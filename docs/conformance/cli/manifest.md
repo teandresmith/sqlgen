@@ -7,7 +7,7 @@
 The generated manifest (§30): configuration, the emitted artifacts, the JSON shape, versioning, extended schema metadata and the `manifest` subcommands. The runtime-embedded manifest (§30.6) is in `runtime.md`. The `manifest-artifacts` matrix has one row per §30.3 artifact, the GraphQL breadcrumb pair included; `emitted` is the artifact written when the manifest is enabled and its own gate is on, `gated` not written when that gate is off, `removed-when-disabled` gone after the next `generate` once `enabled` flips to false, `ownership` the overwrite and removal guard (the breadcrumb provenance marker, the manifest directory's anchors), and `deterministic` byte-identical across two runs with `--manifest-timestamp` pinned.
 
 ## §30 Manifest
-<!-- prd: 30 sha256: 44574c83d3af3896 -->
+<!-- prd: 30 sha256: 87240615158d6b11 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -41,13 +41,13 @@ The effects of `breadcrumbs.*` and `embed_in_client`, and the `formats` gate on 
 | manifest.cfg.enabled.master-toggle | With `enabled: false`, no manifest artifact is emitted, whatever the other fields say. The fixture keeps every other flag on and still gets no directory, breadcrumbs or embed file | `unit: cmd/sqlgen/manifest: TestRunStage_EnabledFlipRemovesArtifacts` | all |  |
 | manifest.cfg.json-filename.relative-to-markdown-dir | The top-level JSON is written under `json_filename`, relative to `markdown_dir` | `unit: cmd/sqlgen/manifest: TestCleanStale_OwnedManifestDirRemoved/json only under a custom json_filename` | all |  |
 | manifest.cfg.json-filename.per-entity-index | In `per_entity` layout, `json_filename` holds the index | `unit: cmd/sqlgen/manifest: TestEmitJSON_PerEntityLayout` | all |  |
-| manifest.cfg.json-filename.custom-per-entity | A custom `json_filename` is honored in `per_entity` layout too | | all |  |
+| manifest.cfg.json-filename.custom-per-entity | A custom `json_filename` is honored in `per_entity` layout too | `unit: cmd/sqlgen/manifest: TestRunStage_CustomJSONFilenameInPerEntityLayout` | all |  |
 | manifest.cfg.json-layout.single | `json_layout: single` writes the full document inline in the top-level JSON | `unit: cmd/sqlgen/manifest: TestEmitJSON_SingleLayout` | all |  |
 | manifest.cfg.json-layout.per-entity | `json_layout: per_entity` writes a top-level index plus one file per entity under `json_per_entity_dir` | `unit: cmd/sqlgen/manifest: TestEmitJSON_PerEntityLayout`; `golden: graphql` | all |  |
-| manifest.cfg.json-per-entity-dir.custom | Per-entity JSON files are written under `<markdown_dir>/<json_per_entity_dir>` for a non-default `json_per_entity_dir` | | all |  |
+| manifest.cfg.json-per-entity-dir.custom | Per-entity JSON files are written under `<markdown_dir>/<json_per_entity_dir>` for a non-default `json_per_entity_dir` | `unit: cmd/sqlgen/manifest: TestRunStage_CustomJSONPerEntityDir` | all |  |
 | manifest.cfg.markdown-dir.placement | The manifest directory is `<output.dir>/<markdown_dir>` | `unit: cmd/sqlgen/manifest: TestCleanStale_AnchorCannotBeRelocated` | all |  |
-| manifest.cfg.include-examples.false-strips | With `include_examples: false`, per-entity `examples` arrays are stripped | | all |  |
-| manifest.cfg.include-examples.conventions-kept | With `include_examples: false`, the examples in `_conventions.md` are still kept | | all |  |
+| manifest.cfg.include-examples.false-strips | With `include_examples: false`, per-entity `examples` arrays are stripped | `unit: cmd/sqlgen/manifest: TestRunStage_IncludeExamplesFalseStripsEntityExamples/single layout, false strips examples`; `unit: cmd/sqlgen/manifest: TestRunStage_IncludeExamplesFalseStripsEntityExamples/per_entity layout, false strips examples`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExamplesFollowIncludeExamples/explicit false strips examples`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExamplesFollowIncludeExamples` | all |  |
+| manifest.cfg.include-examples.conventions-kept | With `include_examples: false`, the examples in `_conventions.md` are still kept | `unit: cmd/sqlgen/manifest: TestRunStage_IncludeExamplesFalseKeepsConventionsExamples` | all |  |
 | manifest.cfg.embed-in-client.methods | `embed_in_client` generates the three methods `Client.Manifest()`, `ManifestEntity()` and `ManifestVersion()` and the embed file | `unit: cmd/sqlgen/gen: TestManifestEmbedTemplate_SingleLayout`; `unit: cmd/sqlgen/manifest: TestRunStage_EmitsFullArtifactSet` | all |  |
 | manifest.cfg.agents-md.identical | `AGENTS.md` has the same content as `CLAUDE.md` | `unit: cmd/sqlgen/manifest: TestEmitBreadcrumbs_Goldens` | all |  |
 
@@ -56,11 +56,11 @@ The effects of `breadcrumbs.*` and `embed_in_client`, and the `formats` gate on 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | manifest.cfg.table.opt-out-only | `tables.<name>.manifest.enabled` can only opt out: it cannot opt a table in while the global `manifest.enabled` is false | `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_PerTableOptInForbidden/table opt-in with global off is error`; `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_PerTableOptInForbidden/table opt-in with global block omitted is error` | all |  |
-| manifest.cfg.table.opt-out-entities | Opting a table out leaves it out of `entities[]` in the JSON | | all |  |
+| manifest.cfg.table.opt-out-entities | Opting a table out leaves it out of `entities[]` in the JSON | `unit: cmd/sqlgen/manifest: TestRunStage_TableOptOutLeavesEmittedEntities/single layout`; `unit: cmd/sqlgen/manifest: TestRunStage_TableOptOutLeavesEmittedEntities/per_entity layout`; `unit: cmd/sqlgen/manifest: TestBuild_PerTableOptOut` | all |  |
 | manifest.cfg.table.opt-out-markdown | An opted-out table gets no per-entity markdown file | `unit: cmd/sqlgen/manifest: TestRunStage_PerTableOptOut` | all |  |
 | manifest.cfg.table.opt-out-json | An opted-out table gets no per-entity JSON file | `unit: cmd/sqlgen/manifest: TestRunStage_PerTableOptOut` | all |  |
-| manifest.cfg.table.opt-out-removes-prior | Opting out a table that an earlier run included removes its existing per-entity markdown and JSON files | | all |  |
-| manifest.cfg.table.opt-out-lookup | An opted-out table is not found by the `ManifestEntity()` lookup | | all |  |
+| manifest.cfg.table.opt-out-removes-prior | Opting out a table that an earlier run included removes its existing per-entity markdown and JSON files | `unit: cmd/sqlgen/manifest: TestRunStage_TableOptOutRemovesPriorEntityFiles` | all |  |
+| manifest.cfg.table.opt-out-lookup | An opted-out table is not found by the `ManifestEntity()` lookup | `unit: cmd/sqlgen/manifest: TestRunStage_TableOptOutLeavesEmittedEntities/single layout`; `unit: cmd/sqlgen/manifest: TestRunStage_TableOptOutLeavesEmittedEntities/per_entity layout` | all |  |
 
 ### Resolution order
 
@@ -80,7 +80,7 @@ One row per summary bullet. The rule rows, with severity, batching and schema, a
 | manifest.cfg.validate.formats-unknown | An unknown `formats` value is an error (the closed set is `json`, `markdown`) | `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_UnknownFormat/unknown 'xml' rejected` | all |  |
 | manifest.cfg.validate.markdown-dir | An invalid `markdown_dir` placement is an error: `.`, an existing artifact dir, `_`-prefixed, absolute, or escaping via `..` | `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_MarkdownDirPlacement/dot rejected`; `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_MarkdownDirPlacement/graph collides with PRD §8.3 artifact subdir`; `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_MarkdownDirPlacement/underscore-prefixed rejected`; `unit: cmd/sqlgen/config: TestValidateManifest_RejectsEscapingPlacements/markdown_dir absolute`; `unit: cmd/sqlgen/config: TestValidateManifest_RejectsEscapingPlacements/markdown_dir escaping via ..` | all |  |
 | manifest.cfg.validate.json-per-entity-dir | A `json_per_entity_dir` that equals `markdown_dir`, starts with `_` or escapes via `..` is an error | `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_JSONPerEntityDirPlacement/equal to markdown_dir rejected`; `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_JSONPerEntityDirPlacement/underscore-prefixed rejected`; `unit: cmd/sqlgen/config: TestValidateManifest_RejectsEscapingPlacements/json_per_entity_dir escaping via ..`; `unit: cmd/sqlgen/config: TestValidateManifest_RejectsEscapingPlacements/json_per_entity_dir equal to markdown_dir once cleaned` | all |  |
-| manifest.cfg.validate.json-per-entity-dir.absolute | An absolute `json_per_entity_dir` is an error | | all |  |
+| manifest.cfg.validate.json-per-entity-dir.absolute | An absolute `json_per_entity_dir` is an error | `unit: cmd/sqlgen/manifest: TestValidatePreParse_AbsoluteJSONPerEntityDir` | all |  |
 | manifest.cfg.validate.json-filename | A `json_filename` containing a path separator is an error | `unit: cmd/sqlgen/config: TestValidateManifest_RejectsEscapingPlacements/json_filename carrying a path separator` | all |  |
 | manifest.cfg.validate.json-layout | A `json_layout` other than `single` or `per_entity` is an error | `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_JSONLayoutEnum/unknown rejected` | all |  |
 | manifest.cfg.validate.table-opt-in | `tables.<name>.manifest.enabled: true` with `manifest.enabled: false` is an error | `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_PerTableOptInForbidden/table opt-in with global off is error` | all |  |
@@ -88,7 +88,7 @@ One row per summary bullet. The rule rows, with severity, batching and schema, a
 | manifest.cfg.validate.embed | `embed_in_client: true` with `manifest.enabled: false` is an error | `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_EmbedRequiresEnabled/embed true is error` | all |  |
 
 ## §30.3 Generated Artifacts
-<!-- prd: 30.3 sha256: 7a7ffe454415c7fb -->
+<!-- prd: 30.3 sha256: 94d1696b245fecd2 -->
 
 ### Artifacts
 
@@ -104,65 +104,65 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.art.claude-md.ownership.user-not-written | A `CLAUDE.md` without the marker is never written | `unit: cmd/sqlgen/manifest: TestEmitBreadcrumbs_Ownership/present without marker is left untouched and warns`; `unit: cmd/sqlgen/manifest: TestRunStage_MarkerGatedDeletionPreservesUserFile` | all | manifest-artifacts: claude-md × ownership |
 | manifest.art.claude-md.ownership.user-not-deleted | A `CLAUDE.md` without the marker is not deleted when the manifest is disabled | `unit: cmd/sqlgen/manifest: TestRunStage_MarkerGatedDeletionPreservesUserFile` | all | manifest-artifacts: claude-md × ownership |
 | manifest.art.claude-md.ownership.demarked-not-overwritten | Once the user deletes the marker line from a sqlgen-authored `CLAUDE.md`, the next run does not overwrite it | `unit: cmd/sqlgen/manifest: TestEmitBreadcrumbs_Ownership/marker line deleted becomes user-owned` | all | manifest-artifacts: claude-md × ownership |
-| manifest.art.claude-md.ownership.demarked-not-deleted | Once the user deletes the marker line, stale-delete is suppressed too: a later disable leaves the file in place | | all | manifest-artifacts: claude-md × ownership |
+| manifest.art.claude-md.ownership.demarked-not-deleted | Once the user deletes the marker line, stale-delete is suppressed too: a later disable leaves the file in place | `unit: cmd/sqlgen/manifest: TestRunStage_DemarkedBreadcrumbsSurviveDisable` | all | manifest-artifacts: claude-md × ownership |
 | manifest.art.claude-md.deterministic | `CLAUDE.md` is byte-identical across runs | `unit: cmd/sqlgen/manifest: TestEmitBreadcrumbs_Determinism`; `golden: postgres` | all | manifest-artifacts: claude-md × deterministic |
 | manifest.art.agents-md.emitted | When the manifest is enabled and `agents_md` is on, `<output.dir>/AGENTS.md` is written | `unit: cmd/sqlgen/manifest: TestRunStage_EmitsFullArtifactSet`; `golden: postgres` | all | manifest-artifacts: agents-md × emitted |
 | manifest.art.agents-md.gated | With `breadcrumbs.agents_md: false`, `AGENTS.md` is not written, while `CLAUDE.md` is | `unit: cmd/sqlgen/manifest: TestEmitBreadcrumbs_OptOut/agents_md false omits AGENTS.md` | all | manifest-artifacts: agents-md × gated |
-| manifest.art.agents-md.removed | After `enabled` flips from true to false, the next generate removes the sqlgen-owned `AGENTS.md` | | all | manifest-artifacts: agents-md × removed-when-disabled |
+| manifest.art.agents-md.removed | After `enabled` flips from true to false, the next generate removes the sqlgen-owned `AGENTS.md` | `unit: cmd/sqlgen/manifest: TestRunStage_DisableRemovesAgentsMDAndEntityJSON` | all | manifest-artifacts: agents-md × removed-when-disabled |
 | manifest.art.agents-md.ownership.marker | sqlgen writes `AGENTS.md` with the provenance marker leading the file | `unit: cmd/sqlgen/manifest: TestEmitBreadcrumbs_Goldens` | all | manifest-artifacts: agents-md × ownership |
-| manifest.art.agents-md.ownership.user-untouched | An `AGENTS.md` without the marker is never written or deleted | | all | manifest-artifacts: agents-md × ownership |
+| manifest.art.agents-md.ownership.user-untouched | An `AGENTS.md` without the marker is never written or deleted | `unit: cmd/sqlgen/manifest: TestRunStage_UnmarkedBreadcrumbsNeverWrittenOrDeleted/models AGENTS.md` | all | manifest-artifacts: agents-md × ownership |
 | manifest.art.agents-md.deterministic | `AGENTS.md` is byte-identical across runs | `unit: cmd/sqlgen/manifest: TestEmitBreadcrumbs_Determinism`; `golden: postgres` | all | manifest-artifacts: agents-md × deterministic |
-| manifest.art.package-doc.emitted | With `breadcrumbs.package_doc` on, `models_gen.go`'s package doc comment is `// Package <name> is generated by sqlgen. AI agents: read <markdown_dir>/_index.md before consuming this package.` | | all | manifest-artifacts: package-doc × emitted |
-| manifest.art.package-doc.json-only | When `formats` has no `markdown`, the pointer names `<markdown_dir>/<json_filename>` instead of `_index.md` | | all |  |
-| manifest.art.package-doc.client-file | When there is no `models_gen.go` (`file_per_table`, or no tables), the pointer goes into the client file (`output.client.file`) | | all |  |
-| manifest.art.breadcrumb.pointer-json-only | When `formats` has no `markdown`, `CLAUDE.md`, `AGENTS.md` and the graph breadcrumbs point at `<markdown_dir>/<json_filename>`, not `_index.md` | | all |  |
-| manifest.art.package-doc.gated | With `breadcrumbs.package_doc: false`, `models_gen.go` carries no manifest pointer | | all | manifest-artifacts: package-doc × gated |
-| manifest.art.package-doc.removed | After `enabled` flips from true to false, the pointer is gone from `models_gen.go` | | all | manifest-artifacts: package-doc × removed-when-disabled |
-| manifest.art.package-doc.deterministic | The `models_gen.go` pointer is byte-identical across runs | | all | manifest-artifacts: package-doc × deterministic |
+| manifest.art.package-doc.emitted | With `breadcrumbs.package_doc` on, `models_gen.go`'s package doc comment is `// Package <name> is generated by sqlgen. AI agents: read <markdown_dir>/_index.md before consuming this package.` | `unit: cmd/sqlgen/cli: TestGenerate_ManifestPointerInModelsPackageDoc/package_doc defaults on`; `unit: cmd/sqlgen/cli: TestGenerate_ManifestPointerInModelsPackageDoc/package_doc explicitly on`; `unit: cmd/sqlgen/cli: TestGenerate_ManifestPointerInModelsPackageDoc/custom markdown_dir` | all | manifest-artifacts: package-doc × emitted |
+| manifest.art.package-doc.json-only | When `formats` has no `markdown`, the pointer names `<markdown_dir>/<json_filename>` instead of `_index.md` | `unit: cmd/sqlgen/cli: TestGenerate_ManifestPointerInModelsPackageDoc/formats without markdown names the JSON`; `unit: cmd/sqlgen/cli: TestGenerate_ManifestPointerInModelsPackageDoc/formats without markdown follows json_filename` | all |  |
+| manifest.art.package-doc.client-file | When there is no `models_gen.go` (`file_per_table`, or no tables), the pointer goes into the client file (`output.client.file`) | `unit: cmd/sqlgen/cli: TestGenerate_ManifestPointerInClientPackageDoc/file_per_table`; `unit: cmd/sqlgen/cli: TestGenerate_ManifestPointerInClientPackageDoc/single_file with zero tables` | all |  |
+| manifest.art.breadcrumb.pointer-json-only | When `formats` has no `markdown`, `CLAUDE.md`, `AGENTS.md` and the graph breadcrumbs point at `<markdown_dir>/<json_filename>`, not `_index.md` | `unit: cmd/sqlgen/manifest: TestRunStage_JSONOnlyBreadcrumbsPointAtJSON/single layout`; `unit: cmd/sqlgen/manifest: TestRunStage_JSONOnlyBreadcrumbsPointAtJSON/per_entity layout`; `unit: cmd/sqlgen/manifest: TestRunStage_JSONOnlyModelsAgentsMDPointsAtJSON`; `unit: cmd/sqlgen/manifest: TestRunStage_JSONOnlyBreadcrumbsPointAtJSON` | all |  |
+| manifest.art.package-doc.gated | With `breadcrumbs.package_doc: false`, `models_gen.go` carries no manifest pointer | `unit: cmd/sqlgen/cli: TestGenerate_ManifestPointerInModelsPackageDoc/package_doc off` | all | manifest-artifacts: package-doc × gated |
+| manifest.art.package-doc.removed | After `enabled` flips from true to false, the pointer is gone from `models_gen.go` | `unit: cmd/sqlgen/cli: TestGenerate_ManifestPointerRemovedWhenDisabled` | all | manifest-artifacts: package-doc × removed-when-disabled |
+| manifest.art.package-doc.deterministic | The `models_gen.go` pointer is byte-identical across runs | `unit: cmd/sqlgen/cli: TestGenerate_ManifestPointerDeterministic` | all | manifest-artifacts: package-doc × deterministic |
 | manifest.art.manifest-embed.emitted | With `embed_in_client` on, `<output.dir>/manifest_embed_gen.go` is written, with a `//go:embed` of the manifest JSON and the three `Client` methods | `unit: cmd/sqlgen/manifest: TestRunStage_EmitsFullArtifactSet`; `unit: cmd/sqlgen/gen: TestManifestEmbedTemplate_SingleLayout`; `golden: postgres` | all | manifest-artifacts: manifest-embed × emitted |
-| manifest.art.manifest-embed.gated | With `embed_in_client: false`, `manifest_embed_gen.go` is not written | | all | manifest-artifacts: manifest-embed × gated |
+| manifest.art.manifest-embed.gated | With `embed_in_client: false`, `manifest_embed_gen.go` is not written | `unit: cmd/sqlgen/manifest: TestRunStage_FormatAndEmbedGates/embed_in_client false` | all | manifest-artifacts: manifest-embed × gated |
 | manifest.art.manifest-embed.removed | After `enabled` flips from true to false, the next generate removes `manifest_embed_gen.go` | `unit: cmd/sqlgen/manifest: TestRunStage_EnabledFlipRemovesArtifacts`; `unit: cmd/sqlgen/manifest: TestCleanStale_BreadcrumbsUnaffectedByDirOwnership`; `unit: cmd/sqlgen/cli: TestGenerate_ReportsManifestDeletions` | all | manifest-artifacts: manifest-embed × removed-when-disabled |
 | manifest.art.manifest-embed.deterministic | `manifest_embed_gen.go` is byte-identical across runs | `golden: postgres` | all | manifest-artifacts: manifest-embed × deterministic |
 | manifest.art.manifest-json.emitted | With `json` in `formats`, `<markdown_dir>/manifest_gen.json` is written | `unit: cmd/sqlgen/manifest: TestRunStage_EmitsFullArtifactSet`; `unit: cmd/sqlgen/manifest: TestEmitJSON_SingleLayout`; `golden: postgres` | all | manifest-artifacts: manifest-json × emitted |
-| manifest.art.manifest-json.gated | With `json` absent from `formats`, `manifest_gen.json` is not written | | all | manifest-artifacts: manifest-json × gated |
+| manifest.art.manifest-json.gated | With `json` absent from `formats`, `manifest_gen.json` is not written | `unit: cmd/sqlgen/manifest: TestRunStage_FormatAndEmbedGates/markdown only, per_entity layout` | all | manifest-artifacts: manifest-json × gated |
 | manifest.art.manifest-json.removed | After `enabled` flips from true to false, the next generate removes `manifest_gen.json` along with the manifest directory | `unit: cmd/sqlgen/manifest: TestRunStage_EnabledFlipRemovesArtifacts`; `unit: cmd/sqlgen/manifest: TestCleanStale_OwnedManifestDirRemoved/json only, manifest_gen.json is the sole anchor`; `unit: cmd/sqlgen/cli: TestGenerate_ReportsManifestDeletions` | all | manifest-artifacts: manifest-json × removed-when-disabled |
 | manifest.art.manifest-json.ownership.anchor | A `json_filename` file whose `generator.name` is `sqlgen` proves the directory is sqlgen's, even as the only anchor and under a custom `json_filename` | `unit: cmd/sqlgen/manifest: TestCleanStale_OwnedManifestDirRemoved/json only, manifest_gen.json is the sole anchor`; `unit: cmd/sqlgen/manifest: TestCleanStale_OwnedManifestDirRemoved/json only under a custom json_filename` | all | manifest-artifacts: manifest-json × ownership |
 | manifest.art.manifest-json.ownership.not-sqlgen | A `json_filename` file that is not sqlgen's, because another generator wrote it or it is not JSON, proves nothing, and the directory is left in place | `unit: cmd/sqlgen/manifest: TestCleanStale_UnownedManifestDirSurvives/json written by some other generator`; `unit: cmd/sqlgen/manifest: TestCleanStale_UnownedManifestDirSurvives/json that is not even json` | all | manifest-artifacts: manifest-json × ownership |
 | manifest.art.manifest-json.ownership.stale-filename | A manifest written under a `json_filename` the current config no longer names is not removed (fail closed) | `unit: cmd/sqlgen/manifest: TestCleanStale_CustomDirNamesFailClosed` | all | manifest-artifacts: manifest-json × ownership |
 | manifest.art.manifest-json.deterministic | `manifest_gen.json` is byte-identical across two runs when `--manifest-timestamp` is pinned | `unit: cmd/sqlgen/manifest: TestRunStage_TimestampDeterminism`; `unit: cmd/sqlgen/manifest: TestEmitJSON_Deterministic`; `golden: postgres` | all | manifest-artifacts: manifest-json × deterministic |
 | manifest.art.index-md.emitted | With `markdown` in `formats`, `<markdown_dir>/_index.md` is written | `unit: cmd/sqlgen/manifest: TestRunStage_EmitsFullArtifactSet`; `golden: postgres` | all | manifest-artifacts: index-md × emitted |
-| manifest.art.index-md.gated | With `markdown` absent from `formats`, `_index.md` is not written | | all | manifest-artifacts: index-md × gated |
+| manifest.art.index-md.gated | With `markdown` absent from `formats`, `_index.md` is not written | `unit: cmd/sqlgen/manifest: TestRunStage_FormatAndEmbedGates/json only, single layout`; `unit: cmd/sqlgen/manifest: TestRunStage_FormatAndEmbedGates/json only, per_entity layout` | all | manifest-artifacts: index-md × gated |
 | manifest.art.index-md.removed | After `enabled` flips from true to false, the next generate removes `_index.md` along with the manifest directory | `unit: cmd/sqlgen/manifest: TestRunStage_EnabledFlipRemovesArtifacts`; `unit: cmd/sqlgen/manifest: TestCleanStale_OwnedManifestDirRemoved/markdown only, index is the sole anchor` | all | manifest-artifacts: index-md × removed-when-disabled |
 | manifest.art.index-md.ownership.anchor | An `_index.md` carrying the generator line proves the directory is sqlgen's, even as the only anchor | `unit: cmd/sqlgen/manifest: TestCleanStale_OwnedManifestDirRemoved/markdown only, index is the sole anchor`; `unit: cmd/sqlgen/manifest: TestManifestIndexAnchorDrift` | all | manifest-artifacts: index-md × ownership |
 | manifest.art.index-md.ownership.disown | Deleting the generator line from `_index.md` disowns the directory, which is then left in place | `unit: cmd/sqlgen/manifest: TestCleanStale_UnownedManifestDirSurvives/index disowned by dropping the generator line` | all | manifest-artifacts: index-md × ownership |
 | manifest.art.index-md.deterministic | `_index.md` is byte-identical across runs | `unit: cmd/sqlgen/manifest: TestEmitMarkdown_Determinism`; `golden: postgres` | all | manifest-artifacts: index-md × deterministic |
 | manifest.art.conventions-md.emitted | With `markdown` in `formats`, `<markdown_dir>/_conventions.md` is written | `unit: cmd/sqlgen/manifest: TestRunStage_EmitsFullArtifactSet`; `golden: postgres` | all | manifest-artifacts: conventions-md × emitted |
-| manifest.art.conventions-md.gated | With `markdown` absent from `formats`, `_conventions.md` is not written | | all | manifest-artifacts: conventions-md × gated |
+| manifest.art.conventions-md.gated | With `markdown` absent from `formats`, `_conventions.md` is not written | `unit: cmd/sqlgen/manifest: TestRunStage_FormatAndEmbedGates/json only, single layout`; `unit: cmd/sqlgen/manifest: TestRunStage_FormatAndEmbedGates/json only, per_entity layout` | all | manifest-artifacts: conventions-md × gated |
 | manifest.art.conventions-md.removed | After `enabled` flips from true to false, the next generate removes `_conventions.md` along with the manifest directory | `unit: cmd/sqlgen/manifest: TestRunStage_EnabledFlipRemovesArtifacts` | all | manifest-artifacts: conventions-md × removed-when-disabled |
-| manifest.art.conventions-md.ownership | `_conventions.md` is removed only along with a manifest directory that carries an anchor. A directory with no anchor is left whole | | all | manifest-artifacts: conventions-md × ownership |
+| manifest.art.conventions-md.ownership | `_conventions.md` is removed only along with a manifest directory that carries an anchor. A directory with no anchor is left whole | `unit: cmd/sqlgen/manifest: TestRunStage_ConventionsMDFollowsDirOwnership/no anchor leaves _conventions.md`; `unit: cmd/sqlgen/manifest: TestRunStage_ConventionsMDFollowsDirOwnership/anchored dir takes _conventions.md with it` | all | manifest-artifacts: conventions-md × ownership |
 | manifest.art.conventions-md.deterministic | `_conventions.md` is byte-identical across runs | `unit: cmd/sqlgen/manifest: TestEmitMarkdown_Determinism`; `golden: postgres` | all | manifest-artifacts: conventions-md × deterministic |
 | manifest.art.entity-md.emitted | With `markdown` in `formats`, one `<markdown_dir>/<file_prefix>.md` is written per entity | `unit: cmd/sqlgen/manifest: TestRunStage_EmitsFullArtifactSet`; `golden: postgres` | all | manifest-artifacts: entity-md × emitted |
-| manifest.art.entity-md.gated | With `markdown` absent from `formats`, no per-entity markdown is written | | all | manifest-artifacts: entity-md × gated |
+| manifest.art.entity-md.gated | With `markdown` absent from `formats`, no per-entity markdown is written | `unit: cmd/sqlgen/manifest: TestRunStage_FormatAndEmbedGates/json only, single layout`; `unit: cmd/sqlgen/manifest: TestRunStage_FormatAndEmbedGates/json only, per_entity layout` | all | manifest-artifacts: entity-md × gated |
 | manifest.art.entity-md.removed | After `enabled` flips from true to false, the next generate removes every per-entity markdown file, including ones for tables dropped earlier | `unit: cmd/sqlgen/manifest: TestRunStage_EnabledFlipRemovesArtifacts`; `unit: cmd/sqlgen/manifest: TestCleanStale_OwnedManifestDirRemoved/both formats` | all | manifest-artifacts: entity-md × removed-when-disabled |
 | manifest.art.entity-md.ownership | Markdown files in a manifest directory with no anchor are not removed | `unit: cmd/sqlgen/manifest: TestCleanStale_UnownedManifestDirSurvives/index disowned by dropping the generator line` | all | manifest-artifacts: entity-md × ownership |
 | manifest.art.entity-md.deterministic | Per-entity markdown is byte-identical across runs | `unit: cmd/sqlgen/manifest: TestEmitMarkdown_Determinism`; `golden: postgres` | all | manifest-artifacts: entity-md × deterministic |
 | manifest.art.entity-json.emitted | In `per_entity` layout, one `<markdown_dir>/entities/<file_prefix>.json` is written per entity | `unit: cmd/sqlgen/manifest: TestRunStage_PerTableOptOut`; `unit: cmd/sqlgen/manifest: TestEmitJSON_PerEntityLayout`; `golden: graphql` | all | manifest-artifacts: entity-json × emitted |
 | manifest.art.entity-json.gated-layout | The `entities/` directory exists only in `per_entity` layout. Under `single` it is not written, and after a `per_entity` → `single` flip it is dropped | `unit: cmd/sqlgen/manifest: TestCleanStale_EntitiesDirDroppedOnLayoutFlip/only sqlgen json inside, directory goes`; `golden: postgres` | all | manifest-artifacts: entity-json × gated |
-| manifest.art.entity-json.gated-format | With `json` absent from `formats`, no per-entity JSON is written, even in `per_entity` layout | | all | manifest-artifacts: entity-json × gated |
-| manifest.art.entity-json.removed | After `enabled` flips from true to false, the next generate removes `entities/*.json` along with the manifest directory | | all | manifest-artifacts: entity-json × removed-when-disabled |
+| manifest.art.entity-json.gated-format | With `json` absent from `formats`, no per-entity JSON is written, even in `per_entity` layout | `unit: cmd/sqlgen/manifest: TestRunStage_FormatAndEmbedGates/markdown only, per_entity layout` | all | manifest-artifacts: entity-json × gated |
+| manifest.art.entity-json.removed | After `enabled` flips from true to false, the next generate removes `entities/*.json` along with the manifest directory | `unit: cmd/sqlgen/manifest: TestRunStage_DisableRemovesAgentsMDAndEntityJSON` | all | manifest-artifacts: entity-json × removed-when-disabled |
 | manifest.art.entity-json.ownership | After the layout flip, only the `*.json` files sqlgen emits in `entities/` are removed. The directory goes only if nothing else remains | `unit: cmd/sqlgen/manifest: TestCleanStale_EntitiesDirDroppedOnLayoutFlip/consumer file inside, directory stays` | all | manifest-artifacts: entity-json × ownership |
 | manifest.art.entity-json.deterministic | Per-entity JSON is byte-identical across two runs when `--manifest-timestamp` is pinned | `golden: graphql` | all | manifest-artifacts: entity-json × deterministic |
 | manifest.art.graph-claude-md.emitted | With GraphQL enabled, the graph package gets `graph/CLAUDE.md`, whether the graph dir is nested under models or is a top-level sibling | `unit: cmd/sqlgen/manifest: TestRunStage_NestedGraphBreadcrumbs`; `unit: cmd/sqlgen/manifest: TestEmitBreadcrumbs_LayeredRelativePath/top-level sibling graph`; `golden: graphql` | all | manifest-artifacts: graph-claude-md × emitted |
 | manifest.art.graph-claude-md.gated | With GraphQL disabled, no `graph/CLAUDE.md` is written | `golden: postgres` | all | manifest-artifacts: graph-claude-md × gated |
 | manifest.art.graph-claude-md.removed | After `enabled` flips from true to false, the next generate removes the sqlgen-owned `graph/CLAUDE.md` | `unit: cmd/sqlgen/manifest: TestRunStage_NestedGraphBreadcrumbs` | all | manifest-artifacts: graph-claude-md × removed-when-disabled |
 | manifest.art.graph-claude-md.ownership.marker | `graph/CLAUDE.md` opens with the provenance marker | `unit: cmd/sqlgen/manifest: TestEmitBreadcrumbs_LayeredGoldens` | all | manifest-artifacts: graph-claude-md × ownership |
-| manifest.art.graph-claude-md.ownership.user-untouched | A `graph/CLAUDE.md` without the marker is never written or deleted (the same rule as the models breadcrumbs) | | all | manifest-artifacts: graph-claude-md × ownership |
+| manifest.art.graph-claude-md.ownership.user-untouched | A `graph/CLAUDE.md` without the marker is never written or deleted (the same rule as the models breadcrumbs) | `unit: cmd/sqlgen/manifest: TestRunStage_UnmarkedBreadcrumbsNeverWrittenOrDeleted/graph CLAUDE.md` | all | manifest-artifacts: graph-claude-md × ownership |
 | manifest.art.graph-claude-md.deterministic | `graph/CLAUDE.md` is byte-identical across runs | `unit: cmd/sqlgen/manifest: TestEmitBreadcrumbs_Determinism`; `golden: graphql` | all | manifest-artifacts: graph-claude-md × deterministic |
 | manifest.art.graph-agents-md.emitted | With GraphQL enabled, the graph package gets `graph/AGENTS.md`, with the same content as `graph/CLAUDE.md` | `unit: cmd/sqlgen/manifest: TestRunStage_NestedGraphBreadcrumbs`; `unit: cmd/sqlgen/manifest: TestEmitBreadcrumbs_LayeredGoldens`; `golden: graphql` | all | manifest-artifacts: graph-agents-md × emitted |
 | manifest.art.graph-agents-md.gated | With GraphQL disabled, no `graph/AGENTS.md` is written | `golden: postgres` | all | manifest-artifacts: graph-agents-md × gated |
 | manifest.art.graph-agents-md.removed | After `enabled` flips from true to false, the next generate removes the sqlgen-owned `graph/AGENTS.md` | `unit: cmd/sqlgen/manifest: TestRunStage_NestedGraphBreadcrumbs` | all | manifest-artifacts: graph-agents-md × removed-when-disabled |
 | manifest.art.graph-agents-md.ownership.marker | `graph/AGENTS.md` opens with the provenance marker | `unit: cmd/sqlgen/manifest: TestEmitBreadcrumbs_LayeredGoldens` | all | manifest-artifacts: graph-agents-md × ownership |
-| manifest.art.graph-agents-md.ownership.user-untouched | A `graph/AGENTS.md` without the marker is never written or deleted | | all | manifest-artifacts: graph-agents-md × ownership |
+| manifest.art.graph-agents-md.ownership.user-untouched | A `graph/AGENTS.md` without the marker is never written or deleted | `unit: cmd/sqlgen/manifest: TestRunStage_UnmarkedBreadcrumbsNeverWrittenOrDeleted/graph AGENTS.md` | all | manifest-artifacts: graph-agents-md × ownership |
 | manifest.art.graph-agents-md.deterministic | `graph/AGENTS.md` is byte-identical across runs | `unit: cmd/sqlgen/manifest: TestEmitBreadcrumbs_Determinism`; `golden: graphql` | all | manifest-artifacts: graph-agents-md × deterministic |
 
 ### Artifact contents
@@ -187,6 +187,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.art.naming.files-resolve | Every `files[]` entry names a Go file that exists in the generated package, under both layouts | `unit: cmd/sqlgen/manifest: TestEntityFilesExistOnDisk` | all |  |
 | manifest.art.naming.schema-prefix-on-collision | The schema is prefixed only when the bare name appears in more than one parsed schema: `public.users` beside `audit.users` gives `manifest/public_user.md` | `golden: postgres` | postgres |  |
 | manifest.art.naming.lone-schema-bare | A table whose name appears in only one schema keeps the bare prefix (a lone `public.users` stays `manifest/user.md`) | `golden: postgres` | postgres |  |
+| manifest.art.naming.single-file-views | Under `single_file`, every view's body is concatenated into `views_gen.go` and no per-view `<file_prefix>_gen.go` is written | `unit: cmd/sqlgen/cli: TestSingleFileLayout_views` | all |  |
 
 ### Breadcrumb ownership
 
@@ -206,14 +207,14 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 |---|---|---|---|---|
 | manifest.art.stale.removed-table-md | Removing a table from the schema removes its per-entity markdown on the next generation, in either JSON layout | `unit: cmd/sqlgen/manifest: TestCleanStale_RemovedTable` | all |  |
 | manifest.art.stale.removed-table-json | Removing a table from the schema removes its per-entity JSON on the next generation | `unit: cmd/sqlgen/manifest: TestCleanStale_RemovedTable` | all |  |
-| manifest.art.stale.format-markdown-dropped | With the manifest still enabled, dropping `markdown` from `formats` removes every `.md` file in the owned `markdown_dir` on the next generation | | all |  |
-| manifest.art.stale.format-json-dropped | With the manifest still enabled, dropping `json` from `formats` removes the `json_filename` artifact and the per-entity `*.json` files on the next generation | | all |  |
-| manifest.art.stale.format-dropped-ownership | A format flip removes files only under the *Directory ownership* rule: a `markdown_dir` with no anchor is untouched | | all |  |
-| manifest.art.stale.graphql-disabled | With the manifest still enabled, disabling GraphQL removes the graph breadcrumbs that carry the provenance marker | | all |  |
-| manifest.art.stale.graphql-disabled-user-owned | Disabling GraphQL leaves an unmarked graph breadcrumb untouched | | all |  |
+| manifest.art.stale.format-markdown-dropped | With the manifest still enabled, dropping `markdown` from `formats` removes every `.md` file in the owned `markdown_dir` on the next generation | `unit: cmd/sqlgen/manifest: TestRunStage_MarkdownFormatDroppedRemovesMarkdown`; `unit: cmd/sqlgen/manifest: TestRunStage_MarkdownFormatDroppedRemovesEveryMarkdownFile` | all |  |
+| manifest.art.stale.format-json-dropped | With the manifest still enabled, dropping `json` from `formats` removes the `json_filename` artifact and the per-entity `*.json` files on the next generation | `unit: cmd/sqlgen/manifest: TestRunStage_JSONFormatDroppedRemovesJSON` | all |  |
+| manifest.art.stale.format-dropped-ownership | A format flip removes files only under the *Directory ownership* rule: a `markdown_dir` with no anchor is untouched | `unit: cmd/sqlgen/manifest: TestRunStage_MarkdownFormatDroppedLeavesUnanchoredDir` | all |  |
+| manifest.art.stale.graphql-disabled | With the manifest still enabled, disabling GraphQL removes the graph breadcrumbs that carry the provenance marker | `unit: cmd/sqlgen/manifest: TestRunStage_GraphQLDisabledRemovesGraphBreadcrumbs` | all |  |
+| manifest.art.stale.graphql-disabled-user-owned | Disabling GraphQL leaves an unmarked graph breadcrumb untouched | `unit: cmd/sqlgen/manifest: TestRunStage_GraphQLDisabledLeavesUnmarkedGraphBreadcrumbs` | all |  |
 | manifest.art.stale.disable-removes-dir | Setting `manifest.enabled: false` after a prior `true` removes the whole manifest directory | `unit: cmd/sqlgen/manifest: TestRunStage_EnabledFlipRemovesArtifacts`; `unit: cmd/sqlgen/manifest: TestCleanStale_OwnedManifestDirRemoved/both formats`; `unit: cmd/sqlgen/cli: TestGenerate_ReportsManifestDeletions` | all |  |
 | manifest.art.stale.disable-keeps-user-breadcrumbs | Breadcrumbs that are user-owned are never deleted on disable | `unit: cmd/sqlgen/manifest: TestRunStage_MarkerGatedDeletionPreservesUserFile` | all |  |
-| manifest.art.stale.disable-keeps-user-breadcrumbs.user-adopted | Breadcrumbs that the user adopted are never deleted on disable | | all |  |
+| manifest.art.stale.disable-keeps-user-breadcrumbs.user-adopted | Breadcrumbs that the user adopted are never deleted on disable | `unit: cmd/sqlgen/manifest: TestRunStage_DemarkedBreadcrumbsSurviveDisable` | all |  |
 
 ### Directory ownership
 
@@ -233,9 +234,9 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 |---|---|---|---|---|
 | manifest.art.det.byte-for-byte | Manifest emission is byte-for-byte deterministic for an unchanged schema and config, with `generated_at` pinned | `golden: postgres`; `golden: graphql`; `golden: mysql`; `golden: sqlite` | all |  |
 | manifest.art.det.timestamp-flag | `--manifest-timestamp` fixes `generated_at`: a value passed to the flag is used verbatim | `unit: cmd/sqlgen/cli: TestResolveManifestTimestamp`; `unit: cmd/sqlgen/manifest: TestRunStage_TimestampDeterminism` | all |  |
-| manifest.art.det.sorted | Every collection other than `columns[]` and `methods.query[]` / `methods.mutation[]` is sorted lexicographically by a stable key | | all |  |
-| manifest.art.det.columns-declaration-order | `columns[]` keeps the table's declaration order | | all |  |
-| manifest.art.det.methods-generated-order | `methods.query[]` and `methods.mutation[]` keep the generated method order | | all |  |
+| manifest.art.det.sorted | `entities[]`, `enums[]`, `extras[]` and, per entity, `indexes[]`, `relationships[]`, `sort.fields` and the column members of `filter.fields` are sorted lexicographically by stable key | `unit: cmd/sqlgen/manifest: TestEmitJSON_KeyedCollectionsSorted` | all |  |
+| manifest.art.det.columns-declaration-order | `columns[]` keeps the table's declaration order | `unit: cmd/sqlgen/manifest: TestRunStage_ColumnsKeepDeclarationOrder` | all |  |
+| manifest.art.det.methods-generated-order | `methods.query[]` and `methods.mutation[]` follow the order the generated `<Entity>Client` interface declares | `unit: cmd/sqlgen/manifest: TestBuild_MethodsFollowClientInterfaceOrder`; `unit: cmd/sqlgen/manifest: TestManifestMethodsKeepGeneratedOrder` | all |  |
 | manifest.art.det.marshal-indent | JSON is written indented (`json.MarshalIndent`) | `unit: cmd/sqlgen/manifest: TestEmitJSON_SingleLayout` | all |  |
 | manifest.art.det.no-html-escape | JSON is written with HTML escaping disabled | `unit: cmd/sqlgen/manifest: TestEmitJSON_HTMLEscapingDisabled` | all |  |
 
@@ -249,7 +250,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.art.graph.pointer-doc-comments | The graph breadcrumb's third pointer is the doc comments on the generated resolver, walker and middleware Go files in that directory | `golden: graphql` | all |  |
 
 ## §30.4 JSON Schema
-<!-- prd: 30.4 sha256: c08f0f4cd53f04ba -->
+<!-- prd: 30.4 sha256: 799379b751a42b74 -->
 
 ### Single layout
 
@@ -275,12 +276,13 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | manifest.json.top.schema-url | `$schema` is the URL of the JSON Schema for this `schema_version` (`…/cmd/sqlgen/manifest/schema/v1.json`) | `unit: cmd/sqlgen/manifest: TestBuild_TopLevelEnvelope` | all |  |
-| manifest.json.top.schema-url-tagged-release | `$schema` is the GitHub raw URL of the latest tagged release | | all |  |
+| manifest.json.top.schema-url-tagged-release | `$schema` is the GitHub raw URL of the latest tagged release | `unit: cmd/sqlgen/manifest: TestEmitJSON_SchemaURLNamesTheTaggedRelease/release 0.42.0`; `unit: cmd/sqlgen/manifest: TestEmitJSON_SchemaURLNamesTheTaggedRelease/release 1.3.7` | all |  |
 | manifest.json.top.schema-url-immutable | The `$schema` URL is immutable per version | | all |  |
 | manifest.json.top.conforms | An emitted manifest validates against the JSON Schema for its `schema_version`: the single document, the per-entity index and every per-entity record | `unit: cmd/sqlgen/manifest: TestEmitJSON_ValidatesAgainstSchema/single`; `unit: cmd/sqlgen/manifest: TestEmitJSON_ValidatesAgainstSchema/per_entity`; `unit: cmd/sqlgen/cli: TestManifestValidate_E2EExamples` | all |  |
 | manifest.json.top.schema-version | `schema_version` is a semver string | `unit: cmd/sqlgen/cli: TestManifestValidate_E2EExamples` | all |  |
 | manifest.json.top.generated-at-rfc3339 | Without `--manifest-timestamp`, `generated_at` is an RFC3339 timestamp | `unit: cmd/sqlgen/cli: TestResolveManifestTimestamp` | all |  |
-| manifest.json.top.generated-at-rfc3339.pinned | With `--manifest-timestamp` set, `generated_at` is still an RFC3339 timestamp | | all |  |
+| manifest.json.top.generated-at-rfc3339.pinned | With `--manifest-timestamp` set, `generated_at` is still an RFC3339 timestamp | `unit: cmd/sqlgen/cli: TestGenerate_PinnedManifestTimestampIsGeneratedAt` | all |  |
+| manifest.json.top.timestamp-flag-rfc3339 | A `--manifest-timestamp` value that is not RFC3339 is a usage error (exit 2) naming the flag | `unit: cmd/sqlgen/cli: TestGenerate_ManifestTimestampMustBeRFC3339` | all |  |
 | manifest.json.top.generated-at-only-nondeterministic | `generated_at` is the only non-deterministic field: with it pinned, two runs produce byte-identical JSON | `unit: cmd/sqlgen/manifest: TestRunStage_TimestampDeterminism`; `golden: postgres` | all |  |
 | manifest.json.top.generator | `generator` is `{name, version}` of the emitter (`sqlgen` and its version) | `unit: cmd/sqlgen/manifest: TestBuild_TopLevelEnvelope` | all |  |
 | manifest.json.top.dialect.postgres | `dialect` is `"postgres"` for a PostgreSQL package | `unit: cmd/sqlgen/manifest: TestBuild_TopLevelEnvelope`; `golden: postgres` | postgres |  |
@@ -294,7 +296,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.top.entities | `entities` lists the package's tables and views | `unit: cmd/sqlgen/manifest: TestBuild_EntityFilesFollowOutputLayout` | all |  |
 | manifest.json.top.enums | `enums` lists the generated enum types, named as the generated Go type (§8.3) | `unit: cmd/sqlgen/manifest: TestBuildEnums_namesFollowTheGeneratedGoType` | all |  |
 | manifest.json.top.extras.composite | `extras` lists the generated composite types | `golden: postgres`; `golden: introspect_postgres` | postgres |  |
-| manifest.json.top.extras.extra | `extras` lists the generated config `extras` types | | all |  |
+| manifest.json.top.extras.extra | `extras` lists the generated config `extras` types | `unit: cmd/sqlgen/manifest: TestEmitJSON_ExtrasListConfigExtras` | all |  |
 | manifest.json.top.extras.domain | `extras` lists the generated domain aliases | `golden: postgres`; `golden: introspect_postgres` | postgres |  |
 
 ## §30.4.1 Conventions block
@@ -386,7 +388,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.entity.table-tenancy | A tenanted table populates `features.tenancy` with its tenant column | `unit: cmd/sqlgen/manifest: TestBuild_TenantedTable` | all |  |
 | manifest.json.entity.columns | Each column carries `name`, `go_field`, `go_type`, `db_type`, `nullable`, `pk`, `unique`, `comparator` and `comment` | `golden: postgres` | all |  |
 | manifest.json.entity.columns.default-auto | A column's `default`, `default_kind` and `auto` are omitted when empty | `golden: postgres` | all |  |
-| manifest.json.entity.comment-always | `comment` is always written, `""` when there is none | | all |  |
+| manifest.json.entity.comment-always | `comment` is always written, `""` when there is none | `unit: cmd/sqlgen/manifest: TestEmitJSON_CommentAlwaysWritten/table without comments`; `unit: cmd/sqlgen/manifest: TestEmitJSON_CommentAlwaysWritten/view without comments`; `unit: cmd/sqlgen/manifest: TestEmitJSON_CommentAlwaysWritten/table with comments` | all |  |
 | manifest.json.entity.column-access-emitted | `access` and `redacted` are emitted for a non-public column | `unit: cmd/sqlgen/manifest: TestEmitJSON_AccessMarkers_BothLayouts/single layout`; `unit: cmd/sqlgen/manifest: TestEmitJSON_AccessMarkers_BothLayouts/per_entity layout` | all |  |
 | manifest.json.entity.column-access-public-omitted | A public column omits `access` | `unit: cmd/sqlgen/manifest: TestValidateAgainstSchema_AccessFields` | all |  |
 | manifest.json.entity.column-redacted-public-omitted | A public column omits `redacted` | `golden: graphql` | all |  |
@@ -396,11 +398,11 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.entity.method-fields | Each method carries `name`, `params[]` of `{name, type}`, `returns` and `errors[]`, with optional `notes` and `sql_bodies` | `golden: postgres` | all |  |
 | manifest.json.entity.filter | `filter` is `{type: "<Entity>Filter", fields: [...]}` | `golden: postgres` | all |  |
 | manifest.json.entity.sort | `sort` is `{type: "<Entity>Sort", fields: [...]}` | `golden: postgres` | all |  |
-| manifest.json.entity.examples | `examples.read` and `examples.write` are arrays of strings, each a line of Go code | | all |  |
-| manifest.json.entity.examples.read | `examples.read` holds a `Get` call (when `Get` is generated) and a `GetMany` call filtering on a real column | | all |  |
-| manifest.json.entity.examples.write | `examples.write` holds a `Create` call and an `Update` call (when generated) | | all |  |
-| manifest.json.entity.examples.view | A view's `examples` carries `read` lines only | | all |  |
-| manifest.json.entity.examples.real-surface | Example lines are built from the entity's generated methods, fields and types | | all |  |
+| manifest.json.entity.examples | `examples.read` and `examples.write` are arrays of strings, each a line of Go code | `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines`; `unit: cmd/sqlgen: TestManifestExampleLinesCompile` | all |  |
+| manifest.json.entity.examples.read | `examples.read` holds a `Get` call (when `Get` is generated) and a `GetMany` call filtering on a real column | `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines/User`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines/OrderItem`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines/ActiveUser`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines` | all |  |
+| manifest.json.entity.examples.write | `examples.write` holds a `Create` call and an `Update` call (when generated) | `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines/User`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines/OrderItem`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines` | all |  |
+| manifest.json.entity.examples.view | A view's `examples` carries `read` lines only | `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines/ActiveUser`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleLines` | all |  |
+| manifest.json.entity.examples.real-surface | Example lines are built from the entity's generated methods, fields and types | `unit: cmd/sqlgen: TestManifestExampleLinesCompile`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleUUIDConstructor`; `unit: cmd/sqlgen/manifest: TestBuild_EntityExampleIDFilterLiteral` | all |  |
 
 ### View entries
 
@@ -410,7 +412,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.view.pk-none | A view with no declared key has `pk.kind: "none"` | `unit: cmd/sqlgen/manifest: TestBuild_ViewEntity` | all |  |
 | manifest.json.view.relationships-empty | A view has `relationships: []` | `golden: postgres` | all |  |
 | manifest.json.view.source-files | Under `input.source: files`, a view's `source` is its annotation file's text | `golden: postgres`; `golden: sqlite` | all |  |
-| manifest.json.view.source-database | Under `input.source: database`, a view's `source` is the definition the database stores | | all |  |
+| manifest.json.view.source-database | Under `input.source: database`, a view's `source` is the definition the database stores | `integration: cmd/sqlgen/cli: TestGenerate_ManifestViewSourceIsStoredDefinitionUnderDatabase` | all |  |
 | manifest.json.matview.materialized | A materialized view carries `materialized: true` | `unit: cmd/sqlgen/manifest: TestBuild_MaterializedViewEntity`; `unit: cmd/sqlgen/manifest: TestBuild_MaterializedMarkerJSONShape` | postgres |  |
 | manifest.json.matview.materialized-omitted | `materialized` is omitted on every other entity | `unit: cmd/sqlgen/manifest: TestBuild_MaterializedMarkerJSONShape`; `golden: postgres` | postgres |  |
 | manifest.json.matview.refresh | A materialized view advertises `Refresh` under `methods.mutation[]` with `sql_bodies` `REFRESH MATERIALIZED VIEW <name>` | `unit: cmd/sqlgen/manifest: TestBuild_MaterializedViewEntity` | postgres |  |
@@ -447,6 +449,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.files.per-table-view | Under `file_per_table` a view's `files[]` is `["<file_prefix>_gen.go"]` | `unit: cmd/sqlgen/manifest: TestBuild_EntityFilesFollowOutputLayout/file_per_table gives each entity its own snake-cased file`; `golden: sqlite` | all |  |
 | manifest.json.files.resolves | `files[]` names the file `gen` wrote, so it resolves under either layout | `unit: cmd/sqlgen/manifest: TestEntityFilesExistOnDisk` | all |  |
 | manifest.json.files.body-only | `files[]` names only the entity's body file: package-wide artifacts (`sorter_gen.go`, `cache_gen.go`, `event_hooks_gen.go`, `*_gen.graphqls`) are not listed | `golden: postgres`; `golden: graphql` | all |  |
+| manifest.json.files.per-table-view-file | Under `file_per_table`, each view's body is written to its own `<file_prefix>_gen.go` and no `views_gen.go` is written | `unit: cmd/sqlgen/cli: TestFilePerTableLayout_views` | all |  |
 
 ### Composite keys
 
@@ -460,7 +463,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | manifest.json.rel.fk-o2o-o2m | An `o2o` or `o2m` edge carries `fk` | `unit: cmd/sqlgen/manifest: TestBuild_FKSchema`; `unit: cmd/sqlgen/manifest: TestBuild_O2MFKNotOnTargetStaysOnTarget` | all |  |
-| manifest.json.rel.fk-m2o | An `m2o` edge carries `fk` | | all |  |
+| manifest.json.rel.fk-m2o | An `m2o` edge carries `fk` | `unit: cmd/sqlgen/manifest: TestEmitJSON_ManyToOneEdgeCarriesFK` | all |  |
 | manifest.json.rel.m2m-junction | An `m2m` edge carries `junction` | `unit: cmd/sqlgen/manifest: TestBuild_M2MRelationship`; `unit: cmd/sqlgen/manifest: TestBuild_M2MJunctionSchema` | all |  |
 | manifest.json.rel.m2m-no-fk | An `m2m` edge carries no `fk` | `golden: postgres` | all |  |
 | manifest.json.rel.fk-table-o2m | On an `o2m` edge `fk.table` is the target's table | `unit: cmd/sqlgen/manifest: TestBuild_FKSchema`; `unit: cmd/sqlgen/manifest: TestBuild_O2MFKNotOnTargetStaysOnTarget` | all |  |
@@ -511,7 +514,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.errors.update-strict | `Update` carries `ErrNotFound` only under `strict_updates` | `unit: cmd/sqlgen/manifest: TestBuild_MethodErrors_MatchTemplateGuards/strict updates on`; `unit: cmd/sqlgen/manifest: TestBuild_MethodErrors_MatchTemplateGuards/strict updates off` | all |  |
 | manifest.json.errors.increment-strict | `Increment` carries `ErrNotFound` only under `strict_updates` | `unit: cmd/sqlgen/manifest: TestBuild_MethodErrors_MatchTemplateGuards/strict updates on`; `unit: cmd/sqlgen/manifest: TestBuild_MethodErrors_MatchTemplateGuards/strict updates off` | all |  |
 | manifest.json.errors.where | The mutating `*Where` methods (`UpdateWhere` and the delete and restore forms) carry `ErrEmptyFilter` | `unit: cmd/sqlgen/manifest: TestBuild_MethodErrors_MatchTemplateGuards/strict updates on` | all |  |
-| manifest.json.errors.exists-where | `ExistsWhere` does not carry `ErrEmptyFilter` | | all |  |
+| manifest.json.errors.exists-where | `ExistsWhere` does not carry `ErrEmptyFilter` | `unit: cmd/sqlgen/manifest: TestBuild_MethodErrors_MatchTemplateGuards/strict updates on` | all |  |
 | manifest.json.errors.connection | `Connection` carries `ErrInvalidCursor` | `unit: cmd/sqlgen/manifest: TestBuild_MethodErrors_MatchTemplateGuards/strict updates on`; `unit: cmd/sqlgen/manifest: TestBuild_TenantedViewMethodErrors` | all |  |
 | manifest.json.errors.update-many | `UpdateMany` does not carry `ErrNotFound` under any setting | `unit: cmd/sqlgen/manifest: TestBuild_MethodErrors_MatchTemplateGuards/strict updates on`; `unit: cmd/sqlgen/manifest: TestBuild_MethodErrors_MatchTemplateGuards/strict updates off` | all |  |
 
@@ -525,7 +528,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.sql.placeholder-postgres | Placeholders render as `$N` on PostgreSQL | `unit: cmd/sqlgen/manifest: TestBuild_SQLBodies_RuntimeClausesAreTokens`; `golden: postgres` | postgres |  |
 | manifest.json.sql.placeholder-mysql | Placeholders render as `?` on MySQL | `golden: mysql` | mysql |  |
 | manifest.json.sql.placeholder-sqlite | Placeholders render as `?` on SQLite | `golden: sqlite` | sqlite |  |
-| manifest.json.sql.from-pipeline | `sql_bodies` is captured from the SQL-build pipeline that emits the `_gen.go` query bodies: it is the statement the generated method sends | | all |  |
+| manifest.json.sql.from-pipeline | `sql_bodies` is captured from the SQL-build pipeline that emits the `_gen.go` query bodies: it is the statement the generated method sends | `unit: cmd/sqlgen/cli: TestGenerate_ManifestSQLBodiesAreTheStatementsMethodsSend/postgres`; `unit: cmd/sqlgen/cli: TestGenerate_ManifestSQLBodiesAreTheStatementsMethodsSend/mysql`; `unit: cmd/sqlgen/cli: TestGenerate_ManifestSQLBodiesAreTheStatementsMethodsSend/sqlite` | all |  |
 | manifest.json.sql.no-statement-no-key | `Paginate` and `Connection`, which issue no statement of their own, carry no `sql_bodies` key | `unit: cmd/sqlgen/manifest: TestBuild_SQLBodies_CoverEveryMethodType`; `golden: postgres` | all |  |
 | manifest.json.sql.token.filter | The caller's filter conditions render as `<filter>` | `unit: cmd/sqlgen/manifest: TestBuild_SQLBodies_CoverEveryMethodType` | all |  |
 | manifest.json.sql.token.sort | The caller's `ORDER BY` renders as `<sort>` | `unit: cmd/sqlgen/manifest: TestBuild_SQLBodies_CoverEveryMethodType` | all |  |
@@ -545,11 +548,11 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| manifest.json.gc.cache | `generation_config.cache` is `true` if any table has cache configured | | all |  |
+| manifest.json.gc.cache | `generation_config.cache` is `true` if any table has cache configured | `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfigCacheFollowsPerTableResolution` | all |  |
 | manifest.json.gc.tenancy | `generation_config.tenancy` is `true` if a tenant column is configured for any table | `unit: cmd/sqlgen/manifest: TestBuild_TenantedTable`; `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfig_OffByDefault`; `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfig_AllOn` | all |  |
-| manifest.json.gc.events | `generation_config.events` is `true` if any table has event emission enabled | | all |  |
+| manifest.json.gc.events | `generation_config.events` is `true` if any table has event emission enabled | `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfigEventsFollowsPerTableResolution` | all |  |
 | manifest.json.gc.soft-delete | `generation_config.soft_delete` is `true` if any table uses soft-delete | `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfig_OffByDefault`; `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfig_AllOn` | all |  |
-| manifest.json.gc.views | `generation_config.views` is `true` if any view is generated | | all |  |
+| manifest.json.gc.views | `generation_config.views` is `true` if any view is generated | `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfigViewsFollowsGeneratedViews` | all |  |
 | manifest.json.gc.graphql | `generation_config.graphql` is `true` if GraphQL output is enabled | `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfig_OffByDefault`; `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfig_AllOn`; `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfig_GraphTopLevel` | all |  |
 | manifest.json.gc.audit-columns | `generation_config.audit_columns` is `true` if any table has audit columns declared | `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfig_OffByDefault`; `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfig_AllOn` | all |  |
 | manifest.json.gc.graph-top-level | `generation_config.graph_top_level` is `true` if the resolved graph dir is not under `output.dir` | `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfig_GraphTopLevel`; `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfig_GraphTopLevel_DisabledAPI`; `unit: cmd/sqlgen/manifest: TestBuild_GenerationConfig_AllOn` | all |  |
@@ -571,7 +574,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.ver.patch | Bug fixes and clarifications bump the patch version | | all |  |
 | manifest.ver.schema-file | Every breaking version preserves its JSON Schema at `cmd/sqlgen/manifest/schema/v<N>.json` | `unit: cmd/sqlgen/manifest: TestEmitJSON_ValidatesAgainstSchema/single` | all |  |
 | manifest.ver.emits-latest | Generation emits the latest schema version (`$schema` names the newest `v<N>.json`) | `unit: cmd/sqlgen/manifest: TestBuild_TopLevelEnvelope` | all |  |
-| manifest.ver.pin-schema-url | Consumers pin via the `$schema` URL: `manifest validate` validates against the schema that URL names | | all |  |
+| manifest.ver.pin-schema-url | Consumers pin via the `$schema` URL: `manifest validate` validates against the schema that URL names | `unit: cmd/sqlgen/cli: TestManifestValidate_UsesSchemaAtManifestURL/a manifest the embedded schema accepts fails the schema at its URL`; `unit: cmd/sqlgen/cli: TestManifestValidate_UsesSchemaAtManifestURL/a manifest the embedded schema rejects passes the schema at its URL` | all |  |
 | manifest.ver.zero-x | `schema_version` ships at `0.x` until the shape is frozen | `golden: postgres` | all |  |
 | manifest.ver.zero-x-minor-breaking | While `0.x`, breaking changes are permitted under a minor bump | | all |  |
 | manifest.ver.0-2-0 | `schema_version` is `0.2.0`: every relationship's `fk` and `junction` take the key-list shape of §30.4.2, with `constraint` | | all |  |
@@ -599,26 +602,26 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.meta.indexes.non-unique | `indexes[]` lists declared non-unique indexes | `unit: cmd/sqlgen/manifest: TestBuild_IndexNamesReadTheSchema/postgres names` | all |  |
 | manifest.meta.indexes.partial | `indexes[]` lists partial indexes | `unit: cmd/sqlgen/manifest: TestBuild_PartialUniqueIndex`; `golden: postgres` | all |  |
 | manifest.meta.indexes.gin | `indexes[]` lists GIN indexes with `method: "gin"` | `unit: cmd/sqlgen/manifest: TestBuild_GINIndexMethod` | postgres |  |
-| manifest.meta.indexes.gist | `indexes[]` lists GIST indexes with `method: "gist"` | | postgres |  |
+| manifest.meta.indexes.gist | `indexes[]` lists GIST indexes with `method: "gist"` | `unit: cmd/sqlgen/manifest: TestEmitJSON_GistIndexMethod`; `integration: cmd/sqlgen/cli: TestGenerate_ManifestIndexesAndChecksMatchAcrossSources` | postgres |  |
 | manifest.meta.indexes.fields | Each index carries `name`, `columns[]`, `unique` and `method` | `unit: cmd/sqlgen/manifest: TestBuild_IndexNamesReadTheSchema` | all |  |
 | manifest.meta.indexes.where | A partial index carries its predicate in `where`; other indexes omit it | `unit: cmd/sqlgen/manifest: TestBuild_PartialUniqueIndex`; `unit: cmd/sqlgen/manifest: TestBuild_GINIndexMethod` | all |  |
-| manifest.meta.indexes.expression-not-listed | An index with an expression part (`lower(email)`, `a + 1`) is not listed | | all |  |
-| manifest.meta.indexes.expression-every-source | An expression index is left out under every `input.source` | | all |  |
+| manifest.meta.indexes.expression-not-listed | An index with an expression part (`lower(email)`, `a + 1`) is not listed | `unit: cmd/sqlgen/manifest: TestEmitJSON_ExpressionIndexNotListed/postgres`; `unit: cmd/sqlgen/manifest: TestEmitJSON_ExpressionIndexNotListed/mysql`; `unit: cmd/sqlgen/manifest: TestEmitJSON_ExpressionIndexNotListed/sqlite` | all |  |
+| manifest.meta.indexes.expression-every-source | An expression index is left out under every `input.source` | `integration: cmd/sqlgen/cli: TestGenerate_ManifestIndexesAndChecksMatchAcrossSources` | all |  |
 | manifest.meta.indexes.pk-declared | The primary-key index is listed when the schema declares a `PRIMARY KEY` | `unit: cmd/sqlgen/manifest: TestBuild_PKIndexNeedsASchemaDeclaredKey/schema-declared key lists the PK index`; `unit: cmd/sqlgen/manifest: TestBuild_PKIndexNeedsASchemaDeclaredKey/table-level PK restated in config lists the PK index`; `unit: cmd/sqlgen/manifest: TestBuild_IndexesIncludePKAndUnique` | all |  |
 | manifest.meta.indexes.pk-override-none | A key declared only through `primary_key.columns` has no primary-key index listed | `unit: cmd/sqlgen/manifest: TestBuild_PKIndexNeedsASchemaDeclaredKey/app-enforced key with no index lists none` | all |  |
 | manifest.meta.indexes.pk-override-unique | A `UNIQUE` that backs a `primary_key.columns` key is listed under its own name | `unit: cmd/sqlgen/manifest: TestBuild_PKIndexNeedsASchemaDeclaredKey/app-enforced key backed by a UNIQUE lists only the UNIQUE`; `unit: cmd/sqlgen/manifest: TestBuild_IndexNamesReadTheSchema/a UNIQUE backing an app-enforced key is listed in place of the PK index` | all |  |
 | manifest.meta.indexes.declared-name | A declared constraint or index name is listed as declared | `unit: cmd/sqlgen/manifest: TestBuild_IndexNamesReadTheSchema/postgres names` | all |  |
-| manifest.meta.indexes.declared-name.inline-table-level | A declared name is listed as declared whether it is declared inline or table-level | | all |  |
+| manifest.meta.indexes.declared-name.inline-table-level | A declared name is listed as declared whether it is declared inline or table-level | `unit: cmd/sqlgen/manifest: TestEmitJSON_DeclaredIndexNameInlineOrTableLevel/postgres`; `unit: cmd/sqlgen/manifest: TestEmitJSON_DeclaredIndexNameInlineOrTableLevel/mysql`; `unit: cmd/sqlgen/manifest: TestEmitJSON_DeclaredIndexNameInlineOrTableLevel/sqlite`; `integration: cmd/sqlgen/cli: TestGenerate_ManifestIndexesAndChecksMatchAcrossSources` | all |  |
 | manifest.meta.indexes.mysql-primary | A MySQL primary key is listed as `PRIMARY` | `unit: cmd/sqlgen/manifest: TestBuild_IndexNamesReadTheSchema/mysql names and a kept duplicate`; `golden: mysql` | mysql |  |
 | manifest.meta.indexes.unnamed-postgres | An unnamed PostgreSQL constraint is listed under the name PostgreSQL gives it (`users_pkey`, `users_email_key`) | `golden: postgres` | postgres |  |
-| manifest.meta.indexes.unnamed-postgres.index | An unnamed PostgreSQL index is listed under the name PostgreSQL gives it (`orders_placed_at_idx`) | | postgres |  |
+| manifest.meta.indexes.unnamed-postgres.index | An unnamed PostgreSQL index is listed under the name PostgreSQL gives it (`orders_placed_at_idx`) | `integration: cmd/sqlgen/cli: TestGenerate_ManifestIndexesAndChecksMatchAcrossSources` | postgres |  |
 | manifest.meta.indexes.unnamed-mysql | An unnamed MySQL constraint or index is listed under the name MySQL gives it (`email`) | `golden: mysql` | mysql |  |
 | manifest.meta.indexes.mysql-fk-index | The index MySQL builds on its own for a foreign key is listed | `golden: mysql` | mysql |  |
-| manifest.meta.indexes.every-source | The index list is the same under every `input.source` | | all |  |
+| manifest.meta.indexes.every-source | The index list is the same under every `input.source` | `integration: cmd/sqlgen/cli: TestGenerate_ManifestIndexesAndChecksMatchAcrossSources` | all |  |
 | manifest.meta.indexes.sqlite-declared | On SQLite a declared constraint name is listed | `unit: cmd/sqlgen/manifest: TestBuild_IndexNamesReadTheSchema/sqlite labels an unnamed key and keeps a declared name` | sqlite |  |
 | manifest.meta.indexes.sqlite-pkey | On SQLite an unnamed `PRIMARY KEY` is labelled `<table>_pkey` | `unit: cmd/sqlgen/manifest: TestBuild_IndexNamesReadTheSchema/sqlite labels an unnamed key and keeps a declared name` | sqlite |  |
 | manifest.meta.indexes.sqlite-key | On SQLite an unnamed `UNIQUE` is labelled `<table>_<cols>_key`, `<cols>` joining the column names with `_` | `unit: cmd/sqlgen/manifest: TestBuild_IndexNamesReadTheSchema/sqlite labels an unnamed key and keeps a declared name` | sqlite |  |
-| manifest.meta.indexes.duplicate-where-indexed | A `UNIQUE` repeating the primary key or an earlier `UNIQUE` is listed only where the database builds an index for it | | postgres, sqlite |  |
+| manifest.meta.indexes.duplicate-where-indexed | A `UNIQUE` repeating the primary key or an earlier `UNIQUE` is listed only where the database builds an index for it | `integration: cmd/sqlgen/cli: TestGenerate_ManifestIndexesAndChecksMatchAcrossSources` | postgres, sqlite |  |
 | manifest.meta.indexes.mysql-duplicate | On MySQL a duplicate `UNIQUE` is listed under its own name (`email_2`) | `unit: cmd/sqlgen/manifest: TestBuild_IndexNamesReadTheSchema/mysql names and a kept duplicate` | mysql |  |
 
 ### `comparator`, `check`, `default_kind`
@@ -629,10 +632,10 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.meta.comparator.nullable | The nullable variant is published (`comparator.NullableNumber[int32]`) | `unit: cmd/sqlgen/manifest: TestBuildColumns_ComparatorMirrorsFilterFields` | all |  |
 | manifest.meta.comparator.type-param | The type parameter is published (`comparator.Slice[string]`, `comparator.Opaque[net.IP]`) | `unit: cmd/sqlgen/manifest: TestBuildColumns_ComparatorMirrorsFilterFields` | postgres |  |
 | manifest.meta.comparator.omit-jsonb-array | `comparator` is omitted for a `jsonb[]` column | `unit: cmd/sqlgen/manifest: TestBuildColumns_ComparatorMirrorsFilterFields` | postgres |  |
-| manifest.meta.comparator.omit-json-array | `comparator` is omitted for a `json[]` column | | postgres |  |
-| manifest.meta.comparator.omit-sqlite-json | `comparator` is omitted for a `types.JSON` column on SQLite | | sqlite |  |
+| manifest.meta.comparator.omit-json-array | `comparator` is omitted for a `json[]` column | `unit: cmd/sqlgen/manifest: TestEmitJSON_ComparatorOmittedForNonFilterableColumn/postgres json array` | postgres |  |
+| manifest.meta.comparator.omit-sqlite-json | `comparator` is omitted for a `types.JSON` column on SQLite | `unit: cmd/sqlgen/manifest: TestEmitJSON_ComparatorOmittedForNonFilterableColumn/sqlite types.JSON column` | sqlite |  |
 | manifest.meta.check.expression | A column's `check` carries the CHECK-constraint expression text | `unit: cmd/sqlgen/manifest: TestBuild_CheckConstraintFlattened`; `unit: cmd/sqlgen/manifest: TestBuild_CheckConstraintDerivesColumnsFromExpression`; `unit: cmd/sqlgen/manifest: TestBuild_CheckConstraintExpressionLiteralNotMatched` | all |  |
-| manifest.meta.check.every-source | `check` is in the file parser's normalized form, so it is the same under every `input.source` | | all |  |
+| manifest.meta.check.every-source | `check` is in the file parser's normalized form, so it is the same under every `input.source` | `integration: cmd/sqlgen/cli: TestGenerate_ManifestIndexesAndChecksMatchAcrossSources` | all |  |
 | manifest.meta.check.flattened | A multi-column CHECK is flattened onto each participating column | `unit: cmd/sqlgen/manifest: TestBuild_CheckConstraintFlattened`; `unit: cmd/sqlgen/manifest: TestBuild_CheckConstraintDerivesColumnsFromExpression` | all |  |
 | manifest.meta.default-kind.literal | `default_kind` is `literal` for a constant value | `unit: cmd/sqlgen/manifest: TestBuild_DefaultKindClassification` | all |  |
 | manifest.meta.default-kind.function | `default_kind` is `function` for a function default (`gen_random_uuid()`, `CURRENT_TIMESTAMP`) | `unit: cmd/sqlgen/manifest: TestBuild_DefaultKindClassification` | all |  |
@@ -654,12 +657,12 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 |---|---|---|---|---|
 | manifest.meta.events.populated | `features.events.{enabled, types[], payload_shape}` is populated when `events.enabled: true` for the entity | `unit: cmd/sqlgen/manifest: TestBuild_EventsTable` | all |  |
 | manifest.meta.events.global-off | `features.events` is not populated when events are not enabled | `golden: mysql` | all |  |
-| manifest.meta.events.table-off | `features.events` is not populated for a table that opts out of events | | all |  |
-| manifest.meta.cache.populated | `features.cache.{key_pattern, invalidates_on[]}` is populated when cache is configured | `unit: cmd/sqlgen/manifest: TestBuild_CacheConfiguredTable` | all |  |
-| manifest.meta.cache.unconfigured | `features.cache` is not populated when cache is not configured | `golden: mysql` | all |  |
+| manifest.meta.events.table-off | `features.events` is not populated for a table that opts out of events | `unit: cmd/sqlgen/manifest: TestEmitJSON_EventsNullForOptedOutTable` | all |  |
+| manifest.meta.cache.populated | `features.cache.{key_pattern, invalidates_on[]}` is populated when cache is configured | `unit: cmd/sqlgen/manifest: TestBuild_CacheConfiguredTable`; `unit: cmd/sqlgen/manifest: TestBuild_FeaturesCacheFollowsPerTableResolution` | all |  |
+| manifest.meta.cache.unconfigured | `features.cache` is not populated when cache is not configured | `golden: mysql`; `unit: cmd/sqlgen/manifest: TestBuild_FeaturesCacheFollowsPerTableResolution` | all |  |
 | manifest.meta.cache.key-pattern | `key_pattern` uses `{column}` template syntax | `unit: cmd/sqlgen/manifest: TestBuild_CacheConfiguredTable` | all |  |
-| manifest.meta.cache.invalidates-on | `invalidates_on[]` lists the entity's generated methods that §27.7 says invalidate (`Update`, `Upsert`, `Increment`, `SoftDelete`, `HardDelete`, `Restore` and their `*Many` / `*Where` forms), in the entity's method order | | all |  |
-| manifest.meta.cache.invalidates-on.no-create | `invalidates_on[]` does not list `Create` / `CreateMany` | | all |  |
+| manifest.meta.cache.invalidates-on | `invalidates_on[]` lists the entity's generated methods that §27.7 says invalidate (`Update`, `Upsert`, `Increment`, `SoftDelete`, `HardDelete`, `Restore` and their `*Many` / `*Where` forms), in the entity's method order | `unit: cmd/sqlgen/manifest: TestBuild_CacheInvalidatesOnNamesEntityMutations`; `unit: cmd/sqlgen/manifest: TestBuild_FeaturesCacheFollowsPerTableResolution` | all |  |
+| manifest.meta.cache.invalidates-on.no-create | `invalidates_on[]` does not list `Create` / `CreateMany` | `unit: cmd/sqlgen/manifest: TestBuild_CacheInvalidatesOnNamesEntityMutations` | all |  |
 
 ### `methods[].sql_bodies`, `generation_config`
 
@@ -686,7 +689,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | manifest.cli.validate.loads | `manifest validate` loads the manifest JSON at `<path>` | `unit: cmd/sqlgen/cli: TestManifestValidate_Valid` | all |  |
-| manifest.cli.validate.schema-url | It validates against the JSON Schema the `$schema` URL references | | all |  |
+| manifest.cli.validate.schema-url | It validates against the JSON Schema the `$schema` URL references | `unit: cmd/sqlgen/cli: TestManifestValidate_UsesSchemaAtManifestURL/a manifest the embedded schema accepts fails the schema at its URL`; `unit: cmd/sqlgen/cli: TestManifestValidate_UsesSchemaAtManifestURL/a manifest the embedded schema rejects passes the schema at its URL` | all |  |
 | manifest.cli.validate.summary-schema-version | On success it prints a summary carrying `schema_version` | `unit: cmd/sqlgen/cli: TestManifestValidate_Valid` | all |  |
 | manifest.cli.validate.summary-entities | The summary carries the entity count | `unit: cmd/sqlgen/cli: TestManifestValidate_Valid` | all |  |
 | manifest.cli.validate.summary-enums | The summary carries the enum count | `unit: cmd/sqlgen/cli: TestManifestValidate_Valid` | all |  |
@@ -714,7 +717,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.cli.diff.json | `--json` produces machine-readable output | `unit: cmd/sqlgen/cli: TestManifestDiff_JSONShape` | all |  |
 | manifest.cli.diff.exit-0 | Exit code 0 if there is no diff | `unit: cmd/sqlgen/cli: TestManifestDiff_SameFile` | all |  |
 | manifest.cli.diff.exit-1 | Exit code 1 if there is any diff | `unit: cmd/sqlgen/cli: TestManifestDiff_ColumnAdded`; `unit: cmd/sqlgen/cli: TestManifestDiff_ChangesFoundIsAResult` | all |  |
-| manifest.cli.diff.on-disk | `manifest diff` operates on the on-disk JSON alone, with no `sqlgen.yml`, database or generated package | | all |  |
+| manifest.cli.diff.on-disk | `manifest diff` operates on the on-disk JSON alone, with no `sqlgen.yml`, database or generated package | `unit: cmd/sqlgen/cli: TestManifestDiff_ReadsOnlyTheTwoFiles/changed manifests`; `unit: cmd/sqlgen/cli: TestManifestDiff_ReadsOnlyTheTwoFiles/identical manifests` | all |  |
 
 ## Not applicable
 
@@ -722,6 +725,19 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 |---|---|---|
 | manifest-artifacts: package-doc × ownership | §30.3: the `models_gen.go` package-doc pointer "lives inside a fully sqlgen-owned `DO NOT EDIT` file". The provenance-marker and directory-anchor guards do not apply | |
 | manifest-artifacts: manifest-embed × ownership | §30.3: `manifest_embed_gen.go` is a `_gen.go` file under the hard `// Code generated by sqlgen. DO NOT EDIT.` claim, so the soft, adoptable ownership guard does not apply | |
+
+## Unclaimed
+
+Tests in this file's packages that back no PRD behavior.
+
+| Unclaimed test | Reason |
+|---|---|
+| cmd/sqlgen/manifest: TestEmitMarkdown_Examples | markdown rendering detail (per-entity example blocks + fence-aware blank-line normalization); no PRD statement about entity.md content |
+| cmd/sqlgen/manifest: TestEmitMarkdown_FKCell | markdown rendering detail (schema-qualified FK cell); no PRD statement about the markdown relationships table |
+| cmd/sqlgen/manifest: TestEmitMarkdown_FeaturesLine | markdown rendering detail (_index.md "Features:" line); PRD §30.3 fixes no _index.md content beyond the scan table / cross-reference |
+| cmd/sqlgen/manifest: TestEmitMarkdown_GeneratedSQLBlock | markdown rendering detail (per-entity SQL block); PRD specifies sql_bodies for the JSON only |
+| cmd/sqlgen/manifest: TestFeatureStructs_noDriftBetweenBuilderAndRuntime | internal invariant: builder/runtime feature-struct parity behind the §30.6 decode; runtime.md has no §30.6 rows yet |
+| cmd/sqlgen/manifest: TestRunStage_NoAPIBlockLeavesGraphBreadcrumbs | internal guard (the stale sweep does not guess a default graph dir when no api block names one); no PRD statement or row |
 
 ## PRD gaps
 

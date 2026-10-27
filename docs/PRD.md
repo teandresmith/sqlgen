@@ -15587,7 +15587,7 @@ The marker is authored **only** by sqlgen when it writes the complete file; it i
 
 This rule governs the directory removal only. The per-entity pruning inside an *enabled* manifest directory is driven by the current entity set, and the per-entity JSON directory is dropped after a `per_entity` → `single` flip by removing the `*.json` files sqlgen emits there and then the directory itself only if nothing else remains.
 
-**Determinism** (PRD §5.7). Manifest emission is deterministic byte-for-byte given an unchanged schema + config. The only non-deterministic field is `generated_at`, which the generator accepts a `--manifest-timestamp` flag to fix for golden tests. `columns[]` keeps the table's declaration order and `methods.query[]` / `methods.mutation[]` keep the generated method order; every other collection is sorted lexicographically by stable key. JSON is written via `json.MarshalIndent` with HTML-escaping disabled.
+**Determinism** (PRD §5.7). Manifest emission is deterministic byte-for-byte given an unchanged schema + config. The only non-deterministic field is `generated_at`, which the generator accepts a `--manifest-timestamp` flag to fix for golden tests. `entities[]`, `enums[]`, `extras[]` and, per entity, `indexes[]`, `relationships[]`, `sort.fields` and the column members of `filter.fields` are sorted lexicographically by stable key. `methods.query[]` / `methods.mutation[]` follow the order the generated `<Entity>Client` interface declares, and every other list keeps its source order: `columns[]` the table's declaration order, `filter.fields` puts `And` / `Or` after its sorted column members, and `error_sentinels[]`, `params`, `errors[]`, `pk.columns`, index columns, enum values, extra fields and example lines as the generator emits them. JSON is written via `json.MarshalIndent` with HTML-escaping disabled.
 
 **GraphQL breadcrumbs** (PRD §26.5.8). When GraphQL is enabled, the generated `graph/` package receives breadcrumb files (`graph/CLAUDE.md`, `graph/AGENTS.md`) rather than its own `manifest/` directory — only the models package gets a `manifest/`. The breadcrumbs point at three sources: the models manifest (its `_index.md`, or its `json_filename` artifact when `formats` has no `markdown`, via a relative path computed from the resolved graph dir, so it adapts whether graph is nested under models or a top-level sibling), the `*_gen.graphqls` files in the same directory (self-describing GraphQL schema), and the doc comments on the generated resolver, walker and middleware Go files in that directory.
 
@@ -15644,7 +15644,7 @@ The on-disk JSON has two layouts, controlled by `json_layout`:
 |---|---|---|
 | `$schema` | string | URL of the JSON Schema for this `schema_version`. GitHub raw URL of the latest tagged release; immutable per-version. |
 | `schema_version` | semver | Independent of sqlgen's overall version. See §30.5. |
-| `generated_at` | RFC3339 | Only non-deterministic field. |
+| `generated_at` | RFC3339 | Only non-deterministic field. `--manifest-timestamp` pins it; a value that is not RFC3339 is a usage error (exit 2) naming the flag. |
 | `generator` | object | `{name, version}` of the emitter. |
 | `dialect` | string | `"postgres"`, `"mysql"`, or `"sqlite"`. |
 | `package` | string | Go package name of the output. |
