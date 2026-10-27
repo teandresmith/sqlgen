@@ -4,7 +4,7 @@
 - **Generator:** sqlgen dev
 - **Schema version:** 0.1.0
 
-Features: none
+Features: views
 
 ## Entities
 

@@ -135,3 +135,10 @@ Type `OrderTotalFilter`.
 Type `OrderTotalSort`.
 
 Fields: LineCount, ProductID, TotalQuantity
+
+## Read examples
+
+```go
+row, err := client.OrderTotal().Get(ctx, uuid.NewV4())
+rows, err := client.OrderTotal().GetMany(ctx, &models.GetOrderTotalsInput{Filter: &models.OrderTotalFilter{LineCount: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```

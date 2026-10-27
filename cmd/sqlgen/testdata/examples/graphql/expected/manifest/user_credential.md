@@ -298,3 +298,17 @@ Type `UserCredentialFilter`.
 Type `UserCredentialSort`.
 
 Fields: CreatedAt, ExternalID, LastLoginAt, Provider, UserID
+
+## Read examples
+
+```go
+row, err := client.UserCredentials().Get(ctx, uuid.NewV4())
+rows, err := client.UserCredentials().GetMany(ctx, &models.GetUserCredentialsInput{Filter: &models.UserCredentialFilter{ExternalID: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.UserCredentials().Create(ctx, &models.CreateUserCredentialInput{UserID: uuid.NewV4(), Provider: "example", ExternalID: "example"})
+updated, err := client.UserCredentials().Update(ctx, uuid.NewV4(), &models.UpdateUserCredentialInput{Provider: omittable.Set("example")})
+```

@@ -296,3 +296,17 @@ Type `BinaryKeyFilter`.
 Type `BinaryKeySort`.
 
 Fields: CreatedAt, ID, Name
+
+## Read examples
+
+```go
+row, err := client.BinaryKeys().Get(ctx, []byte("example"))
+rows, err := client.BinaryKeys().GetMany(ctx, &models.GetBinaryKeysInput{Filter: &models.BinaryKeyFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.BinaryKeys().Create(ctx, &models.CreateBinaryKeyInput{ID: []byte("example"), Name: "example"})
+updated, err := client.BinaryKeys().Update(ctx, []byte("example"), &models.UpdateBinaryKeyInput{Name: omittable.Set("example")})
+```

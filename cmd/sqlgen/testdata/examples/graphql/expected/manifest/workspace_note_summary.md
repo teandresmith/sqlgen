@@ -143,3 +143,10 @@ Type `WorkspaceNoteSummaryFilter`.
 Type `WorkspaceNoteSummarySort`.
 
 Fields: Body, DocumentCount, ID, Kind, Labels, PinnedOrder, WorkspaceID
+
+## Read examples
+
+```go
+row, err := client.WorkspaceNoteSummary().Get(ctx, uuid.NewV4())
+rows, err := client.WorkspaceNoteSummary().GetMany(ctx, &models.GetWorkspaceNoteSummariesInput{Filter: &models.WorkspaceNoteSummaryFilter{Body: &comparator.String{Eq: new("example")}}})
+```

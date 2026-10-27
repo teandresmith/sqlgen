@@ -113,6 +113,11 @@ func TestValidatePreParse_ReportsEachRuleWithTheOthers(t *testing.T) {
 			want: "tables.users.manifest.enabled",
 		},
 		{
+			name: "table events opt-in under a global opt-out",
+			yaml: "events:\n  enabled: false\ntables:\n  users:\n    events:\n      enabled: true\n",
+			want: "tables.users.events.enabled",
+		},
+		{
 			name: "manifest breadcrumb with the manifest off",
 			yaml: "generation:\n  manifest:\n    enabled: false\n    breadcrumbs:\n      claude_md: true\n",
 			want: "manifest.breadcrumbs.claude_md",

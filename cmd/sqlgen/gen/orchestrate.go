@@ -44,6 +44,10 @@ type GenerateResult struct {
 	Views  []ViewContext
 	Enums  []EnumContext
 	API    *APIContext
+	// UUID is the UUID integration the package resolved (PRD §7.4), the one
+	// every generated UUID constructor is spelled with. The manifest's example
+	// lines spell uuid.UUID values with it too.
+	UUID gotype.UUIDIntegration
 
 	// WriteDirs maps each directory this run wrote into to the directory that
 	// same file would occupy in a normal run. The two are equal unless the run
@@ -205,11 +209,7 @@ func GenerateInto(schema *parser.Schema, cfg *config.RootConfig, version, writeR
 	collisions := computeNameCollisions(schema)
 	registerSchemaTypes(resolver, schema, cfg, collisions)
 
-	input := &GenerateInput{
-		Schema:   schema,
-		Config:   cfg,
-		Resolver: resolver,
-	}
+	input := &GenerateInput{Schema: schema, Config: cfg, Resolver: resolver}
 
 	tmpl, err := loadTemplatesWithResolver(dialect, resolver)
 	if err != nil {
@@ -306,6 +306,7 @@ func GenerateInto(schema *parser.Schema, cfg *config.RootConfig, version, writeR
 		Views:      viewContexts,
 		Enums:      ctxs.enums,
 		API:        api.ctx,
+		UUID:       ctxs.uuid,
 		Warnings:   input.Warnings,
 		WriteDirs:  writeDirs,
 	}, nil
@@ -369,7 +370,23 @@ func generateClient(tmpl *template.Template, tables []TableContext, views []View
 	eventsEnabled := cfg.Events != nil && cfg.Events.Enabled
 	clientCtx := BuildClientContext(tables, views, opts.Package, cfg.Output.Client.Name, eventsEnabled, cacheCtx, cfg, tenancyMap)
 	clientPath := filepath.Join(opts.OutputDir, cfg.Output.Client.File)
-	if err := renderAndWrite(tmpl, "client", clientCtx, clientCtx.Package, clientCtx.Imports, clientPath, version); err != nil {
+	body, err := executeTemplateSafe(tmpl, "client", clientCtx)
+	if err != nil {
+		return nil, fmt.Errorf("generating unified client: executing template client: %w", err)
+	}
+	// The manifest pointer rides on models_gen.go when that file is written;
+	// otherwise (file_per_table, or no tables) the client file, which every
+	// run writes, carries it.
+	var pkgDoc string
+	if cfg.Output.Layout == config.LayoutFilePerTable || len(tables) == 0 {
+		pkgDoc = manifestPackageDoc(cfg)
+	}
+	raw := withPackageDoc(pkgDoc, WrapWithPreamble(clientCtx.Package, clientCtx.Imports, []byte(body)))
+	formatted, err := Format(raw, version, clientPath)
+	if err != nil {
+		return nil, fmt.Errorf("generating unified client: %w", err)
+	}
+	if err := writeFile(clientPath, formatted); err != nil {
 		return nil, fmt.Errorf("generating unified client: %w", err)
 	}
 	return []string{clientPath}, nil
@@ -606,7 +623,7 @@ func generateTables(tmpl *template.Template, tables []TableContext, cfg *config.
 	if cfg.Output.Layout == config.LayoutFilePerTable {
 		return generateTablesPerFile(tmpl, tables, opts, version)
 	}
-	return generateTablesSingleFile(tmpl, tables, opts, version)
+	return generateTablesSingleFile(tmpl, tables, manifestPackageDoc(cfg), opts, version)
 }
 
 // generateTablesPerFile generates one file per table.
@@ -660,8 +677,9 @@ func generateTablesPerFile(tmpl *template.Template, tables []TableContext, opts 
 	return files, nil
 }
 
-// generateTablesSingleFile renders all tables into one combined file.
-func generateTablesSingleFile(tmpl *template.Template, tables []TableContext, opts *Options, version string) ([]string, error) {
+// generateTablesSingleFile renders all tables into one combined file. A
+// non-empty pkgDoc becomes the file's package doc comment.
+func generateTablesSingleFile(tmpl *template.Template, tables []TableContext, pkgDoc string, opts *Options, version string) ([]string, error) {
 	if len(tables) == 0 {
 		return nil, nil
 	}
@@ -683,7 +701,7 @@ func generateTablesSingleFile(tmpl *template.Template, tables []TableContext, op
 
 	combined := strings.Join(allBodies, "\n\n")
 	filePath := filepath.Join(opts.OutputDir, modelsFileName)
-	raw := WrapWithPreamble(pkg, deduplicateImports(allImports), []byte(combined))
+	raw := withPackageDoc(pkgDoc, WrapWithPreamble(pkg, deduplicateImports(allImports), []byte(combined)))
 	formatted, err := Format(raw, version, filePath)
 	if err != nil {
 		return nil, fmt.Errorf("formatting %s: %w", filePath, err)

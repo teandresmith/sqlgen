@@ -116,3 +116,10 @@ Type `ProductSummaryFilter`.
 Type `ProductSummarySort`.
 
 Fields: CategoryName, Description, ID, Name, OrderCount, Price
+
+## Read examples
+
+```go
+row, err := client.ProductSummary().Get(ctx, uuid.NewV4())
+rows, err := client.ProductSummary().GetMany(ctx, &models.GetProductSummariesInput{Filter: &models.ProductSummaryFilter{CategoryName: &comparator.String{Eq: new("example")}}})
+```

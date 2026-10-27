@@ -300,3 +300,17 @@ Type `WorkspaceSettingFilter`.
 Type `WorkspaceSettingSort`.
 
 Fields: CreatedAt, Key, Value, WorkspaceID
+
+## Read examples
+
+```go
+row, err := client.WorkspaceSettings().Get(ctx, models.WorkspaceSettingPK{WorkspaceID: uuid.NewV4(), Key: "example"})
+rows, err := client.WorkspaceSettings().GetMany(ctx, &models.GetWorkspaceSettingsInput{Filter: &models.WorkspaceSettingFilter{Value: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.WorkspaceSettings().Create(ctx, &models.CreateWorkspaceSettingInput{WorkspaceID: uuid.NewV4(), Key: "example", Value: "example"})
+updated, err := client.WorkspaceSettings().Update(ctx, models.WorkspaceSettingPK{WorkspaceID: uuid.NewV4(), Key: "example"}, &models.UpdateWorkspaceSettingInput{Value: omittable.Set("example")})
+```

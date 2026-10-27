@@ -42,12 +42,15 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:lineitem:{order_id}:{product_id}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "Increment",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -516,5 +519,14 @@
       "WorkspaceID"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.LineItems().Get(ctx, models.LineItemPK{OrderID: 1, ProductID: 1})",
+      "rows, err := client.LineItems().GetMany(ctx, &models.GetLineItemsInput{Filter: &models.LineItemFilter{Quantity: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+    ],
+    "write": [
+      "created, err := client.LineItems().Create(ctx, &models.CreateLineItemInput{OrderID: 1, ProductID: 1, Quantity: 1})",
+      "updated, err := client.LineItems().Update(ctx, models.LineItemPK{OrderID: 1, ProductID: 1}, &models.UpdateLineItemInput{WorkspaceID: omittable.Set(uuid.NewV4())})"
+    ]
+  }
 }

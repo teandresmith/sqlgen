@@ -298,3 +298,17 @@ Type `DocumentFilter`.
 Type `DocumentSort`.
 
 Fields: CreatedAt, EntityID, EntityType, ID, Name
+
+## Read examples
+
+```go
+row, err := client.Documents().Get(ctx, 1)
+rows, err := client.Documents().GetMany(ctx, &models.GetDocumentsInput{Filter: &models.DocumentFilter{EntityType: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Documents().Create(ctx, &models.CreateDocumentInput{EntityID: 1, EntityType: "example", Name: "example"})
+updated, err := client.Documents().Update(ctx, 1, &models.UpdateDocumentInput{EntityID: omittable.Set(int64(1))})
+```

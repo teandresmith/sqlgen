@@ -1153,9 +1153,11 @@ func TestBuild_GenerationConfig_AllOn(t *testing.T) {
 	// output.dir=models with a top-level sibling graph dir → graph_top_level.
 	cfg.Output.Dir = "models"
 	cfg.API = &config.APIConfig{Enabled: true, GraphQL: &config.GraphQLAPIConfig{Enabled: true, SchemaDir: "graph", ResolverDir: "graph"}}
-	cfg.Views["v"] = config.ViewConfig{}
+	// generation_config.views follows the generated views (PRD §30.4.3), so
+	// the fixture carries a real schema view rather than a bare config entry.
 	schema := &parser.Schema{
 		Tables: []parser.Table{{Name: "t", Columns: []parser.Column{{Name: "id", Type: "uuid", PrimaryKey: true}, {Name: "tenant_id", Type: "uuid"}, {Name: "deleted_at", Type: "timestamptz", Nullable: true}, {Name: "updated_at", Type: "timestamptz"}}}},
+		Views:  []parser.View{{Name: "v", SQL: "SELECT id FROM t", Columns: []parser.Column{{Name: "id", Type: "uuid"}}}},
 	}
 	doc, err := manifest.Build(testBuildInput(t, schema, cfg))
 	if err != nil {

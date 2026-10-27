@@ -288,3 +288,17 @@ Type `BinaryKeyBadgeFilter`.
 Type `BinaryKeyBadgeSort`.
 
 Fields: BadgeCode, BinaryKeyID
+
+## Read examples
+
+```go
+row, err := client.BinaryKeyBadges().Get(ctx, models.BinaryKeyBadgePK{BinaryKeyID: []byte("example"), BadgeCode: "example"})
+rows, err := client.BinaryKeyBadges().GetMany(ctx, &models.GetBinaryKeyBadgesInput{Filter: &models.BinaryKeyBadgeFilter{BadgeCode: &comparator.ID{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.BinaryKeyBadges().Create(ctx, &models.CreateBinaryKeyBadgeInput{BinaryKeyID: []byte("example"), BadgeCode: "example"})
+updated, err := client.BinaryKeyBadges().Update(ctx, models.BinaryKeyBadgePK{BinaryKeyID: []byte("example"), BadgeCode: "example"}, &models.UpdateBinaryKeyBadgeInput{})
+```

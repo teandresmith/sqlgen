@@ -302,3 +302,17 @@ Type `ProjectFilter`.
 Type `ProjectSort`.
 
 Fields: AccountID, ID, Name, Slug, Summary, Tags
+
+## Read examples
+
+```go
+row, err := client.Projects().Get(ctx, 1)
+rows, err := client.Projects().GetMany(ctx, &models.GetProjectsInput{Filter: &models.ProjectFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Projects().Create(ctx, &models.CreateProjectInput{AccountID: 1, Name: "example", Slug: "example", Summary: "example"})
+updated, err := client.Projects().Update(ctx, 1, &models.UpdateProjectInput{AccountID: omittable.Set(uint64(1))})
+```

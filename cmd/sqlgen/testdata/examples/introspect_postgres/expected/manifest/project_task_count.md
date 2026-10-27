@@ -119,3 +119,10 @@ Type `ProjectTaskCountFilter`.
 Type `ProjectTaskCountSort`.
 
 Fields: ProjectID, TaskCount
+
+## Read examples
+
+```go
+row, err := client.ProjectTaskCount().Get(ctx, 1)
+rows, err := client.ProjectTaskCount().GetMany(ctx, &models.GetProjectTaskCountsInput{Filter: &models.ProjectTaskCountFilter{TaskCount: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```

@@ -325,3 +325,17 @@ Type `AssetFilter`.
 Type `AssetSort`.
 
 Fields: CreatedAt, DeclaredCategories, ID, Name, PrimaryCategory
+
+## Read examples
+
+```go
+row, err := client.Assets().Get(ctx, uuid.NewV4())
+rows, err := client.Assets().GetMany(ctx, &models.GetAssetsInput{Filter: &models.AssetFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Assets().Create(ctx, &models.CreateAssetInput{Name: "example"})
+updated, err := client.Assets().Update(ctx, uuid.NewV4(), &models.UpdateAssetInput{Name: omittable.Set("example")})
+```

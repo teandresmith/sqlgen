@@ -43,12 +43,14 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:profile:{id}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -504,5 +506,14 @@
       "UserID"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.Profiles().Get(ctx, uuid.NewV4())",
+      "rows, err := client.Profiles().GetMany(ctx, &models.GetProfilesInput{Filter: &models.ProfileFilter{CreatedAt: &comparator.Time{Eq: new(time.Now())}}})"
+    ],
+    "write": [
+      "created, err := client.Profiles().Create(ctx, &models.CreateProfileInput{UserID: uuid.NewV4()})",
+      "updated, err := client.Profiles().Update(ctx, uuid.NewV4(), &models.UpdateProfileInput{UserID: omittable.Set(uuid.NewV4())})"
+    ]
+  }
 }

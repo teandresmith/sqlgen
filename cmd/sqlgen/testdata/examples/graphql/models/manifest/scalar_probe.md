@@ -337,3 +337,17 @@ Type `ScalarProbeFilter`.
 Type `ScalarProbeSort`.
 
 Fields: Addr, AddrN, BigCount, CreatedAt, Dur, DurN, Flag, ID, Label, MAC, MACN, MidCount, NetBlock, NetBlockN, Note, ObservedAt, Payload, Ratio, Signature, SmallCount
+
+## Read examples
+
+```go
+row, err := client.ScalarProbes().Get(ctx, uuid.NewV4())
+rows, err := client.ScalarProbes().GetMany(ctx, &models.GetScalarProbesInput{Filter: &models.ScalarProbeFilter{Label: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.ScalarProbes().Create(ctx, &models.CreateScalarProbeInput{Label: "example", Payload: []byte("example"), Dur: time.Minute, Addr: net.ParseIP("192.0.2.1"), NetBlock: *new(net.IPNet), MAC: *new(net.HardwareAddr)})
+updated, err := client.ScalarProbes().Update(ctx, uuid.NewV4(), &models.UpdateScalarProbeInput{Label: omittable.Set("example")})
+```

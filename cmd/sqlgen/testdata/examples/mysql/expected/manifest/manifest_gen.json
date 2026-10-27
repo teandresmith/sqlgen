@@ -154,7 +154,7 @@
     "graph_top_level": false,
     "soft_delete": true,
     "tenancy": false,
-    "views": false
+    "views": true
   },
   "entities": [
     {
@@ -719,7 +719,16 @@
           "Title"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Articles().Get(ctx, 1)",
+          "rows, err := client.Articles().GetMany(ctx, &models.GetArticlesInput{Filter: &models.ArticleFilter{Author: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Articles().Create(ctx, &models.CreateArticleInput{Title: \"example\", Author: \"example\"})",
+          "updated, err := client.Articles().Update(ctx, 1, &models.UpdateArticleInput{Title: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -1269,7 +1278,16 @@
           "Name"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Assets().Get(ctx, 1)",
+          "rows, err := client.Assets().GetMany(ctx, &models.GetAssetsInput{Filter: &models.AssetFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Assets().Create(ctx, &models.CreateAssetInput{Name: \"example\"})",
+          "updated, err := client.Assets().Update(ctx, 1, &models.UpdateAssetInput{Name: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -1684,7 +1702,16 @@
           "DocumentID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.AssetDocumentLinks().Get(ctx, models.AssetDocumentLinkPK{AssetID: 1, DocumentID: 1})",
+          "rows, err := client.AssetDocumentLinks().GetMany(ctx, &models.GetAssetDocumentLinksInput{Filter: &models.AssetDocumentLinkFilter{AssetID: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+        ],
+        "write": [
+          "created, err := client.AssetDocumentLinks().Create(ctx, &models.CreateAssetDocumentLinkInput{AssetID: 1, DocumentID: 1})",
+          "updated, err := client.AssetDocumentLinks().Update(ctx, models.AssetDocumentLinkPK{AssetID: 1, DocumentID: 1}, &models.UpdateAssetDocumentLinkInput{})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -2183,7 +2210,16 @@
           "Name"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Categories().Get(ctx, 1)",
+          "rows, err := client.Categories().GetMany(ctx, &models.GetCategoriesInput{Filter: &models.CategoryFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: \"example\"})",
+          "updated, err := client.Categories().Update(ctx, 1, &models.UpdateCategoryInput{Name: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "view",
@@ -2397,6 +2433,11 @@
           "ProductNames",
           "ProductNamesJSON",
           "TotalPrice"
+        ]
+      },
+      "examples": {
+        "read": [
+          "rows, err := client.CategoryStat().GetMany(ctx, &models.GetCategoryStatsInput{Filter: &models.CategoryStatFilter{ProductCount: &comparator.Number[int32]{Eq: new(int32(1))}}})"
         ]
       }
     },
@@ -2858,7 +2899,16 @@
           "Label"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.DefaultOnlyRows().Get(ctx, 1)",
+          "rows, err := client.DefaultOnlyRows().GetMany(ctx, &models.GetDefaultOnlyRowsInput{Filter: &models.DefaultOnlyRowFilter{Label: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.DefaultOnlyRows().Create(ctx, &models.CreateDefaultOnlyRowInput{})",
+          "updated, err := client.DefaultOnlyRows().Update(ctx, 1, &models.UpdateDefaultOnlyRowInput{Label: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -3379,7 +3429,16 @@
           "Name"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Documents().Get(ctx, 1)",
+          "rows, err := client.Documents().GetMany(ctx, &models.GetDocumentsInput{Filter: &models.DocumentFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Documents().Create(ctx, &models.CreateDocumentInput{EntityID: 1, EntityType: models.DocumentsEntityTypeEnum(\"asset.primary\"), Name: \"example\"})",
+          "updated, err := client.Documents().Update(ctx, 1, &models.UpdateDocumentInput{EntityID: omittable.Set(int64(1))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -3764,7 +3823,16 @@
           "ID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.KeyOnlyRows().Get(ctx, 1)",
+          "rows, err := client.KeyOnlyRows().GetMany(ctx, &models.GetKeyOnlyRowsInput{Filter: &models.KeyOnlyRowFilter{ID: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+        ],
+        "write": [
+          "created, err := client.KeyOnlyRows().Create(ctx, &models.CreateKeyOnlyRowInput{})",
+          "updated, err := client.KeyOnlyRows().Update(ctx, 1, &models.UpdateKeyOnlyRowInput{})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -4322,7 +4390,16 @@
           "UserID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Orders().Get(ctx, 1)",
+          "rows, err := client.Orders().GetMany(ctx, &models.GetOrdersInput{Filter: &models.OrderFilter{Status: &comparator.Enum[models.OrdersStatusEnum]{Eq: new(models.OrdersStatusEnum(\"pending\"))}}})"
+        ],
+        "write": [
+          "created, err := client.Orders().Create(ctx, &models.CreateOrderInput{UserID: 1, Total: 1})",
+          "updated, err := client.Orders().Update(ctx, 1, &models.UpdateOrderInput{UserID: omittable.Set(int64(1))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -4811,7 +4888,16 @@
           "UnitPrice"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.OrderItems().Get(ctx, 1)",
+          "rows, err := client.OrderItems().GetMany(ctx, &models.GetOrderItemsInput{Filter: &models.OrderItemFilter{OrderID: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+        ],
+        "write": [
+          "created, err := client.OrderItems().Create(ctx, &models.CreateOrderItemInput{OrderID: 1, ProductID: 1, Quantity: 1, UnitPrice: 1})",
+          "updated, err := client.OrderItems().Update(ctx, 1, &models.UpdateOrderItemInput{OrderID: omittable.Set(int64(1))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -5438,7 +5524,16 @@
           "WeightKg"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Products().Get(ctx, 1)",
+          "rows, err := client.Products().GetMany(ctx, &models.GetProductsInput{Filter: &models.ProductFilter{SKU: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Products().Create(ctx, &models.CreateProductInput{CategoryID: 1, Title: \"example\", Price: 1, SKU: \"example\", Attributes: types.JSON(\"{}\")})",
+          "updated, err := client.Products().Update(ctx, 1, &models.UpdateProductInput{CategoryID: omittable.Set(int32(1))})"
+        ]
+      }
     },
     {
       "kind": "view",
@@ -5642,6 +5737,12 @@
           "OrderCount",
           "Price",
           "Title"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.ProductSummary().Get(ctx, 1)",
+          "rows, err := client.ProductSummary().GetMany(ctx, &models.GetProductSummariesInput{Filter: &models.ProductSummaryFilter{CategoryName: &comparator.String{Eq: new(\"example\")}}})"
         ]
       }
     },
@@ -6088,7 +6189,16 @@
           "TagName"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.ProductTagLabels().Get(ctx, models.ProductTagLabelPK{ProductID: 1, TagName: \"example\", Label: \"example\"})",
+          "rows, err := client.ProductTagLabels().GetMany(ctx, &models.GetProductTagLabelsInput{Filter: &models.ProductTagLabelFilter{Description: &comparator.NullableString{Null: new(true)}}})"
+        ],
+        "write": [
+          "created, err := client.ProductTagLabels().Create(ctx, &models.CreateProductTagLabelInput{ProductID: 1, TagName: \"example\", Label: \"example\"})",
+          "updated, err := client.ProductTagLabels().Update(ctx, models.ProductTagLabelPK{ProductID: 1, TagName: \"example\", Label: \"example\"}, &models.UpdateProductTagLabelInput{Description: omittable.Set(new(\"example\"))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -6573,7 +6683,16 @@
           "Website"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Profiles().Get(ctx, 1)",
+          "rows, err := client.Profiles().GetMany(ctx, &models.GetProfilesInput{Filter: &models.ProfileFilter{UserID: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+        ],
+        "write": [
+          "created, err := client.Profiles().Create(ctx, &models.CreateProfileInput{UserID: 1})",
+          "updated, err := client.Profiles().Update(ctx, 1, &models.UpdateProfileInput{UserID: omittable.Set(int64(1))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -7003,7 +7122,16 @@
           "Slug"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.SluggedRows().Get(ctx, 1)",
+          "rows, err := client.SluggedRows().GetMany(ctx, &models.GetSluggedRowsInput{Filter: &models.SluggedRowFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.SluggedRows().Create(ctx, &models.CreateSluggedRowInput{})",
+          "updated, err := client.SluggedRows().Update(ctx, 1, &models.UpdateSluggedRowInput{Name: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -7527,7 +7655,16 @@
           "Name"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Tags().Get(ctx, 1)",
+          "rows, err := client.Tags().GetMany(ctx, &models.GetTagsInput{Filter: &models.TagFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Tags().Create(ctx, &models.CreateTagInput{Name: \"example\"})",
+          "updated, err := client.Tags().Update(ctx, 1, &models.UpdateTagInput{Name: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -8376,7 +8513,16 @@
           "UpdatedAt"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Users().Get(ctx, 1)",
+          "rows, err := client.Users().GetMany(ctx, &models.GetUsersInput{Filter: &models.UserFilter{Email: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Users().Create(ctx, &models.CreateUserInput{Name: \"example\", Email: \"example\", Balance: 1})",
+          "updated, err := client.Users().Update(ctx, 1, &models.UpdateUserInput{Name: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -8837,7 +8983,16 @@
           "UserID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.UserCategories().Get(ctx, models.UserCategoryPK{UserID: 1, CategoryID: 1})",
+          "rows, err := client.UserCategories().GetMany(ctx, &models.GetUserCategoriesInput{Filter: &models.UserCategoryFilter{Slot: &comparator.NullableNumber[int32]{Null: new(true)}}})"
+        ],
+        "write": [
+          "created, err := client.UserCategories().Create(ctx, &models.CreateUserCategoryInput{UserID: 1, CategoryID: 1})",
+          "updated, err := client.UserCategories().Update(ctx, models.UserCategoryPK{UserID: 1, CategoryID: 1}, &models.UpdateUserCategoryInput{Slot: omittable.Set(new(int32(1)))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -9262,7 +9417,16 @@
           "UserID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.UserEvents().Get(ctx, 1)",
+          "rows, err := client.UserEvents().GetMany(ctx, &models.GetUserEventsInput{Filter: &models.UserEventFilter{Action: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.UserEvents().Create(ctx, &models.CreateUserEventInput{Action: \"example\"})",
+          "updated, err := client.UserEvents().Update(ctx, 1, &models.UpdateUserEventInput{UserID: omittable.Set(new(int64(1)))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -9766,7 +9930,16 @@
           "Price"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Warehouses().Get(ctx, 1)",
+          "rows, err := client.Warehouses().GetMany(ctx, &models.GetWarehousesInput{Filter: &models.WarehouseFilter{ExternalID: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Warehouses().Create(ctx, &models.CreateWarehouseInput{ExternalID: *new(ksuid.KSUID), Name: \"example\", Price: decimal.NewFromInt(1)})",
+          "updated, err := client.Warehouses().Update(ctx, 1, &models.UpdateWarehouseInput{Name: omittable.Set(\"example\")})"
+        ]
+      }
     }
   ],
   "enums": [

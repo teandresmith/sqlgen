@@ -154,7 +154,7 @@
     "graph_top_level": false,
     "soft_delete": false,
     "tenancy": false,
-    "views": false
+    "views": true
   },
   "entities": [
     {
@@ -653,7 +653,16 @@
           "Nickname"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Accounts().Get(ctx, 1)",
+          "rows, err := client.Accounts().GetMany(ctx, &models.GetAccountsInput{Filter: &models.AccountFilter{CreatedAt: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Accounts().Create(ctx, &models.CreateAccountInput{Email: \"example\", DisplayName: \"example\"})",
+          "updated, err := client.Accounts().Update(ctx, 1, &models.UpdateAccountInput{Email: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -1162,7 +1171,16 @@
           "Slug"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Projects().Get(ctx, 1)",
+          "rows, err := client.Projects().GetMany(ctx, &models.GetProjectsInput{Filter: &models.ProjectFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Projects().Create(ctx, &models.CreateProjectInput{AccountID: 1, Name: \"example\", Slug: \"example\"})",
+          "updated, err := client.Projects().Update(ctx, 1, &models.UpdateProjectInput{AccountID: omittable.Set(int64(1))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -1585,7 +1603,16 @@
           "Role"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.ProjectMembers().Get(ctx, models.ProjectMemberPK{ProjectID: 1, AccountID: 1})",
+          "rows, err := client.ProjectMembers().GetMany(ctx, &models.GetProjectMembersInput{Filter: &models.ProjectMemberFilter{Role: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.ProjectMembers().Create(ctx, &models.CreateProjectMemberInput{ProjectID: 1, AccountID: 1, Role: \"example\"})",
+          "updated, err := client.ProjectMembers().Update(ctx, models.ProjectMemberPK{ProjectID: 1, AccountID: 1}, &models.UpdateProjectMemberInput{Role: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "view",
@@ -1757,6 +1784,12 @@
           "ID",
           "Name",
           "Slug"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.ProjectSummary().Get(ctx, 1)",
+          "rows, err := client.ProjectSummary().GetMany(ctx, &models.GetProjectSummariesInput{Filter: &models.ProjectSummaryFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
         ]
       }
     },
@@ -2256,7 +2289,16 @@
           "Title"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Tasks().Get(ctx, 1)",
+          "rows, err := client.Tasks().GetMany(ctx, &models.GetTasksInput{Filter: &models.TaskFilter{Title: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Tasks().Create(ctx, &models.CreateTaskInput{ProjectID: 1, Title: \"example\"})",
+          "updated, err := client.Tasks().Update(ctx, 1, &models.UpdateTaskInput{ProjectID: omittable.Set(int64(1))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -2673,7 +2715,16 @@
           "TaskID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.TaskLabels().Get(ctx, 1)",
+          "rows, err := client.TaskLabels().GetMany(ctx, &models.GetTaskLabelsInput{Filter: &models.TaskLabelFilter{Label: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.TaskLabels().Create(ctx, &models.CreateTaskLabelInput{TaskID: 1, Label: \"example\"})",
+          "updated, err := client.TaskLabels().Update(ctx, 1, &models.UpdateTaskLabelInput{TaskID: omittable.Set(int64(1))})"
+        ]
+      }
     }
   ],
   "enums": [],

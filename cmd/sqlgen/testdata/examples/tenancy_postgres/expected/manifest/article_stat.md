@@ -110,3 +110,10 @@ Type `ArticleStatFilter`.
 Type `ArticleStatSort`.
 
 Fields: ID, Title, WorkspaceID
+
+## Read examples
+
+```go
+row, err := client.ArticleStat().Get(ctx, 1)
+rows, err := client.ArticleStat().GetMany(ctx, &models.GetArticleStatsInput{Filter: &models.ArticleStatFilter{Title: &comparator.String{Eq: new("example")}}})
+```

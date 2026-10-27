@@ -377,3 +377,17 @@ Type `TagFilter`.
 Type `TagSort`.
 
 Fields: ID, IsDeleted, Name
+
+## Read examples
+
+```go
+row, err := client.Tags().Get(ctx, uuid.NewV4())
+rows, err := client.Tags().GetMany(ctx, &models.GetTagsInput{Filter: &models.TagFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Tags().Create(ctx, &models.CreateTagInput{Name: "example"})
+updated, err := client.Tags().Update(ctx, uuid.NewV4(), &models.UpdateTagInput{Name: omittable.Set("example")})
+```

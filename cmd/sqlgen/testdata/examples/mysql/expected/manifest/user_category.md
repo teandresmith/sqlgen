@@ -309,3 +309,17 @@ Type `UserCategoryFilter`.
 Type `UserCategorySort`.
 
 Fields: CategoryID, Slot, UserID
+
+## Read examples
+
+```go
+row, err := client.UserCategories().Get(ctx, models.UserCategoryPK{UserID: 1, CategoryID: 1})
+rows, err := client.UserCategories().GetMany(ctx, &models.GetUserCategoriesInput{Filter: &models.UserCategoryFilter{Slot: &comparator.NullableNumber[int32]{Null: new(true)}}})
+```
+
+## Write examples
+
+```go
+created, err := client.UserCategories().Create(ctx, &models.CreateUserCategoryInput{UserID: 1, CategoryID: 1})
+updated, err := client.UserCategories().Update(ctx, models.UserCategoryPK{UserID: 1, CategoryID: 1}, &models.UpdateUserCategoryInput{Slot: omittable.Set(new(int32(1)))})
+```

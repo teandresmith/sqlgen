@@ -35,12 +35,14 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:filterprobe:{id}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -509,5 +511,14 @@
       "Weights"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.FilterProbes().Get(ctx, uuid.NewV4())",
+      "rows, err := client.FilterProbes().GetMany(ctx, &models.GetFilterProbesInput{Filter: &models.FilterProbeFilter{CreatedAt: &comparator.Time{Eq: new(time.Now())}}})"
+    ],
+    "write": [
+      "created, err := client.FilterProbes().Create(ctx, &models.CreateFilterProbeInput{})",
+      "updated, err := client.FilterProbes().Update(ctx, uuid.NewV4(), &models.UpdateFilterProbeInput{Doc: omittable.Set(types.JSON(\"{}\"))})"
+    ]
+  }
 }

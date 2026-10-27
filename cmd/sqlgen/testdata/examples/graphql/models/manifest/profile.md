@@ -301,3 +301,17 @@ Type `ProfileFilter`.
 Type `ProfileSort`.
 
 Fields: AvatarURL, Bio, CreatedAt, ID, Settings, UserID
+
+## Read examples
+
+```go
+row, err := client.Profiles().Get(ctx, uuid.NewV4())
+rows, err := client.Profiles().GetMany(ctx, &models.GetProfilesInput{Filter: &models.ProfileFilter{CreatedAt: &comparator.Time{Eq: new(time.Now())}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Profiles().Create(ctx, &models.CreateProfileInput{UserID: uuid.NewV4()})
+updated, err := client.Profiles().Update(ctx, uuid.NewV4(), &models.UpdateProfileInput{UserID: omittable.Set(uuid.NewV4())})
+```

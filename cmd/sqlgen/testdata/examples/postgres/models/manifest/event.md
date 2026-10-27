@@ -299,3 +299,17 @@ Type `EventFilter`.
 Type `EventSort`.
 
 Fields: CreatedAt, ID, Name, Payload
+
+## Read examples
+
+```go
+row, err := client.Events().Get(ctx, uuid.NewV4())
+rows, err := client.Events().GetMany(ctx, &models.GetEventsInput{Filter: &models.EventFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Events().Create(ctx, &models.CreateEventInput{Name: "example"})
+updated, err := client.Events().Update(ctx, uuid.NewV4(), &models.UpdateEventInput{Name: omittable.Set("example")})
+```

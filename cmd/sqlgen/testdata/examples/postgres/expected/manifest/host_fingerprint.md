@@ -288,3 +288,17 @@ Type `HostFingerprintFilter`.
 Type `HostFingerprintSort`.
 
 Fields: FingerprintDigest, HostAddr
+
+## Read examples
+
+```go
+row, err := client.HostFingerprints().Get(ctx, models.HostFingerprintPK{HostAddr: net.ParseIP("192.0.2.1"), FingerprintDigest: []byte("example")})
+rows, err := client.HostFingerprints().GetMany(ctx, &models.GetHostFingerprintsInput{})
+```
+
+## Write examples
+
+```go
+created, err := client.HostFingerprints().Create(ctx, &models.CreateHostFingerprintInput{HostAddr: net.ParseIP("192.0.2.1"), FingerprintDigest: []byte("example")})
+updated, err := client.HostFingerprints().Update(ctx, models.HostFingerprintPK{HostAddr: net.ParseIP("192.0.2.1"), FingerprintDigest: []byte("example")}, &models.UpdateHostFingerprintInput{})
+```

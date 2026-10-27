@@ -284,3 +284,17 @@ Type `KeyOnlyRowFilter`.
 Type `KeyOnlyRowSort`.
 
 Fields: ID
+
+## Read examples
+
+```go
+row, err := client.KeyOnlyRows().Get(ctx, 1)
+rows, err := client.KeyOnlyRows().GetMany(ctx, &models.GetKeyOnlyRowsInput{Filter: &models.KeyOnlyRowFilter{ID: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.KeyOnlyRows().Create(ctx, &models.CreateKeyOnlyRowInput{})
+updated, err := client.KeyOnlyRows().Update(ctx, 1, &models.UpdateKeyOnlyRowInput{})
+```

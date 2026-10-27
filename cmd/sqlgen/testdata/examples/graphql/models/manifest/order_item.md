@@ -314,3 +314,17 @@ Type `OrderItemFilter`.
 Type `OrderItemSort`.
 
 Fields: CreatedAt, ExternalRef, ID, OrderID, ProductID, Quantity, SourceIP, UnitPrice
+
+## Read examples
+
+```go
+row, err := client.OrderItems().Get(ctx, uuid.NewV4())
+rows, err := client.OrderItems().GetMany(ctx, &models.GetOrderItemsInput{Filter: &models.OrderItemFilter{UnitPrice: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.OrderItems().Create(ctx, &models.CreateOrderItemInput{OrderID: uuid.NewV4(), ProductID: uuid.NewV4(), UnitPrice: decimal.NewFromInt(1)})
+updated, err := client.OrderItems().Update(ctx, uuid.NewV4(), &models.UpdateOrderItemInput{OrderID: omittable.Set(uuid.NewV4())})
+```

@@ -288,3 +288,17 @@ Type `AssetDocumentLinkFilter`.
 Type `AssetDocumentLinkSort`.
 
 Fields: AssetID, DocumentID
+
+## Read examples
+
+```go
+row, err := client.AssetDocumentLinks().Get(ctx, models.AssetDocumentLinkPK{AssetID: 1, DocumentID: 1})
+rows, err := client.AssetDocumentLinks().GetMany(ctx, &models.GetAssetDocumentLinksInput{Filter: &models.AssetDocumentLinkFilter{AssetID: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.AssetDocumentLinks().Create(ctx, &models.CreateAssetDocumentLinkInput{AssetID: 1, DocumentID: 1})
+updated, err := client.AssetDocumentLinks().Update(ctx, models.AssetDocumentLinkPK{AssetID: 1, DocumentID: 1}, &models.UpdateAssetDocumentLinkInput{})
+```

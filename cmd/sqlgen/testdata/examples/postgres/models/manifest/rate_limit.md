@@ -309,3 +309,17 @@ Type `RateLimitFilter`.
 Type `RateLimitSort`.
 
 Fields: Bucket, Count, OrgID, UpdatedAt
+
+## Read examples
+
+```go
+row, err := client.RateLimits().Get(ctx, models.RateLimitPK{OrgID: 1, Bucket: "example"})
+rows, err := client.RateLimits().GetMany(ctx, &models.GetRateLimitsInput{Filter: &models.RateLimitFilter{Count: &comparator.Number[int32]{Eq: new(int32(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.RateLimits().Create(ctx, &models.CreateRateLimitInput{OrgID: 1, Bucket: "example"})
+updated, err := client.RateLimits().Update(ctx, models.RateLimitPK{OrgID: 1, Bucket: "example"}, &models.UpdateRateLimitInput{Count: omittable.Set(int32(1))})
+```

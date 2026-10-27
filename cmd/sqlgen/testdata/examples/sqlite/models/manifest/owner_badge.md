@@ -288,3 +288,17 @@ Type `OwnerBadgeFilter`.
 Type `OwnerBadgeSort`.
 
 Fields: BadgeCode, OwnerID
+
+## Read examples
+
+```go
+row, err := client.OwnerBadges().Get(ctx, models.OwnerBadgePK{OwnerID: 1, BadgeCode: "example"})
+rows, err := client.OwnerBadges().GetMany(ctx, &models.GetOwnerBadgesInput{Filter: &models.OwnerBadgeFilter{OwnerID: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.OwnerBadges().Create(ctx, &models.CreateOwnerBadgeInput{OwnerID: 1, BadgeCode: "example"})
+updated, err := client.OwnerBadges().Update(ctx, models.OwnerBadgePK{OwnerID: 1, BadgeCode: "example"}, &models.UpdateOwnerBadgeInput{})
+```

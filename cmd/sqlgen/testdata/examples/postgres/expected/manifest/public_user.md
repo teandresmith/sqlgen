@@ -312,3 +312,17 @@ Type `PublicUserFilter`.
 Type `PublicUserSort`.
 
 Fields: CreatedAt, Email, ID, Metadata, Name, Role, Tags, UpdatedAt
+
+## Read examples
+
+```go
+row, err := client.PublicUsers().Get(ctx, uuid.NewV4())
+rows, err := client.PublicUsers().GetMany(ctx, &models.GetPublicUsersInput{Filter: &models.PublicUserFilter{Email: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.PublicUsers().Create(ctx, &models.CreatePublicUserInput{Email: "example", Name: "example"})
+updated, err := client.PublicUsers().Update(ctx, uuid.NewV4(), &models.UpdatePublicUserInput{Email: omittable.Set("example")})
+```

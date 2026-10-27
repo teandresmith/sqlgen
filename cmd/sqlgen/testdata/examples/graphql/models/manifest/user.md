@@ -441,3 +441,17 @@ Type `UserFilter`.
 Type `UserSort`.
 
 Fields: ClientIP, CreatedAt, DeletedAt, Email, ID, InternalScore, IsActive, LastLoginAt, Metadata, Name, NewPassword, PasswordHash, UpdatedAt
+
+## Read examples
+
+```go
+row, err := client.Users().Get(ctx, uuid.NewV4())
+rows, err := client.Users().GetMany(ctx, &models.GetUsersInput{Filter: &models.UserFilter{Email: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Users().Create(ctx, &models.CreateUserInput{Email: "example", Name: "example"})
+updated, err := client.Users().Update(ctx, uuid.NewV4(), &models.UpdateUserInput{Email: omittable.Set("example")})
+```

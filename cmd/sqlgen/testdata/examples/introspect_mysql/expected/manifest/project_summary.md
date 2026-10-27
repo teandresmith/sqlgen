@@ -94,3 +94,10 @@ Type `ProjectSummaryFilter`.
 Type `ProjectSummarySort`.
 
 Fields: ID, Name, Summary
+
+## Read examples
+
+```go
+row, err := client.ProjectSummary().Get(ctx, 1)
+rows, err := client.ProjectSummary().GetMany(ctx, &models.GetProjectSummariesInput{Filter: &models.ProjectSummaryFilter{Name: &comparator.String{Eq: new("example")}}})
+```

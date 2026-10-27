@@ -294,3 +294,17 @@ Type `AuditUserFilter`.
 Type `AuditUserSort`.
 
 Fields: Action, CreatedAt, Details, ID, SourceIP
+
+## Read examples
+
+```go
+row, err := client.AuditUsers().Get(ctx, uuid.NewV4())
+rows, err := client.AuditUsers().GetMany(ctx, &models.GetAuditUsersInput{Filter: &models.AuditUserFilter{Action: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.AuditUsers().Create(ctx, &models.CreateAuditUserInput{Action: "example"})
+updated, err := client.AuditUsers().Update(ctx, uuid.NewV4(), &models.UpdateAuditUserInput{Action: omittable.Set("example")})
+```

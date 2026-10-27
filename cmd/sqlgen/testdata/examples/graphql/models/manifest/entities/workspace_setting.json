@@ -42,12 +42,14 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:workspacesetting:{workspace_id}:{key}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -499,5 +501,14 @@
       "WorkspaceID"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.WorkspaceSettings().Get(ctx, models.WorkspaceSettingPK{WorkspaceID: uuid.NewV4(), Key: \"example\"})",
+      "rows, err := client.WorkspaceSettings().GetMany(ctx, &models.GetWorkspaceSettingsInput{Filter: &models.WorkspaceSettingFilter{Value: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.WorkspaceSettings().Create(ctx, &models.CreateWorkspaceSettingInput{WorkspaceID: uuid.NewV4(), Key: \"example\", Value: \"example\"})",
+      "updated, err := client.WorkspaceSettings().Update(ctx, models.WorkspaceSettingPK{WorkspaceID: uuid.NewV4(), Key: \"example\"}, &models.UpdateWorkspaceSettingInput{Value: omittable.Set(\"example\")})"
+    ]
+  }
 }

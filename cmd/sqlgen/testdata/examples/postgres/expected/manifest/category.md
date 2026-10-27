@@ -300,3 +300,17 @@ Type `CategoryFilter`.
 Type `CategorySort`.
 
 Fields: CreatedAt, Description, ID, Name
+
+## Read examples
+
+```go
+row, err := client.Categories().Get(ctx, uuid.NewV4())
+rows, err := client.Categories().GetMany(ctx, &models.GetCategoriesInput{Filter: &models.CategoryFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "example"})
+updated, err := client.Categories().Update(ctx, uuid.NewV4(), &models.UpdateCategoryInput{Name: omittable.Set("example")})
+```

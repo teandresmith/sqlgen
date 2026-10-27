@@ -297,3 +297,17 @@ Type `AuditNoteFilter`.
 Type `AuditNoteSort`.
 
 Fields: EventID, ID, Severity, UserID
+
+## Read examples
+
+```go
+row, err := client.AuditNotes().Get(ctx, 1)
+rows, err := client.AuditNotes().GetMany(ctx, &models.GetAuditNotesInput{Filter: &models.AuditNoteFilter{Severity: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.AuditNotes().Create(ctx, &models.CreateAuditNoteInput{UserID: uuid.NewV4(), Severity: "example"})
+updated, err := client.AuditNotes().Update(ctx, 1, &models.UpdateAuditNoteInput{UserID: omittable.Set(uuid.NewV4())})
+```

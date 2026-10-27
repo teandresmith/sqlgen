@@ -206,12 +206,20 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:article:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
+            "UpdateMany",
+            "UpdateWhere",
             "SoftDelete",
+            "SoftDeleteMany",
+            "SoftDeleteWhere",
             "Restore",
-            "Increment"
+            "RestoreMany",
+            "RestoreWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -752,7 +760,16 @@
           "Title"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Articles().Get(ctx, uuid.NewV4())",
+          "rows, err := client.Articles().GetMany(ctx, &models.GetArticlesInput{Filter: &models.ArticleFilter{Author: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Articles().Create(ctx, &models.CreateArticleInput{Title: \"example\", Author: \"example\"})",
+          "updated, err := client.Articles().Update(ctx, uuid.NewV4(), &models.UpdateArticleInput{Title: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -791,12 +808,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:asset:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -1272,7 +1291,16 @@
           "Name"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Assets().Get(ctx, uuid.NewV4())",
+          "rows, err := client.Assets().GetMany(ctx, &models.GetAssetsInput{Filter: &models.AssetFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Assets().Create(ctx, &models.CreateAssetInput{Name: \"example\"})",
+          "updated, err := client.Assets().Update(ctx, uuid.NewV4(), &models.UpdateAssetInput{Name: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -1318,12 +1346,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:assetdocumentlink:{asset_id}:{document_id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -1700,7 +1730,16 @@
           "DocumentID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.AssetDocumentLinks().Get(ctx, models.AssetDocumentLinkPK{AssetID: uuid.NewV4(), DocumentID: uuid.NewV4()})",
+          "rows, err := client.AssetDocumentLinks().GetMany(ctx, &models.GetAssetDocumentLinksInput{Filter: &models.AssetDocumentLinkFilter{AssetID: &comparator.ID{Eq: new(\"123e4567-e89b-12d3-a456-426614174000\")}}})"
+        ],
+        "write": [
+          "created, err := client.AssetDocumentLinks().Create(ctx, &models.CreateAssetDocumentLinkInput{AssetID: uuid.NewV4(), DocumentID: uuid.NewV4()})",
+          "updated, err := client.AssetDocumentLinks().Update(ctx, models.AssetDocumentLinkPK{AssetID: uuid.NewV4(), DocumentID: uuid.NewV4()}, &models.UpdateAssetDocumentLinkInput{})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -1747,12 +1786,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:auditnote:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -2173,7 +2214,16 @@
           "UserID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.AuditNotes().Get(ctx, 1)",
+          "rows, err := client.AuditNotes().GetMany(ctx, &models.GetAuditNotesInput{Filter: &models.AuditNoteFilter{Severity: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.AuditNotes().Create(ctx, &models.CreateAuditNoteInput{UserID: uuid.NewV4(), Severity: \"example\"})",
+          "updated, err := client.AuditNotes().Update(ctx, 1, &models.UpdateAuditNoteInput{UserID: omittable.Set(uuid.NewV4())})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -2212,12 +2262,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:audituser:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -2646,7 +2698,16 @@
           "SourceIP"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.AuditUsers().Get(ctx, uuid.NewV4())",
+          "rows, err := client.AuditUsers().GetMany(ctx, &models.GetAuditUsersInput{Filter: &models.AuditUserFilter{Action: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.AuditUsers().Create(ctx, &models.CreateAuditUserInput{Action: \"example\"})",
+          "updated, err := client.AuditUsers().Update(ctx, uuid.NewV4(), &models.UpdateAuditUserInput{Action: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -2693,12 +2754,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:category:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -3133,7 +3196,16 @@
           "Name"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Categories().Get(ctx, uuid.NewV4())",
+          "rows, err := client.Categories().GetMany(ctx, &models.GetCategoriesInput{Filter: &models.CategoryFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: \"example\"})",
+          "updated, err := client.Categories().Update(ctx, uuid.NewV4(), &models.UpdateCategoryInput{Name: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "view",
@@ -3365,6 +3437,11 @@
           "ProductNamesJSON",
           "TotalPrice"
         ]
+      },
+      "examples": {
+        "read": [
+          "rows, err := client.CategoryStat().GetMany(ctx, &models.GetCategoryStatsInput{Filter: &models.CategoryStatFilter{ProductCount: &comparator.Number[int32]{Eq: new(int32(1))}}})"
+        ]
       }
     },
     {
@@ -3412,12 +3489,15 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:counter:{key}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "Increment",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -3854,7 +3934,16 @@
           "UpdatedAt"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Counters().Get(ctx, \"example\")",
+          "rows, err := client.Counters().GetMany(ctx, &models.GetCountersInput{Filter: &models.CounterFilter{Count: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+        ],
+        "write": [
+          "created, err := client.Counters().Create(ctx, &models.CreateCounterInput{Key: \"example\"})",
+          "updated, err := client.Counters().Update(ctx, \"example\", &models.UpdateCounterInput{Slot: omittable.Set(new(\"example\"))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -3893,12 +3982,15 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:defaultonlyrow:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "Increment",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -4335,7 +4427,16 @@
           "Label"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.DefaultOnlyRows().Get(ctx, 1)",
+          "rows, err := client.DefaultOnlyRows().GetMany(ctx, &models.GetDefaultOnlyRowsInput{Filter: &models.DefaultOnlyRowFilter{Label: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.DefaultOnlyRows().Create(ctx, &models.CreateDefaultOnlyRowInput{})",
+          "updated, err := client.DefaultOnlyRows().Update(ctx, 1, &models.UpdateDefaultOnlyRowInput{Label: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -4374,12 +4475,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:document:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -4820,7 +4923,16 @@
           "Name"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Documents().Get(ctx, uuid.NewV4())",
+          "rows, err := client.Documents().GetMany(ctx, &models.GetDocumentsInput{Filter: &models.DocumentFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Documents().Create(ctx, &models.CreateDocumentInput{EntityID: uuid.NewV4(), EntityType: models.DocumentEntityTypeEnum(\"asset.primary\"), Name: \"example\"})",
+          "updated, err := client.Documents().Update(ctx, uuid.NewV4(), &models.UpdateDocumentInput{EntityID: omittable.Set(uuid.NewV4())})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -4859,12 +4971,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:event:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -5298,7 +5412,16 @@
           "Payload"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Events().Get(ctx, uuid.NewV4())",
+          "rows, err := client.Events().GetMany(ctx, &models.GetEventsInput{Filter: &models.EventFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Events().Create(ctx, &models.CreateEventInput{Name: \"example\"})",
+          "updated, err := client.Events().Update(ctx, uuid.NewV4(), &models.UpdateEventInput{Name: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -5337,12 +5460,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:fingerprint:{digest}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -5731,7 +5856,16 @@
           "Label"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Fingerprints().Get(ctx, []byte(\"example\"))",
+          "rows, err := client.Fingerprints().GetMany(ctx, &models.GetFingerprintsInput{Filter: &models.FingerprintFilter{Label: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Fingerprints().Create(ctx, &models.CreateFingerprintInput{Digest: []byte(\"example\"), Label: \"example\"})",
+          "updated, err := client.Fingerprints().Update(ctx, []byte(\"example\"), &models.UpdateFingerprintInput{Label: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -5770,12 +5904,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:host:{addr}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -6164,7 +6300,16 @@
           "Label"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Hosts().Get(ctx, net.ParseIP(\"192.0.2.1\"))",
+          "rows, err := client.Hosts().GetMany(ctx, &models.GetHostsInput{Filter: &models.HostFilter{Label: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Hosts().Create(ctx, &models.CreateHostInput{Addr: net.ParseIP(\"192.0.2.1\"), Label: \"example\"})",
+          "updated, err := client.Hosts().Update(ctx, net.ParseIP(\"192.0.2.1\"), &models.UpdateHostInput{Label: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -6210,12 +6355,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:hostfingerprint:{host_addr}:{fingerprint_digest}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -6592,7 +6739,16 @@
           "HostAddr"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.HostFingerprints().Get(ctx, models.HostFingerprintPK{HostAddr: net.ParseIP(\"192.0.2.1\"), FingerprintDigest: []byte(\"example\")})",
+          "rows, err := client.HostFingerprints().GetMany(ctx, &models.GetHostFingerprintsInput{})"
+        ],
+        "write": [
+          "created, err := client.HostFingerprints().Create(ctx, &models.CreateHostFingerprintInput{HostAddr: net.ParseIP(\"192.0.2.1\"), FingerprintDigest: []byte(\"example\")})",
+          "updated, err := client.HostFingerprints().Update(ctx, models.HostFingerprintPK{HostAddr: net.ParseIP(\"192.0.2.1\"), FingerprintDigest: []byte(\"example\")}, &models.UpdateHostFingerprintInput{})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -6631,12 +6787,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:keyonlyrow:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -6998,7 +7156,16 @@
           "ID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.KeyOnlyRows().Get(ctx, 1)",
+          "rows, err := client.KeyOnlyRows().GetMany(ctx, &models.GetKeyOnlyRowsInput{Filter: &models.KeyOnlyRowFilter{ID: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+        ],
+        "write": [
+          "created, err := client.KeyOnlyRows().Create(ctx, &models.CreateKeyOnlyRowInput{})",
+          "updated, err := client.KeyOnlyRows().Update(ctx, 1, &models.UpdateKeyOnlyRowInput{})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -7044,12 +7211,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:notewatcher:{user_id}:{note_id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -7426,7 +7595,16 @@
           "UserID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.NoteWatchers().Get(ctx, models.NoteWatcherPK{UserID: uuid.NewV4(), NoteID: 1})",
+          "rows, err := client.NoteWatchers().GetMany(ctx, &models.GetNoteWatchersInput{Filter: &models.NoteWatcherFilter{NoteID: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+        ],
+        "write": [
+          "created, err := client.NoteWatchers().Create(ctx, &models.CreateNoteWatcherInput{UserID: uuid.NewV4(), NoteID: 1})",
+          "updated, err := client.NoteWatchers().Update(ctx, models.NoteWatcherPK{UserID: uuid.NewV4(), NoteID: 1}, &models.UpdateNoteWatcherInput{})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -7465,12 +7643,15 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:order:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "Increment",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -7969,7 +8150,16 @@
           "UserID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Orders().Get(ctx, uuid.NewV4())",
+          "rows, err := client.Orders().GetMany(ctx, &models.GetOrdersInput{Filter: &models.OrderFilter{Status: &comparator.Enum[models.OrderStatus]{Eq: new(models.OrderStatus(\"pending\"))}}})"
+        ],
+        "write": [
+          "created, err := client.Orders().Create(ctx, &models.CreateOrderInput{UserID: uuid.NewV4()})",
+          "updated, err := client.Orders().Update(ctx, uuid.NewV4(), &models.UpdateOrderInput{UserID: omittable.Set(uuid.NewV4())})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -8017,12 +8207,15 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:orderitem:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "Increment",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -8492,7 +8685,16 @@
           "UnitPrice"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.OrderItems().Get(ctx, uuid.NewV4())",
+          "rows, err := client.OrderItems().GetMany(ctx, &models.GetOrderItemsInput{Filter: &models.OrderItemFilter{Quantity: &comparator.Number[int32]{Eq: new(int32(1))}}})"
+        ],
+        "write": [
+          "created, err := client.OrderItems().Create(ctx, &models.CreateOrderItemInput{OrderID: uuid.NewV4(), ProductID: uuid.NewV4(), UnitPrice: 1})",
+          "updated, err := client.OrderItems().Update(ctx, uuid.NewV4(), &models.UpdateOrderItemInput{OrderID: omittable.Set(uuid.NewV4())})"
+        ]
+      }
     },
     {
       "kind": "view",
@@ -8690,6 +8892,12 @@
           "ProductID",
           "TotalQuantity"
         ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.OrderTotal().Get(ctx, uuid.NewV4())",
+          "rows, err := client.OrderTotal().GetMany(ctx, &models.GetOrderTotalsInput{Filter: &models.OrderTotalFilter{LineCount: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+        ]
       }
     },
     {
@@ -8729,12 +8937,15 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:product:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "Increment",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -9312,7 +9523,16 @@
           "UpdatedAt"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Products().Get(ctx, uuid.NewV4())",
+          "rows, err := client.Products().GetMany(ctx, &models.GetProductsInput{Filter: &models.ProductFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Products().Create(ctx, &models.CreateProductInput{Name: \"example\", Price: 1, CategoryID: uuid.NewV4()})",
+          "updated, err := client.Products().Update(ctx, uuid.NewV4(), &models.UpdateProductInput{Name: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "view",
@@ -9534,6 +9754,12 @@
           "OrderCount",
           "Price"
         ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.ProductSummary().Get(ctx, uuid.NewV4())",
+          "rows, err := client.ProductSummary().GetMany(ctx, &models.GetProductSummariesInput{Filter: &models.ProductSummaryFilter{CategoryName: &comparator.String{Eq: new(\"example\")}}})"
+        ]
       }
     },
     {
@@ -9586,12 +9812,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:producttaglabel:{product_id}:{tag_name}:{label}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -10000,7 +10228,16 @@
           "TagName"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.ProductTagLabels().Get(ctx, models.ProductTagLabelPK{ProductID: uuid.NewV4(), TagName: \"example\", Label: \"example\"})",
+          "rows, err := client.ProductTagLabels().GetMany(ctx, &models.GetProductTagLabelsInput{Filter: &models.ProductTagLabelFilter{Description: &comparator.NullableString{Null: new(true)}}})"
+        ],
+        "write": [
+          "created, err := client.ProductTagLabels().Create(ctx, &models.CreateProductTagLabelInput{ProductID: uuid.NewV4(), TagName: \"example\", Label: \"example\"})",
+          "updated, err := client.ProductTagLabels().Update(ctx, models.ProductTagLabelPK{ProductID: uuid.NewV4(), TagName: \"example\", Label: \"example\"}, &models.UpdateProductTagLabelInput{Description: omittable.Set(new(\"example\"))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -10047,12 +10284,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:profile:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -10524,7 +10763,16 @@
           "UserID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Profiles().Get(ctx, uuid.NewV4())",
+          "rows, err := client.Profiles().GetMany(ctx, &models.GetProfilesInput{Filter: &models.ProfileFilter{CreatedAt: &comparator.Time{Eq: new(time.Now())}}})"
+        ],
+        "write": [
+          "created, err := client.Profiles().Create(ctx, &models.CreateProfileInput{UserID: uuid.NewV4()})",
+          "updated, err := client.Profiles().Update(ctx, uuid.NewV4(), &models.UpdateProfileInput{UserID: omittable.Set(uuid.NewV4())})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -10571,12 +10819,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:publicnote:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -10987,7 +11237,16 @@
           "UserID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.PublicNotes().Get(ctx, uuid.NewV4())",
+          "rows, err := client.PublicNotes().GetMany(ctx, &models.GetPublicNotesInput{Filter: &models.PublicNoteFilter{Body: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.PublicNotes().Create(ctx, &models.CreatePublicNoteInput{UserID: uuid.NewV4(), Body: \"example\"})",
+          "updated, err := client.PublicNotes().Update(ctx, uuid.NewV4(), &models.UpdatePublicNoteInput{UserID: omittable.Set(uuid.NewV4())})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -11034,12 +11293,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:publicuser:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -11588,7 +11849,16 @@
           "UpdatedAt"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.PublicUsers().Get(ctx, uuid.NewV4())",
+          "rows, err := client.PublicUsers().GetMany(ctx, &models.GetPublicUsersInput{Filter: &models.PublicUserFilter{Email: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.PublicUsers().Create(ctx, &models.CreatePublicUserInput{Email: \"example\", Name: \"example\"})",
+          "updated, err := client.PublicUsers().Update(ctx, uuid.NewV4(), &models.UpdatePublicUserInput{Email: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -11634,12 +11904,15 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:ratelimit:{org_id}:{bucket}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "Increment",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -12076,7 +12349,16 @@
           "UpdatedAt"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.RateLimits().Get(ctx, models.RateLimitPK{OrgID: 1, Bucket: \"example\"})",
+          "rows, err := client.RateLimits().GetMany(ctx, &models.GetRateLimitsInput{Filter: &models.RateLimitFilter{Count: &comparator.Number[int32]{Eq: new(int32(1))}}})"
+        ],
+        "write": [
+          "created, err := client.RateLimits().Create(ctx, &models.CreateRateLimitInput{OrgID: 1, Bucket: \"example\"})",
+          "updated, err := client.RateLimits().Update(ctx, models.RateLimitPK{OrgID: 1, Bucket: \"example\"}, &models.UpdateRateLimitInput{Count: omittable.Set(int32(1))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -12123,12 +12405,15 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:sequencerow:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "Increment",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -12594,7 +12879,16 @@
           "Ticket"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.SequenceRows().Get(ctx, 1)",
+          "rows, err := client.SequenceRows().GetMany(ctx, &models.GetSequenceRowsInput{Filter: &models.SequenceRowFilter{Note: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.SequenceRows().Create(ctx, &models.CreateSequenceRowInput{Note: \"example\"})",
+          "updated, err := client.SequenceRows().Update(ctx, 1, &models.UpdateSequenceRowInput{Code: omittable.Set(new(\"example\"))})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -12641,12 +12935,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:sluggedrow:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -13045,7 +13341,16 @@
           "Slug"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.SluggedRows().Get(ctx, 1)",
+          "rows, err := client.SluggedRows().GetMany(ctx, &models.GetSluggedRowsInput{Filter: &models.SluggedRowFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.SluggedRows().Create(ctx, &models.CreateSluggedRowInput{})",
+          "updated, err := client.SluggedRows().Update(ctx, 1, &models.UpdateSluggedRowInput{Name: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -13095,12 +13400,20 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:tag:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
+            "UpdateMany",
+            "UpdateWhere",
             "SoftDelete",
+            "SoftDeleteMany",
+            "SoftDeleteWhere",
             "Restore",
-            "Increment"
+            "RestoreMany",
+            "RestoreWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -13593,7 +13906,16 @@
           "Name"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Tags().Get(ctx, uuid.NewV4())",
+          "rows, err := client.Tags().GetMany(ctx, &models.GetTagsInput{Filter: &models.TagFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Tags().Create(ctx, &models.CreateTagInput{Name: \"example\"})",
+          "updated, err := client.Tags().Update(ctx, uuid.NewV4(), &models.UpdateTagInput{Name: omittable.Set(\"example\")})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -13639,12 +13961,14 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:usercategory:{user_id}:{category_id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -14021,7 +14345,16 @@
           "UserID"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.UserCategories().Get(ctx, models.UserCategoryPK{UserID: uuid.NewV4(), CategoryID: uuid.NewV4()})",
+          "rows, err := client.UserCategories().GetMany(ctx, &models.GetUserCategoriesInput{Filter: &models.UserCategoryFilter{CategoryID: &comparator.ID{Eq: new(\"123e4567-e89b-12d3-a456-426614174000\")}}})"
+        ],
+        "write": [
+          "created, err := client.UserCategories().Create(ctx, &models.CreateUserCategoryInput{UserID: uuid.NewV4(), CategoryID: uuid.NewV4()})",
+          "updated, err := client.UserCategories().Update(ctx, models.UserCategoryPK{UserID: uuid.NewV4(), CategoryID: uuid.NewV4()}, &models.UpdateUserCategoryInput{})"
+        ]
+      }
     },
     {
       "kind": "table",
@@ -14068,12 +14401,15 @@
           "hydration": "eager",
           "key_pattern": "sqlgen:warehouse:{id}",
           "invalidates_on": [
-            "Create",
+            "Upsert",
+            "UpsertMany",
             "Update",
-            "Delete",
-            "SoftDelete",
-            "Restore",
-            "Increment"
+            "UpdateMany",
+            "UpdateWhere",
+            "Increment",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
           ]
         },
         "events": {
@@ -14634,7 +14970,16 @@
           "TagIDS"
         ]
       },
-      "examples": {}
+      "examples": {
+        "read": [
+          "row, err := client.Warehouses().Get(ctx, uuid.NewV4())",
+          "rows, err := client.Warehouses().GetMany(ctx, &models.GetWarehousesInput{Filter: &models.WarehouseFilter{ExternalID: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Warehouses().Create(ctx, &models.CreateWarehouseInput{ExternalID: *new(ksuid.KSUID), Name: \"example\", Price: decimal.NewFromInt(1)})",
+          "updated, err := client.Warehouses().Update(ctx, uuid.NewV4(), &models.UpdateWarehouseInput{Name: omittable.Set(\"example\")})"
+        ]
+      }
     }
   ],
   "enums": [

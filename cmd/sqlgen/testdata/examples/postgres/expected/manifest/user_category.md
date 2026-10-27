@@ -290,3 +290,17 @@ Type `UserCategoryFilter`.
 Type `UserCategorySort`.
 
 Fields: CategoryID, UserID
+
+## Read examples
+
+```go
+row, err := client.UserCategories().Get(ctx, models.UserCategoryPK{UserID: uuid.NewV4(), CategoryID: uuid.NewV4()})
+rows, err := client.UserCategories().GetMany(ctx, &models.GetUserCategoriesInput{Filter: &models.UserCategoryFilter{CategoryID: &comparator.ID{Eq: new("123e4567-e89b-12d3-a456-426614174000")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.UserCategories().Create(ctx, &models.CreateUserCategoryInput{UserID: uuid.NewV4(), CategoryID: uuid.NewV4()})
+updated, err := client.UserCategories().Update(ctx, models.UserCategoryPK{UserID: uuid.NewV4(), CategoryID: uuid.NewV4()}, &models.UpdateUserCategoryInput{})
+```

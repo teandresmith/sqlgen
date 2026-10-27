@@ -328,3 +328,17 @@ Type `ProductFilter`.
 Type `ProductSort`.
 
 Fields: CategoryID, CreatedAt, Description, ID, IsActive, Metadata, Name, Price, Quantity, Tags, UpdatedAt
+
+## Read examples
+
+```go
+row, err := client.Products().Get(ctx, uuid.NewV4())
+rows, err := client.Products().GetMany(ctx, &models.GetProductsInput{Filter: &models.ProductFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Products().Create(ctx, &models.CreateProductInput{Name: "example", Price: 1, CategoryID: uuid.NewV4()})
+updated, err := client.Products().Update(ctx, uuid.NewV4(), &models.UpdateProductInput{Name: omittable.Set("example")})
+```

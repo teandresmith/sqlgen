@@ -291,3 +291,17 @@ Type `PublicNoteFilter`.
 Type `PublicNoteSort`.
 
 Fields: Body, ID, SourceEventID, UserID
+
+## Read examples
+
+```go
+row, err := client.PublicNotes().Get(ctx, uuid.NewV4())
+rows, err := client.PublicNotes().GetMany(ctx, &models.GetPublicNotesInput{Filter: &models.PublicNoteFilter{Body: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.PublicNotes().Create(ctx, &models.CreatePublicNoteInput{UserID: uuid.NewV4(), Body: "example"})
+updated, err := client.PublicNotes().Update(ctx, uuid.NewV4(), &models.UpdatePublicNoteInput{UserID: omittable.Set(uuid.NewV4())})
+```

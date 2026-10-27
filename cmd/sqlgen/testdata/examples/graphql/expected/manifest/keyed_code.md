@@ -315,3 +315,17 @@ Type `KeyedCodeFilter`.
 Type `KeyedCodeSort`.
 
 Fields: Code, ID, Name
+
+## Read examples
+
+```go
+row, err := client.KeyedCodes().Get(ctx, uuid.NewV4())
+rows, err := client.KeyedCodes().GetMany(ctx, &models.GetKeyedCodesInput{Filter: &models.KeyedCodeFilter{Code: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.KeyedCodes().Create(ctx, &models.CreateKeyedCodeInput{Code: "example", Name: "example"})
+updated, err := client.KeyedCodes().Update(ctx, uuid.NewV4(), &models.UpdateKeyedCodeInput{Code: omittable.Set("example")})
+```

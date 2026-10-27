@@ -290,3 +290,17 @@ Type `UserSessionFilter`.
 Type `UserSessionSort`.
 
 Fields: CreatedAt, ID, TokenHash, UserID
+
+## Read examples
+
+```go
+row, err := client.UserSessions().Get(ctx, uuid.NewV4())
+rows, err := client.UserSessions().GetMany(ctx, &models.GetUserSessionsInput{Filter: &models.UserSessionFilter{TokenHash: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.UserSessions().Create(ctx, &models.CreateUserSessionInput{UserID: uuid.NewV4(), TokenHash: "example"})
+updated, err := client.UserSessions().Update(ctx, uuid.NewV4(), &models.UpdateUserSessionInput{UserID: omittable.Set(uuid.NewV4())})
+```

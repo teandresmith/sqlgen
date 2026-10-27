@@ -444,7 +444,7 @@ func TestValidatePreParse_Manifest_EmbedRequiresEnabled(t *testing.T) {
 // TestLoadConfig_ManifestDefaultsApplied verifies that when the YAML sets
 // `manifest: { enabled: true }` alone, applyDefaults fills the unset fields
 // to the PRD §30.2 defaults: formats, json_layout, markdown_dir, breadcrumbs
-// sub-flags, embed_in_client, include_examples, include_internal.
+// sub-flags, embed_in_client, include_examples.
 func TestLoadConfig_ManifestDefaultsApplied(t *testing.T) {
 	path := writeTestConfig(t, `
 input:
@@ -486,9 +486,6 @@ generation:
 	if m.IncludeExamples == nil || !*m.IncludeExamples {
 		t.Errorf("IncludeExamples = %v, want true", m.IncludeExamples)
 	}
-	if m.IncludeInternal == nil || *m.IncludeInternal {
-		t.Errorf("IncludeInternal = %v, want false", m.IncludeInternal)
-	}
 	if m.EmbedInClient == nil || !*m.EmbedInClient {
 		t.Errorf("EmbedInClient = %v, want true", m.EmbedInClient)
 	}
@@ -500,6 +497,32 @@ generation:
 	}
 	if m.Breadcrumbs.PackageDoc == nil || !*m.Breadcrumbs.PackageDoc {
 		t.Errorf("Breadcrumbs.PackageDoc = %v, want true", m.Breadcrumbs.PackageDoc)
+	}
+}
+
+// TestLoadConfig_ManifestIncludeInternalRejected pins that the manifest
+// block has no include_internal key: the manifest is always the
+// consumer-facing surface, so the strict loader rejects the key as unknown
+// rather than silently ignoring it.
+func TestLoadConfig_ManifestIncludeInternalRejected(t *testing.T) {
+	path := writeTestConfig(t, `
+input:
+  dialect: postgres
+  paths: ["./migrations"]
+output:
+  dir: ./models
+generation:
+  manifest:
+    enabled: true
+    include_internal: true
+`)
+
+	_, err := config.LoadConfig(path)
+	if err == nil {
+		t.Fatal("LoadConfig() accepted generation.manifest.include_internal, want an unknown-field error")
+	}
+	if !strings.Contains(err.Error(), "include_internal") {
+		t.Errorf("LoadConfig() error = %v, want it to name include_internal", err)
 	}
 }
 

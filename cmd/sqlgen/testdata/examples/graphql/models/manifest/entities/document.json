@@ -35,12 +35,14 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:document:{id}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -540,5 +542,14 @@
       "Name"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.Documents().Get(ctx, uuid.NewV4())",
+      "rows, err := client.Documents().GetMany(ctx, &models.GetDocumentsInput{Filter: &models.DocumentFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Documents().Create(ctx, &models.CreateDocumentInput{EntityID: uuid.NewV4(), EntityType: models.DocumentEntityTypeEnum(\"asset.primary\"), Name: \"example\"})",
+      "updated, err := client.Documents().Update(ctx, uuid.NewV4(), &models.UpdateDocumentInput{EntityID: omittable.Set(uuid.NewV4())})"
+    ]
+  }
 }

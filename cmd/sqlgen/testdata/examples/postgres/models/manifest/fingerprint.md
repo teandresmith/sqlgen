@@ -292,3 +292,17 @@ Type `FingerprintFilter`.
 Type `FingerprintSort`.
 
 Fields: Digest, Label
+
+## Read examples
+
+```go
+row, err := client.Fingerprints().Get(ctx, []byte("example"))
+rows, err := client.Fingerprints().GetMany(ctx, &models.GetFingerprintsInput{Filter: &models.FingerprintFilter{Label: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Fingerprints().Create(ctx, &models.CreateFingerprintInput{Digest: []byte("example"), Label: "example"})
+updated, err := client.Fingerprints().Update(ctx, []byte("example"), &models.UpdateFingerprintInput{Label: omittable.Set("example")})
+```

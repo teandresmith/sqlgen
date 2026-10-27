@@ -313,3 +313,17 @@ Type `WarehouseFilter`.
 Type `WarehouseSort`.
 
 Fields: CreatedAt, ExternalID, ID, InspectedAt, Name, NullablePrice, Price
+
+## Read examples
+
+```go
+row, err := client.Warehouses().Get(ctx, 1)
+rows, err := client.Warehouses().GetMany(ctx, &models.GetWarehousesInput{Filter: &models.WarehouseFilter{ExternalID: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Warehouses().Create(ctx, &models.CreateWarehouseInput{ExternalID: *new(ksuid.KSUID), Name: "example", Price: decimal.NewFromInt(1)})
+updated, err := client.Warehouses().Update(ctx, 1, &models.UpdateWarehouseInput{Name: omittable.Set("example")})
+```

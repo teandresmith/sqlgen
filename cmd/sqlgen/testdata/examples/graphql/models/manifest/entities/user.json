@@ -46,12 +46,21 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:user:{id}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
+        "UpdateMany",
+        "UpdateWhere",
+        "Increment",
         "SoftDelete",
+        "SoftDeleteMany",
+        "SoftDeleteWhere",
         "Restore",
-        "Increment"
+        "RestoreMany",
+        "RestoreWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -854,5 +863,14 @@
       "UpdatedAt"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.Users().Get(ctx, uuid.NewV4())",
+      "rows, err := client.Users().GetMany(ctx, &models.GetUsersInput{Filter: &models.UserFilter{Email: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Users().Create(ctx, &models.CreateUserInput{Email: \"example\", Name: \"example\"})",
+      "updated, err := client.Users().Update(ctx, uuid.NewV4(), &models.UpdateUserInput{Email: omittable.Set(\"example\")})"
+    ]
+  }
 }

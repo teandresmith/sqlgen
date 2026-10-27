@@ -310,3 +310,17 @@ Type `SequenceRowFilter`.
 Type `SequenceRowSort`.
 
 Fields: AuditNo, Code, ID, Note, Seq, Ticket
+
+## Read examples
+
+```go
+row, err := client.SequenceRows().Get(ctx, 1)
+rows, err := client.SequenceRows().GetMany(ctx, &models.GetSequenceRowsInput{Filter: &models.SequenceRowFilter{Note: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.SequenceRows().Create(ctx, &models.CreateSequenceRowInput{Note: "example"})
+updated, err := client.SequenceRows().Update(ctx, 1, &models.UpdateSequenceRowInput{Code: omittable.Set(new("example"))})
+```

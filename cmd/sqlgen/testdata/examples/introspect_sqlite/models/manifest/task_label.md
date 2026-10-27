@@ -288,3 +288,17 @@ Type `TaskLabelFilter`.
 Type `TaskLabelSort`.
 
 Fields: ID, Label, TaskID
+
+## Read examples
+
+```go
+row, err := client.TaskLabels().Get(ctx, 1)
+rows, err := client.TaskLabels().GetMany(ctx, &models.GetTaskLabelsInput{Filter: &models.TaskLabelFilter{Label: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.TaskLabels().Create(ctx, &models.CreateTaskLabelInput{TaskID: 1, Label: "example"})
+updated, err := client.TaskLabels().Update(ctx, 1, &models.UpdateTaskLabelInput{TaskID: omittable.Set(int64(1))})
+```

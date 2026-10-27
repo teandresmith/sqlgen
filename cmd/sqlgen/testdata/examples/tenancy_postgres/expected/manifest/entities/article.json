@@ -38,12 +38,20 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:article:{id}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
+        "UpdateMany",
+        "UpdateWhere",
         "SoftDelete",
+        "SoftDeleteMany",
+        "SoftDeleteWhere",
         "Restore",
-        "Increment"
+        "RestoreMany",
+        "RestoreWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -597,5 +605,14 @@
       "WorkspaceID"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.Articles().Get(ctx, 1)",
+      "rows, err := client.Articles().GetMany(ctx, &models.GetArticlesInput{Filter: &models.ArticleFilter{Title: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Articles().Create(ctx, &models.CreateArticleInput{Title: \"example\"})",
+      "updated, err := client.Articles().Update(ctx, 1, &models.UpdateArticleInput{WorkspaceID: omittable.Set(uuid.NewV4())})"
+    ]
+  }
 }

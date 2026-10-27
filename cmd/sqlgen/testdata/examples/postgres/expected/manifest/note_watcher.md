@@ -288,3 +288,17 @@ Type `NoteWatcherFilter`.
 Type `NoteWatcherSort`.
 
 Fields: NoteID, UserID
+
+## Read examples
+
+```go
+row, err := client.NoteWatchers().Get(ctx, models.NoteWatcherPK{UserID: uuid.NewV4(), NoteID: 1})
+rows, err := client.NoteWatchers().GetMany(ctx, &models.GetNoteWatchersInput{Filter: &models.NoteWatcherFilter{NoteID: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.NoteWatchers().Create(ctx, &models.CreateNoteWatcherInput{UserID: uuid.NewV4(), NoteID: 1})
+updated, err := client.NoteWatchers().Update(ctx, models.NoteWatcherPK{UserID: uuid.NewV4(), NoteID: 1}, &models.UpdateNoteWatcherInput{})
+```

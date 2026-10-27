@@ -305,3 +305,17 @@ Type `DefaultOnlyRowFilter`.
 Type `DefaultOnlyRowSort`.
 
 Fields: Active, Hits, ID, Label
+
+## Read examples
+
+```go
+row, err := client.DefaultOnlyRows().Get(ctx, 1)
+rows, err := client.DefaultOnlyRows().GetMany(ctx, &models.GetDefaultOnlyRowsInput{Filter: &models.DefaultOnlyRowFilter{Label: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.DefaultOnlyRows().Create(ctx, &models.CreateDefaultOnlyRowInput{})
+updated, err := client.DefaultOnlyRows().Update(ctx, 1, &models.UpdateDefaultOnlyRowInput{Label: omittable.Set("example")})
+```

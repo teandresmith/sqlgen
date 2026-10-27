@@ -94,3 +94,9 @@ Type `CategoryStatFilter`.
 Type `CategoryStatSort`.
 
 Fields: AvgPrice, CategoryName, MaxPrice, MinPrice, ProductCount, ProductNames, TotalPrice
+
+## Read examples
+
+```go
+rows, err := client.CategoryStat().GetMany(ctx, &models.GetCategoryStatsInput{Filter: &models.CategoryStatFilter{ProductCount: &comparator.Number[int32]{Eq: new(int32(1))}}})
+```

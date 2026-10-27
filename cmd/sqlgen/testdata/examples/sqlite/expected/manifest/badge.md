@@ -293,3 +293,17 @@ Type `BadgeFilter`.
 Type `BadgeSort`.
 
 Fields: Code, Label
+
+## Read examples
+
+```go
+row, err := client.Badges().Get(ctx, "example")
+rows, err := client.Badges().GetMany(ctx, &models.GetBadgesInput{Filter: &models.BadgeFilter{Label: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Badges().Create(ctx, &models.CreateBadgeInput{Code: "example", Label: "example"})
+updated, err := client.Badges().Update(ctx, "example", &models.UpdateBadgeInput{Label: omittable.Set("example")})
+```

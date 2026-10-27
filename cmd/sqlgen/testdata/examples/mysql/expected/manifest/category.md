@@ -319,3 +319,17 @@ Type `CategoryFilter`.
 Type `CategorySort`.
 
 Fields: Description, ID, Name
+
+## Read examples
+
+```go
+row, err := client.Categories().Get(ctx, 1)
+rows, err := client.Categories().GetMany(ctx, &models.GetCategoriesInput{Filter: &models.CategoryFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "example"})
+updated, err := client.Categories().Update(ctx, 1, &models.UpdateCategoryInput{Name: omittable.Set("example")})
+```

@@ -339,3 +339,17 @@ Type `EventFilter`.
 Type `EventSort`.
 
 Fields: ASCIIArt, Action, Address2ID, Adjustment, CSVData, FKVal, HTTP2Flag, ID, IOCount, Line2ID, MAC, OSName, OccurredAt, PKVal, ProcessedAt, RetryCount, S3URL, Succeeded, TCPPort, UserID, Utf8Body
+
+## Read examples
+
+```go
+row, err := client.Events().Get(ctx, uuid.NewV4())
+rows, err := client.Events().GetMany(ctx, &models.GetEventsInput{Filter: &models.EventFilter{Action: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Events().Create(ctx, &models.CreateEventInput{Action: "example", OccurredAt: *new(types.DateTime)})
+updated, err := client.Events().Update(ctx, uuid.NewV4(), &models.UpdateEventInput{UserID: omittable.Set(new(uuid.NewV4()))})
+```

@@ -288,3 +288,17 @@ Type `AssetDocumentLinkFilter`.
 Type `AssetDocumentLinkSort`.
 
 Fields: AssetID, DocumentID
+
+## Read examples
+
+```go
+row, err := client.AssetDocumentLinks().Get(ctx, models.AssetDocumentLinkPK{AssetID: uuid.NewV4(), DocumentID: uuid.NewV4()})
+rows, err := client.AssetDocumentLinks().GetMany(ctx, &models.GetAssetDocumentLinksInput{Filter: &models.AssetDocumentLinkFilter{AssetID: &comparator.ID{Eq: new("123e4567-e89b-12d3-a456-426614174000")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.AssetDocumentLinks().Create(ctx, &models.CreateAssetDocumentLinkInput{AssetID: uuid.NewV4(), DocumentID: uuid.NewV4()})
+updated, err := client.AssetDocumentLinks().Update(ctx, models.AssetDocumentLinkPK{AssetID: uuid.NewV4(), DocumentID: uuid.NewV4()}, &models.UpdateAssetDocumentLinkInput{})
+```

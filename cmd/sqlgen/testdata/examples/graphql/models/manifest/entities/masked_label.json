@@ -35,12 +35,14 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:maskedlabel:{id}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -419,5 +421,14 @@
       "Label"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.MaskedLabels().Get(ctx, uuid.NewV4())",
+      "rows, err := client.MaskedLabels().GetMany(ctx, &models.GetMaskedLabelsInput{Filter: &models.MaskedLabelFilter{Label: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.MaskedLabels().Create(ctx, &models.CreateMaskedLabelInput{Label: \"example\"})",
+      "updated, err := client.MaskedLabels().Update(ctx, uuid.NewV4(), &models.UpdateMaskedLabelInput{Label: omittable.Set(\"example\")})"
+    ]
+  }
 }

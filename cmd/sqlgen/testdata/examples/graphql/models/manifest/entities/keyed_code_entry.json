@@ -35,12 +35,14 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:keyedcodeentry:{id}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -435,5 +437,14 @@
       "Note"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.KeyedCodeEntries().Get(ctx, uuid.NewV4())",
+      "rows, err := client.KeyedCodeEntries().GetMany(ctx, &models.GetKeyedCodeEntriesInput{Filter: &models.KeyedCodeEntryFilter{Note: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.KeyedCodeEntries().Create(ctx, &models.CreateKeyedCodeEntryInput{KeyedCodeID: uuid.NewV4(), Note: \"example\"})",
+      "updated, err := client.KeyedCodeEntries().Update(ctx, uuid.NewV4(), &models.UpdateKeyedCodeEntryInput{KeyedCodeID: omittable.Set(uuid.NewV4())})"
+    ]
+  }
 }

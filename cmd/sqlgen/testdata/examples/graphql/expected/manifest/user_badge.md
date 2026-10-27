@@ -295,3 +295,17 @@ Type `UserBadgeFilter`.
 Type `UserBadgeSort`.
 
 Fields: ID, Label, UserID
+
+## Read examples
+
+```go
+row, err := client.UserBadges().Get(ctx, 1)
+rows, err := client.UserBadges().GetMany(ctx, &models.GetUserBadgesInput{Filter: &models.UserBadgeFilter{Label: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.UserBadges().Create(ctx, &models.CreateUserBadgeInput{Label: "example"})
+updated, err := client.UserBadges().Update(ctx, 1, &models.UpdateUserBadgeInput{UserID: omittable.Set(new(uuid.NewV4()))})
+```

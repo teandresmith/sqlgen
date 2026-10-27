@@ -38,12 +38,21 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:order:{id}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
+        "UpdateMany",
+        "UpdateWhere",
+        "Increment",
         "SoftDelete",
+        "SoftDeleteMany",
+        "SoftDeleteWhere",
         "Restore",
-        "Increment"
+        "RestoreMany",
+        "RestoreWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -693,5 +702,14 @@
       "UserID"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.Orders().Get(ctx, uuid.NewV4())",
+      "rows, err := client.Orders().GetMany(ctx, &models.GetOrdersInput{Filter: &models.OrderFilter{Total: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Orders().Create(ctx, &models.CreateOrderInput{UserID: uuid.NewV4()})",
+      "updated, err := client.Orders().Update(ctx, uuid.NewV4(), &models.UpdateOrderInput{UserID: omittable.Set(uuid.NewV4())})"
+    ]
+  }
 }

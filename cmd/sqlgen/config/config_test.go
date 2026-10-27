@@ -1219,19 +1219,27 @@ func TestResolveTableEventsEnabled(t *testing.T) {
 			want:   false,
 		},
 		{
-			name: "table override true takes precedence over global false",
+			name: "table override true cannot opt in under global false",
 			table: config.TableConfig{
 				Events: &config.TableEventConfig{Enabled: new(true)},
 			},
 			global: &config.EventConfig{Enabled: false},
-			want:   true,
+			want:   false,
 		},
 		{
-			name: "table override true with nil global",
+			name: "table override true cannot opt in with nil global",
 			table: config.TableConfig{
 				Events: &config.TableEventConfig{Enabled: new(true)},
 			},
 			global: nil,
+			want:   false,
+		},
+		{
+			name: "table override true with global true",
+			table: config.TableConfig{
+				Events: &config.TableEventConfig{Enabled: new(true)},
+			},
+			global: &config.EventConfig{Enabled: true},
 			want:   true,
 		},
 		{
@@ -1750,5 +1758,54 @@ input:
 	_, err := config.LoadConfig(path)
 	if err == nil {
 		t.Error("LoadConfig() should return error for invalid YAML")
+	}
+}
+
+// TestLoadConfig_CacheDefaultsForPerEntityOptIn pins PRD §27.2: a per-table
+// (or per-view) cache.enabled: true opts in even with no `cache:` block, so the
+// block is materialized with enabled: false and the §27.2 defaults the cached
+// entities inherit. With no opt-in and no block, there is nothing to default.
+func TestLoadConfig_CacheDefaultsForPerEntityOptIn(t *testing.T) {
+	const base = "input:\n  dialect: postgres\n  paths: [\"./migrations\"]\noutput:\n  dir: ./models\n"
+	tests := []struct {
+		name      string
+		yaml      string
+		wantBlock bool
+	}{
+		{name: "no block and no opt-in", yaml: "", wantBlock: false},
+		{name: "no block and a table opt-out", yaml: "tables:\n  products:\n    cache:\n      enabled: false\n", wantBlock: false},
+		{name: "no block and a table opt-in", yaml: "tables:\n  products:\n    cache:\n      enabled: true\n", wantBlock: true},
+		{name: "no block and a view opt-in", yaml: "views:\n  product_summary:\n    sql: ./v.sql\n    invalidate_on: [products]\n    cache:\n      enabled: true\n", wantBlock: true},
+		{name: "block off and a table opt-in", yaml: "cache:\n  enabled: false\ntables:\n  products:\n    cache:\n      enabled: true\n", wantBlock: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := config.LoadConfig(writeTestConfig(t, base+tt.yaml))
+			if err != nil {
+				t.Fatalf("LoadConfig() error: %v", err)
+			}
+			if !tt.wantBlock {
+				if cfg.Cache != nil {
+					t.Errorf("Cache = %+v, want nil", cfg.Cache)
+				}
+				return
+			}
+			if cfg.Cache == nil {
+				t.Fatal("Cache = nil, want the block materialized with its defaults")
+			}
+			want := config.CacheConfig{
+				TTL:            "1h",
+				Serializer:     config.SerializerJSON,
+				KeyPrefix:      "sqlgen",
+				Hydration:      &config.HydrationConfig{Enabled: true, Timeout: "30s"},
+				CircuitBreaker: &config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 5, ProbeInterval: "30s", HalfOpenMaxProbes: 1},
+			}
+			if diff := cmp.Diff(want, *cfg.Cache); diff != "" {
+				t.Errorf("Cache mismatch (-want +got):\n%s", diff)
+			}
+			if !cfg.CacheKeyPrefixDefaulted {
+				t.Error("CacheKeyPrefixDefaulted = false, want true so the key_prefix warning fires")
+			}
+		})
 	}
 }

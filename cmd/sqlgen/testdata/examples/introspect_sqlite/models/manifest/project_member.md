@@ -290,3 +290,17 @@ Type `ProjectMemberFilter`.
 Type `ProjectMemberSort`.
 
 Fields: AccountID, ProjectID, Role
+
+## Read examples
+
+```go
+row, err := client.ProjectMembers().Get(ctx, models.ProjectMemberPK{ProjectID: 1, AccountID: 1})
+rows, err := client.ProjectMembers().GetMany(ctx, &models.GetProjectMembersInput{Filter: &models.ProjectMemberFilter{Role: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.ProjectMembers().Create(ctx, &models.CreateProjectMemberInput{ProjectID: 1, AccountID: 1, Role: "example"})
+updated, err := client.ProjectMembers().Update(ctx, models.ProjectMemberPK{ProjectID: 1, AccountID: 1}, &models.UpdateProjectMemberInput{Role: omittable.Set("example")})
+```

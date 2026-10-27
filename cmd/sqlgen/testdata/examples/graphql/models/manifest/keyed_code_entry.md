@@ -288,3 +288,17 @@ Type `KeyedCodeEntryFilter`.
 Type `KeyedCodeEntrySort`.
 
 Fields: ID, KeyedCodeID, Note
+
+## Read examples
+
+```go
+row, err := client.KeyedCodeEntries().Get(ctx, uuid.NewV4())
+rows, err := client.KeyedCodeEntries().GetMany(ctx, &models.GetKeyedCodeEntriesInput{Filter: &models.KeyedCodeEntryFilter{Note: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.KeyedCodeEntries().Create(ctx, &models.CreateKeyedCodeEntryInput{KeyedCodeID: uuid.NewV4(), Note: "example"})
+updated, err := client.KeyedCodeEntries().Update(ctx, uuid.NewV4(), &models.UpdateKeyedCodeEntryInput{KeyedCodeID: omittable.Set(uuid.NewV4())})
+```

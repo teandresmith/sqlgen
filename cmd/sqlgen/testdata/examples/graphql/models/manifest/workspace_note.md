@@ -349,3 +349,17 @@ Type `WorkspaceNoteFilter`.
 Type `WorkspaceNoteSort`.
 
 Fields: Body, CreatedAt, ID, Kind, Labels, ParentID, PinnedOrder, WorkspaceID
+
+## Read examples
+
+```go
+row, err := client.WorkspaceNotes().Get(ctx, uuid.NewV4())
+rows, err := client.WorkspaceNotes().GetMany(ctx, &models.GetWorkspaceNotesInput{Filter: &models.WorkspaceNoteFilter{Body: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.WorkspaceNotes().Create(ctx, &models.CreateWorkspaceNoteInput{Body: "example"})
+updated, err := client.WorkspaceNotes().Update(ctx, uuid.NewV4(), &models.UpdateWorkspaceNoteInput{WorkspaceID: omittable.Set(uuid.NewV4())})
+```

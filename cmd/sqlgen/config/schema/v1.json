@@ -298,7 +298,6 @@
         "json_per_entity_dir": { "type": "string", "description": "Directory for per-entity JSON, used when json_layout is per_entity." },
         "markdown_dir": { "type": "string", "description": "Directory for emitted markdown." },
         "include_examples": { "type": "boolean", "description": "Include usage examples in the emitted markdown." },
-        "include_internal": { "type": "boolean", "description": "Include internal-only detail in the manifest." },
         "embed_in_client": { "type": "boolean", "description": "Embed the manifest into the generated Client via manifest_embed_gen.go." },
         "breadcrumbs": {
           "type": "object",

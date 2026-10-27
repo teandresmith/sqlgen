@@ -313,3 +313,17 @@ Type `OrderItemFilter`.
 Type `OrderItemSort`.
 
 Fields: ID, OrderID, ProductID, Quantity, UnitPrice
+
+## Read examples
+
+```go
+row, err := client.OrderItems().Get(ctx, 1)
+rows, err := client.OrderItems().GetMany(ctx, &models.GetOrderItemsInput{Filter: &models.OrderItemFilter{OrderID: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.OrderItems().Create(ctx, &models.CreateOrderItemInput{OrderID: 1, ProductID: 1, Quantity: 1, UnitPrice: 1})
+updated, err := client.OrderItems().Update(ctx, 1, &models.UpdateOrderItemInput{OrderID: omittable.Set(int64(1))})
+```

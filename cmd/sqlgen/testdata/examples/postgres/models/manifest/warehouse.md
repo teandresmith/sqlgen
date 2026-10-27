@@ -328,3 +328,17 @@ Type `WarehouseFilter`.
 Type `WarehouseSort`.
 
 Fields: AllowedRoles, CreatedAt, ExternalID, ID, Name, NullablePrice, NullableRef, Price, Region, RelatedIDS, TagIDS
+
+## Read examples
+
+```go
+row, err := client.Warehouses().Get(ctx, uuid.NewV4())
+rows, err := client.Warehouses().GetMany(ctx, &models.GetWarehousesInput{Filter: &models.WarehouseFilter{ExternalID: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Warehouses().Create(ctx, &models.CreateWarehouseInput{ExternalID: *new(ksuid.KSUID), Name: "example", Price: decimal.NewFromInt(1)})
+updated, err := client.Warehouses().Update(ctx, uuid.NewV4(), &models.UpdateWarehouseInput{Name: omittable.Set("example")})
+```

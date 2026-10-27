@@ -347,3 +347,17 @@ Type `ProductFilter`.
 Type `ProductSort`.
 
 Fields: Attributes, CategoryID, CreatedAt, ID, InStock, Price, SKU, Title, WeightKg
+
+## Read examples
+
+```go
+row, err := client.Products().Get(ctx, 1)
+rows, err := client.Products().GetMany(ctx, &models.GetProductsInput{Filter: &models.ProductFilter{SKU: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Products().Create(ctx, &models.CreateProductInput{CategoryID: 1, Title: "example", Price: 1, SKU: "example", Attributes: types.JSON("{}")})
+updated, err := client.Products().Update(ctx, 1, &models.UpdateProductInput{CategoryID: omittable.Set(int32(1))})
+```

@@ -293,3 +293,17 @@ Type `OwnerFilter`.
 Type `OwnerSort`.
 
 Fields: Name, OwnerKey
+
+## Read examples
+
+```go
+row, err := client.Owners().Get(ctx, 1)
+rows, err := client.Owners().GetMany(ctx, &models.GetOwnersInput{Filter: &models.OwnerFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Owners().Create(ctx, &models.CreateOwnerInput{Name: "example"})
+updated, err := client.Owners().Update(ctx, 1, &models.UpdateOwnerInput{Name: omittable.Set("example")})
+```

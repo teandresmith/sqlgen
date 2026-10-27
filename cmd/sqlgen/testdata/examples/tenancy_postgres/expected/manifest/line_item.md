@@ -315,3 +315,17 @@ Type `LineItemFilter`.
 Type `LineItemSort`.
 
 Fields: OrderID, ProductID, Quantity, WorkspaceID
+
+## Read examples
+
+```go
+row, err := client.LineItems().Get(ctx, models.LineItemPK{OrderID: 1, ProductID: 1})
+rows, err := client.LineItems().GetMany(ctx, &models.GetLineItemsInput{Filter: &models.LineItemFilter{Quantity: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.LineItems().Create(ctx, &models.CreateLineItemInput{OrderID: 1, ProductID: 1, Quantity: 1})
+updated, err := client.LineItems().Update(ctx, models.LineItemPK{OrderID: 1, ProductID: 1}, &models.UpdateLineItemInput{WorkspaceID: omittable.Set(uuid.NewV4())})
+```

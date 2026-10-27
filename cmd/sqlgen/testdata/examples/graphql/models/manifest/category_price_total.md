@@ -152,3 +152,10 @@ Type `CategoryPriceTotalFilter`.
 Type `CategoryPriceTotalSort`.
 
 Fields: CategoryID, MaxPrice, ProductCount, TotalPrice
+
+## Read examples
+
+```go
+row, err := client.CategoryPriceTotal().Get(ctx, 1)
+rows, err := client.CategoryPriceTotal().GetMany(ctx, &models.GetCategoryPriceTotalsInput{Filter: &models.CategoryPriceTotalFilter{ProductCount: &comparator.Number[int32]{Eq: new(int32(1))}}})
+```

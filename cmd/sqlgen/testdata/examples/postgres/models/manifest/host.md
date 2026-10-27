@@ -292,3 +292,17 @@ Type `HostFilter`.
 Type `HostSort`.
 
 Fields: Addr, Label
+
+## Read examples
+
+```go
+row, err := client.Hosts().Get(ctx, net.ParseIP("192.0.2.1"))
+rows, err := client.Hosts().GetMany(ctx, &models.GetHostsInput{Filter: &models.HostFilter{Label: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Hosts().Create(ctx, &models.CreateHostInput{Addr: net.ParseIP("192.0.2.1"), Label: "example"})
+updated, err := client.Hosts().Update(ctx, net.ParseIP("192.0.2.1"), &models.UpdateHostInput{Label: omittable.Set("example")})
+```

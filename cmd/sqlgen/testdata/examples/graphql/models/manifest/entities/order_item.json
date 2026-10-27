@@ -44,12 +44,15 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:orderitem:{id}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "Increment",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -549,5 +552,14 @@
       "UnitPrice"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.OrderItems().Get(ctx, uuid.NewV4())",
+      "rows, err := client.OrderItems().GetMany(ctx, &models.GetOrderItemsInput{Filter: &models.OrderItemFilter{UnitPrice: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.OrderItems().Create(ctx, &models.CreateOrderItemInput{OrderID: uuid.NewV4(), ProductID: uuid.NewV4(), UnitPrice: decimal.NewFromInt(1)})",
+      "updated, err := client.OrderItems().Update(ctx, uuid.NewV4(), &models.UpdateOrderItemInput{OrderID: omittable.Set(uuid.NewV4())})"
+    ]
+  }
 }

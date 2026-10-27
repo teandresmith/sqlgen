@@ -35,12 +35,15 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:event:{id}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "Increment",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -744,5 +747,14 @@
       "Utf8Body"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.Events().Get(ctx, uuid.NewV4())",
+      "rows, err := client.Events().GetMany(ctx, &models.GetEventsInput{Filter: &models.EventFilter{Action: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Events().Create(ctx, &models.CreateEventInput{Action: \"example\", OccurredAt: *new(types.DateTime)})",
+      "updated, err := client.Events().Update(ctx, uuid.NewV4(), &models.UpdateEventInput{UserID: omittable.Set(new(uuid.NewV4()))})"
+    ]
+  }
 }

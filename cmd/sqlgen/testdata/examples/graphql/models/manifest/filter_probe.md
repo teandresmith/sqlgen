@@ -296,3 +296,17 @@ Type `FilterProbeFilter`.
 Type `FilterProbeSort`.
 
 Fields: CreatedAt, Doc, Flags, ID, Tags, TagsN, Weights
+
+## Read examples
+
+```go
+row, err := client.FilterProbes().Get(ctx, uuid.NewV4())
+rows, err := client.FilterProbes().GetMany(ctx, &models.GetFilterProbesInput{Filter: &models.FilterProbeFilter{CreatedAt: &comparator.Time{Eq: new(time.Now())}}})
+```
+
+## Write examples
+
+```go
+created, err := client.FilterProbes().Create(ctx, &models.CreateFilterProbeInput{})
+updated, err := client.FilterProbes().Update(ctx, uuid.NewV4(), &models.UpdateFilterProbeInput{Doc: omittable.Set(types.JSON("{}"))})
+```

@@ -305,3 +305,17 @@ Type `AccountFilter`.
 Type `AccountSort`.
 
 Fields: CreatedAt, DisplayName, Email, ID, IsActive, Locale, Nickname
+
+## Read examples
+
+```go
+row, err := client.Accounts().Get(ctx, 1)
+rows, err := client.Accounts().GetMany(ctx, &models.GetAccountsInput{Filter: &models.AccountFilter{DisplayName: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Accounts().Create(ctx, &models.CreateAccountInput{Email: "example", DisplayName: "example"})
+updated, err := client.Accounts().Update(ctx, 1, &models.UpdateAccountInput{Email: omittable.Set("example")})
+```

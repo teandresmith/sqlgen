@@ -104,6 +104,7 @@ func makeGenerateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 			Views:     result.Views,
 			Enums:     result.Enums,
 			API:       result.API,
+			UUID:      result.UUID,
 			Version:   Version,
 			Timestamp: resolveManifestTimestamp(flags.manifestTimestamp),
 		})

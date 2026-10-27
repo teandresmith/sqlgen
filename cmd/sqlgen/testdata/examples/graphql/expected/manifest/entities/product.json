@@ -38,12 +38,21 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:product:{id}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
+        "UpdateMany",
+        "UpdateWhere",
+        "Increment",
         "SoftDelete",
+        "SoftDeleteMany",
+        "SoftDeleteWhere",
         "Restore",
-        "Increment"
+        "RestoreMany",
+        "RestoreWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -725,5 +734,14 @@
       "UpdatedAt"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.Products().Get(ctx, uuid.NewV4())",
+      "rows, err := client.Products().GetMany(ctx, &models.GetProductsInput{Filter: &models.ProductFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Products().Create(ctx, &models.CreateProductInput{Name: \"example\", Price: decimal.NewFromInt(1), CategoryID: 1})",
+      "updated, err := client.Products().Update(ctx, uuid.NewV4(), &models.UpdateProductInput{Name: omittable.Set(\"example\")})"
+    ]
+  }
 }

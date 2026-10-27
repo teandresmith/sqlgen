@@ -295,3 +295,17 @@ Type `ProductTagLabelFilter`.
 Type `ProductTagLabelSort`.
 
 Fields: Description, Label, ProductID, TagName
+
+## Read examples
+
+```go
+row, err := client.ProductTagLabels().Get(ctx, models.ProductTagLabelPK{ProductID: uuid.NewV4(), TagName: "example", Label: "example"})
+rows, err := client.ProductTagLabels().GetMany(ctx, &models.GetProductTagLabelsInput{Filter: &models.ProductTagLabelFilter{Description: &comparator.NullableString{Null: new(true)}}})
+```
+
+## Write examples
+
+```go
+created, err := client.ProductTagLabels().Create(ctx, &models.CreateProductTagLabelInput{ProductID: uuid.NewV4(), TagName: "example", Label: "example"})
+updated, err := client.ProductTagLabels().Update(ctx, models.ProductTagLabelPK{ProductID: uuid.NewV4(), TagName: "example", Label: "example"}, &models.UpdateProductTagLabelInput{Description: omittable.Set(new("example"))})
+```

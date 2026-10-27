@@ -383,3 +383,17 @@ Type `ArticleFilter`.
 Type `ArticleSort`.
 
 Fields: Author, Body, CreatedAt, DeletedAt, ID, Title
+
+## Read examples
+
+```go
+row, err := client.Articles().Get(ctx, uuid.NewV4())
+rows, err := client.Articles().GetMany(ctx, &models.GetArticlesInput{Filter: &models.ArticleFilter{Author: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Articles().Create(ctx, &models.CreateArticleInput{Title: "example", Author: "example"})
+updated, err := client.Articles().Update(ctx, uuid.NewV4(), &models.UpdateArticleInput{Title: omittable.Set("example")})
+```

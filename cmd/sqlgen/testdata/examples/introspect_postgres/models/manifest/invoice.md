@@ -309,3 +309,17 @@ Type `InvoiceFilter`.
 Type `InvoiceSort`.
 
 Fields: AccountID, ID, SubtotalCents, TaxCents, TotalCents
+
+## Read examples
+
+```go
+row, err := client.Invoices().Get(ctx, 1)
+rows, err := client.Invoices().GetMany(ctx, &models.GetInvoicesInput{Filter: &models.InvoiceFilter{AccountID: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Invoices().Create(ctx, &models.CreateInvoiceInput{AccountID: 1, SubtotalCents: 1, TaxCents: 1})
+updated, err := client.Invoices().Update(ctx, 1, &models.UpdateInvoiceInput{AccountID: omittable.Set(int64(1))})
+```

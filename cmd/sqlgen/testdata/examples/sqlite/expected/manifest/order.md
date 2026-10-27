@@ -314,3 +314,17 @@ Type `OrderFilter`.
 Type `OrderSort`.
 
 Fields: ID, Notes, OrderedAt, Status, Total, UserID
+
+## Read examples
+
+```go
+row, err := client.Orders().Get(ctx, 1)
+rows, err := client.Orders().GetMany(ctx, &models.GetOrdersInput{Filter: &models.OrderFilter{Status: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Orders().Create(ctx, &models.CreateOrderInput{UserID: 1})
+updated, err := client.Orders().Update(ctx, 1, &models.UpdateOrderInput{UserID: omittable.Set(int64(1))})
+```

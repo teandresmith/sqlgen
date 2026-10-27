@@ -319,3 +319,17 @@ Type `ReservedWordColumnFilter`.
 Type `ReservedWordColumnSort`.
 
 Fields: Ctx, Err, Error, Func, ID, Interface, Len, Make, Map, New, Type
+
+## Read examples
+
+```go
+row, err := client.ReservedWordColumns().Get(ctx, 1)
+rows, err := client.ReservedWordColumns().GetMany(ctx, &models.GetReservedWordColumnsInput{Filter: &models.ReservedWordColumnFilter{Ctx: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.ReservedWordColumns().Create(ctx, &models.CreateReservedWordColumnInput{})
+updated, err := client.ReservedWordColumns().Update(ctx, 1, &models.UpdateReservedWordColumnInput{Type: omittable.Set("example")})
+```

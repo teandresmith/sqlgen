@@ -319,3 +319,17 @@ Type `TaskFilter`.
 Type `TaskSort`.
 
 Fields: AssigneeID, EstimateMinutes, EstimateSeconds, ID, Priority, ProjectID, Title
+
+## Read examples
+
+```go
+row, err := client.Tasks().Get(ctx, 1)
+rows, err := client.Tasks().GetMany(ctx, &models.GetTasksInput{Filter: &models.TaskFilter{Title: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Tasks().Create(ctx, &models.CreateTaskInput{ProjectID: 1, Title: "example"})
+updated, err := client.Tasks().Update(ctx, 1, &models.UpdateTaskInput{ProjectID: omittable.Set(uint64(1))})
+```

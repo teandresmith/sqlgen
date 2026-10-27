@@ -372,3 +372,17 @@ Type `UserFilter`.
 Type `UserSort`.
 
 Fields: Age, Avatar, Balance, BigUnsigned, Bio, BirthDate, CreatedAt, Email, ID, IsActive, LastLogin, LoginCount, MediumVal, Metadata, Name, Permissions, Rating, Role, Score, TinyFlag, UpdatedAt
+
+## Read examples
+
+```go
+row, err := client.Users().Get(ctx, 1)
+rows, err := client.Users().GetMany(ctx, &models.GetUsersInput{Filter: &models.UserFilter{Email: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Users().Create(ctx, &models.CreateUserInput{Name: "example", Email: "example", Balance: 1})
+updated, err := client.Users().Update(ctx, 1, &models.UpdateUserInput{Name: omittable.Set("example")})
+```

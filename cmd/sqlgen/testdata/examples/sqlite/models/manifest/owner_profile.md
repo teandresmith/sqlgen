@@ -295,3 +295,17 @@ Type `OwnerProfileFilter`.
 Type `OwnerProfileSort`.
 
 Fields: Bio, ID, OwnerID
+
+## Read examples
+
+```go
+row, err := client.OwnerProfiles().Get(ctx, 1)
+rows, err := client.OwnerProfiles().GetMany(ctx, &models.GetOwnerProfilesInput{Filter: &models.OwnerProfileFilter{OwnerID: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.OwnerProfiles().Create(ctx, &models.CreateOwnerProfileInput{OwnerID: 1})
+updated, err := client.OwnerProfiles().Update(ctx, 1, &models.UpdateOwnerProfileInput{OwnerID: omittable.Set(int64(1))})
+```

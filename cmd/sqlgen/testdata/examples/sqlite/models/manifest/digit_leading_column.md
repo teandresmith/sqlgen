@@ -307,3 +307,17 @@ Type `DigitLeadingColumnFilter`.
 Type `DigitLeadingColumnSort`.
 
 Fields: Col1stPlace, Col2010Revenue, Col2024Quota, Col3dModelURL, ID
+
+## Read examples
+
+```go
+row, err := client.DigitLeadingColumns().Get(ctx, 1)
+rows, err := client.DigitLeadingColumns().GetMany(ctx, &models.GetDigitLeadingColumnsInput{Filter: &models.DigitLeadingColumnFilter{Col1stPlace: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.DigitLeadingColumns().Create(ctx, &models.CreateDigitLeadingColumnInput{})
+updated, err := client.DigitLeadingColumns().Update(ctx, 1, &models.UpdateDigitLeadingColumnInput{Col2010Revenue: omittable.Set(float64(1))})
+```

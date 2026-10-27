@@ -289,3 +289,17 @@ Type `SluggedRowFilter`.
 Type `SluggedRowSort`.
 
 Fields: ID, Name, Slug
+
+## Read examples
+
+```go
+row, err := client.SluggedRows().Get(ctx, 1)
+rows, err := client.SluggedRows().GetMany(ctx, &models.GetSluggedRowsInput{Filter: &models.SluggedRowFilter{Name: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.SluggedRows().Create(ctx, &models.CreateSluggedRowInput{})
+updated, err := client.SluggedRows().Update(ctx, 1, &models.UpdateSluggedRowInput{Name: omittable.Set("example")})
+```

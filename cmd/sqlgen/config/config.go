@@ -480,7 +480,6 @@ type ManifestConfig struct {
 	JSONPerEntityDir string            `yaml:"json_per_entity_dir"`
 	MarkdownDir      string            `yaml:"markdown_dir"`
 	IncludeExamples  *bool             `yaml:"include_examples"`
-	IncludeInternal  *bool             `yaml:"include_internal"`
 	Breadcrumbs      BreadcrumbsConfig `yaml:"breadcrumbs"`
 	EmbedInClient    *bool             `yaml:"embed_in_client"`
 	MCP              *MCPConfig        `yaml:"mcp"`
@@ -1771,9 +1770,6 @@ func applyManifestDefaults(gen *GenerationConfig) {
 	if m.IncludeExamples == nil {
 		m.IncludeExamples = new(true)
 	}
-	if m.IncludeInternal == nil {
-		m.IncludeInternal = new(false)
-	}
 	if m.EmbedInClient == nil {
 		m.EmbedInClient = new(true)
 	}
@@ -1973,14 +1969,42 @@ func applyOverrideDefaults(ov *OverrideConfig) {
 
 // applyCacheDefaults fills unset fields on cfg.Cache with the built-in defaults
 // documented in PRD §27.2 and CACHE.md §3.4. Nothing is done when the YAML has
-// no `cache:` block. When `key_prefix` is empty (unset or explicit ""), the
-// default "sqlgen" is applied and cfg.CacheKeyPrefixDefaulted is flipped so
-// ValidatePreParse can emit the defaulted-key_prefix stderr warning.
+// no `cache:` block and no table or view opts into caching. A per-table or
+// per-view `cache.enabled: true` opts in even without a global block (PRD
+// §4.8 / §27.2 / §27.11), so in that case the block is materialized with
+// `enabled: false` and the same defaults, which the cached entities inherit.
+// When `key_prefix` is empty (unset or explicit ""), the default "sqlgen" is
+// applied and cfg.CacheKeyPrefixDefaulted is flipped so ValidatePreParse can
+// emit the defaulted-key_prefix stderr warning.
 func applyCacheDefaults(cfg *RootConfig) {
 	if cfg.Cache == nil {
-		return
+		if !anyEntityOptsIntoCache(cfg) {
+			return
+		}
+		cfg.Cache = &CacheConfig{}
 	}
-	c := cfg.Cache
+	cfg.CacheKeyPrefixDefaulted = fillCacheDefaults(cfg.Cache)
+}
+
+// anyEntityOptsIntoCache reports whether some table or view sets
+// cache.enabled: true.
+func anyEntityOptsIntoCache(cfg *RootConfig) bool {
+	for _, t := range cfg.Tables {
+		if t.Cache != nil && t.Cache.Enabled != nil && *t.Cache.Enabled {
+			return true
+		}
+	}
+	for _, v := range cfg.Views {
+		if v.Cache != nil && v.Cache.Enabled != nil && *v.Cache.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// fillCacheDefaults fills the unset fields of c with the PRD §27.2 defaults
+// and reports whether key_prefix was defaulted.
+func fillCacheDefaults(c *CacheConfig) (prefixDefaulted bool) {
 	if c.TTL == "" {
 		c.TTL = "1h"
 	}
@@ -1989,7 +2013,7 @@ func applyCacheDefaults(cfg *RootConfig) {
 	}
 	if c.KeyPrefix == "" {
 		c.KeyPrefix = "sqlgen"
-		cfg.CacheKeyPrefixDefaulted = true
+		prefixDefaulted = true
 	}
 	if c.Hydration == nil {
 		c.Hydration = &HydrationConfig{Enabled: true, Timeout: "30s"}
@@ -2004,6 +2028,16 @@ func applyCacheDefaults(cfg *RootConfig) {
 			HalfOpenMaxProbes: 1,
 		}
 	}
+	return prefixDefaulted
+}
+
+// DefaultCacheConfig returns a cache block with `enabled: false` and every
+// PRD §27.2 default filled in — what a config with no `cache:` block resolves
+// to once a table or view opts into caching.
+func DefaultCacheConfig() *CacheConfig {
+	c := &CacheConfig{}
+	fillCacheDefaults(c)
+	return c
 }
 
 func applyMapDefaults(cfg *RootConfig) {
@@ -2253,15 +2287,16 @@ func ResolveTableExcludeColumns(table TableConfig, global GenerationConfig) []st
 }
 
 // ResolveTableEventsEnabled returns whether events are enabled for a table.
-// Resolution order: table-level override → global events.enabled → false.
+// The global events.enabled is a gate: a table is enabled only when the
+// global flag is on and the table does not opt out with
+// tables.<name>.events.enabled: false. A per-table `enabled: true` cannot
+// opt in under a global off — validation rejects it (validateEventsConfig).
 func ResolveTableEventsEnabled(table TableConfig, global *EventConfig) bool {
-	if table.Events != nil && table.Events.Enabled != nil {
-		return *table.Events.Enabled
+	if global == nil || !global.Enabled {
+		return false
 	}
-	if global != nil {
-		return global.Enabled
-	}
-	return false
+	optedOut := table.Events != nil && table.Events.Enabled != nil && !*table.Events.Enabled
+	return !optedOut
 }
 
 // IsValidPreset returns true if the given string is a recognized operations preset.

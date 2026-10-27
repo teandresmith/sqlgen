@@ -16,11 +16,17 @@ import (
 // CleanInput carries what CleanStale needs to prune the manifest surface.
 // Doc is nil when the manifest is disabled — the signal to remove the whole
 // manifest directory rather than diff against the current entity set.
+//
+// GraphDir is the graph package directory whose breadcrumbs the current run
+// manages (GraphQL enabled; see ResolveGraphBreadcrumbDir). StaleGraphDir is the
+// configured graph package directory when GraphQL is off: no breadcrumbs belong
+// there any more, so the sqlgen-marked pair a previous run wrote is removed.
 type CleanInput struct {
-	Config    *config.RootConfig
-	Doc       *Document
-	OutputDir string
-	GraphDir  string
+	Config        *config.RootConfig
+	Doc           *Document
+	OutputDir     string
+	GraphDir      string
+	StaleGraphDir string
 }
 
 // CleanStale removes orphaned manifest artifacts per PRD §23.8 / §30.3 and
@@ -37,6 +43,13 @@ type CleanInput struct {
 //     embed file is removed when embed_in_client is false, per-entity markdown /
 //     JSON files for tables no longer in the schema are removed, and the
 //     per-entity JSON directory is pruned and dropped when the layout is single.
+//     A format no longer selected has its artifacts removed — the markdown when
+//     formats lacks markdown, the JSON (top-level file and per-entity files)
+//     when it lacks json — each gated on that format's own anchor, so only a
+//     directory a previous run wrote that format into is touched.
+//
+// In both modes the sqlgen-marked breadcrumbs in StaleGraphDir (GraphQL off)
+// are removed.
 //
 // Deleting only what sqlgen can show it authored keeps the deletion side of the
 // pipeline symmetric with the emission side. §23.8's governing rule is that
@@ -58,11 +71,17 @@ func CleanStale(in CleanInput) ([]string, error) {
 		if err := r.breadcrumbs(in.OutputDir, in.GraphDir, true, true); err != nil {
 			return r.deleted, err
 		}
+		if err := r.graphBreadcrumbs(in.StaleGraphDir); err != nil {
+			return r.deleted, err
+		}
 		return r.deleted, r.file(embedFile)
 	}
 
 	// Enabled — prune per-flag opt-outs and orphans.
 	if err := r.breadcrumbs(in.OutputDir, in.GraphDir, !deref(m.Breadcrumbs.ClaudeMD), !deref(m.Breadcrumbs.AgentsMD)); err != nil {
+		return r.deleted, err
+	}
+	if err := r.graphBreadcrumbs(in.StaleGraphDir); err != nil {
 		return r.deleted, err
 	}
 	if m.EmbedInClient != nil && !*m.EmbedInClient {
@@ -79,31 +98,41 @@ func CleanStale(in CleanInput) ([]string, error) {
 	// against directly-constructed configs that never went through LoadConfig,
 	// and an unguarded glob-and-delete outside the output tree is the same
 	// defect this file already exists to prevent.
-	expectedMD := map[string]bool{"_index.md": true, "_conventions.md": true}
-	for _, e := range in.Doc.Entities {
-		expectedMD[e.FilePrefix+".md"] = true
-	}
+	//
+	// With markdown no longer among the formats every *.md is stale — the same
+	// claim on the directory's *.md the prune makes, but only once the index
+	// proves an earlier run wrote markdown here.
 	if within(in.OutputDir, markdownDir) {
-		if err := r.prune(markdownDir, "*.md", expectedMD); err != nil {
+		if err := r.markdown(markdownDir, in.Doc, formatEnabled(m, config.ManifestFormatMarkdown)); err != nil {
 			return r.deleted, err
 		}
 	}
 
-	// Stale per-entity JSON. In per_entity layout keep one <file_prefix>.json per
-	// current entity; in single layout the entities directory should not exist,
-	// so drop it (e.g. after a per_entity → single flip).
 	entitiesDir := filepath.Join(markdownDir, dirOrDefault(perEntityDirOf(m), "entities"))
-	if m.JSONLayout == config.JSONLayoutPerEntity {
-		if !within(markdownDir, entitiesDir) {
-			return r.deleted, nil
-		}
-		expectedJSON := make(map[string]bool, len(in.Doc.Entities))
-		for _, e := range in.Doc.Entities {
-			expectedJSON[e.FilePrefix+".json"] = true
-		}
-		return r.deleted, r.prune(entitiesDir, "*.json", expectedJSON)
+	return r.deleted, r.jsonArtifacts(in, markdownDir, entitiesDir)
+}
+
+// jsonArtifacts prunes the stale manifest JSON. In per_entity layout it keeps
+// one <file_prefix>.json per current entity; in single layout the entities
+// directory should not exist, so it is dropped (e.g. after a per_entity →
+// single flip). With json no longer among the formats the top-level JSON goes
+// too.
+func (r *remover) jsonArtifacts(in CleanInput, markdownDir, entitiesDir string) error {
+	m := in.Config.Generation.Manifest
+	if !formatEnabled(m, config.ManifestFormatJSON) {
+		return r.droppedJSON(in.OutputDir, markdownDir, entitiesDir, jsonFilenameOf(m))
 	}
-	return r.deleted, r.entitiesDir(markdownDir, entitiesDir)
+	if m.JSONLayout != config.JSONLayoutPerEntity {
+		return r.entitiesDir(markdownDir, entitiesDir)
+	}
+	if !within(markdownDir, entitiesDir) {
+		return nil
+	}
+	expectedJSON := make(map[string]bool, len(in.Doc.Entities))
+	for _, e := range in.Doc.Entities {
+		expectedJSON[e.FilePrefix+".json"] = true
+	}
+	return r.prune(entitiesDir, "*.json", expectedJSON)
 }
 
 // manifestIndexMarker is the literal a sqlgen-written manifest/_index.md
@@ -232,6 +261,46 @@ func (r *remover) manifestDir(base, target, jsonFilename string) error {
 	return r.tree(target)
 }
 
+// markdown prunes the markdown in markdownDir. While markdown is a selected
+// format it keeps _index.md, _conventions.md and one <file_prefix>.md per
+// current entity, removing any other *.md (a removed table's file). Once it is
+// not, every *.md goes — but only when _index.md carries the sqlgen marker. The
+// check runs before anything is removed, since _index.md is itself among the
+// files removed, and it reads the markdown anchor alone: the JSON anchor the
+// current run just wrote proves nothing about who wrote the *.md beside it.
+func (r *remover) markdown(markdownDir string, doc *Document, selected bool) error {
+	if !selected {
+		if !fileContains(filepath.Join(markdownDir, manifestIndexFilename), manifestIndexMarker) {
+			return nil
+		}
+		return r.prune(markdownDir, "*.md", nil)
+	}
+	expected := map[string]bool{manifestIndexFilename: true, "_conventions.md": true}
+	for _, e := range doc.Entities {
+		expected[e.FilePrefix+".md"] = true
+	}
+	return r.prune(markdownDir, "*.md", expected)
+}
+
+// droppedJSON removes the manifest JSON after json leaves the formats: the top-level
+// <json_filename> and the per-entity JSON directory's *.json, then that
+// directory once empty. Like markdown, it acts only on its own anchor — the
+// top-level JSON carrying sqlgen's generator name — checked before the anchor
+// itself is removed.
+func (r *remover) droppedJSON(outputDir, markdownDir, entitiesDir, jsonFilename string) error {
+	if !within(outputDir, markdownDir) {
+		return nil
+	}
+	jsonPath := filepath.Join(markdownDir, filepath.Base(jsonFilename))
+	if !isSqlgenManifestJSON(jsonPath) {
+		return nil
+	}
+	if err := r.file(jsonPath); err != nil {
+		return err
+	}
+	return r.entitiesDir(markdownDir, entitiesDir)
+}
+
 // entitiesDir drops the per-entity JSON directory after a per_entity → single
 // layout flip. It prunes the *.json files sqlgen emits there and removes the
 // directory only once empty, which needs no entity prefixes and leaves anything
@@ -268,6 +337,16 @@ func (r *remover) breadcrumbs(outputDir, graphDir string, removeClaude, removeAg
 		}
 	}
 	return nil
+}
+
+// graphBreadcrumbs removes the sqlgen-marked CLAUDE.md / AGENTS.md from a graph
+// package directory that no longer receives breadcrumbs (GraphQL off). An empty
+// dir is a no-op; an unmarked file is left in place.
+func (r *remover) graphBreadcrumbs(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	return r.breadcrumbs(dir, "", true, true)
 }
 
 // ownedFile removes path only when it carries the provenance marker (PRD §30.3

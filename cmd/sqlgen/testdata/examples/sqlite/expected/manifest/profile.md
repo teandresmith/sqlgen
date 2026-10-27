@@ -299,3 +299,17 @@ Type `ProfileFilter`.
 Type `ProfileSort`.
 
 Fields: GithubHandle, ID, UserID, Verified, Website
+
+## Read examples
+
+```go
+row, err := client.Profiles().Get(ctx, 1)
+rows, err := client.Profiles().GetMany(ctx, &models.GetProfilesInput{Filter: &models.ProfileFilter{UserID: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Profiles().Create(ctx, &models.CreateProfileInput{UserID: 1})
+updated, err := client.Profiles().Update(ctx, 1, &models.UpdateProfileInput{UserID: omittable.Set(int64(1))})
+```

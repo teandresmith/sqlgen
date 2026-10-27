@@ -424,3 +424,17 @@ Type `OrderFilter`.
 Type `OrderSort`.
 
 Fields: CreatedAt, DeletedAt, ID, Notes, Total, UpdatedAt, UserID
+
+## Read examples
+
+```go
+row, err := client.Orders().Get(ctx, uuid.NewV4())
+rows, err := client.Orders().GetMany(ctx, &models.GetOrdersInput{Filter: &models.OrderFilter{Total: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Orders().Create(ctx, &models.CreateOrderInput{UserID: uuid.NewV4()})
+updated, err := client.Orders().Update(ctx, uuid.NewV4(), &models.UpdateOrderInput{UserID: omittable.Set(uuid.NewV4())})
+```

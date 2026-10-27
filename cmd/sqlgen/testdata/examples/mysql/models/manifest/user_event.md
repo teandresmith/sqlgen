@@ -291,3 +291,17 @@ Type `UserEventFilter`.
 Type `UserEventSort`.
 
 Fields: Action, ID, UserID
+
+## Read examples
+
+```go
+row, err := client.UserEvents().Get(ctx, 1)
+rows, err := client.UserEvents().GetMany(ctx, &models.GetUserEventsInput{Filter: &models.UserEventFilter{Action: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.UserEvents().Create(ctx, &models.CreateUserEventInput{Action: "example"})
+updated, err := client.UserEvents().Update(ctx, 1, &models.UpdateUserEventInput{UserID: omittable.Set(new(int64(1)))})
+```

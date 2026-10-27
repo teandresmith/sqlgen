@@ -43,12 +43,14 @@
       "hydration": "eager",
       "key_pattern": "sqlgen:category:{id}",
       "invalidates_on": [
-        "Create",
+        "Upsert",
+        "UpsertMany",
         "Update",
-        "Delete",
-        "SoftDelete",
-        "Restore",
-        "Increment"
+        "UpdateMany",
+        "UpdateWhere",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
       ]
     },
     "events": {
@@ -541,5 +543,14 @@
       "Name"
     ]
   },
-  "examples": {}
+  "examples": {
+    "read": [
+      "row, err := client.Categories().Get(ctx, 1)",
+      "rows, err := client.Categories().GetMany(ctx, &models.GetCategoriesInput{Filter: &models.CategoryFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+    ],
+    "write": [
+      "created, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: \"example\"})",
+      "updated, err := client.Categories().Update(ctx, 1, &models.UpdateCategoryInput{Name: omittable.Set(\"example\")})"
+    ]
+  }
 }

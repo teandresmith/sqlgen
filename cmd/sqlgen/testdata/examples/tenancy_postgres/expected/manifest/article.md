@@ -388,3 +388,17 @@ Type `ArticleFilter`.
 Type `ArticleSort`.
 
 Fields: DeletedAt, ID, Title, WorkspaceID
+
+## Read examples
+
+```go
+row, err := client.Articles().Get(ctx, 1)
+rows, err := client.Articles().GetMany(ctx, &models.GetArticlesInput{Filter: &models.ArticleFilter{Title: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Articles().Create(ctx, &models.CreateArticleInput{Title: "example"})
+updated, err := client.Articles().Update(ctx, 1, &models.UpdateArticleInput{WorkspaceID: omittable.Set(uuid.NewV4())})
+```

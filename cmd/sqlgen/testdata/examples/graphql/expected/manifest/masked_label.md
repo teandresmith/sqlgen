@@ -286,3 +286,17 @@ Type `MaskedLabelFilter`.
 Type `MaskedLabelSort`.
 
 Fields: ID, Label
+
+## Read examples
+
+```go
+row, err := client.MaskedLabels().Get(ctx, uuid.NewV4())
+rows, err := client.MaskedLabels().GetMany(ctx, &models.GetMaskedLabelsInput{Filter: &models.MaskedLabelFilter{Label: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.MaskedLabels().Create(ctx, &models.CreateMaskedLabelInput{Label: "example"})
+updated, err := client.MaskedLabels().Update(ctx, uuid.NewV4(), &models.UpdateMaskedLabelInput{Label: omittable.Set("example")})
+```

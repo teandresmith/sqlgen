@@ -319,3 +319,17 @@ Type `NumericWidthFilter`.
 Type `NumericWidthSort`.
 
 Fields: Bigs, CreatedAt, ID, Ratio, RatioN, Ratios, Scores, ScoresN, Small, SmallN, Smalls
+
+## Read examples
+
+```go
+row, err := client.NumericWidths().Get(ctx, uuid.NewV4())
+rows, err := client.NumericWidths().GetMany(ctx, &models.GetNumericWidthsInput{Filter: &models.NumericWidthFilter{Ratio: &comparator.Number[float32]{Eq: new(float32(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.NumericWidths().Create(ctx, &models.CreateNumericWidthInput{Small: 1, Ratio: 1})
+updated, err := client.NumericWidths().Update(ctx, uuid.NewV4(), &models.UpdateNumericWidthInput{Small: omittable.Set(int16(1))})
+```

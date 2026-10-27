@@ -308,3 +308,17 @@ Type `CounterFilter`.
 Type `CounterSort`.
 
 Fields: Count, Key, Slot, UpdatedAt
+
+## Read examples
+
+```go
+row, err := client.Counters().Get(ctx, "example")
+rows, err := client.Counters().GetMany(ctx, &models.GetCountersInput{Filter: &models.CounterFilter{Count: &comparator.Number[int64]{Eq: new(int64(1))}}})
+```
+
+## Write examples
+
+```go
+created, err := client.Counters().Create(ctx, &models.CreateCounterInput{Key: "example"})
+updated, err := client.Counters().Update(ctx, "example", &models.UpdateCounterInput{Slot: omittable.Set(new("example"))})
+```

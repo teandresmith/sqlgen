@@ -51,6 +51,7 @@ func ValidatePreParse(cfg *RootConfig) ([]Warning, error) {
 	validateRelationships(cfg, &errs)
 	validateNestedMutations(cfg, &errs)
 	validateManifestConfig(cfg, &errs)
+	validateEventsConfig(cfg, &errs)
 	validateColumnAccess(cfg, &errs)
 	validateColumnOverrides(cfg, &errs)
 
@@ -2384,6 +2385,23 @@ func validateManifestPerTableOptIn(cfg *RootConfig, globalEnabled bool, errs *[]
 		}
 		if *t.Manifest.Enabled && !globalEnabled {
 			*errs = append(*errs, fmt.Errorf("tables.%s.manifest.enabled: cannot be true when global manifest.enabled is false — per-table flag is opt-out only (PRD §30.2 / §4.13)", name))
+		}
+	}
+}
+
+// validateEventsConfig rejects the opt-in form of the per-table events
+// override. The global events.enabled gates event generation, so a per-table
+// `enabled: true` under a global off (or no `events:` block) would be a
+// silently ignored knob (PRD §28.8 / §4.13). Views take no events override.
+func validateEventsConfig(cfg *RootConfig, errs *[]error) {
+	globalEnabled := cfg.Events != nil && cfg.Events.Enabled
+	for _, name := range sortedTableKeys(cfg.Tables) {
+		t := cfg.Tables[name]
+		if t.Events == nil || t.Events.Enabled == nil {
+			continue
+		}
+		if *t.Events.Enabled && !globalEnabled {
+			*errs = append(*errs, fmt.Errorf("tables.%s.events.enabled: cannot be true when global events.enabled is false — per-table flag is opt-out only (PRD §28.8 / §4.13)", name))
 		}
 	}
 }

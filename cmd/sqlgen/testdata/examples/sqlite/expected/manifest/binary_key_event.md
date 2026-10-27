@@ -288,3 +288,17 @@ Type `BinaryKeyEventFilter`.
 Type `BinaryKeyEventSort`.
 
 Fields: BinaryKeyID, ID, Label
+
+## Read examples
+
+```go
+row, err := client.BinaryKeyEvents().Get(ctx, 1)
+rows, err := client.BinaryKeyEvents().GetMany(ctx, &models.GetBinaryKeyEventsInput{Filter: &models.BinaryKeyEventFilter{Label: &comparator.String{Eq: new("example")}}})
+```
+
+## Write examples
+
+```go
+created, err := client.BinaryKeyEvents().Create(ctx, &models.CreateBinaryKeyEventInput{BinaryKeyID: []byte("example"), Label: "example"})
+updated, err := client.BinaryKeyEvents().Update(ctx, 1, &models.UpdateBinaryKeyEventInput{BinaryKeyID: omittable.Set([]byte("example"))})
+```
