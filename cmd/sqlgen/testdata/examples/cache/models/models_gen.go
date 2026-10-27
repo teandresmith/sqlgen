@@ -257,6 +257,11 @@ func (c *articleClient) Get(ctx context.Context, id int64, opts ...func(*CallOpt
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[ArticleFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -2906,6 +2911,11 @@ func (c *auditLogClient) Get(ctx context.Context, id int64, opts ...func(*CallOp
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[AuditLogFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -4927,6 +4937,11 @@ func (c *orderItemClient) Get(ctx context.Context, pk OrderItemPK, opts ...func(
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[OrderItemFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -6771,6 +6786,11 @@ func (c *productClient) Get(ctx context.Context, id int64, opts ...func(*CallOpt
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[ProductFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -8960,6 +8980,11 @@ func (c *profileClient) Get(ctx context.Context, id int64, opts ...func(*CallOpt
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[ProfileFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -11207,6 +11232,11 @@ func (c *userClient) Get(ctx context.Context, id int64, opts ...func(*CallOption
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[UserFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation

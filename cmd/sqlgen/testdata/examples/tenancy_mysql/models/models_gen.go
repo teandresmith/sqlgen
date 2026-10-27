@@ -437,6 +437,11 @@ func (c *articleClient) Get(ctx context.Context, id int64, opts ...func(*CallOpt
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[ArticleFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -4008,6 +4013,11 @@ func (c *documentClient) Get(ctx context.Context, id string, opts ...func(*CallO
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[DocumentFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -6513,6 +6523,11 @@ func (c *lineItemClient) Get(ctx context.Context, pk LineItemPK, opts ...func(*C
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[LineItemFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation

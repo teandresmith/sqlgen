@@ -243,6 +243,11 @@ func (c *assetClient) Get(ctx context.Context, id int64, opts ...func(*CallOptio
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[AssetFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -401,7 +406,7 @@ func (c *assetClient) GetMany(ctx context.Context, input *GetAssetsInput, opts .
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, assets, options.FieldOptions); err != nil {
+			if err := c.loadRelationships(ctx, conn, assets, options); err != nil {
 				return nil, err
 			}
 		}
@@ -447,13 +452,27 @@ func (fo *AssetFieldOptions) loadsRelationships() bool {
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
 //
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
 // The fan-out is unbounded, inside a transaction and out. Outside one each
 // edge draws its own pooled connection and the parallelism is real. Inside one
 // they share the transaction's single connection — database.Conn hands every
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *assetClient) loadRelationships(ctx context.Context, conn database.Querier, assets []*Asset, fo *AssetFieldOptions) error {
+func (c *assetClient) loadRelationships(ctx context.Context, conn database.Querier, assets []*Asset, options CallOptions[AssetFieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 
 	if fo.Attachments != nil {
@@ -506,6 +525,8 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 					requiredColumns: []string{"entity_id"},
 				}, func(co *CallOptions[DocumentFieldOptions]) {
 					co.FieldOptions = fo.Attachments.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load asset documents: %w", err)
@@ -579,6 +600,8 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 					requiredColumns: []string{"entity_id"},
 				}, func(co *CallOptions[DocumentFieldOptions]) {
 					co.FieldOptions = fo.Invoices.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load asset documents: %w", err)
@@ -651,6 +674,8 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 					requiredColumns: []string{"entity_id"},
 				}, func(co *CallOptions[DocumentFieldOptions]) {
 					co.FieldOptions = fo.PhotoAttachments.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load asset documents: %w", err)
@@ -723,6 +748,8 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 					requiredColumns: []string{"entity_id"},
 				}, func(co *CallOptions[DocumentFieldOptions]) {
 					co.FieldOptions = fo.PrimaryOrInvoiceDocuments.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load asset documents: %w", err)
@@ -863,6 +890,8 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 					requiredColumns: []string{"id"},
 				}, func(co *CallOptions[DocumentFieldOptions]) {
 					co.FieldOptions = fo.LinkedAttachments.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load asset documents: %w", err)
@@ -1002,6 +1031,8 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 					requiredColumns: []string{"id"},
 				}, func(co *CallOptions[DocumentFieldOptions]) {
 					co.FieldOptions = fo.Documents.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load asset documents: %w", err)

@@ -3940,7 +3940,7 @@ products, err := client.Products().GetMany(ctx, input, func(o *<pkg>.CallOptions
 })
 ```
 
-The generated relationship loader receives the resolved `CallOptions` from the parent `GetMany` and applies them to each child query. There is no way to set different options per relationship — the options are per-operation, not per-query.
+The generated relationship loader receives the resolved `CallOptions` from the parent `GetMany` and applies them to each child query. The toggles it applies are the caller's: `SkipHooks`, `SkipCache` and `SkipEvents` as the caller set them (with `SkipHooks` implying the other two), not the ones sqlgen sets on its own internal reads, so a `Get`, `Connection` or write read-back loads relationships with the caller's hooks. `LockMode` is the exception (Section 9.6a). There is no way to set different options per relationship — the options are per-operation, not per-query.
 
 ### 9.6a Lock Modes
 
@@ -4098,6 +4098,8 @@ Tenancy filters narrow which rows get locked (correct — only rows in the consu
 `Create`/`Update`/`Upsert`/`Restore`/`SoftDelete*` chain an internal `Get`/`GetMany` for the entity-return path (Section 9.7). When the caller sets `LockMode` on a write method, the chained read does **not** inherit it — the write itself already acquired an implicit row lock that survives until commit, so re-locking via the chained read adds nothing. The internal call already uses `SkipHooks: true`; the generator extends that to also force `LockMode: LockNone` on the chained call.
 
 **Read-method internals propagate LockMode.** `Get` chains an internal `GetMany` (Section 9.8.2) and `Connection` chains an internal `GetMany` (Section 9.8.7). When the caller sets `LockMode` on `Get` or `Connection`, the inner `GetMany` MUST carry the same `LockMode` so the actual SELECT emits the lock clause. The inner runtime guard re-runs but is idempotent (same ctx, same tx, same forced `SkipCache`). The "do not inherit" rule above is scoped to write-method chained reads only.
+
+**Relationship loads do not carry LockMode.** The child and junction reads a `GetMany` issues to load relationships (Section 9.6, "Relationship propagation") run without a lock clause: `LockMode` applies to the primary read only. Carrying it would make a `LockForUpdateSkipLocked` parent read drop child rows another transaction holds, with no sign of it, and let `LockForUpdateNoWait` fail on a child the caller never asked to lock.
 
 #### Validation rules
 

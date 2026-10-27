@@ -706,12 +706,11 @@ func TestTenancyTemplate_loadRelationships_propagatesSkipTenancy(t *testing.T) {
 	out := renderTenancyTableBody(t, tc, "table/get")
 
 	wants := []string{
-		// loadRelationships signature carries skipTenancy under tenancy.
-		"func (c *productClient) loadRelationships(ctx context.Context, conn database.Querier, products []*Product, fo *ProductFieldOptions, skipTenancy bool) error {",
-		// Call site passes options.SkipTenancy through.
-		"if err := c.loadRelationships(ctx, conn, products, options.FieldOptions, options.SkipTenancy); err != nil {",
+		// loadRelationships receives the parent's resolved options.
+		"func (c *productClient) loadRelationships(ctx context.Context, conn database.Querier, products []*Product, options CallOptions[ProductFieldOptions]) error {",
+		"if err := c.loadRelationships(ctx, conn, products, options); err != nil {",
 		// Child GetMany callback forwards the flag.
-		"co.SkipTenancy = skipTenancy",
+		"co.SkipTenancy = options.SkipTenancy",
 	}
 	for _, want := range wants {
 		if !strings.Contains(out, want) {

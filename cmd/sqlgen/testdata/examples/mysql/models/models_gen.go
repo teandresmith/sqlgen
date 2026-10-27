@@ -296,6 +296,11 @@ func (c *articleClient) Get(ctx context.Context, id int64, opts ...func(*CallOpt
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[ArticleFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -3018,6 +3023,11 @@ func (c *assetDocumentLinkClient) Get(ctx context.Context, pk AssetDocumentLinkP
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[AssetDocumentLinkFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -4904,6 +4914,11 @@ func (c *assetClient) Get(ctx context.Context, id int64, opts ...func(*CallOptio
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[AssetFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -5074,7 +5089,7 @@ func (c *assetClient) GetMany(ctx context.Context, input *GetAssetsInput, opts .
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, assets, options.FieldOptions); err != nil {
+			if err := c.loadRelationships(ctx, conn, assets, options); err != nil {
 				return nil, err
 			}
 		}
@@ -5117,13 +5132,27 @@ func (fo *AssetFieldOptions) loadsRelationships() bool {
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
 //
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
 // The fan-out is unbounded, inside a transaction and out. Outside one each
 // edge draws its own pooled connection and the parallelism is real. Inside one
 // they share the transaction's single connection — database.Conn hands every
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *assetClient) loadRelationships(ctx context.Context, conn database.Querier, assets []*Asset, fo *AssetFieldOptions) error {
+func (c *assetClient) loadRelationships(ctx context.Context, conn database.Querier, assets []*Asset, options CallOptions[AssetFieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 
 	if fo.Attachments != nil {
@@ -5176,6 +5205,8 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 					requiredColumns: []string{"entity_id"},
 				}, func(co *CallOptions[DocumentFieldOptions]) {
 					co.FieldOptions = fo.Attachments.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load asset documents: %w", err)
@@ -5249,6 +5280,8 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 					requiredColumns: []string{"entity_id"},
 				}, func(co *CallOptions[DocumentFieldOptions]) {
 					co.FieldOptions = fo.Invoices.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load asset documents: %w", err)
@@ -5321,6 +5354,8 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 					requiredColumns: []string{"entity_id"},
 				}, func(co *CallOptions[DocumentFieldOptions]) {
 					co.FieldOptions = fo.PhotoAttachments.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load asset documents: %w", err)
@@ -5461,6 +5496,8 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 					requiredColumns: []string{"id"},
 				}, func(co *CallOptions[DocumentFieldOptions]) {
 					co.FieldOptions = fo.LinkedAttachments.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load asset documents: %w", err)
@@ -5600,6 +5637,8 @@ func (c *assetClient) loadRelationships(ctx context.Context, conn database.Queri
 					requiredColumns: []string{"id"},
 				}, func(co *CallOptions[DocumentFieldOptions]) {
 					co.FieldOptions = fo.Documents.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load asset documents: %w", err)
@@ -8836,6 +8875,11 @@ func (c *categoryClient) Get(ctx context.Context, id int32, opts ...func(*CallOp
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[CategoryFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -8973,7 +9017,7 @@ func (c *categoryClient) GetMany(ctx context.Context, input *GetCategoriesInput,
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, categories, options.FieldOptions); err != nil {
+			if err := c.loadRelationships(ctx, conn, categories, options); err != nil {
 				return nil, err
 			}
 		}
@@ -9007,13 +9051,27 @@ func (fo *CategoryFieldOptions) loadsRelationships() bool {
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
 //
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
 // The fan-out is unbounded, inside a transaction and out. Outside one each
 // edge draws its own pooled connection and the parallelism is real. Inside one
 // they share the transaction's single connection — database.Conn hands every
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Querier, categories []*Category, fo *CategoryFieldOptions) error {
+func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Querier, categories []*Category, options CallOptions[CategoryFieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 
 	if fo.Products != nil {
@@ -9061,6 +9119,8 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 					requiredColumns: []string{"category_id"},
 				}, func(co *CallOptions[ProductFieldOptions]) {
 					co.FieldOptions = fo.Products.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load category products: %w", err)
@@ -9197,6 +9257,8 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 					requiredColumns: []string{"id"},
 				}, func(co *CallOptions[UserFieldOptions]) {
 					co.FieldOptions = fo.Users.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load category users: %w", err)
@@ -11625,6 +11687,11 @@ func (c *defaultOnlyRowClient) Get(ctx context.Context, id int64, opts ...func(*
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[DefaultOnlyRowFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -13873,6 +13940,11 @@ func (c *documentClient) Get(ctx context.Context, id int64, opts ...func(*CallOp
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[DocumentFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -14010,7 +14082,7 @@ func (c *documentClient) GetMany(ctx context.Context, input *GetDocumentsInput, 
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, documents, options.FieldOptions); err != nil {
+			if err := c.loadRelationships(ctx, conn, documents, options); err != nil {
 				return nil, err
 			}
 		}
@@ -14041,13 +14113,27 @@ func (fo *DocumentFieldOptions) loadsRelationships() bool {
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
 //
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
 // The fan-out is unbounded, inside a transaction and out. Outside one each
 // edge draws its own pooled connection and the parallelism is real. Inside one
 // they share the transaction's single connection — database.Conn hands every
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *documentClient) loadRelationships(ctx context.Context, conn database.Querier, documents []*Document, fo *DocumentFieldOptions) error {
+func (c *documentClient) loadRelationships(ctx context.Context, conn database.Querier, documents []*Document, options CallOptions[DocumentFieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 
 	if fo.Assets != nil {
@@ -14163,6 +14249,8 @@ func (c *documentClient) loadRelationships(ctx context.Context, conn database.Qu
 					requiredColumns: []string{"id"},
 				}, func(co *CallOptions[AssetFieldOptions]) {
 					co.FieldOptions = fo.Assets.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load document assets: %w", err)
@@ -16741,6 +16829,11 @@ func (c *keyOnlyRowClient) Get(ctx context.Context, id int64, opts ...func(*Call
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[KeyOnlyRowFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -18743,6 +18836,11 @@ func (c *orderItemClient) Get(ctx context.Context, id int64, opts ...func(*CallO
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[OrderItemFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -20988,6 +21086,11 @@ func (c *orderClient) Get(ctx context.Context, id int64, opts ...func(*CallOptio
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[OrderFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -21125,7 +21228,7 @@ func (c *orderClient) GetMany(ctx context.Context, input *GetOrdersInput, opts .
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, orders, options.FieldOptions); err != nil {
+			if err := c.loadRelationships(ctx, conn, orders, options); err != nil {
 				return nil, err
 			}
 		}
@@ -21156,13 +21259,27 @@ func (fo *OrderFieldOptions) loadsRelationships() bool {
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
 //
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
 // The fan-out is unbounded, inside a transaction and out. Outside one each
 // edge draws its own pooled connection and the parallelism is real. Inside one
 // they share the transaction's single connection — database.Conn hands every
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *orderClient) loadRelationships(ctx context.Context, conn database.Querier, orders []*Order, fo *OrderFieldOptions) error {
+func (c *orderClient) loadRelationships(ctx context.Context, conn database.Querier, orders []*Order, options CallOptions[OrderFieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 
 	if fo.OrderItems != nil {
@@ -21210,6 +21327,8 @@ func (c *orderClient) loadRelationships(ctx context.Context, conn database.Queri
 					requiredColumns: []string{"order_id"},
 				}, func(co *CallOptions[OrderItemFieldOptions]) {
 					co.FieldOptions = fo.OrderItems.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load order order_items: %w", err)
@@ -23788,6 +23907,11 @@ func (c *productTagLabelClient) Get(ctx context.Context, pk ProductTagLabelPK, o
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[ProductTagLabelFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -25783,6 +25907,11 @@ func (c *productClient) Get(ctx context.Context, id int64, opts ...func(*CallOpt
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[ProductFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -25920,7 +26049,7 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, products, options.FieldOptions); err != nil {
+			if err := c.loadRelationships(ctx, conn, products, options); err != nil {
 				return nil, err
 			}
 		}
@@ -25954,13 +26083,27 @@ func (fo *ProductFieldOptions) loadsRelationships() bool {
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
 //
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
 // The fan-out is unbounded, inside a transaction and out. Outside one each
 // edge draws its own pooled connection and the parallelism is real. Inside one
 // they share the transaction's single connection — database.Conn hands every
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *productClient) loadRelationships(ctx context.Context, conn database.Querier, products []*Product, fo *ProductFieldOptions) error {
+func (c *productClient) loadRelationships(ctx context.Context, conn database.Querier, products []*Product, options CallOptions[ProductFieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 
 	if fo.OrderItems != nil {
@@ -26008,6 +26151,8 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
 					requiredColumns: []string{"product_id"},
 				}, func(co *CallOptions[OrderItemFieldOptions]) {
 					co.FieldOptions = fo.OrderItems.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load product order_items: %w", err)
@@ -26076,6 +26221,8 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
 					requiredColumns: []string{"product_id"},
 				}, func(co *CallOptions[ProductTagLabelFieldOptions]) {
 					co.FieldOptions = fo.ProductTagLabels.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load product product_tag_labels: %w", err)
@@ -28827,6 +28974,11 @@ func (c *profileClient) Get(ctx context.Context, id int64, opts ...func(*CallOpt
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[ProfileFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -31452,6 +31604,11 @@ func (c *sluggedRowClient) Get(ctx context.Context, id int64, opts ...func(*Call
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[SluggedRowFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -33592,6 +33749,11 @@ func (c *tagClient) Get(ctx context.Context, id int32, opts ...func(*CallOptions
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[TagFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -36169,6 +36331,11 @@ func (c *userCategoryClient) Get(ctx context.Context, pk UserCategoryPK, opts ..
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[UserCategoryFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -38305,6 +38472,11 @@ func (c *userEventClient) Get(ctx context.Context, id int64, opts ...func(*CallO
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[UserEventFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -40508,6 +40680,11 @@ func (c *userClient) Get(ctx context.Context, id int64, opts ...func(*CallOption
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[UserFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -40678,7 +40855,7 @@ func (c *userClient) GetMany(ctx context.Context, input *GetUsersInput, opts ...
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, users, options.FieldOptions); err != nil {
+			if err := c.loadRelationships(ctx, conn, users, options); err != nil {
 				return nil, err
 			}
 		}
@@ -40715,13 +40892,27 @@ func (fo *UserFieldOptions) loadsRelationships() bool {
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
 //
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
 // The fan-out is unbounded, inside a transaction and out. Outside one each
 // edge draws its own pooled connection and the parallelism is real. Inside one
 // they share the transaction's single connection — database.Conn hands every
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *userClient) loadRelationships(ctx context.Context, conn database.Querier, users []*User, fo *UserFieldOptions) error {
+func (c *userClient) loadRelationships(ctx context.Context, conn database.Querier, users []*User, options CallOptions[UserFieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 
 	if fo.Orders != nil {
@@ -40769,6 +40960,8 @@ func (c *userClient) loadRelationships(ctx context.Context, conn database.Querie
 					requiredColumns: []string{"user_id"},
 				}, func(co *CallOptions[OrderFieldOptions]) {
 					co.FieldOptions = fo.Orders.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load user orders: %w", err)
@@ -40837,6 +41030,8 @@ func (c *userClient) loadRelationships(ctx context.Context, conn database.Querie
 					requiredColumns: []string{"user_id"},
 				}, func(co *CallOptions[UserEventFieldOptions]) {
 					co.FieldOptions = fo.UserEvents.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load user user_events: %w", err)
@@ -40976,6 +41171,8 @@ func (c *userClient) loadRelationships(ctx context.Context, conn database.Querie
 					requiredColumns: []string{"id"},
 				}, func(co *CallOptions[CategoryFieldOptions]) {
 					co.FieldOptions = fo.Categories.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load user categories: %w", err)
@@ -45388,6 +45585,11 @@ func (c *warehouseClient) Get(ctx context.Context, id int64, opts ...func(*CallO
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[WarehouseFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation

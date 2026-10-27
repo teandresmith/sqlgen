@@ -13,14 +13,15 @@ import (
 
 // CallOptions controls per-call behavior overrides.
 type CallOptions[FO any] struct {
-	SkipCache          bool         `json:"skip_cache"`           // bypass cache read-through and write-through
-	SkipEvents         bool         `json:"skip_events"`          // suppress event publishing for this mutation
-	SkipHooks          bool         `json:"skip_hooks"`           // bypass all hooks except panic recovery
-	SkipTenancy        bool         `json:"skip_tenancy"`         // bypass tenant auto-filter and mutation mismatch check; orthogonal to SkipHooks
-	Tenant             *uuid.UUID   `json:"tenant"`               // explicit tenant: resolve tenancy to this value (filter + auto-set) instead of the ctx resolver; wins over SkipTenancy; nil = unset
-	FieldOptions       *FO          `json:"field_options"`        // column selection and relationship loading
-	LockMode           sql.LockMode `json:"lock_mode"`            // row-level lock clause for read methods
-	AllowInTransaction bool         `json:"allow_in_transaction"` // permit Stream inside a transaction; commits the caller to issuing nothing else on that txCtx
+	SkipCache          bool          `json:"skip_cache"`           // bypass cache read-through and write-through
+	SkipEvents         bool          `json:"skip_events"`          // suppress event publishing for this mutation
+	SkipHooks          bool          `json:"skip_hooks"`           // bypass all hooks except panic recovery
+	SkipTenancy        bool          `json:"skip_tenancy"`         // bypass tenant auto-filter and mutation mismatch check; orthogonal to SkipHooks
+	Tenant             *uuid.UUID    `json:"tenant"`               // explicit tenant: resolve tenancy to this value (filter + auto-set) instead of the ctx resolver; wins over SkipTenancy; nil = unset
+	FieldOptions       *FO           `json:"field_options"`        // column selection and relationship loading
+	LockMode           sql.LockMode  `json:"lock_mode"`            // row-level lock clause for read methods
+	AllowInTransaction bool          `json:"allow_in_transaction"` // permit Stream inside a transaction; commits the caller to issuing nothing else on that txCtx
+	caller             callerOptions // the hook toggles the outermost call resolved; survives internal hops
 }
 
 // IncrementInput holds parameters for atomic column increment/decrement.
@@ -54,6 +55,11 @@ func resolveCallOptions[FO any](opts []func(*CallOptions[FO])) CallOptions[FO] {
 	if options.SkipHooks {
 		options.SkipCache = true
 		options.SkipEvents = true
+	}
+	// The first resolution records the caller's toggles; an internal call that
+	// copied these options keeps the record it inherited.
+	if !options.caller.set {
+		options.caller = callerOptions{set: true, skipHooks: options.SkipHooks, skipCache: options.SkipCache, skipEvents: options.SkipEvents}
 	}
 	// Explicit tenant wins over SkipTenancy
 	// — the call runs scoped to the explicit tenant.
@@ -153,4 +159,16 @@ func upsertDedupeKey(row []any, positions []int) (string, bool) {
 		key += fmt.Sprintf("%d:%s", len(s), s)
 	}
 	return key, true
+}
+
+// callerOptions is the SkipHooks / SkipCache / SkipEvents triple a call's
+// first resolveCallOptions recorded. An internal call that reuses its caller's
+// options and sets SkipHooks to keep the caller's hook chain from firing twice
+// carries this record through unchanged, so the relationship loads that call
+// triggers run under the caller's toggles rather than its own.
+type callerOptions struct {
+	set        bool
+	skipHooks  bool
+	skipCache  bool
+	skipEvents bool
 }

@@ -76,8 +76,8 @@ func TestCallOptionsFieldsMatchGeneratedStruct(t *testing.T) {
 	}
 }
 
-// callOptionsFieldsDeclaredIn extracts the field names of the generated
-// CallOptions[FO] struct, in declaration order.
+// callOptionsFieldsDeclaredIn extracts the exported field names of the
+// generated CallOptions[FO] struct, in declaration order.
 func callOptionsFieldsDeclaredIn(t *testing.T, path string) []string {
 	t.Helper()
 	file, err := goparser.ParseFile(token.NewFileSet(), path, nil, goparser.SkipObjectResolution)
@@ -99,9 +99,14 @@ func callOptionsFieldsDeclaredIn(t *testing.T, path string) []string {
 			if !ok {
 				continue
 			}
+			// Only the exported fields are knobs a consumer can set; an
+			// unexported field is generated-code bookkeeping the manifest
+			// rightly leaves out.
 			for _, f := range st.Fields.List {
 				for _, name := range f.Names {
-					out = append(out, name.Name)
+					if name.IsExported() {
+						out = append(out, name.Name)
+					}
 				}
 			}
 		}

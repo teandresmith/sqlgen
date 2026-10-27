@@ -561,7 +561,7 @@ func TestGetTemplate_o2mRelationshipLoading(t *testing.T) {
 			output := executeGetTemplate(t, ctx)
 
 			wantPatterns := append([]string{
-				"func (c *productClient) loadRelationships(ctx context.Context, conn database.Querier, products []*Product, fo *ProductFieldOptions) error",
+				"func (c *productClient) loadRelationships(ctx context.Context, conn database.Querier, products []*Product, options CallOptions[ProductFieldOptions]) error",
 				"g, ctx := errgroup.WithContext(ctx)",
 				"if fo.Reviews != nil {",
 				"Limit:  new(0)",

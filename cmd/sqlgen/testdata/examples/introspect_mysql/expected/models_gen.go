@@ -268,6 +268,11 @@ func (c *accountClient) Get(ctx context.Context, id uint64, opts ...func(*CallOp
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[AccountFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -405,7 +410,7 @@ func (c *accountClient) GetMany(ctx context.Context, input *GetAccountsInput, op
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, accounts, options.FieldOptions); err != nil {
+			if err := c.loadRelationships(ctx, conn, accounts, options); err != nil {
 				return nil, err
 			}
 		}
@@ -439,13 +444,27 @@ func (fo *AccountFieldOptions) loadsRelationships() bool {
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
 //
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
 // The fan-out is unbounded, inside a transaction and out. Outside one each
 // edge draws its own pooled connection and the parallelism is real. Inside one
 // they share the transaction's single connection — database.Conn hands every
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *accountClient) loadRelationships(ctx context.Context, conn database.Querier, accounts []*Account, fo *AccountFieldOptions) error {
+func (c *accountClient) loadRelationships(ctx context.Context, conn database.Querier, accounts []*Account, options CallOptions[AccountFieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 
 	if fo.Projects != nil {
@@ -493,6 +512,8 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 					requiredColumns: []string{"account_id"},
 				}, func(co *CallOptions[ProjectFieldOptions]) {
 					co.FieldOptions = fo.Projects.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load account projects: %w", err)
@@ -561,6 +582,8 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 					requiredColumns: []string{"assignee_id"},
 				}, func(co *CallOptions[TaskFieldOptions]) {
 					co.FieldOptions = fo.Tasks.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load account tasks: %w", err)
@@ -2867,6 +2890,11 @@ func (c *projectClient) Get(ctx context.Context, id uint64, opts ...func(*CallOp
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[ProjectFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -3004,7 +3032,7 @@ func (c *projectClient) GetMany(ctx context.Context, input *GetProjectsInput, op
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, projects, options.FieldOptions); err != nil {
+			if err := c.loadRelationships(ctx, conn, projects, options); err != nil {
 				return nil, err
 			}
 		}
@@ -3035,13 +3063,27 @@ func (fo *ProjectFieldOptions) loadsRelationships() bool {
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
 //
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
 // The fan-out is unbounded, inside a transaction and out. Outside one each
 // edge draws its own pooled connection and the parallelism is real. Inside one
 // they share the transaction's single connection — database.Conn hands every
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *projectClient) loadRelationships(ctx context.Context, conn database.Querier, projects []*Project, fo *ProjectFieldOptions) error {
+func (c *projectClient) loadRelationships(ctx context.Context, conn database.Querier, projects []*Project, options CallOptions[ProjectFieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 
 	if fo.Tasks != nil {
@@ -3089,6 +3131,8 @@ func (c *projectClient) loadRelationships(ctx context.Context, conn database.Que
 					requiredColumns: []string{"project_id"},
 				}, func(co *CallOptions[TaskFieldOptions]) {
 					co.FieldOptions = fo.Tasks.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load project tasks: %w", err)
@@ -5220,6 +5264,11 @@ func (c *taskLabelClient) Get(ctx context.Context, id uint64, opts ...func(*Call
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[TaskLabelFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -7306,6 +7355,11 @@ func (c *taskClient) Get(ctx context.Context, id uint64, opts ...func(*CallOptio
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[TaskFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -7443,7 +7497,7 @@ func (c *taskClient) GetMany(ctx context.Context, input *GetTasksInput, opts ...
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, tasks, options.FieldOptions); err != nil {
+			if err := c.loadRelationships(ctx, conn, tasks, options); err != nil {
 				return nil, err
 			}
 		}
@@ -7474,13 +7528,27 @@ func (fo *TaskFieldOptions) loadsRelationships() bool {
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
 //
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
 // The fan-out is unbounded, inside a transaction and out. Outside one each
 // edge draws its own pooled connection and the parallelism is real. Inside one
 // they share the transaction's single connection — database.Conn hands every
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *taskClient) loadRelationships(ctx context.Context, conn database.Querier, tasks []*Task, fo *TaskFieldOptions) error {
+func (c *taskClient) loadRelationships(ctx context.Context, conn database.Querier, tasks []*Task, options CallOptions[TaskFieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 
 	if fo.TaskLabels != nil {
@@ -7528,6 +7596,8 @@ func (c *taskClient) loadRelationships(ctx context.Context, conn database.Querie
 					requiredColumns: []string{"task_id"},
 				}, func(co *CallOptions[TaskLabelFieldOptions]) {
 					co.FieldOptions = fo.TaskLabels.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 				})
 				if err != nil {
 					return fmt.Errorf("load task task_labels: %w", err)

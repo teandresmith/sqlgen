@@ -81,6 +81,11 @@ func (c *{{ .StructName | toCamelCase }}Client) Get(ctx context.Context, {{ if .
 		// caller-supplied options captured at Get() time.
 		effectiveOpts := options
 		if qOpts, ok := q.CallOptions.(CallOptions[{{ .StructName }}FieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
 			effectiveOpts = qOpts
 		}
 		// Internal GetMany call with SkipHooks to prevent nested hook invocation
@@ -338,7 +343,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
 		// serialized by the transaction's connection reservation inside one
 		if fieldOptions != nil {
-			if err := c.loadRelationships(ctx, conn, {{ $resultVar }}, options.FieldOptions{{ if .Tenancy }}, options.SkipTenancy{{ end }}{{ if .ExplicitTenantGoType }}, options.Tenant{{ end }}); err != nil {
+			if err := c.loadRelationships(ctx, conn, {{ $resultVar }}, options); err != nil {
 				return nil, err
 			}
 		}
@@ -379,14 +384,25 @@ func (fo *{{ .StructName }}FieldOptions) loadsRelationships() bool {
 // loadRelationships fetches every selected O2M / M2M member through the
 // target's own client, so each child read carries that table's own filters,
 // soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache{{ if .Tenancy }}, SkipEvents{{ if .ExplicitTenantGoType }}, SkipTenancy and Tenant{{ else }} and SkipTenancy{{ end }}{{ else }} and SkipEvents{{ end }}. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
 {{- if .ExplicitTenantGoType }}
 //
-// Both tenancy call options travel with it for that reason.
-// SkipTenancy has always been forwarded; CallOptions.Tenant is forwarded too,
-// because a parent scoped to an explicit tenant whose children fell back to the
-// ctx resolver read the two halves of one row set under two different tenants —
-// and on the explicit-tenant bootstrap path, where ctx carries no tenant at all, the child
-// read failed with tenancy.ErrMissing while the parent succeeded.
+// A child that fell back to the ctx resolver instead of the parent's explicit
+// Tenant would read the two halves of one row set under two tenants, and on the
+// explicit-tenant bootstrap path, where ctx carries no tenant at all, fail with
+// tenancy.ErrMissing while the parent succeeded.
 {{- end }}
 //
 // The fan-out is unbounded, inside a transaction and out. Outside one each
@@ -395,7 +411,8 @@ func (fo *{{ .StructName }}FieldOptions) loadsRelationships() bool {
 // nested read the same *database.Tx — and the Tx's connection reservation
 // serializes them, so the statement count is identical either way and only the
 // concurrency differs. The loader needs no transaction-aware bound of its own.
-func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Context, conn database.Querier, {{ $resultVar }} []*{{ .StructName }}, fo *{{ .StructName }}FieldOptions{{ if .Tenancy }}, skipTenancy bool{{ end }}{{ if .ExplicitTenantGoType }}, tenant *{{ .ExplicitTenantGoType }}{{ end }}) error {
+func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Context, conn database.Querier, {{ $resultVar }} []*{{ .StructName }}, options CallOptions[{{ .StructName }}FieldOptions]) error {
+	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
 {{- range .O2MRelationships }}
 {{- $relVar := printf "related%s" .FieldName }}
@@ -481,11 +498,13 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 					requiredColumns: []string{ {{- printf "%q" .FKColumn -}} },
 				}, func(co *CallOptions[{{ .TargetStructName }}FieldOptions]) {
 					co.FieldOptions = fo.{{ .FieldName }}.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 {{- if $.Tenancy }}
-					co.SkipTenancy = skipTenancy
+					co.SkipTenancy = options.SkipTenancy
 {{- end }}
 {{- if $.ExplicitTenantGoType }}
-					co.Tenant = tenant
+					co.Tenant = options.Tenant
 {{- end }}
 				})
 				if err != nil {
@@ -662,11 +681,13 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 					requiredColumns: []string{ {{- printf "%q" .TargetPKColumn -}} },
 				}, func(co *CallOptions[{{ .TargetStructName }}FieldOptions]) {
 					co.FieldOptions = fo.{{ .FieldName }}.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
 {{- if $.Tenancy }}
-					co.SkipTenancy = skipTenancy
+					co.SkipTenancy = options.SkipTenancy
 {{- end }}
 {{- if $.ExplicitTenantGoType }}
-					co.Tenant = tenant
+					co.Tenant = options.Tenant
 {{- end }}
 				})
 				if err != nil {
