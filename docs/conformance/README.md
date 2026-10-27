@@ -17,7 +17,8 @@ in [`docs/design/CONFORMANCE.md`](../design/CONFORMANCE.md) §3 and §5. `make r
 | [`cli/api-http.md`](cli/api-http.md) | CLI: API generation, REST, HTTP headers and gRPC (§26.8, §26.11, §26.13); no package of its own | unit, golden, example |
 | [`cli/api-schema.md`](cli/api-schema.md) | CLI: API generation, GraphQL schema (§26–§26.4.1); no package of its own | unit, golden, example |
 | [`cli/commands.md`](cli/commands.md) | CLI: `cmd/sqlgen`, `cli`, `wrapper` | unit, integration, golden |
-| [`cli/manifest.md`](cli/manifest.md) | CLI: `cmd/sqlgen/manifest`, `mcp` | unit, integration |
+| [`cli/manifest.md`](cli/manifest.md) | CLI: `cmd/sqlgen/manifest` (§30) | unit, golden |
+| [`cli/mcp.md`](cli/mcp.md) | CLI: `cmd/sqlgen/mcp`, `mcp/integration` (§31) | unit, integration |
 | [`client.md`](client.md) | The generated client | conformance, example |
 
 Every directory holding `_test.go` files is listed in one file's `<!-- packages: … -->` line, or
@@ -371,12 +372,12 @@ another file also cites is still owned once.
 | §30.6 Runtime-Embedded Manifest | runtime.md |
 | §30.7 Extended Schema Metadata | cli/manifest.md |
 | §30.8 CLI Tooling | cli/manifest.md |
-| §31 MCP Server | cli/manifest.md |
+| §31 MCP Server | cli/mcp.md |
 | §31.1 Overview | informative |
-| §31.2 Configuration | cli/manifest.md |
-| §31.3 Tool, Resource & Prompt Surface | cli/manifest.md |
-| §31.4 Protocol | cli/manifest.md |
-| §31.5 Versioning Policy | cli/manifest.md |
+| §31.2 Configuration | cli/mcp.md |
+| §31.3 Tool, Resource & Prompt Surface | cli/mcp.md |
+| §31.4 Protocol | cli/mcp.md |
+| §31.5 Versioning Policy | cli/mcp.md |
 | §32 Column Access Control | cli/gen.md |
 | §32.1 Overview | informative |
 | §32.2 Roles | cli/gen.md |
