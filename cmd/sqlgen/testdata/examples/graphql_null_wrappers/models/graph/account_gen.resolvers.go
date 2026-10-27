@@ -10,7 +10,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql_null_wrappers/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql_null_wrappers/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql_null_wrappers/models/graph/sqlgenresolver"
 )
 
 // CreateAccount is the resolver for the createAccount field.
@@ -32,159 +31,12 @@ func (r *mutationResolver) CreateAccounts(ctx context.Context, inputs []*gqlmode
 
 // UpdateAccount is the resolver for the updateAccount field.
 func (r *mutationResolver) UpdateAccount(ctx context.Context, id int64, input gqlmodel.UpdateAccountInput) (*models.Account, error) {
-	if input.ExternalRef != nil && input.ExternalRefInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"external_ref\" cannot be both set and incremented in one mutation")
-	}
-	if input.ExternalRefInc != nil && input.ExternalRefDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"external_ref\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.SmallCount != nil && input.SmallCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"small_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.SmallCountInc != nil && input.SmallCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"small_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.MidCount != nil && input.MidCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"mid_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.MidCountInc != nil && input.MidCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"mid_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.BigCount != nil && input.BigCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"big_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.BigCountInc != nil && input.BigCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"big_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Ratio != nil && input.RatioInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"ratio\" cannot be both set and incremented in one mutation")
-	}
-	if input.RatioInc != nil && input.RatioDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"ratio\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Balance != nil && input.BalanceInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"balance\" cannot be both set and incremented in one mutation")
-	}
-	if input.BalanceInc != nil && input.BalanceDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"balance\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateAccountInput(input)
-	hasSet := hasUpdateAccountSetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.AccountIncrementColumn]
-	if input.ExternalRefInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.AccountIncrementColumn]{
-			Column: models.AccountIncrementExternalRef,
-			Amount: int(*input.ExternalRefInc),
-		})
-	}
-	if input.ExternalRefDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.AccountIncrementColumn]{
-			Column: models.AccountIncrementExternalRef,
-			Amount: -int(*input.ExternalRefDec),
-		})
-	}
-	if input.SmallCountInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.AccountIncrementColumn]{
-			Column: models.AccountIncrementSmallCount,
-			Amount: int(*input.SmallCountInc),
-		})
-	}
-	if input.SmallCountDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.AccountIncrementColumn]{
-			Column: models.AccountIncrementSmallCount,
-			Amount: -int(*input.SmallCountDec),
-		})
-	}
-	if input.MidCountInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.AccountIncrementColumn]{
-			Column: models.AccountIncrementMidCount,
-			Amount: int(*input.MidCountInc),
-		})
-	}
-	if input.MidCountDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.AccountIncrementColumn]{
-			Column: models.AccountIncrementMidCount,
-			Amount: -int(*input.MidCountDec),
-		})
-	}
-	if input.BigCountInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.AccountIncrementColumn]{
-			Column: models.AccountIncrementBigCount,
-			Amount: int(*input.BigCountInc),
-		})
-	}
-	if input.BigCountDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.AccountIncrementColumn]{
-			Column: models.AccountIncrementBigCount,
-			Amount: -int(*input.BigCountDec),
-		})
-	}
-	if input.RatioInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.AccountIncrementColumn]{
-			Column: models.AccountIncrementRatio,
-			Amount: int(*input.RatioInc),
-		})
-	}
-	if input.RatioDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.AccountIncrementColumn]{
-			Column: models.AccountIncrementRatio,
-			Amount: -int(*input.RatioDec),
-		})
-	}
-	if input.BalanceInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.AccountIncrementColumn]{
-			Column: models.AccountIncrementBalance,
-			Amount: int(*input.BalanceInc),
-		})
-	}
-	if input.BalanceDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.AccountIncrementColumn]{
-			Column: models.AccountIncrementBalance,
-			Amount: -int(*input.BalanceDec),
-		})
-	}
-	return r.M.UpdateAccount(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateAccount(ctx, id, translateUpdateAccountRequest(input))
 }
 
 // UpdateAccounts is the resolver for the updateAccounts field.
 func (r *mutationResolver) UpdateAccounts(ctx context.Context, filter gqlmodel.AccountFilter, input gqlmodel.UpdateAccountInput) ([]*models.Account, error) {
-	if input.ExternalRef != nil && input.ExternalRefInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"external_ref\" cannot be both set and incremented in one mutation")
-	}
-	if input.ExternalRefInc != nil && input.ExternalRefDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"external_ref\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.SmallCount != nil && input.SmallCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"small_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.SmallCountInc != nil && input.SmallCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"small_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.MidCount != nil && input.MidCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"mid_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.MidCountInc != nil && input.MidCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"mid_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.BigCount != nil && input.BigCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"big_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.BigCountInc != nil && input.BigCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"big_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Ratio != nil && input.RatioInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"ratio\" cannot be both set and incremented in one mutation")
-	}
-	if input.RatioInc != nil && input.RatioDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"ratio\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Balance != nil && input.BalanceInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"balance\" cannot be both set and incremented in one mutation")
-	}
-	if input.BalanceInc != nil && input.BalanceDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update accounts: column \"balance\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateAccounts(ctx, translateAccountFilter(&filter), translateUpdateAccountInput(input))
+	return r.M.UpdateAccounts(ctx, translateAccountFilter(&filter), translateUpdateAccountRequest(input))
 }
 
 // UpsertAccount is the resolver for the upsertAccount field.

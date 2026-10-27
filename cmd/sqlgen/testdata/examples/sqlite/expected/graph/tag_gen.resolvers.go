@@ -34,14 +34,12 @@ func (r *mutationResolver) CreateTags(ctx context.Context, inputs []*gqlmodel.Cr
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateTag(ctx context.Context, id int, input gqlmodel.UpdateTagInput) (*models.Tag, error) {
-	setIn := translateUpdateTagInput(input)
-	hasSet := hasUpdateTagSetFields(input)
-	return r.M.UpdateTag(ctx, id, setIn, hasSet)
+	return r.M.UpdateTag(ctx, id, translateUpdateTagRequest(input))
 }
 
 // UpdateTags is the resolver for the updateTags field.
 func (r *mutationResolver) UpdateTags(ctx context.Context, filter gqlmodel.TagFilter, input gqlmodel.UpdateTagInput) ([]*models.Tag, error) {
-	return r.M.UpdateTags(ctx, translateTagFilter(&filter), translateUpdateTagInput(input))
+	return r.M.UpdateTags(ctx, translateTagFilter(&filter), translateUpdateTagRequest(input))
 }
 
 // UpsertTag is the resolver for the upsertTag field.

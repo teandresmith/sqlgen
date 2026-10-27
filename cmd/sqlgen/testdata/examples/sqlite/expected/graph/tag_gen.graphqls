@@ -48,7 +48,7 @@ input TagSort {
 }
 input CreateTagInput {
   name: String!
-  isDeleted: Boolean!
+  isDeleted: Boolean
 }
 input UpdateTagInput {
   name: String

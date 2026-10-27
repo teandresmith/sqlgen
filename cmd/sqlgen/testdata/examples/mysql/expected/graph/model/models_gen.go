@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/segmentio/ksuid"
 	"github.com/shopspring/decimal"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models"
@@ -31,8 +32,8 @@ type ArticleSort struct {
 }
 
 type AssetAttachmentsCreateInput struct {
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
+	Name      string     `json:"name"`
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
 }
 
 type AssetAttachmentsCreateNested struct {
@@ -78,8 +79,8 @@ type AssetFilter struct {
 }
 
 type AssetInvoicesCreateInput struct {
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
+	Name      string     `json:"name"`
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
 }
 
 type AssetInvoicesCreateNested struct {
@@ -91,8 +92,8 @@ type AssetInvoicesUpdateNested struct {
 }
 
 type AssetPrimaryDocumentCreateInput struct {
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
+	Name      string     `json:"name"`
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
 }
 
 type AssetPrimaryDocumentCreateNested struct {
@@ -126,10 +127,10 @@ type CategoryProductsCreateInput struct {
 	Title      string     `json:"title"`
 	Price      float64    `json:"price"`
 	WeightKg   *float64   `json:"weightKg,omitempty"`
-	InStock    bool       `json:"inStock"`
+	InStock    *bool      `json:"inStock,omitempty"`
 	SKU        string     `json:"sku"`
 	Attributes types.JSON `json:"attributes"`
-	CreatedAt  time.Time  `json:"createdAt"`
+	CreatedAt  *time.Time `json:"createdAt,omitempty"`
 }
 
 type CategoryProductsCreateNested struct {
@@ -167,7 +168,7 @@ type CreateArticleInput struct {
 	Title     string     `json:"title"`
 	Body      *string    `json:"body,omitempty"`
 	Author    string     `json:"author"`
-	CreatedAt time.Time  `json:"createdAt"`
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
 	DeletedAt *time.Time `json:"deletedAt,omitempty"`
 }
 
@@ -177,8 +178,8 @@ type CreateAssetDocumentLinkInput struct {
 }
 
 type CreateAssetInput struct {
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
+	Name      string     `json:"name"`
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
 }
 
 type CreateAssetWithRelatedInput struct {
@@ -200,16 +201,16 @@ type CreateCategoryWithRelatedInput struct {
 }
 
 type CreateDefaultOnlyRowInput struct {
-	Label  string `json:"label"`
-	Hits   int    `json:"hits"`
-	Active bool   `json:"active"`
+	Label  *string `json:"label,omitempty"`
+	Hits   *int    `json:"hits,omitempty"`
+	Active *bool   `json:"active,omitempty"`
 }
 
 type CreateDocumentInput struct {
 	EntityID   int                            `json:"entityID"`
 	EntityType models.DocumentsEntityTypeEnum `json:"entityType"`
 	Name       string                         `json:"name"`
-	CreatedAt  time.Time                      `json:"createdAt"`
+	CreatedAt  *time.Time                     `json:"createdAt,omitempty"`
 }
 
 type CreateDocumentWithRelatedInput struct {
@@ -218,11 +219,11 @@ type CreateDocumentWithRelatedInput struct {
 }
 
 type CreateOrderInput struct {
-	UserID    int                     `json:"userID"`
-	Status    models.OrdersStatusEnum `json:"status"`
-	Total     float64                 `json:"total"`
-	Notes     *string                 `json:"notes,omitempty"`
-	OrderedAt time.Time               `json:"orderedAt"`
+	UserID    int                      `json:"userID"`
+	Status    *models.OrdersStatusEnum `json:"status,omitempty"`
+	Total     float64                  `json:"total"`
+	Notes     *string                  `json:"notes,omitempty"`
+	OrderedAt *time.Time               `json:"orderedAt,omitempty"`
 }
 
 type CreateOrderItemInput struct {
@@ -242,10 +243,10 @@ type CreateProductInput struct {
 	Title      string     `json:"title"`
 	Price      float64    `json:"price"`
 	WeightKg   *float64   `json:"weightKg,omitempty"`
-	InStock    bool       `json:"inStock"`
+	InStock    *bool      `json:"inStock,omitempty"`
 	SKU        string     `json:"sku"`
 	Attributes types.JSON `json:"attributes"`
-	CreatedAt  time.Time  `json:"createdAt"`
+	CreatedAt  *time.Time `json:"createdAt,omitempty"`
 }
 
 type CreateProductTagLabelInput struct {
@@ -264,17 +265,17 @@ type CreateProfileInput struct {
 	UserID       int        `json:"userID"`
 	Website      *string    `json:"website,omitempty"`
 	GithubHandle *string    `json:"githubHandle,omitempty"`
-	Verified     bool       `json:"verified"`
+	Verified     *bool      `json:"verified,omitempty"`
 	Preferences  types.JSON `json:"preferences,omitempty"`
 }
 
 type CreateSluggedRowInput struct {
-	Name string `json:"name"`
+	Name *string `json:"name,omitempty"`
 }
 
 type CreateTagInput struct {
 	Name      string `json:"name"`
-	IsDeleted bool   `json:"isDeleted"`
+	IsDeleted *bool  `json:"isDeleted,omitempty"`
 }
 
 type CreateUserCategoryInput struct {
@@ -291,13 +292,13 @@ type CreateUserEventInput struct {
 type CreateUserInput struct {
 	Name        string                            `json:"name"`
 	Email       string                            `json:"email"`
-	Role        models.UsersRoleEnum              `json:"role"`
-	Permissions []models.UsersPermissionsSetValue `json:"permissions"`
+	Role        *models.UsersRoleEnum             `json:"role,omitempty"`
+	Permissions []models.UsersPermissionsSetValue `json:"permissions,omitempty"`
 	Age         *int                              `json:"age,omitempty"`
 	Bio         *string                           `json:"bio,omitempty"`
-	IsActive    bool                              `json:"isActive"`
+	IsActive    *bool                             `json:"isActive,omitempty"`
 	Balance     float64                           `json:"balance"`
-	LoginCount  int                               `json:"loginCount"`
+	LoginCount  *int                              `json:"loginCount,omitempty"`
 	Avatar      []byte                            `json:"avatar,omitempty"`
 	Metadata    types.JSON                        `json:"metadata,omitempty"`
 	Rating      *float64                          `json:"rating,omitempty"`
@@ -307,8 +308,8 @@ type CreateUserInput struct {
 	BigUnsigned *int                              `json:"bigUnsigned,omitempty"`
 	BirthDate   *time.Time                        `json:"birthDate,omitempty"`
 	LastLogin   *time.Time                        `json:"lastLogin,omitempty"`
-	CreatedAt   time.Time                         `json:"createdAt"`
-	UpdatedAt   time.Time                         `json:"updatedAt"`
+	CreatedAt   *time.Time                        `json:"createdAt,omitempty"`
+	UpdatedAt   *time.Time                        `json:"updatedAt,omitempty"`
 }
 
 type CreateUserWithRelatedInput struct {
@@ -324,7 +325,7 @@ type CreateWarehouseInput struct {
 	Price         decimal.Decimal      `json:"price"`
 	NullablePrice *decimal.NullDecimal `json:"nullablePrice,omitempty"`
 	InspectedAt   *types.NullDateTime  `json:"inspectedAt,omitempty"`
-	CreatedAt     types.DateTime       `json:"createdAt"`
+	CreatedAt     *types.DateTime      `json:"createdAt,omitempty"`
 }
 
 type DecimalComparator struct {
@@ -683,11 +684,11 @@ type TimeRange struct {
 }
 
 type UpdateArticleInput struct {
-	Title     *string    `json:"title,omitempty"`
-	Body      *string    `json:"body,omitempty"`
-	Author    *string    `json:"author,omitempty"`
-	CreatedAt *time.Time `json:"createdAt,omitempty"`
-	DeletedAt *time.Time `json:"deletedAt,omitempty"`
+	Title     *string                       `json:"title,omitempty"`
+	Body      graphql.Omittable[*string]    `json:"body,omitempty"`
+	Author    *string                       `json:"author,omitempty"`
+	CreatedAt *time.Time                    `json:"createdAt,omitempty"`
+	DeletedAt graphql.Omittable[*time.Time] `json:"deletedAt,omitempty"`
 }
 
 type UpdateAssetInput struct {
@@ -704,8 +705,8 @@ type UpdateAssetWithRelatedInput struct {
 }
 
 type UpdateCategoryInput struct {
-	Name        *string `json:"name,omitempty"`
-	Description *string `json:"description,omitempty"`
+	Name        *string                    `json:"name,omitempty"`
+	Description graphql.Omittable[*string] `json:"description,omitempty"`
 }
 
 type UpdateCategoryWithRelatedInput struct {
@@ -734,13 +735,13 @@ type UpdateDocumentWithRelatedInput struct {
 }
 
 type UpdateOrderInput struct {
-	UserID    *int                     `json:"userID,omitempty"`
-	Status    *models.OrdersStatusEnum `json:"status,omitempty"`
-	Total     *float64                 `json:"total,omitempty"`
-	TotalInc  *int                     `json:"total_inc,omitempty"`
-	TotalDec  *int                     `json:"total_dec,omitempty"`
-	Notes     *string                  `json:"notes,omitempty"`
-	OrderedAt *time.Time               `json:"orderedAt,omitempty"`
+	UserID    *int                       `json:"userID,omitempty"`
+	Status    *models.OrdersStatusEnum   `json:"status,omitempty"`
+	Total     *float64                   `json:"total,omitempty"`
+	TotalInc  *int                       `json:"total_inc,omitempty"`
+	TotalDec  *int                       `json:"total_dec,omitempty"`
+	Notes     graphql.Omittable[*string] `json:"notes,omitempty"`
+	OrderedAt *time.Time                 `json:"orderedAt,omitempty"`
 }
 
 type UpdateOrderItemInput struct {
@@ -760,22 +761,22 @@ type UpdateOrderWithRelatedInput struct {
 }
 
 type UpdateProductInput struct {
-	CategoryID  *int       `json:"categoryID,omitempty"`
-	Title       *string    `json:"title,omitempty"`
-	Price       *float64   `json:"price,omitempty"`
-	PriceInc    *int       `json:"price_inc,omitempty"`
-	PriceDec    *int       `json:"price_dec,omitempty"`
-	WeightKg    *float64   `json:"weightKg,omitempty"`
-	WeightKgInc *int       `json:"weightKg_inc,omitempty"`
-	WeightKgDec *int       `json:"weightKg_dec,omitempty"`
-	InStock     *bool      `json:"inStock,omitempty"`
-	SKU         *string    `json:"sku,omitempty"`
-	Attributes  types.JSON `json:"attributes,omitempty"`
-	CreatedAt   *time.Time `json:"createdAt,omitempty"`
+	CategoryID  *int                        `json:"categoryID,omitempty"`
+	Title       *string                     `json:"title,omitempty"`
+	Price       *float64                    `json:"price,omitempty"`
+	PriceInc    *int                        `json:"price_inc,omitempty"`
+	PriceDec    *int                        `json:"price_dec,omitempty"`
+	WeightKg    graphql.Omittable[*float64] `json:"weightKg,omitempty"`
+	WeightKgInc *int                        `json:"weightKg_inc,omitempty"`
+	WeightKgDec *int                        `json:"weightKg_dec,omitempty"`
+	InStock     *bool                       `json:"inStock,omitempty"`
+	SKU         *string                     `json:"sku,omitempty"`
+	Attributes  types.JSON                  `json:"attributes,omitempty"`
+	CreatedAt   *time.Time                  `json:"createdAt,omitempty"`
 }
 
 type UpdateProductTagLabelInput struct {
-	Description *string `json:"description,omitempty"`
+	Description graphql.Omittable[*string] `json:"description,omitempty"`
 }
 
 type UpdateProductWithRelatedInput struct {
@@ -784,11 +785,11 @@ type UpdateProductWithRelatedInput struct {
 }
 
 type UpdateProfileInput struct {
-	UserID       *int       `json:"userID,omitempty"`
-	Website      *string    `json:"website,omitempty"`
-	GithubHandle *string    `json:"githubHandle,omitempty"`
-	Verified     *bool      `json:"verified,omitempty"`
-	Preferences  types.JSON `json:"preferences,omitempty"`
+	UserID       *int                          `json:"userID,omitempty"`
+	Website      graphql.Omittable[*string]    `json:"website,omitempty"`
+	GithubHandle graphql.Omittable[*string]    `json:"githubHandle,omitempty"`
+	Verified     *bool                         `json:"verified,omitempty"`
+	Preferences  graphql.Omittable[types.JSON] `json:"preferences,omitempty"`
 }
 
 type UpdateSluggedRowInput struct {
@@ -801,14 +802,14 @@ type UpdateTagInput struct {
 }
 
 type UpdateUserCategoryInput struct {
-	Slot    *int `json:"slot,omitempty"`
-	SlotInc *int `json:"slot_inc,omitempty"`
-	SlotDec *int `json:"slot_dec,omitempty"`
+	Slot    graphql.Omittable[*int] `json:"slot,omitempty"`
+	SlotInc *int                    `json:"slot_inc,omitempty"`
+	SlotDec *int                    `json:"slot_dec,omitempty"`
 }
 
 type UpdateUserEventInput struct {
-	UserID *int    `json:"userID,omitempty"`
-	Action *string `json:"action,omitempty"`
+	UserID graphql.Omittable[*int] `json:"userID,omitempty"`
+	Action *string                 `json:"action,omitempty"`
 }
 
 type UpdateUserInput struct {
@@ -816,10 +817,10 @@ type UpdateUserInput struct {
 	Email          *string                           `json:"email,omitempty"`
 	Role           *models.UsersRoleEnum             `json:"role,omitempty"`
 	Permissions    []models.UsersPermissionsSetValue `json:"permissions,omitempty"`
-	Age            *int                              `json:"age,omitempty"`
+	Age            graphql.Omittable[*int]           `json:"age,omitempty"`
 	AgeInc         *int                              `json:"age_inc,omitempty"`
 	AgeDec         *int                              `json:"age_dec,omitempty"`
-	Bio            *string                           `json:"bio,omitempty"`
+	Bio            graphql.Omittable[*string]        `json:"bio,omitempty"`
 	IsActive       *bool                             `json:"isActive,omitempty"`
 	Balance        *float64                          `json:"balance,omitempty"`
 	BalanceInc     *int                              `json:"balance_inc,omitempty"`
@@ -827,25 +828,25 @@ type UpdateUserInput struct {
 	LoginCount     *int                              `json:"loginCount,omitempty"`
 	LoginCountInc  *int                              `json:"loginCount_inc,omitempty"`
 	LoginCountDec  *int                              `json:"loginCount_dec,omitempty"`
-	Avatar         []byte                            `json:"avatar,omitempty"`
-	Metadata       types.JSON                        `json:"metadata,omitempty"`
-	Rating         *float64                          `json:"rating,omitempty"`
+	Avatar         graphql.Omittable[[]byte]         `json:"avatar,omitempty"`
+	Metadata       graphql.Omittable[types.JSON]     `json:"metadata,omitempty"`
+	Rating         graphql.Omittable[*float64]       `json:"rating,omitempty"`
 	RatingInc      *int                              `json:"rating_inc,omitempty"`
 	RatingDec      *int                              `json:"rating_dec,omitempty"`
-	Score          *float64                          `json:"score,omitempty"`
+	Score          graphql.Omittable[*float64]       `json:"score,omitempty"`
 	ScoreInc       *int                              `json:"score_inc,omitempty"`
 	ScoreDec       *int                              `json:"score_dec,omitempty"`
-	TinyFlag       *int                              `json:"tinyFlag,omitempty"`
+	TinyFlag       graphql.Omittable[*int]           `json:"tinyFlag,omitempty"`
 	TinyFlagInc    *int                              `json:"tinyFlag_inc,omitempty"`
 	TinyFlagDec    *int                              `json:"tinyFlag_dec,omitempty"`
-	MediumVal      *int                              `json:"mediumVal,omitempty"`
+	MediumVal      graphql.Omittable[*int]           `json:"mediumVal,omitempty"`
 	MediumValInc   *int                              `json:"mediumVal_inc,omitempty"`
 	MediumValDec   *int                              `json:"mediumVal_dec,omitempty"`
-	BigUnsigned    *int                              `json:"bigUnsigned,omitempty"`
+	BigUnsigned    graphql.Omittable[*int]           `json:"bigUnsigned,omitempty"`
 	BigUnsignedInc *int                              `json:"bigUnsigned_inc,omitempty"`
 	BigUnsignedDec *int                              `json:"bigUnsigned_dec,omitempty"`
-	BirthDate      *time.Time                        `json:"birthDate,omitempty"`
-	LastLogin      *time.Time                        `json:"lastLogin,omitempty"`
+	BirthDate      graphql.Omittable[*time.Time]     `json:"birthDate,omitempty"`
+	LastLogin      graphql.Omittable[*time.Time]     `json:"lastLogin,omitempty"`
 	CreatedAt      *time.Time                        `json:"createdAt,omitempty"`
 	UpdatedAt      *time.Time                        `json:"updatedAt,omitempty"`
 }
@@ -858,16 +859,16 @@ type UpdateUserWithRelatedInput struct {
 }
 
 type UpdateWarehouseInput struct {
-	ExternalID       *ksuid.KSUID         `json:"externalID,omitempty"`
-	Name             *string              `json:"name,omitempty"`
-	Price            *decimal.Decimal     `json:"price,omitempty"`
-	PriceInc         *int                 `json:"price_inc,omitempty"`
-	PriceDec         *int                 `json:"price_dec,omitempty"`
-	NullablePrice    *decimal.NullDecimal `json:"nullablePrice,omitempty"`
-	NullablePriceInc *int                 `json:"nullablePrice_inc,omitempty"`
-	NullablePriceDec *int                 `json:"nullablePrice_dec,omitempty"`
-	InspectedAt      *types.NullDateTime  `json:"inspectedAt,omitempty"`
-	CreatedAt        *types.DateTime      `json:"createdAt,omitempty"`
+	ExternalID       *ksuid.KSUID                            `json:"externalID,omitempty"`
+	Name             *string                                 `json:"name,omitempty"`
+	Price            *decimal.Decimal                        `json:"price,omitempty"`
+	PriceInc         *int                                    `json:"price_inc,omitempty"`
+	PriceDec         *int                                    `json:"price_dec,omitempty"`
+	NullablePrice    graphql.Omittable[*decimal.NullDecimal] `json:"nullablePrice,omitempty"`
+	NullablePriceInc *int                                    `json:"nullablePrice_inc,omitempty"`
+	NullablePriceDec *int                                    `json:"nullablePrice_dec,omitempty"`
+	InspectedAt      graphql.Omittable[*types.NullDateTime]  `json:"inspectedAt,omitempty"`
+	CreatedAt        *types.DateTime                         `json:"createdAt,omitempty"`
 }
 
 type UpsertAssetWithRelatedInput struct {
@@ -957,10 +958,10 @@ type UserFilter struct {
 }
 
 type UserOrdersCreateInput struct {
-	Status    models.OrdersStatusEnum `json:"status"`
-	Total     float64                 `json:"total"`
-	Notes     *string                 `json:"notes,omitempty"`
-	OrderedAt time.Time               `json:"orderedAt"`
+	Status    *models.OrdersStatusEnum `json:"status,omitempty"`
+	Total     float64                  `json:"total"`
+	Notes     *string                  `json:"notes,omitempty"`
+	OrderedAt *time.Time               `json:"orderedAt,omitempty"`
 }
 
 type UserOrdersCreateNested struct {
@@ -974,7 +975,7 @@ type UserOrdersUpdateNested struct {
 type UserProfileCreateInput struct {
 	Website      *string    `json:"website,omitempty"`
 	GithubHandle *string    `json:"githubHandle,omitempty"`
-	Verified     bool       `json:"verified"`
+	Verified     *bool      `json:"verified,omitempty"`
 	Preferences  types.JSON `json:"preferences,omitempty"`
 }
 

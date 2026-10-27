@@ -35,14 +35,12 @@ func (r *mutationResolver) CreateWorkspaceSettings(ctx context.Context, inputs [
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateWorkspaceSetting(ctx context.Context, workspaceID uuid1.UUID, key string, input gqlmodel.UpdateWorkspaceSettingInput) (*models.WorkspaceSetting, error) {
-	setIn := translateUpdateWorkspaceSettingInput(input)
-	hasSet := hasUpdateWorkspaceSettingSetFields(input)
-	return r.M.UpdateWorkspaceSetting(ctx, workspaceID, key, setIn, hasSet)
+	return r.M.UpdateWorkspaceSetting(ctx, workspaceID, key, translateUpdateWorkspaceSettingRequest(input))
 }
 
 // UpdateWorkspaceSettings is the resolver for the updateWorkspaceSettings field.
 func (r *mutationResolver) UpdateWorkspaceSettings(ctx context.Context, filter gqlmodel.WorkspaceSettingFilter, input gqlmodel.UpdateWorkspaceSettingInput) ([]*models.WorkspaceSetting, error) {
-	return r.M.UpdateWorkspaceSettings(ctx, translateWorkspaceSettingFilter(&filter), translateUpdateWorkspaceSettingInput(input))
+	return r.M.UpdateWorkspaceSettings(ctx, translateWorkspaceSettingFilter(&filter), translateUpdateWorkspaceSettingRequest(input))
 }
 
 // UpsertWorkspaceSetting is the resolver for the upsertWorkspaceSetting field.

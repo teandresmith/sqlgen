@@ -10,7 +10,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models/graph/sqlgenresolver"
 )
 
 // CreateDefaultOnlyRow is the resolver for the createDefaultOnlyRow field.
@@ -32,39 +31,12 @@ func (r *mutationResolver) CreateDefaultOnlyRows(ctx context.Context, inputs []*
 
 // UpdateDefaultOnlyRow is the resolver for the updateDefaultOnlyRow field.
 func (r *mutationResolver) UpdateDefaultOnlyRow(ctx context.Context, id int, input gqlmodel.UpdateDefaultOnlyRowInput) (*models.DefaultOnlyRow, error) {
-	if input.Hits != nil && input.HitsInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update default_only_rows: column \"hits\" cannot be both set and incremented in one mutation")
-	}
-	if input.HitsInc != nil && input.HitsDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update default_only_rows: column \"hits\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateDefaultOnlyRowInput(input)
-	hasSet := hasUpdateDefaultOnlyRowSetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.DefaultOnlyRowIncrementColumn]
-	if input.HitsInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.DefaultOnlyRowIncrementColumn]{
-			Column: models.DefaultOnlyRowIncrementHits,
-			Amount: int(*input.HitsInc),
-		})
-	}
-	if input.HitsDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.DefaultOnlyRowIncrementColumn]{
-			Column: models.DefaultOnlyRowIncrementHits,
-			Amount: -int(*input.HitsDec),
-		})
-	}
-	return r.M.UpdateDefaultOnlyRow(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateDefaultOnlyRow(ctx, id, translateUpdateDefaultOnlyRowRequest(input))
 }
 
 // UpdateDefaultOnlyRows is the resolver for the updateDefaultOnlyRows field.
 func (r *mutationResolver) UpdateDefaultOnlyRows(ctx context.Context, filter gqlmodel.DefaultOnlyRowFilter, input gqlmodel.UpdateDefaultOnlyRowInput) ([]*models.DefaultOnlyRow, error) {
-	if input.Hits != nil && input.HitsInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update default_only_rows: column \"hits\" cannot be both set and incremented in one mutation")
-	}
-	if input.HitsInc != nil && input.HitsDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update default_only_rows: column \"hits\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateDefaultOnlyRows(ctx, translateDefaultOnlyRowFilter(&filter), translateUpdateDefaultOnlyRowInput(input))
+	return r.M.UpdateDefaultOnlyRows(ctx, translateDefaultOnlyRowFilter(&filter), translateUpdateDefaultOnlyRowRequest(input))
 }
 
 // UpsertDefaultOnlyRow is the resolver for the upsertDefaultOnlyRow field.

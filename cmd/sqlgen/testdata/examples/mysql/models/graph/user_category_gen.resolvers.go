@@ -10,7 +10,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models/graph/sqlgenresolver"
 )
 
 // CreateUserCategory is the resolver for the createUserCategory field.
@@ -32,39 +31,12 @@ func (r *mutationResolver) CreateUserCategories(ctx context.Context, inputs []*g
 
 // UpdateUserCategory is the resolver for the updateUserCategory field.
 func (r *mutationResolver) UpdateUserCategory(ctx context.Context, userID int, categoryID int, input gqlmodel.UpdateUserCategoryInput) (*models.UserCategory, error) {
-	if input.Slot != nil && input.SlotInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update user_categories: column \"slot\" cannot be both set and incremented in one mutation")
-	}
-	if input.SlotInc != nil && input.SlotDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update user_categories: column \"slot\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateUserCategoryInput(input)
-	hasSet := hasUpdateUserCategorySetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.UserCategoryIncrementColumn]
-	if input.SlotInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.UserCategoryIncrementColumn]{
-			Column: models.UserCategoryIncrementSlot,
-			Amount: int(*input.SlotInc),
-		})
-	}
-	if input.SlotDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.UserCategoryIncrementColumn]{
-			Column: models.UserCategoryIncrementSlot,
-			Amount: -int(*input.SlotDec),
-		})
-	}
-	return r.M.UpdateUserCategory(ctx, userID, categoryID, setIn, hasSet, incOps)
+	return r.M.UpdateUserCategory(ctx, userID, categoryID, translateUpdateUserCategoryRequest(input))
 }
 
 // UpdateUserCategories is the resolver for the updateUserCategories field.
 func (r *mutationResolver) UpdateUserCategories(ctx context.Context, filter gqlmodel.UserCategoryFilter, input gqlmodel.UpdateUserCategoryInput) ([]*models.UserCategory, error) {
-	if input.Slot != nil && input.SlotInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update user_categories: column \"slot\" cannot be both set and incremented in one mutation")
-	}
-	if input.SlotInc != nil && input.SlotDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update user_categories: column \"slot\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateUserCategories(ctx, translateUserCategoryFilter(&filter), translateUpdateUserCategoryInput(input))
+	return r.M.UpdateUserCategories(ctx, translateUserCategoryFilter(&filter), translateUpdateUserCategoryRequest(input))
 }
 
 // UpsertUserCategory is the resolver for the upsertUserCategory field.

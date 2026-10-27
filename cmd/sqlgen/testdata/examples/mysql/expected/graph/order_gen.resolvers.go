@@ -10,7 +10,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models/graph/sqlgenresolver"
 )
 
 // CreateOrder is the resolver for the createOrder field.
@@ -32,39 +31,12 @@ func (r *mutationResolver) CreateOrders(ctx context.Context, inputs []*gqlmodel.
 
 // UpdateOrder is the resolver for the updateOrder field.
 func (r *mutationResolver) UpdateOrder(ctx context.Context, id int, input gqlmodel.UpdateOrderInput) (*models.Order, error) {
-	if input.Total != nil && input.TotalInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update orders: column \"total\" cannot be both set and incremented in one mutation")
-	}
-	if input.TotalInc != nil && input.TotalDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update orders: column \"total\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateOrderInput(input)
-	hasSet := hasUpdateOrderSetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.OrderIncrementColumn]
-	if input.TotalInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.OrderIncrementColumn]{
-			Column: models.OrderIncrementTotal,
-			Amount: int(*input.TotalInc),
-		})
-	}
-	if input.TotalDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.OrderIncrementColumn]{
-			Column: models.OrderIncrementTotal,
-			Amount: -int(*input.TotalDec),
-		})
-	}
-	return r.M.UpdateOrder(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateOrder(ctx, id, translateUpdateOrderRequest(input))
 }
 
 // UpdateOrders is the resolver for the updateOrders field.
 func (r *mutationResolver) UpdateOrders(ctx context.Context, filter gqlmodel.OrderFilter, input gqlmodel.UpdateOrderInput) ([]*models.Order, error) {
-	if input.Total != nil && input.TotalInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update orders: column \"total\" cannot be both set and incremented in one mutation")
-	}
-	if input.TotalInc != nil && input.TotalDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update orders: column \"total\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateOrders(ctx, translateOrderFilter(&filter), translateUpdateOrderInput(input))
+	return r.M.UpdateOrders(ctx, translateOrderFilter(&filter), translateUpdateOrderRequest(input))
 }
 
 // UpsertOrder is the resolver for the upsertOrder field.

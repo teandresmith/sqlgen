@@ -34,14 +34,12 @@ func (r *mutationResolver) CreateProfiles(ctx context.Context, inputs []*gqlmode
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateProfile(ctx context.Context, id int, input gqlmodel.UpdateProfileInput) (*models.Profile, error) {
-	setIn := translateUpdateProfileInput(input)
-	hasSet := hasUpdateProfileSetFields(input)
-	return r.M.UpdateProfile(ctx, id, setIn, hasSet)
+	return r.M.UpdateProfile(ctx, id, translateUpdateProfileRequest(input))
 }
 
 // UpdateProfiles is the resolver for the updateProfiles field.
 func (r *mutationResolver) UpdateProfiles(ctx context.Context, filter gqlmodel.ProfileFilter, input gqlmodel.UpdateProfileInput) ([]*models.Profile, error) {
-	return r.M.UpdateProfiles(ctx, translateProfileFilter(&filter), translateUpdateProfileInput(input))
+	return r.M.UpdateProfiles(ctx, translateProfileFilter(&filter), translateUpdateProfileRequest(input))
 }
 
 // UpsertProfile is the resolver for the upsertProfile field.

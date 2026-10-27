@@ -73,13 +73,13 @@ input WorkspaceNoteSort {
   direction: SortDirection!
 }
 input CreateWorkspaceNoteInput {
-  workspaceID: UUID!
+  workspaceID: UUID
   parentID: UUID
   body: String!
-  pinnedOrder: Int!
-  kind: WorkspaceNoteKindEnum!
-  labels: JSON!
-  createdAt: Time!
+  pinnedOrder: Int
+  kind: WorkspaceNoteKindEnum
+  labels: JSON
+  createdAt: Time
 }
 input UpdateWorkspaceNoteInput {
   parentID: UUID
@@ -143,12 +143,12 @@ input WorkspaceNoteChildrenUpdateNested {
 }
 
 input WorkspaceNoteChildrenCreateInput {
-  workspaceID: UUID!
+  workspaceID: UUID
   body: String!
-  pinnedOrder: Int!
-  kind: WorkspaceNoteKindEnum!
-  labels: JSON!
-  createdAt: Time!
+  pinnedOrder: Int
+  kind: WorkspaceNoteKindEnum
+  labels: JSON
+  createdAt: Time
 }
 
 input WorkspaceNoteDraftChildrenCreateNested {
@@ -164,11 +164,11 @@ input WorkspaceNoteDraftChildrenUpdateNested {
 }
 
 input WorkspaceNoteDraftChildrenCreateInput {
-  workspaceID: UUID!
+  workspaceID: UUID
   body: String!
-  pinnedOrder: Int!
-  labels: JSON!
-  createdAt: Time!
+  pinnedOrder: Int
+  labels: JSON
+  createdAt: Time
 }
 
 extend type Mutation {

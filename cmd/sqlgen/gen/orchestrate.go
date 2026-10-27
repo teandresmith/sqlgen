@@ -1102,6 +1102,12 @@ func generateAPI(tmpl *template.Template, plan *apiPlan, cfg *config.RootConfig,
 	}
 	files = append(files, supportFiles...)
 
+	serverFiles, err := generateAPIServerFiles(tmpl, plan, g, version)
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, serverFiles...)
+
 	if apiCtx.ModelsImportPath != "" && len(apiCtx.Tables) > 0 && hasAnyInputTranslator(apiCtx) {
 		inputFile, err := generateAPIInputTranslatorFile(tmpl, apiCtx, g, resolverDir, version)
 		if err != nil {
@@ -1110,6 +1116,24 @@ func generateAPI(tmpl *template.Template, plan *apiPlan, cfg *config.RootConfig,
 		files = append(files, inputFile)
 	}
 
+	return files, nil
+}
+
+// generateAPIServerFiles emits the regenerated query-limits file and the
+// one-shot server.go that applies it (written only when absent).
+func generateAPIServerFiles(tmpl *template.Template, plan *apiPlan, g *config.GraphQLAPIConfig, version string) ([]string, error) {
+	limitsFile, err := generateAPILimitsFile(tmpl, plan.ctx, g, plan.sqlgenResolverDir, version)
+	if err != nil {
+		return nil, err
+	}
+	files := []string{limitsFile}
+	serverFile, err := generateAPIServerFile(tmpl, plan.ctx, g.Package, plan.resolverDir, plan.writeDirs[plan.resolverDir])
+	if err != nil {
+		return nil, err
+	}
+	if serverFile != "" {
+		files = append(files, serverFile)
+	}
 	return files, nil
 }
 
@@ -1370,7 +1394,7 @@ func buildAPIInputTranslateFile(pkg string, apiCtx *APIContext, body string) []b
 		b.WriteString(apiCtx.GqlgenModelImportPath)
 		b.WriteString("\"\n")
 	}
-	if nestedTranslatorsNeedSqlgenResolver(apiCtx) {
+	if inputTranslatorsNeedSqlgenResolver(apiCtx) {
 		b.WriteString("\n\t\"")
 		b.WriteString(apiCtx.SqlgenResolverImportPath)
 		b.WriteString("\"\n")
@@ -1381,14 +1405,17 @@ func buildAPIInputTranslateFile(pkg string, apiCtx *APIContext, body string) []b
 	return []byte(b.String())
 }
 
-// nestedTranslatorsNeedSqlgenResolver reports whether the rendered nested
-// translators reference the sqlgenresolver package: the conflict-target
-// translator and the increment collector both return its INVALID_INPUT error,
-// and the collector builds its IncrementOp values (PRD §26.5.1, §26.5.4).
-// Scoped so a package with no such translator declares no import it does not
-// use.
-func nestedTranslatorsNeedSqlgenResolver(apiCtx *APIContext) bool {
+// inputTranslatorsNeedSqlgenResolver reports whether the rendered translators
+// reference the sqlgenresolver package: every update-request translator
+// builds its Update<T>Request, and the nested conflict-target translator and
+// increment collector both return its INVALID_INPUT error, the collector
+// building its IncrementOp values too (PRD §26.5.1, §26.5.4). Scoped so a
+// package with no such translator declares no import it does not use.
+func inputTranslatorsNeedSqlgenResolver(apiCtx *APIContext) bool {
 	for _, t := range apiCtx.Tables {
+		if (t.Operations.Update || t.Operations.UpdateWhere) && t.HasUpdateInput {
+			return true
+		}
 		if n := t.Nested; n != nil && (n.EmitUpsert || n.IncrementOpsFunc != "") {
 			return true
 		}
@@ -2122,7 +2149,7 @@ func buildResolverFile(pkg string, apiCtx *APIContext, body string) []byte {
 		// scalar emitted unparseable resolver methods like
 		// `func (q *Q) Event(ctx context.Context, id uuid.UUID) ...`
 		// against an import block that didn't reference `uuid`.
-		for _, imp := range pkArgImports(apiCtx) {
+		for _, imp := range resolverKeyImports(apiCtx) {
 			b.WriteString("\t\"")
 			b.WriteString(imp)
 			b.WriteString("\"\n")
@@ -2158,6 +2185,21 @@ func pkArgImports(apiCtx *APIContext) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// resolverKeyImports is pkArgImports plus what the bulk updates' re-read of
+// their matched rows spells (APIRowKeys.Imports: the comparator package, and
+// `fmt` / an element type's package when the key needs them), on the tables
+// that emit that re-read — an update_where with `_inc` / `_dec` operators.
+func resolverKeyImports(apiCtx *APIContext) []string {
+	out := pkArgImports(apiCtx)
+	for _, t := range apiCtx.Tables {
+		if t.Operations.UpdateWhere && t.HasUpdateInput && len(t.UpdateOps) > 0 {
+			out = append(out, t.RowKeys.Imports...)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // resolverFileFeatures summarises which feature groups are referenced by the

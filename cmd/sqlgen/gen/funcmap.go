@@ -118,11 +118,13 @@ func FuncMapWithResolver(dialect sql.Dialect, resolver *gotype.Resolver) templat
 		"hasAnyRead":         funcHasAnyRead,
 		"hasAnyMutation":     funcHasAnyMutation,
 		"pkConvert":          funcPKConvert,
+		"pkFromRow":          funcPKFromRow,
 		"pkSchemaArgs":       funcPKSchemaArgs,
 		"pkGoArgs":           funcPKGoArgs,
 		"pkPassArgs":         funcPKPassArgs,
 		"inputCoerceBare":    funcInputCoerceBare,
 		"inputCoerceDeref":   funcInputCoerceDeref,
+		"inputCoerceDerefOf": funcInputCoerceDerefOf,
 	}
 }
 
@@ -168,11 +170,20 @@ func funcInputCoerceBare(f APIInputField) string {
 //   - default:             model wraps T (or is bare T); gqlgen emits
 //     `*T`. Deref and apply any size cast.
 func funcInputCoerceDeref(f APIInputField) string {
+	return funcInputCoerceDerefOf("in."+f.GoFieldName, f)
+}
+
+// funcInputCoerceDerefOf is funcInputCoerceDeref over an arbitrary source
+// expression rather than `in.<GoFieldName>`. The update translator needs it
+// for a field gqlgen wraps in `graphql.Omittable`: the value it coerces is the
+// one unwrapped into a local, in exactly the shape gqlgen would otherwise have
+// emitted for the field itself.
+func funcInputCoerceDerefOf(src string, f APIInputField) string {
 	if f.AddressOf {
-		return "&in." + f.GoFieldName
+		return "&" + src
 	}
 	if f.GqlgenIsBareNullable {
-		expr := "in." + f.GoFieldName
+		expr := src
 		// Named-slice bridge (e.g. gqlgen's `[]models.DocumentEntityTypeEnum`
 		// → model's `models.DocumentEntityTypeEnumSlice`): the gqlgen-emitted
 		// type is bare `[]T` but the model field uses a named slice, so the
@@ -185,9 +196,9 @@ func funcInputCoerceDeref(f APIInputField) string {
 	if f.ModelInnerIsPointer {
 		// Safe only when the pointee types match; PointerCast marks the case
 		// where they do not, and the template handles it without this helper.
-		return "in." + f.GoFieldName
+		return src
 	}
-	expr := "*in." + f.GoFieldName
+	expr := "*" + src
 	if f.CastTo != "" {
 		expr = f.CastTo + "(" + expr + ")"
 	}
@@ -229,6 +240,37 @@ func funcPKConvert(modelsPkg, structName string, args []APIPKArg) string {
 		b.WriteString(a.ModelFieldName)
 		b.WriteString(": ")
 		b.WriteString(convertOnePKArg(a))
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+// funcPKFromRow emits the PK argument expression for a row the resolver
+// already holds, read off its fields: `row.ID` for a single-column PK, or
+// `models.<T>PK{Field1: row.Field1, …}` for a composite one. The row is the
+// model's own struct, so its fields already carry the model's types and no
+// conversion applies.
+func funcPKFromRow(modelsPkg, structName, row string, args []APIPKArg) string {
+	if len(args) == 0 {
+		return ""
+	}
+	if len(args) == 1 {
+		return row + "." + args[0].ModelFieldName
+	}
+	var b strings.Builder
+	b.WriteString(modelsPkg)
+	b.WriteByte('.')
+	b.WriteString(structName)
+	b.WriteString("PK{")
+	for i, a := range args {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(a.ModelFieldName)
+		b.WriteString(": ")
+		b.WriteString(row)
+		b.WriteByte('.')
+		b.WriteString(a.ModelFieldName)
 	}
 	b.WriteByte('}')
 	return b.String()

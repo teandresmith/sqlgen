@@ -49,7 +49,9 @@ package gen
 //
 // The same entry carries a second key for a create/update input field whose Go
 // TYPE sqlgen dictates (`models.<Input>.fields.<f>.type`) — see
-// APIModelField.GoType and dictatedInputGoType.
+// APIModelField.GoType and dictatedInputGoType — and a third,
+// `omittable: true`, for an update-input field over a nullable column (see
+// APIModelField.Omittable).
 func APIGoFieldOverrides(apiCtx *APIContext) map[string]map[string]APIModelField {
 	if apiCtx == nil {
 		return nil
@@ -88,6 +90,18 @@ func APIGoFieldOverrides(apiCtx *APIContext) map[string]map[string]APIModelField
 
 	for _, t := range apiCtx.Tables {
 		tableGoFieldOverrides(t, set, setType)
+		// The update translator reads a nullable column's field through
+		// `graphql.Omittable`, which gqlgen emits only when told to.
+		if t.HasUpdateInput {
+			for _, f := range t.UpdateInputFields {
+				if f.GqlgenOmittable && f.GraphQLName != "" {
+					fields := fieldsFor("Update" + t.StructName + "Input")
+					entry := fields[f.GraphQLName]
+					entry.Omittable = true
+					fields[f.GraphQLName] = entry
+				}
+			}
+		}
 	}
 
 	if len(out) == 0 {
@@ -109,6 +123,11 @@ type APIModelField struct {
 	// for a create/update input field whose model type gqlgen would otherwise
 	// disagree with irreconcilably — see dictatedInputGoType.
 	GoType string
+	// Omittable makes gqlgen wrap the field in `graphql.Omittable`
+	// (`omittable: true`), so an explicit `null` is distinguishable from an
+	// omitted field. Set for an update-input field over a nullable column,
+	// where `null` clears the column — see APIInputField.GqlgenOmittable.
+	Omittable bool
 }
 
 // tableGoFieldOverrides emits one table's field overrides through set (Go

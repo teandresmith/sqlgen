@@ -216,23 +216,28 @@ func FormatOnly(raw []byte, version string, filename string) ([]byte, error) {
 }
 
 func formatWithOptions(raw []byte, version string, filename string, formatOnly bool) ([]byte, error) {
-	withHeader := aliasStdSQLQualifiers(injectHeader(raw, version))
+	return processImports(aliasStdSQLQualifiers(injectHeader(raw, version)), filename, formatOnly)
+}
 
-	formatted, err := imports.Process(filename, withHeader, &imports.Options{
+// processImports runs goimports over src. It is the step Format shares with
+// the consumer-owned files sqlgen writes once (graph/server.go), which carry
+// no generated header but go through the same import fixing.
+func processImports(src []byte, filename string, formatOnly bool) ([]byte, error) {
+	formatted, err := imports.Process(filename, src, &imports.Options{
 		Comments:   true,
 		TabIndent:  true,
 		TabWidth:   8,
 		FormatOnly: formatOnly,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("goimports failed for %s: %w\n\nraw template output:\n%s", filename, err, withHeader)
+		return nil, fmt.Errorf("goimports failed for %s: %w\n\nraw template output:\n%s", filename, err, src)
 	}
 
 	if importFixObserver != nil && !formatOnly {
 		importFixObserver(filename)
 	}
 	if importDriftObserver != nil && !formatOnly {
-		reportImportDrift(filename, withHeader, formatted)
+		reportImportDrift(filename, src, formatted)
 	}
 
 	return formatted, nil

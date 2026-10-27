@@ -79,16 +79,16 @@ input ReservedWordColumnSort {
   direction: SortDirection!
 }
 input CreateReservedWordColumnInput {
-  type: String!
-  interface: String!
-  func: String!
-  map: String!
-  new: String!
-  make: String!
-  len: Int!
-  error: String!
-  ctx: String!
-  err: String!
+  type: String
+  interface: String
+  func: String
+  map: String
+  new: String
+  make: String
+  len: Int
+  error: String
+  ctx: String
+  err: String
 }
 input UpdateReservedWordColumnInput {
   type: String

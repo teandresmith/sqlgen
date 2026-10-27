@@ -8,6 +8,7 @@ import (
 	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql_null_wrappers/models"
+	"github.com/teandresmith/sqlgen/comparator"
 	"github.com/teandresmith/sqlgen/sql"
 )
 
@@ -19,8 +20,9 @@ import (
 //
 // Q/M methods take model-side types only — that breaks the cycle that would
 // otherwise form between this sub-package and graph (graph's gqlgen-generated
-// input types depend on graph's package; seed-side translation maps them
-// onto these methods' model-shape parameters).
+// input types depend on graph's package; the graph package's regenerated
+// translators map them onto these methods' parameters, an update input onto
+// the Update<T>Request this package declares).
 
 // Q is the query helper struct for sqlgen-managed Query.* fields.
 type Q struct {
@@ -40,8 +42,8 @@ type IncrementOp[T comparable] struct {
 }
 
 // InvalidInputError builds a gqlerror.Error tagged with INVALID_INPUT for
-// runtime conflict checks on input operators. Exported so
-// seed files in the parent graph package can call it directly.
+// runtime conflict checks on input operators. Exported so the input
+// translators in the parent graph package can call it directly.
 func InvalidInputError(msg string) error {
 	return &gqlerror.Error{
 		Message:    msg,
@@ -146,16 +148,149 @@ func (m *M) CreateAccounts(ctx context.Context, inputs []*models.CreateAccountIn
 	return res, nil
 }
 
+// UpdateAccountRequest is one updateAccount /
+// updateAccounts input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateAccountRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateAccountInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet         bool
+	ExternalRefInc *int
+	ExternalRefDec *int
+	SmallCountInc  *int
+	SmallCountDec  *int
+	MidCountInc    *int
+	MidCountDec    *int
+	BigCountInc    *int
+	BigCountDec    *int
+	RatioInc       *int
+	RatioDec       *int
+	BalanceInc     *int
+	BalanceDec     *int
+}
+
 // UpdateAccount resolves the single-row update mutation for accounts.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then dispatches `_set` → `_inc` → `_dec` in
+// order and re-fetches the entity so the mutation result reflects the
 // post-dispatch state.
-func (m *M) UpdateAccount(ctx context.Context, id int64, setIn *models.UpdateAccountInput, hasSet bool, incOps []IncrementOp[models.AccountIncrementColumn]) (*models.Account, error) {
+func (m *M) UpdateAccount(ctx context.Context, id int64, input UpdateAccountRequest) (*models.Account, error) {
+	if input.Set.ExternalRef.IsSet() && input.ExternalRefInc != nil {
+		return nil, InvalidInputError("update accounts: column \"external_ref\" cannot be both set and incremented in one mutation")
+	}
+	if input.ExternalRefInc != nil && input.ExternalRefDec != nil {
+		return nil, InvalidInputError("update accounts: column \"external_ref\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.SmallCount.IsSet() && input.SmallCountInc != nil {
+		return nil, InvalidInputError("update accounts: column \"small_count\" cannot be both set and incremented in one mutation")
+	}
+	if input.SmallCountInc != nil && input.SmallCountDec != nil {
+		return nil, InvalidInputError("update accounts: column \"small_count\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.MidCount.IsSet() && input.MidCountInc != nil {
+		return nil, InvalidInputError("update accounts: column \"mid_count\" cannot be both set and incremented in one mutation")
+	}
+	if input.MidCountInc != nil && input.MidCountDec != nil {
+		return nil, InvalidInputError("update accounts: column \"mid_count\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.BigCount.IsSet() && input.BigCountInc != nil {
+		return nil, InvalidInputError("update accounts: column \"big_count\" cannot be both set and incremented in one mutation")
+	}
+	if input.BigCountInc != nil && input.BigCountDec != nil {
+		return nil, InvalidInputError("update accounts: column \"big_count\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Ratio.IsSet() && input.RatioInc != nil {
+		return nil, InvalidInputError("update accounts: column \"ratio\" cannot be both set and incremented in one mutation")
+	}
+	if input.RatioInc != nil && input.RatioDec != nil {
+		return nil, InvalidInputError("update accounts: column \"ratio\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Balance.IsSet() && input.BalanceInc != nil {
+		return nil, InvalidInputError("update accounts: column \"balance\" cannot be both set and incremented in one mutation")
+	}
+	if input.BalanceInc != nil && input.BalanceDec != nil {
+		return nil, InvalidInputError("update accounts: column \"balance\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.AccountIncrementColumn]
+	if input.ExternalRefInc != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementExternalRef,
+			Amount: *input.ExternalRefInc,
+		})
+	}
+	if input.ExternalRefDec != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementExternalRef,
+			Amount: -*input.ExternalRefDec,
+		})
+	}
+	if input.SmallCountInc != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementSmallCount,
+			Amount: *input.SmallCountInc,
+		})
+	}
+	if input.SmallCountDec != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementSmallCount,
+			Amount: -*input.SmallCountDec,
+		})
+	}
+	if input.MidCountInc != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementMidCount,
+			Amount: *input.MidCountInc,
+		})
+	}
+	if input.MidCountDec != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementMidCount,
+			Amount: -*input.MidCountDec,
+		})
+	}
+	if input.BigCountInc != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementBigCount,
+			Amount: *input.BigCountInc,
+		})
+	}
+	if input.BigCountDec != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementBigCount,
+			Amount: -*input.BigCountDec,
+		})
+	}
+	if input.RatioInc != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementRatio,
+			Amount: *input.RatioInc,
+		})
+	}
+	if input.RatioDec != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementRatio,
+			Amount: -*input.RatioDec,
+		})
+	}
+	if input.BalanceInc != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementBalance,
+			Amount: *input.BalanceInc,
+		})
+	}
+	if input.BalanceDec != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementBalance,
+			Amount: -*input.BalanceDec,
+		})
+	}
 	fo := accountFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Accounts().Update(ctx, id, setIn, func(o *models.CallOptions[models.AccountFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Accounts().Update(ctx, id, input.Set, func(o *models.CallOptions[models.AccountFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.AccountFieldOptions](ctx) {
 				f(o)
 			}
@@ -188,15 +323,185 @@ func (m *M) UpdateAccount(ctx context.Context, id int64, setIn *models.UpdateAcc
 }
 
 // UpdateAccounts resolves the bulk update-where mutation for accounts.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateAccounts(ctx context.Context, filter *models.AccountFilter, setIn *models.UpdateAccountInput) ([]*models.Account, error) {
+// It takes the same input as updateAccount, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateAccounts(ctx context.Context, filter *models.AccountFilter, input UpdateAccountRequest) ([]*models.Account, error) {
+	if input.Set.ExternalRef.IsSet() && input.ExternalRefInc != nil {
+		return nil, InvalidInputError("update accounts: column \"external_ref\" cannot be both set and incremented in one mutation")
+	}
+	if input.ExternalRefInc != nil && input.ExternalRefDec != nil {
+		return nil, InvalidInputError("update accounts: column \"external_ref\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.SmallCount.IsSet() && input.SmallCountInc != nil {
+		return nil, InvalidInputError("update accounts: column \"small_count\" cannot be both set and incremented in one mutation")
+	}
+	if input.SmallCountInc != nil && input.SmallCountDec != nil {
+		return nil, InvalidInputError("update accounts: column \"small_count\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.MidCount.IsSet() && input.MidCountInc != nil {
+		return nil, InvalidInputError("update accounts: column \"mid_count\" cannot be both set and incremented in one mutation")
+	}
+	if input.MidCountInc != nil && input.MidCountDec != nil {
+		return nil, InvalidInputError("update accounts: column \"mid_count\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.BigCount.IsSet() && input.BigCountInc != nil {
+		return nil, InvalidInputError("update accounts: column \"big_count\" cannot be both set and incremented in one mutation")
+	}
+	if input.BigCountInc != nil && input.BigCountDec != nil {
+		return nil, InvalidInputError("update accounts: column \"big_count\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Ratio.IsSet() && input.RatioInc != nil {
+		return nil, InvalidInputError("update accounts: column \"ratio\" cannot be both set and incremented in one mutation")
+	}
+	if input.RatioInc != nil && input.RatioDec != nil {
+		return nil, InvalidInputError("update accounts: column \"ratio\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Balance.IsSet() && input.BalanceInc != nil {
+		return nil, InvalidInputError("update accounts: column \"balance\" cannot be both set and incremented in one mutation")
+	}
+	if input.BalanceInc != nil && input.BalanceDec != nil {
+		return nil, InvalidInputError("update accounts: column \"balance\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.AccountIncrementColumn]
+	if input.ExternalRefInc != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementExternalRef,
+			Amount: *input.ExternalRefInc,
+		})
+	}
+	if input.ExternalRefDec != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementExternalRef,
+			Amount: -*input.ExternalRefDec,
+		})
+	}
+	if input.SmallCountInc != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementSmallCount,
+			Amount: *input.SmallCountInc,
+		})
+	}
+	if input.SmallCountDec != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementSmallCount,
+			Amount: -*input.SmallCountDec,
+		})
+	}
+	if input.MidCountInc != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementMidCount,
+			Amount: *input.MidCountInc,
+		})
+	}
+	if input.MidCountDec != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementMidCount,
+			Amount: -*input.MidCountDec,
+		})
+	}
+	if input.BigCountInc != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementBigCount,
+			Amount: *input.BigCountInc,
+		})
+	}
+	if input.BigCountDec != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementBigCount,
+			Amount: -*input.BigCountDec,
+		})
+	}
+	if input.RatioInc != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementRatio,
+			Amount: *input.RatioInc,
+		})
+	}
+	if input.RatioDec != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementRatio,
+			Amount: -*input.RatioDec,
+		})
+	}
+	if input.BalanceInc != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementBalance,
+			Amount: *input.BalanceInc,
+		})
+	}
+	if input.BalanceDec != nil {
+		incOps = append(incOps, IncrementOp[models.AccountIncrementColumn]{
+			Column: models.AccountIncrementBalance,
+			Amount: -*input.BalanceDec,
+		})
+	}
 	fo := accountFieldOptionsFromContext(ctx)
-	res, err := m.Client.Accounts().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.AccountFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.AccountFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.Accounts().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.AccountFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.AccountFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.Account
+	err := m.Client.WithTx(ctx, "update_account_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.Accounts().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.AccountFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.AccountFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.Account{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.Accounts().Increment(ctx, row.ID, models.IncrementInput[models.AccountIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.AccountFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.AccountFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read, and soft-delete scoping drops a row
+		// the set fields soft-deleted, as the operator-free path does.
+		res, err = m.Client.Accounts().GetMany(ctx, &models.GetAccountsInput{
+			Filter: &models.AccountFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.AccountFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.AccountFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -369,16 +674,49 @@ func (m *M) CreateEntries(ctx context.Context, inputs []*models.CreateEntryInput
 	return res, nil
 }
 
+// UpdateEntryRequest is one updateEntry /
+// updateEntries input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateEntryRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateEntryInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet    bool
+	AmountInc *int
+	AmountDec *int
+}
+
 // UpdateEntry resolves the single-row update mutation for entries.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then dispatches `_set` → `_inc` → `_dec` in
+// order and re-fetches the entity so the mutation result reflects the
 // post-dispatch state.
-func (m *M) UpdateEntry(ctx context.Context, id int64, setIn *models.UpdateEntryInput, hasSet bool, incOps []IncrementOp[models.EntryIncrementColumn]) (*models.Entry, error) {
+func (m *M) UpdateEntry(ctx context.Context, id int64, input UpdateEntryRequest) (*models.Entry, error) {
+	if input.Set.Amount.IsSet() && input.AmountInc != nil {
+		return nil, InvalidInputError("update entries: column \"amount\" cannot be both set and incremented in one mutation")
+	}
+	if input.AmountInc != nil && input.AmountDec != nil {
+		return nil, InvalidInputError("update entries: column \"amount\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.EntryIncrementColumn]
+	if input.AmountInc != nil {
+		incOps = append(incOps, IncrementOp[models.EntryIncrementColumn]{
+			Column: models.EntryIncrementAmount,
+			Amount: *input.AmountInc,
+		})
+	}
+	if input.AmountDec != nil {
+		incOps = append(incOps, IncrementOp[models.EntryIncrementColumn]{
+			Column: models.EntryIncrementAmount,
+			Amount: -*input.AmountDec,
+		})
+	}
 	fo := entryFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Entries().Update(ctx, id, setIn, func(o *models.CallOptions[models.EntryFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Entries().Update(ctx, id, input.Set, func(o *models.CallOptions[models.EntryFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.EntryFieldOptions](ctx) {
 				f(o)
 			}
@@ -411,15 +749,95 @@ func (m *M) UpdateEntry(ctx context.Context, id int64, setIn *models.UpdateEntry
 }
 
 // UpdateEntries resolves the bulk update-where mutation for entries.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateEntries(ctx context.Context, filter *models.EntryFilter, setIn *models.UpdateEntryInput) ([]*models.Entry, error) {
+// It takes the same input as updateEntry, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateEntries(ctx context.Context, filter *models.EntryFilter, input UpdateEntryRequest) ([]*models.Entry, error) {
+	if input.Set.Amount.IsSet() && input.AmountInc != nil {
+		return nil, InvalidInputError("update entries: column \"amount\" cannot be both set and incremented in one mutation")
+	}
+	if input.AmountInc != nil && input.AmountDec != nil {
+		return nil, InvalidInputError("update entries: column \"amount\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.EntryIncrementColumn]
+	if input.AmountInc != nil {
+		incOps = append(incOps, IncrementOp[models.EntryIncrementColumn]{
+			Column: models.EntryIncrementAmount,
+			Amount: *input.AmountInc,
+		})
+	}
+	if input.AmountDec != nil {
+		incOps = append(incOps, IncrementOp[models.EntryIncrementColumn]{
+			Column: models.EntryIncrementAmount,
+			Amount: -*input.AmountDec,
+		})
+	}
 	fo := entryFieldOptionsFromContext(ctx)
-	res, err := m.Client.Entries().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.EntryFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.EntryFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.Entries().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.EntryFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.EntryFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.Entry
+	err := m.Client.WithTx(ctx, "update_entry_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.Entries().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.EntryFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.EntryFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.Entry{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.Entries().Increment(ctx, row.ID, models.IncrementInput[models.EntryIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.EntryFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.EntryFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read, and soft-delete scoping drops a row
+		// the set fields soft-deleted, as the operator-free path does.
+		res, err = m.Client.Entries().GetMany(ctx, &models.GetEntriesInput{
+			Filter: &models.EntryFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.EntryFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.EntryFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)

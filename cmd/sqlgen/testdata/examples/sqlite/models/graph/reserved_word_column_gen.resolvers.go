@@ -10,7 +10,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models/graph/sqlgenresolver"
 )
 
 // CreateReservedWordColumn is the resolver for the createReservedWordColumn field.
@@ -32,39 +31,12 @@ func (r *mutationResolver) CreateReservedWordColumns(ctx context.Context, inputs
 
 // UpdateReservedWordColumn is the resolver for the updateReservedWordColumn field.
 func (r *mutationResolver) UpdateReservedWordColumn(ctx context.Context, id int, input gqlmodel.UpdateReservedWordColumnInput) (*models.ReservedWordColumn, error) {
-	if input.Len != nil && input.LenInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update reserved_word_columns: column \"len\" cannot be both set and incremented in one mutation")
-	}
-	if input.LenInc != nil && input.LenDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update reserved_word_columns: column \"len\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateReservedWordColumnInput(input)
-	hasSet := hasUpdateReservedWordColumnSetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.ReservedWordColumnIncrementColumn]
-	if input.LenInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.ReservedWordColumnIncrementColumn]{
-			Column: models.ReservedWordColumnIncrementLen,
-			Amount: int(*input.LenInc),
-		})
-	}
-	if input.LenDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.ReservedWordColumnIncrementColumn]{
-			Column: models.ReservedWordColumnIncrementLen,
-			Amount: -int(*input.LenDec),
-		})
-	}
-	return r.M.UpdateReservedWordColumn(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateReservedWordColumn(ctx, id, translateUpdateReservedWordColumnRequest(input))
 }
 
 // UpdateReservedWordColumns is the resolver for the updateReservedWordColumns field.
 func (r *mutationResolver) UpdateReservedWordColumns(ctx context.Context, filter gqlmodel.ReservedWordColumnFilter, input gqlmodel.UpdateReservedWordColumnInput) ([]*models.ReservedWordColumn, error) {
-	if input.Len != nil && input.LenInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update reserved_word_columns: column \"len\" cannot be both set and incremented in one mutation")
-	}
-	if input.LenInc != nil && input.LenDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update reserved_word_columns: column \"len\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateReservedWordColumns(ctx, translateReservedWordColumnFilter(&filter), translateUpdateReservedWordColumnInput(input))
+	return r.M.UpdateReservedWordColumns(ctx, translateReservedWordColumnFilter(&filter), translateUpdateReservedWordColumnRequest(input))
 }
 
 // UpsertReservedWordColumn is the resolver for the upsertReservedWordColumn field.

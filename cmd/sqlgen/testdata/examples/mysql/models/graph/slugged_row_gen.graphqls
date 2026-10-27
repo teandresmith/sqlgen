@@ -47,7 +47,7 @@ input SluggedRowSort {
   direction: SortDirection!
 }
 input CreateSluggedRowInput {
-  name: String!
+  name: String
 }
 input UpdateSluggedRowInput {
   name: String

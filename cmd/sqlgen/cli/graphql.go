@@ -454,7 +454,7 @@ func modelFieldOverrides(apiCtx *gen.APIContext) map[string]map[string]wrapper.M
 	for typeName, fields := range src {
 		converted := make(map[string]wrapper.ModelField, len(fields))
 		for graphQLName, f := range fields {
-			converted[graphQLName] = wrapper.ModelField{FieldName: f.FieldName, GoType: f.GoType}
+			converted[graphQLName] = wrapper.ModelField{FieldName: f.FieldName, GoType: f.GoType, Omittable: f.Omittable}
 		}
 		out[typeName] = converted
 	}

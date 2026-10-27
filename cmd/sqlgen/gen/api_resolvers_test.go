@@ -296,7 +296,7 @@ func TestResolvers_PKArgUsesGqlgenDefaultBinding(t *testing.T) {
 	// (receivers are q/m on Q/M; calls go through q.Client / m.Client).
 	wantCalls := []string{
 		"q.Client.Categories().Get(ctx, int64(id),",
-		"m.Client.Categories().Update(ctx, int64(id), setIn,",
+		"m.Client.Categories().Update(ctx, int64(id), input.Set,",
 		"m.Client.Categories().SoftDelete(ctx, int64(id),",
 		"m.Client.Categories().HardDelete(ctx, int64(id),",
 		"m.Client.Categories().Restore(ctx, int64(id),",
@@ -509,17 +509,18 @@ func TestResolvers_MutationResultNullability(t *testing.T) {
 }
 
 func TestResolvers_IncDec_DispatchOrder(t *testing.T) {
-	// Dispatch order is split — the seed builds the incOps slice in
-	// inc-then-dec order before delegating; M.UpdateProduct in sqlgenresolver
-	// dispatches set-then-incOps in the order received.
+	// M.UpdateProduct in sqlgenresolver owns the whole dispatch: it builds
+	// the incOps slice in inc-then-dec order and runs set-then-incOps. The
+	// seed only delegates, so a column added later is dispatched without
+	// touching it.
 	apiCtx := resolverAPIContext(t, resolverTestSchema(), nil)
 	out := renderResolvers(t, apiCtx)
 	seeds := renderSeeds(t, apiCtx)
 
-	// Q/M side: the Update method runs `m.Client.Products().Update(...)` for
-	// the set-fields branch then loops over incOps emitting Increment calls.
+	// The Update method runs `m.Client.Products().Update(...)` for the
+	// set-fields branch then loops over incOps emitting Increment calls.
 	updateBody := extractFunc(t, out, "UpdateProduct")
-	setIdx := strings.Index(updateBody, "m.Client.Products().Update(ctx, id, setIn")
+	setIdx := strings.Index(updateBody, "m.Client.Products().Update(ctx, id, input.Set")
 	incLoop := strings.Index(updateBody, "for _, op := range incOps")
 	if setIdx < 0 || incLoop < 0 {
 		t.Fatalf("Q/M UpdateProduct body missing dispatch markers (set=%d incLoop=%d)\n%s", setIdx, incLoop, updateBody)
@@ -528,31 +529,35 @@ func TestResolvers_IncDec_DispatchOrder(t *testing.T) {
 		t.Fatalf("Q/M dispatch order violated: set=%d incLoop=%d\n%s", setIdx, incLoop, updateBody)
 	}
 
-	// Seed side: the seed builds incOps slice with inc append before dec append.
+	// The incOps slice takes the inc append before the dec append.
+	incIdx := strings.Index(updateBody, "Amount: *input.StockInc")
+	decIdx := strings.Index(updateBody, "Amount: -*input.StockDec")
+	if incIdx < 0 || decIdx < 0 {
+		t.Fatalf("Q/M UpdateProduct body missing inc/dec dispatch (inc=%d dec=%d)\n%s", incIdx, decIdx, updateBody)
+	}
+	if incIdx >= decIdx {
+		t.Fatalf("Q/M dispatch order violated: inc=%d dec=%d\n%s", incIdx, decIdx, updateBody)
+	}
+
 	seedBody := extractFunc(t, seeds, "UpdateProduct")
-	seedIncIdx := strings.Index(seedBody, "Amount: int(*input.StockInc)")
-	seedDecIdx := strings.Index(seedBody, "Amount: -int(*input.StockDec)")
-	if seedIncIdx < 0 || seedDecIdx < 0 {
-		t.Fatalf("seed UpdateProduct body missing inc/dec dispatch (inc=%d dec=%d)\n%s", seedIncIdx, seedDecIdx, seedBody)
-	}
-	if seedIncIdx >= seedDecIdx {
-		t.Fatalf("seed dispatch order violated: inc=%d dec=%d\n%s", seedIncIdx, seedDecIdx, seedBody)
-	}
+	mustContain(t, seedBody, "return r.M.UpdateProduct(ctx, id, translateUpdateProductRequest(input))")
 }
 
 func TestResolvers_IncDec_RuntimeConflictGuards(t *testing.T) {
-	// Conflict checks live in seeds (graph package) since they
-	// reference gqlgen-input field names.
+	// Conflict checks live on the M methods, which read the operators off
+	// the Update<T>Request the graph package's translator builds.
 	apiCtx := resolverAPIContext(t, resolverTestSchema(), nil)
 	out := renderResolvers(t, apiCtx)
-	seeds := renderSeeds(t, apiCtx)
 
-	updateBody := extractFunc(t, seeds, "UpdateProduct")
-
-	mustContain(t, updateBody, "input.Stock != nil && input.StockInc != nil")
-	mustContain(t, updateBody, "input.StockInc != nil && input.StockDec != nil")
-	mustContain(t, updateBody, `sqlgenresolver.InvalidInputError("update products: column \"stock\" cannot be both set and incremented in one mutation")`)
-	mustContain(t, updateBody, `sqlgenresolver.InvalidInputError("update products: column \"stock\" cannot be both incremented and decremented in one mutation")`)
+	for _, method := range []string{"UpdateProduct", "UpdateProducts"} {
+		t.Run(method, func(t *testing.T) {
+			body := extractFunc(t, out, method)
+			mustContain(t, body, "input.Set.Stock.IsSet() && input.StockInc != nil")
+			mustContain(t, body, "input.StockInc != nil && input.StockDec != nil")
+			mustContain(t, body, `InvalidInputError("update products: column \"stock\" cannot be both set and incremented in one mutation")`)
+			mustContain(t, body, `InvalidInputError("update products: column \"stock\" cannot be both incremented and decremented in one mutation")`)
+		})
+	}
 
 	// InvalidInputError is exported from sqlgenresolver — Q/M template emits the
 	// helper definition tagging gqlerror with INVALID_INPUT.
@@ -641,8 +646,9 @@ func TestResolvers_NoNumericColumns_OmitsIncrementOp(t *testing.T) {
 		}
 	}
 
-	// Q/M-side method must be the reduced-signature variant (no incOps param).
-	mustContain(t, out, "func (m *M) UpdateCategory(ctx context.Context, id uuid.UUID, setIn *models.UpdateCategoryInput, hasSet bool) (*models.Category, error)")
+	// Q/M-side method takes the same request carrier as a table with
+	// operators; the carrier simply has no operator fields.
+	mustContain(t, out, "func (m *M) UpdateCategory(ctx context.Context, id uuid.UUID, input UpdateCategoryRequest) (*models.Category, error)")
 
 	// Q/M body must not loop over incOps or call Increment — those are gated
 	// out alongside the IncrementColumn enum.
@@ -654,8 +660,8 @@ func TestResolvers_NoNumericColumns_OmitsIncrementOp(t *testing.T) {
 		t.Errorf("Q/M UpdateCategory must not call Increment when no numeric columns\n%s", updateBody)
 	}
 
-	// Seed must delegate with the matching reduced signature — no incOps slice
-	// build, no IncrementOp construction, no fifth argument on the Q/M call.
+	// Seed must delegate in one line — no incOps slice build, no
+	// IncrementOp construction.
 	seedBody := extractFunc(t, seeds, "UpdateCategory")
 	if strings.Contains(seedBody, "var incOps") {
 		t.Errorf("seed UpdateCategory must not declare incOps when no numeric columns\n%s", seedBody)
@@ -663,7 +669,7 @@ func TestResolvers_NoNumericColumns_OmitsIncrementOp(t *testing.T) {
 	if strings.Contains(seedBody, "sqlgenresolver.IncrementOp[") {
 		t.Errorf("seed UpdateCategory must not construct IncrementOp[T] when no numeric columns\n%s", seedBody)
 	}
-	mustContain(t, seedBody, "return r.M.UpdateCategory(ctx, id, setIn, hasSet)")
+	mustContain(t, seedBody, "return r.M.UpdateCategory(ctx, id, translateUpdateCategoryRequest(input))")
 }
 
 // TestResolvers_NumericColumns_KeepsIncrementOp pins the inverse:
@@ -677,8 +683,8 @@ func TestResolvers_NumericColumns_KeepsIncrementOp(t *testing.T) {
 	mustContain(t, out, "incOps []IncrementOp[models.ProductIncrementColumn]")
 	mustContain(t, out, "models.IncrementInput[models.ProductIncrementColumn]")
 	mustContain(t, out, "for _, op := range incOps")
-	mustContain(t, seeds, "var incOps []sqlgenresolver.IncrementOp[models.ProductIncrementColumn]")
-	mustContain(t, seeds, "return r.M.UpdateProduct(ctx, id, setIn, hasSet, incOps)")
+	mustContain(t, out, "var incOps []IncrementOp[models.ProductIncrementColumn]")
+	mustContain(t, seeds, "return r.M.UpdateProduct(ctx, id, translateUpdateProductRequest(input))")
 }
 
 // decimalOnlyResolverSchema is a fixture shaped like the graphql
@@ -748,10 +754,10 @@ func TestResolvers_DecimalOnly_KeepsIncrementOp(t *testing.T) {
 	mustContain(t, out, "models.IncrementInput[models.OrderIncrementColumn]")
 	mustContain(t, out, "for _, op := range incOps")
 
-	// Seed must construct IncrementOp[OrderIncrementColumn] entries (one per
-	// decimal column) and pass the slice to the Q/M Update method.
-	mustContain(t, seeds, "var incOps []sqlgenresolver.IncrementOp[models.OrderIncrementColumn]")
-	mustContain(t, seeds, "return r.M.UpdateOrder(ctx, id, setIn, hasSet, incOps)")
+	// The M method constructs IncrementOp[OrderIncrementColumn] entries (one
+	// per decimal column); the seed only delegates.
+	mustContain(t, out, "var incOps []IncrementOp[models.OrderIncrementColumn]")
+	mustContain(t, seeds, "return r.M.UpdateOrder(ctx, id, translateUpdateOrderRequest(input))")
 
 	// The old failure mode (the empty-type form) must NOT appear —
 	// this is what we'd see if hasNumeric still came back false on decimal.
@@ -810,7 +816,7 @@ func TestResolvers_DecimalOnly_APITableContextHasIncrementColumns(t *testing.T) 
 
 // TestResolvers_MixedNumeric_BothInIncrementEnum pins the mixed-column case:
 // a table with one integer-numeric column and one decimal column must list
-// both in the IncrementColumn enum and the seed-side dispatch.
+// both in the IncrementColumn enum and the M method's dispatch.
 func TestResolvers_MixedNumeric_BothInIncrementEnum(t *testing.T) {
 	in := apiTestInput(t, mixedNumericResolverSchema())
 	withDecimalOverride(in)
@@ -854,8 +860,8 @@ func TestResolvers_IntegerOnly_UnchangedFromBaseline(t *testing.T) {
 
 	mustContain(t, out, "incOps []IncrementOp[models.ProductIncrementColumn]")
 	mustContain(t, out, "for _, op := range incOps")
-	mustContain(t, seeds, "var incOps []sqlgenresolver.IncrementOp[models.ProductIncrementColumn]")
-	mustContain(t, seeds, "return r.M.UpdateProduct(ctx, id, setIn, hasSet, incOps)")
+	mustContain(t, out, "var incOps []IncrementOp[models.ProductIncrementColumn]")
+	mustContain(t, seeds, "return r.M.UpdateProduct(ctx, id, translateUpdateProductRequest(input))")
 }
 
 // compositePKResolverSchema is a fixture mirroring the graphql E2E example's

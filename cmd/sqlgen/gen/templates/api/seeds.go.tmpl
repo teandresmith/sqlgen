@@ -1,7 +1,6 @@
 {{- define "api/seeds" -}}
 {{- $ctx := . -}}
 {{- $pkg := $ctx.ModelsPackage -}}
-{{- $sqlgenPkg := $ctx.SqlgenResolverPkgName -}}
 {{- /* gqlgen-emitted input types (Create<T>Input, Update<T>Input,          */ -}}
 {{- /* <T>Filter, <T>Sort) live in the package gqlgen writes to per its     */ -}}
 {{- /* `model:` block. They are referenced under the sqlgen-controlled     */ -}}
@@ -58,61 +57,16 @@ func (r *mutationResolver) Create{{ $t.StructNamePlural }}(ctx context.Context, 
 {{- end }}
 
 {{- if and $t.Operations.Update $t.HasUpdateInput }}
-{{- if $t.HasIncrementColumns }}
 // Update{{ $t.StructName }} is the resolver for the update{{ $t.StructName }} field.
 func (r *mutationResolver) Update{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}, input {{ $gqlPrefix }}Update{{ $t.StructName }}Input) (*{{ $pkg }}.{{ $t.StructName }}, error) {
-{{- range $op := $t.UpdateOps }}
-	if input.{{ $op.SetGoField }} != nil && input.{{ $op.IncGoField }} != nil {
-		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both set and incremented in one mutation")
-	}
-	if input.{{ $op.IncGoField }} != nil && input.{{ $op.DecGoField }} != nil {
-		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both incremented and decremented in one mutation")
-	}
-{{- end }}
-	setIn := translateUpdate{{ $t.StructName }}Input(input)
-	hasSet := hasUpdate{{ $t.StructName }}SetFields(input)
-	var incOps []{{ $sqlgenPkg }}.IncrementOp[{{ $pkg }}.{{ $t.IncrementEnumType }}]
-{{- range $op := $t.UpdateOps }}
-	if input.{{ $op.IncGoField }} != nil {
-		incOps = append(incOps, {{ $sqlgenPkg }}.IncrementOp[{{ $pkg }}.{{ $t.IncrementEnumType }}]{
-			Column: {{ $pkg }}.{{ $op.IncColumnConst }},
-			Amount: int(*input.{{ $op.IncGoField }}),
-		})
-	}
-	if input.{{ $op.DecGoField }} != nil {
-		incOps = append(incOps, {{ $sqlgenPkg }}.IncrementOp[{{ $pkg }}.{{ $t.IncrementEnumType }}]{
-			Column: {{ $pkg }}.{{ $op.IncColumnConst }},
-			Amount: -int(*input.{{ $op.DecGoField }}),
-		})
-	}
-{{- end }}
-	return r.M.Update{{ $t.StructName }}(ctx, {{ pkPassArgs $t.PKArgs }}, setIn, hasSet, incOps)
+	return r.M.Update{{ $t.StructName }}(ctx, {{ pkPassArgs $t.PKArgs }}, translateUpdate{{ $t.StructName }}Request(input))
 }
-{{- else }}
-// Update{{ $t.StructName }} is the resolver for the update{{ $t.StructName }} field.
-// No numeric non-PK columns → no IncrementColumn enum, no `_inc`/
-// `_dec` operators on the input, and the seed delegates with the reduced
-// (set-only) signature exposed by Q/M.
-func (r *mutationResolver) Update{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}, input {{ $gqlPrefix }}Update{{ $t.StructName }}Input) (*{{ $pkg }}.{{ $t.StructName }}, error) {
-	setIn := translateUpdate{{ $t.StructName }}Input(input)
-	hasSet := hasUpdate{{ $t.StructName }}SetFields(input)
-	return r.M.Update{{ $t.StructName }}(ctx, {{ pkPassArgs $t.PKArgs }}, setIn, hasSet)
-}
-{{- end }}
 {{- end }}
 
 {{- if and $t.Operations.UpdateWhere $t.HasUpdateInput }}
 // Update{{ $t.StructNamePlural }} is the resolver for the update{{ $t.StructNamePlural }} field.
 func (r *mutationResolver) Update{{ $t.StructNamePlural }}(ctx context.Context, filter {{ $gqlPrefix }}{{ $t.StructName }}Filter, input {{ $gqlPrefix }}Update{{ $t.StructName }}Input) ([]*{{ $pkg }}.{{ $t.StructName }}, error) {
-{{- range $op := $t.UpdateOps }}
-	if input.{{ $op.SetGoField }} != nil && input.{{ $op.IncGoField }} != nil {
-		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both set and incremented in one mutation")
-	}
-	if input.{{ $op.IncGoField }} != nil && input.{{ $op.DecGoField }} != nil {
-		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both incremented and decremented in one mutation")
-	}
-{{- end }}
-	return r.M.Update{{ $t.StructNamePlural }}(ctx, translate{{ $t.StructName }}Filter(&filter), translateUpdate{{ $t.StructName }}Input(input))
+	return r.M.Update{{ $t.StructNamePlural }}(ctx, translate{{ $t.StructName }}Filter(&filter), translateUpdate{{ $t.StructName }}Request(input))
 }
 {{- end }}
 

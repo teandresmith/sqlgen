@@ -34,14 +34,12 @@ func (r *mutationResolver) CreateBinaryKeyEvents(ctx context.Context, inputs []*
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateBinaryKeyEvent(ctx context.Context, id int, input gqlmodel.UpdateBinaryKeyEventInput) (*models.BinaryKeyEvent, error) {
-	setIn := translateUpdateBinaryKeyEventInput(input)
-	hasSet := hasUpdateBinaryKeyEventSetFields(input)
-	return r.M.UpdateBinaryKeyEvent(ctx, id, setIn, hasSet)
+	return r.M.UpdateBinaryKeyEvent(ctx, id, translateUpdateBinaryKeyEventRequest(input))
 }
 
 // UpdateBinaryKeyEvents is the resolver for the updateBinaryKeyEvents field.
 func (r *mutationResolver) UpdateBinaryKeyEvents(ctx context.Context, filter gqlmodel.BinaryKeyEventFilter, input gqlmodel.UpdateBinaryKeyEventInput) ([]*models.BinaryKeyEvent, error) {
-	return r.M.UpdateBinaryKeyEvents(ctx, translateBinaryKeyEventFilter(&filter), translateUpdateBinaryKeyEventInput(input))
+	return r.M.UpdateBinaryKeyEvents(ctx, translateBinaryKeyEventFilter(&filter), translateUpdateBinaryKeyEventRequest(input))
 }
 
 // UpsertBinaryKeyEvent is the resolver for the upsertBinaryKeyEvent field.

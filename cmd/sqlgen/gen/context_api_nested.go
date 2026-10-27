@@ -530,7 +530,7 @@ func apiNestedChildFields(e NestedEdgeContext, target *APITableContext) []APINes
 		if !ok || !keep[in.ModelFieldName] {
 			continue
 		}
-		out = append(out, APINestedChildField{GraphQLType: f.GraphQLType, Input: in})
+		out = append(out, APINestedChildField{GraphQLType: f.CreateGraphQLType, Input: in})
 	}
 	return out
 }

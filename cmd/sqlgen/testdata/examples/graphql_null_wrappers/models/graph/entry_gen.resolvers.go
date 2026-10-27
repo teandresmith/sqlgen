@@ -10,7 +10,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql_null_wrappers/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql_null_wrappers/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql_null_wrappers/models/graph/sqlgenresolver"
 )
 
 // CreateEntry is the resolver for the createEntry field.
@@ -32,39 +31,12 @@ func (r *mutationResolver) CreateEntries(ctx context.Context, inputs []*gqlmodel
 
 // UpdateEntry is the resolver for the updateEntry field.
 func (r *mutationResolver) UpdateEntry(ctx context.Context, id int64, input gqlmodel.UpdateEntryInput) (*models.Entry, error) {
-	if input.Amount != nil && input.AmountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update entries: column \"amount\" cannot be both set and incremented in one mutation")
-	}
-	if input.AmountInc != nil && input.AmountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update entries: column \"amount\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateEntryInput(input)
-	hasSet := hasUpdateEntrySetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.EntryIncrementColumn]
-	if input.AmountInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.EntryIncrementColumn]{
-			Column: models.EntryIncrementAmount,
-			Amount: int(*input.AmountInc),
-		})
-	}
-	if input.AmountDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.EntryIncrementColumn]{
-			Column: models.EntryIncrementAmount,
-			Amount: -int(*input.AmountDec),
-		})
-	}
-	return r.M.UpdateEntry(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateEntry(ctx, id, translateUpdateEntryRequest(input))
 }
 
 // UpdateEntries is the resolver for the updateEntries field.
 func (r *mutationResolver) UpdateEntries(ctx context.Context, filter gqlmodel.EntryFilter, input gqlmodel.UpdateEntryInput) ([]*models.Entry, error) {
-	if input.Amount != nil && input.AmountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update entries: column \"amount\" cannot be both set and incremented in one mutation")
-	}
-	if input.AmountInc != nil && input.AmountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update entries: column \"amount\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateEntries(ctx, translateEntryFilter(&filter), translateUpdateEntryInput(input))
+	return r.M.UpdateEntries(ctx, translateEntryFilter(&filter), translateUpdateEntryRequest(input))
 }
 
 // UpsertEntry is the resolver for the upsertEntry field.

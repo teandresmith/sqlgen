@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql"
 	uuid "github.com/gofrs/uuid/v5"
 	"github.com/shopspring/decimal"
 )
@@ -53,7 +54,7 @@ type CreateAccountInput struct {
 	Balance     *decimal.NullDecimal `json:"balance,omitempty"`
 	TenantRef   *uuid.NullUUID       `json:"tenantRef,omitempty"`
 	ParentID    *sql.NullInt64       `json:"parentID,omitempty"`
-	CreatedAt   time.Time            `json:"createdAt"`
+	CreatedAt   *time.Time           `json:"createdAt,omitempty"`
 	DeletedAt   *sql.NullTime        `json:"deletedAt,omitempty"`
 }
 
@@ -62,7 +63,7 @@ type CreateEntryInput struct {
 	Memo        *sql.NullString `json:"memo,omitempty"`
 	Amount      decimal.Decimal `json:"amount"`
 	UpstreamRef *uuid.UUID      `json:"upstreamRef,omitempty"`
-	CreatedAt   time.Time       `json:"createdAt"`
+	CreatedAt   *time.Time      `json:"createdAt,omitempty"`
 }
 
 type DecimalComparator struct {
@@ -225,42 +226,42 @@ type TimeRange struct {
 }
 
 type UpdateAccountInput struct {
-	Name           *string              `json:"name,omitempty"`
-	ExternalRef    *int64               `json:"externalRef,omitempty"`
-	ExternalRefInc *int                 `json:"externalRef_inc,omitempty"`
-	ExternalRefDec *int                 `json:"externalRef_dec,omitempty"`
-	Nickname       *sql.NullString      `json:"nickname,omitempty"`
-	Flag           *sql.NullBool        `json:"flag,omitempty"`
-	SmallCount     *sql.NullInt16       `json:"smallCount,omitempty"`
-	SmallCountInc  *int                 `json:"smallCount_inc,omitempty"`
-	SmallCountDec  *int                 `json:"smallCount_dec,omitempty"`
-	MidCount       *sql.NullInt32       `json:"midCount,omitempty"`
-	MidCountInc    *int                 `json:"midCount_inc,omitempty"`
-	MidCountDec    *int                 `json:"midCount_dec,omitempty"`
-	BigCount       *sql.NullInt64       `json:"bigCount,omitempty"`
-	BigCountInc    *int                 `json:"bigCount_inc,omitempty"`
-	BigCountDec    *int                 `json:"bigCount_dec,omitempty"`
-	Ratio          *sql.NullFloat64     `json:"ratio,omitempty"`
-	RatioInc       *int                 `json:"ratio_inc,omitempty"`
-	RatioDec       *int                 `json:"ratio_dec,omitempty"`
-	ObservedAt     *sql.NullTime        `json:"observedAt,omitempty"`
-	Balance        *decimal.NullDecimal `json:"balance,omitempty"`
-	BalanceInc     *int                 `json:"balance_inc,omitempty"`
-	BalanceDec     *int                 `json:"balance_dec,omitempty"`
-	TenantRef      *uuid.NullUUID       `json:"tenantRef,omitempty"`
-	ParentID       *sql.NullInt64       `json:"parentID,omitempty"`
-	CreatedAt      *time.Time           `json:"createdAt,omitempty"`
-	DeletedAt      *sql.NullTime        `json:"deletedAt,omitempty"`
+	Name           *string                                 `json:"name,omitempty"`
+	ExternalRef    *int64                                  `json:"externalRef,omitempty"`
+	ExternalRefInc *int                                    `json:"externalRef_inc,omitempty"`
+	ExternalRefDec *int                                    `json:"externalRef_dec,omitempty"`
+	Nickname       graphql.Omittable[*sql.NullString]      `json:"nickname,omitempty"`
+	Flag           graphql.Omittable[*sql.NullBool]        `json:"flag,omitempty"`
+	SmallCount     graphql.Omittable[*sql.NullInt16]       `json:"smallCount,omitempty"`
+	SmallCountInc  *int                                    `json:"smallCount_inc,omitempty"`
+	SmallCountDec  *int                                    `json:"smallCount_dec,omitempty"`
+	MidCount       graphql.Omittable[*sql.NullInt32]       `json:"midCount,omitempty"`
+	MidCountInc    *int                                    `json:"midCount_inc,omitempty"`
+	MidCountDec    *int                                    `json:"midCount_dec,omitempty"`
+	BigCount       graphql.Omittable[*sql.NullInt64]       `json:"bigCount,omitempty"`
+	BigCountInc    *int                                    `json:"bigCount_inc,omitempty"`
+	BigCountDec    *int                                    `json:"bigCount_dec,omitempty"`
+	Ratio          graphql.Omittable[*sql.NullFloat64]     `json:"ratio,omitempty"`
+	RatioInc       *int                                    `json:"ratio_inc,omitempty"`
+	RatioDec       *int                                    `json:"ratio_dec,omitempty"`
+	ObservedAt     graphql.Omittable[*sql.NullTime]        `json:"observedAt,omitempty"`
+	Balance        graphql.Omittable[*decimal.NullDecimal] `json:"balance,omitempty"`
+	BalanceInc     *int                                    `json:"balance_inc,omitempty"`
+	BalanceDec     *int                                    `json:"balance_dec,omitempty"`
+	TenantRef      graphql.Omittable[*uuid.NullUUID]       `json:"tenantRef,omitempty"`
+	ParentID       graphql.Omittable[*sql.NullInt64]       `json:"parentID,omitempty"`
+	CreatedAt      *time.Time                              `json:"createdAt,omitempty"`
+	DeletedAt      graphql.Omittable[*sql.NullTime]        `json:"deletedAt,omitempty"`
 }
 
 type UpdateEntryInput struct {
-	AccountID   *int64           `json:"accountID,omitempty"`
-	Memo        *sql.NullString  `json:"memo,omitempty"`
-	Amount      *decimal.Decimal `json:"amount,omitempty"`
-	AmountInc   *int             `json:"amount_inc,omitempty"`
-	AmountDec   *int             `json:"amount_dec,omitempty"`
-	UpstreamRef *uuid.UUID       `json:"upstreamRef,omitempty"`
-	CreatedAt   *time.Time       `json:"createdAt,omitempty"`
+	AccountID   *int64                             `json:"accountID,omitempty"`
+	Memo        graphql.Omittable[*sql.NullString] `json:"memo,omitempty"`
+	Amount      *decimal.Decimal                   `json:"amount,omitempty"`
+	AmountInc   *int                               `json:"amount_inc,omitempty"`
+	AmountDec   *int                               `json:"amount_dec,omitempty"`
+	UpstreamRef graphql.Omittable[*uuid.UUID]      `json:"upstreamRef,omitempty"`
+	CreatedAt   *time.Time                         `json:"createdAt,omitempty"`
 }
 
 type AccountSortField string

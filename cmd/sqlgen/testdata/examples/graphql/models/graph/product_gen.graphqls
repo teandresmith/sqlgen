@@ -77,9 +77,9 @@ input CreateProductInput {
   name: String!
   description: String
   price: Decimal!
-  stock: Int!
+  stock: Int
   categoryID: Int!
-  createdAt: Time!
+  createdAt: Time
   updatedAt: Time
   deletedAt: Time
 }
@@ -145,11 +145,11 @@ input ProductOrderItemsUpdateNested {
 
 input ProductOrderItemsCreateInput {
   orderID: UUID!
-  quantity: Int!
+  quantity: Int
   unitPrice: Decimal!
   externalRef: String
   sourceIP: IPAddr
-  createdAt: Time!
+  createdAt: Time
 }
 
 extend type Mutation {

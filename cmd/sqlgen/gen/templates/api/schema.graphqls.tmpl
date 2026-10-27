@@ -89,7 +89,7 @@ input {{ $t.StructName }}Sort {
 input Create{{ $t.StructName }}Input {
 {{- range $f := $t.Fields }}
 {{- if $f.InCreateInput }}
-  {{ $f.GraphQLName }}: {{ $f.GraphQLType }}
+  {{ $f.GraphQLName }}: {{ $f.CreateGraphQLType }}
 {{- end }}
 {{- end }}
 }
@@ -110,8 +110,8 @@ input Update{{ $t.StructName }}Input {
 {{- /* keeps the plain set field.                                            */ -}}
 {{- if $f.InUpdateInput }}
   {{ $f.GraphQLName }}: {{ $f.GraphQLBare }}
-{{- /* `_inc` / `_dec` paired fields always type as `Int` so the seed cast    */ -}}
-{{- /* `int(*input.<IncGoField>)` compiles uniformly across all incrementable */ -}}
+{{- /* `_inc` / `_dec` paired fields always type as `Int` so the translator   */ -}}
+{{- /* cast `int(*in.<IncGoField>)` compiles uniformly across incrementable   */ -}}
 {{- /* column kinds (int / float / decimal). IncrementOp[T].Amount is `int`  */ -}}
 {{- /* by design; the runtime `column = column + ?` SQL accepts an int       */ -}}
 {{- /* against any numeric column type at the dialect level. Writable-gated  */ -}}

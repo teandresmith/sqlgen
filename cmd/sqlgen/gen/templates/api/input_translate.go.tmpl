@@ -39,11 +39,29 @@ func translateCreate{{ $t.StructName }}Input(in {{ $gqlPrefix }}Create{{ $t.Stru
 // omittable in the model; gqlgen emits each field as `*T` regardless of
 // schema nullability so the nil-check is uniform — only the inner coercion
 // varies (see inputCoerceDeref for the cast / address-of / deref branches).
-// `_inc` / `_dec` paired fields are skipped here and dispatched separately
-// by the resolver via Increment.
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdate{{ $t.StructName }}Request
+// carries them to the resolver.
 func translateUpdate{{ $t.StructName }}Input(in {{ $gqlPrefix }}Update{{ $t.StructName }}Input) *{{ $pkg }}.Update{{ $t.StructName }}Input {
 	out := &{{ $pkg }}.Update{{ $t.StructName }}Input{}
 {{ range $f := $t.UpdateInputFields -}}
+{{- if $f.GqlgenOmittable -}}
+	if val, ok := in.{{ $f.GoFieldName }}.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.{{ $f.ModelFieldName }}.Get()
+			out.{{ $f.ModelFieldName }} = omittable.Set(zero)
+		} else {
+{{- if $f.PointerCast }}
+			v := {{ $f.CastTo }}(*val)
+			out.{{ $f.ModelFieldName }} = omittable.Set(&v)
+{{- else }}
+			out.{{ $f.ModelFieldName }} = omittable.Set({{ inputCoerceDerefOf "val" $f }})
+{{- end }}
+		}
+	}
+{{ else -}}
 	if in.{{ $f.GoFieldName }} != nil {
 {{- if $f.PointerCast }}
 		v := {{ $f.CastTo }}(*in.{{ $f.GoFieldName }})
@@ -53,20 +71,50 @@ func translateUpdate{{ $t.StructName }}Input(in {{ $gqlPrefix }}Update{{ $t.Stru
 {{- end }}
 	}
 {{ end -}}
+{{ end -}}
 	return out
 }
 
 // hasUpdate{{ $t.StructName }}SetFields reports whether any non-`_inc`/`_dec`
-// field on the update input is set. The resolver only issues Update when at
-// least one set-field is present; a pure inc/dec mutation skips the Update
-// call entirely so the unified client's hook chain sees one Increment per op.
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
 func hasUpdate{{ $t.StructName }}SetFields(in {{ $gqlPrefix }}Update{{ $t.StructName }}Input) bool {
 {{- range $f := $t.UpdateInputFields }}
+{{- if $f.GqlgenOmittable }}
+	if in.{{ $f.GoFieldName }}.IsSet() {
+		return true
+	}
+{{- else }}
 	if in.{{ $f.GoFieldName }} != nil {
 		return true
 	}
 {{- end }}
+{{- end }}
 	return false
+}
+
+// translateUpdate{{ $t.StructName }}Request carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdate{{ $t.StructName }}Input, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdate{{ $t.StructName }}Request(in {{ $gqlPrefix }}Update{{ $t.StructName }}Input) {{ $sqlgenPkg }}.Update{{ $t.StructName }}Request {
+	out := {{ $sqlgenPkg }}.Update{{ $t.StructName }}Request{
+		Set:    translateUpdate{{ $t.StructName }}Input(in),
+		HasSet: hasUpdate{{ $t.StructName }}SetFields(in),
+	}
+{{- range $op := $t.UpdateOps }}
+	if in.{{ $op.IncGoField }} != nil {
+		out.{{ $op.IncGoField }} = new(int(*in.{{ $op.IncGoField }}))
+	}
+	if in.{{ $op.DecGoField }} != nil {
+		out.{{ $op.DecGoField }} = new(int(*in.{{ $op.DecGoField }}))
+	}
+{{- end }}
+	return out
 }
 {{- end }}
 {{- with $t.Nested }}
@@ -124,7 +172,7 @@ func {{ $n.IncrementOpsFunc }}(in {{ $gqlPrefix }}{{ $n.UpdateInputName }}) ([]{
 		return nil, nil
 	}
 {{- range $op := $t.UpdateOps }}
-	if p.{{ $op.SetGoField }} != nil && p.{{ $op.IncGoField }} != nil {
+	if {{ if $op.SetGqlgenOmittable }}p.{{ $op.SetGoField }}.IsSet(){{ else }}p.{{ $op.SetGoField }} != nil{{ end }} && p.{{ $op.IncGoField }} != nil {
 		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }} with related: column \"{{ $op.SQLName }}\" cannot be both set and incremented in one mutation")
 	}
 	if p.{{ $op.IncGoField }} != nil && p.{{ $op.DecGoField }} != nil {

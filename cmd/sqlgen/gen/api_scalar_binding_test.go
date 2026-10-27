@@ -413,14 +413,19 @@ func TestInputTranslate_BinaryAndNetworkColumns(t *testing.T) {
 		// Every update field is optional, so gqlgen emits bare T for the
 		// nilable bindings and *T for the rest. The required-but-nilable arm
 		// (`in.Payload`) is the one the old code dereferenced.
+		// A nullable column's field is a gqlgen Omittable, unwrapped into
+		// `val` in the same shape gqlgen would otherwise have emitted.
 		"out.Payload = omittable.Set(in.Payload)",
-		"out.Signature = omittable.Set(in.Signature)",
+		"if val, ok := in.Signature.ValueOK(); ok {",
+		"out.Signature = omittable.Set(val)",
 		"out.Addr = omittable.Set(in.Addr)",
 		"out.MAC = omittable.Set(in.MAC)",
 		"out.Dur = omittable.Set(*in.Dur)",
-		"out.DurN = omittable.Set(in.DurN)",
+		"if val, ok := in.DurN.ValueOK(); ok {",
+		"out.DurN = omittable.Set(val)",
 		"out.NetBlock = omittable.Set(*in.NetBlock)",
-		"out.NetBlockN = omittable.Set(in.NetBlockN)",
+		"if val, ok := in.NetBlockN.ValueOK(); ok {",
+		"out.NetBlockN = omittable.Set(val)",
 	} {
 		if !strings.Contains(update, want) {
 			t.Errorf("update translator missing %q:\n%s", want, update)

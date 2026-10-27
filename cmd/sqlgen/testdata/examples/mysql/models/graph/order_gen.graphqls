@@ -63,10 +63,10 @@ input OrderSort {
 }
 input CreateOrderInput {
   userID: Int!
-  status: OrdersStatusEnum!
+  status: OrdersStatusEnum
   total: Float!
   notes: String
-  orderedAt: Time!
+  orderedAt: Time
 }
 input UpdateOrderInput {
   userID: Int

@@ -34,14 +34,12 @@ func (r *mutationResolver) CreateUserEvents(ctx context.Context, inputs []*gqlmo
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateUserEvent(ctx context.Context, id int, input gqlmodel.UpdateUserEventInput) (*models.UserEvent, error) {
-	setIn := translateUpdateUserEventInput(input)
-	hasSet := hasUpdateUserEventSetFields(input)
-	return r.M.UpdateUserEvent(ctx, id, setIn, hasSet)
+	return r.M.UpdateUserEvent(ctx, id, translateUpdateUserEventRequest(input))
 }
 
 // UpdateUserEvents is the resolver for the updateUserEvents field.
 func (r *mutationResolver) UpdateUserEvents(ctx context.Context, filter gqlmodel.UserEventFilter, input gqlmodel.UpdateUserEventInput) ([]*models.UserEvent, error) {
-	return r.M.UpdateUserEvents(ctx, translateUserEventFilter(&filter), translateUpdateUserEventInput(input))
+	return r.M.UpdateUserEvents(ctx, translateUserEventFilter(&filter), translateUpdateUserEventRequest(input))
 }
 
 // UpsertUserEvent is the resolver for the upsertUserEvent field.

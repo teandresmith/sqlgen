@@ -11,7 +11,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models/graph/sqlgenresolver"
 )
 
 // CreateOrderItem is the resolver for the createOrderItem field.
@@ -33,63 +32,12 @@ func (r *mutationResolver) CreateOrderItems(ctx context.Context, inputs []*gqlmo
 
 // UpdateOrderItem is the resolver for the updateOrderItem field.
 func (r *mutationResolver) UpdateOrderItem(ctx context.Context, id uuid1.UUID, input gqlmodel.UpdateOrderItemInput) (*models.OrderItem, error) {
-	if input.Quantity != nil && input.QuantityInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update order_items: column \"quantity\" cannot be both set and incremented in one mutation")
-	}
-	if input.QuantityInc != nil && input.QuantityDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update order_items: column \"quantity\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.UnitPrice != nil && input.UnitPriceInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update order_items: column \"unit_price\" cannot be both set and incremented in one mutation")
-	}
-	if input.UnitPriceInc != nil && input.UnitPriceDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update order_items: column \"unit_price\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateOrderItemInput(input)
-	hasSet := hasUpdateOrderItemSetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.OrderItemIncrementColumn]
-	if input.QuantityInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.OrderItemIncrementColumn]{
-			Column: models.OrderItemIncrementQuantity,
-			Amount: int(*input.QuantityInc),
-		})
-	}
-	if input.QuantityDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.OrderItemIncrementColumn]{
-			Column: models.OrderItemIncrementQuantity,
-			Amount: -int(*input.QuantityDec),
-		})
-	}
-	if input.UnitPriceInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.OrderItemIncrementColumn]{
-			Column: models.OrderItemIncrementUnitPrice,
-			Amount: int(*input.UnitPriceInc),
-		})
-	}
-	if input.UnitPriceDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.OrderItemIncrementColumn]{
-			Column: models.OrderItemIncrementUnitPrice,
-			Amount: -int(*input.UnitPriceDec),
-		})
-	}
-	return r.M.UpdateOrderItem(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateOrderItem(ctx, id, translateUpdateOrderItemRequest(input))
 }
 
 // UpdateOrderItems is the resolver for the updateOrderItems field.
 func (r *mutationResolver) UpdateOrderItems(ctx context.Context, filter gqlmodel.OrderItemFilter, input gqlmodel.UpdateOrderItemInput) ([]*models.OrderItem, error) {
-	if input.Quantity != nil && input.QuantityInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update order_items: column \"quantity\" cannot be both set and incremented in one mutation")
-	}
-	if input.QuantityInc != nil && input.QuantityDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update order_items: column \"quantity\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.UnitPrice != nil && input.UnitPriceInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update order_items: column \"unit_price\" cannot be both set and incremented in one mutation")
-	}
-	if input.UnitPriceInc != nil && input.UnitPriceDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update order_items: column \"unit_price\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateOrderItems(ctx, translateOrderItemFilter(&filter), translateUpdateOrderItemInput(input))
+	return r.M.UpdateOrderItems(ctx, translateOrderItemFilter(&filter), translateUpdateOrderItemRequest(input))
 }
 
 // UpsertOrderItem is the resolver for the upsertOrderItem field.

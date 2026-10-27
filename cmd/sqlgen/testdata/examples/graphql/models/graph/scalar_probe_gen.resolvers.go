@@ -11,7 +11,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models/graph/sqlgenresolver"
 )
 
 // CreateScalarProbe is the resolver for the createScalarProbe field.
@@ -33,111 +32,12 @@ func (r *mutationResolver) CreateScalarProbes(ctx context.Context, inputs []*gql
 
 // UpdateScalarProbe is the resolver for the updateScalarProbe field.
 func (r *mutationResolver) UpdateScalarProbe(ctx context.Context, id uuid1.UUID, input gqlmodel.UpdateScalarProbeInput) (*models.ScalarProbe, error) {
-	if input.SmallCount != nil && input.SmallCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"small_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.SmallCountInc != nil && input.SmallCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"small_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.MidCount != nil && input.MidCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"mid_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.MidCountInc != nil && input.MidCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"mid_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.BigCount != nil && input.BigCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"big_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.BigCountInc != nil && input.BigCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"big_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Ratio != nil && input.RatioInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"ratio\" cannot be both set and incremented in one mutation")
-	}
-	if input.RatioInc != nil && input.RatioDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"ratio\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateScalarProbeInput(input)
-	hasSet := hasUpdateScalarProbeSetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.ScalarProbeIncrementColumn]
-	if input.SmallCountInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.ScalarProbeIncrementColumn]{
-			Column: models.ScalarProbeIncrementSmallCount,
-			Amount: int(*input.SmallCountInc),
-		})
-	}
-	if input.SmallCountDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.ScalarProbeIncrementColumn]{
-			Column: models.ScalarProbeIncrementSmallCount,
-			Amount: -int(*input.SmallCountDec),
-		})
-	}
-	if input.MidCountInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.ScalarProbeIncrementColumn]{
-			Column: models.ScalarProbeIncrementMidCount,
-			Amount: int(*input.MidCountInc),
-		})
-	}
-	if input.MidCountDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.ScalarProbeIncrementColumn]{
-			Column: models.ScalarProbeIncrementMidCount,
-			Amount: -int(*input.MidCountDec),
-		})
-	}
-	if input.BigCountInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.ScalarProbeIncrementColumn]{
-			Column: models.ScalarProbeIncrementBigCount,
-			Amount: int(*input.BigCountInc),
-		})
-	}
-	if input.BigCountDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.ScalarProbeIncrementColumn]{
-			Column: models.ScalarProbeIncrementBigCount,
-			Amount: -int(*input.BigCountDec),
-		})
-	}
-	if input.RatioInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.ScalarProbeIncrementColumn]{
-			Column: models.ScalarProbeIncrementRatio,
-			Amount: int(*input.RatioInc),
-		})
-	}
-	if input.RatioDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.ScalarProbeIncrementColumn]{
-			Column: models.ScalarProbeIncrementRatio,
-			Amount: -int(*input.RatioDec),
-		})
-	}
-	return r.M.UpdateScalarProbe(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateScalarProbe(ctx, id, translateUpdateScalarProbeRequest(input))
 }
 
 // UpdateScalarProbes is the resolver for the updateScalarProbes field.
 func (r *mutationResolver) UpdateScalarProbes(ctx context.Context, filter gqlmodel.ScalarProbeFilter, input gqlmodel.UpdateScalarProbeInput) ([]*models.ScalarProbe, error) {
-	if input.SmallCount != nil && input.SmallCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"small_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.SmallCountInc != nil && input.SmallCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"small_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.MidCount != nil && input.MidCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"mid_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.MidCountInc != nil && input.MidCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"mid_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.BigCount != nil && input.BigCountInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"big_count\" cannot be both set and incremented in one mutation")
-	}
-	if input.BigCountInc != nil && input.BigCountDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"big_count\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Ratio != nil && input.RatioInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"ratio\" cannot be both set and incremented in one mutation")
-	}
-	if input.RatioInc != nil && input.RatioDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update scalar_probes: column \"ratio\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateScalarProbes(ctx, translateScalarProbeFilter(&filter), translateUpdateScalarProbeInput(input))
+	return r.M.UpdateScalarProbes(ctx, translateScalarProbeFilter(&filter), translateUpdateScalarProbeRequest(input))
 }
 
 // UpsertScalarProbe is the resolver for the upsertScalarProbe field.

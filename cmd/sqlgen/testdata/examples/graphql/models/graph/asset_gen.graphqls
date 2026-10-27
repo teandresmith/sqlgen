@@ -75,9 +75,9 @@ input AssetSort {
 }
 input CreateAssetInput {
   name: String!
-  declaredCategories: [DocumentEntityTypeEnum!]!
+  declaredCategories: [DocumentEntityTypeEnum!]
   primaryCategory: DocumentEntityTypeEnum
-  createdAt: Time!
+  createdAt: Time
 }
 input UpdateAssetInput {
   name: String
@@ -140,7 +140,7 @@ input AssetAttachmentsUpdateNested {
 
 input AssetAttachmentsCreateInput {
   name: String!
-  createdAt: Time!
+  createdAt: Time
 }
 
 input AssetDocumentsCreateNested {
@@ -165,7 +165,7 @@ input AssetInvoicesUpdateNested {
 
 input AssetInvoicesCreateInput {
   name: String!
-  createdAt: Time!
+  createdAt: Time
 }
 
 input AssetPrimaryDocumentCreateNested {
@@ -178,7 +178,7 @@ input AssetPrimaryDocumentUpdateNested {
 
 input AssetPrimaryDocumentCreateInput {
   name: String!
-  createdAt: Time!
+  createdAt: Time
 }
 
 extend type Mutation {

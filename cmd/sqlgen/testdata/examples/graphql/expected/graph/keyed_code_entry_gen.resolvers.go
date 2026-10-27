@@ -35,14 +35,12 @@ func (r *mutationResolver) CreateKeyedCodeEntries(ctx context.Context, inputs []
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateKeyedCodeEntry(ctx context.Context, id uuid.UUID, input gqlmodel.UpdateKeyedCodeEntryInput) (*models.KeyedCodeEntry, error) {
-	setIn := translateUpdateKeyedCodeEntryInput(input)
-	hasSet := hasUpdateKeyedCodeEntrySetFields(input)
-	return r.M.UpdateKeyedCodeEntry(ctx, id, setIn, hasSet)
+	return r.M.UpdateKeyedCodeEntry(ctx, id, translateUpdateKeyedCodeEntryRequest(input))
 }
 
 // UpdateKeyedCodeEntries is the resolver for the updateKeyedCodeEntries field.
 func (r *mutationResolver) UpdateKeyedCodeEntries(ctx context.Context, filter gqlmodel.KeyedCodeEntryFilter, input gqlmodel.UpdateKeyedCodeEntryInput) ([]*models.KeyedCodeEntry, error) {
-	return r.M.UpdateKeyedCodeEntries(ctx, translateKeyedCodeEntryFilter(&filter), translateUpdateKeyedCodeEntryInput(input))
+	return r.M.UpdateKeyedCodeEntries(ctx, translateKeyedCodeEntryFilter(&filter), translateUpdateKeyedCodeEntryRequest(input))
 }
 
 // UpsertKeyedCodeEntry is the resolver for the upsertKeyedCodeEntry field.

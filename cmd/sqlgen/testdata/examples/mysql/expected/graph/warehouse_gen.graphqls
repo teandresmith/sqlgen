@@ -68,7 +68,7 @@ input CreateWarehouseInput {
   price: Decimal!
   nullablePrice: NullDecimal
   inspectedAt: NullDateTime
-  createdAt: DateTime!
+  createdAt: DateTime
 }
 input UpdateWarehouseInput {
   externalID: KSUID

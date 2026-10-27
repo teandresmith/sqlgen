@@ -10,7 +10,6 @@ import (
 	uuid1 "uuid"
 
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql_top_level/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql_top_level/graph/sqlgenresolver"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql_top_level/models"
 )
 
@@ -33,39 +32,12 @@ func (r *mutationResolver) CreateProducts(ctx context.Context, inputs []*gqlmode
 
 // UpdateProduct is the resolver for the updateProduct field.
 func (r *mutationResolver) UpdateProduct(ctx context.Context, id uuid1.UUID, input gqlmodel.UpdateProductInput) (*models.Product, error) {
-	if input.Price != nil && input.PriceInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update products: column \"price\" cannot be both set and incremented in one mutation")
-	}
-	if input.PriceInc != nil && input.PriceDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update products: column \"price\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateProductInput(input)
-	hasSet := hasUpdateProductSetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.ProductIncrementColumn]
-	if input.PriceInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.ProductIncrementColumn]{
-			Column: models.ProductIncrementPrice,
-			Amount: int(*input.PriceInc),
-		})
-	}
-	if input.PriceDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.ProductIncrementColumn]{
-			Column: models.ProductIncrementPrice,
-			Amount: -int(*input.PriceDec),
-		})
-	}
-	return r.M.UpdateProduct(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateProduct(ctx, id, translateUpdateProductRequest(input))
 }
 
 // UpdateProducts is the resolver for the updateProducts field.
 func (r *mutationResolver) UpdateProducts(ctx context.Context, filter gqlmodel.ProductFilter, input gqlmodel.UpdateProductInput) ([]*models.Product, error) {
-	if input.Price != nil && input.PriceInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update products: column \"price\" cannot be both set and incremented in one mutation")
-	}
-	if input.PriceInc != nil && input.PriceDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update products: column \"price\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateProducts(ctx, translateProductFilter(&filter), translateUpdateProductInput(input))
+	return r.M.UpdateProducts(ctx, translateProductFilter(&filter), translateUpdateProductRequest(input))
 }
 
 // UpsertProduct is the resolver for the upsertProduct field.

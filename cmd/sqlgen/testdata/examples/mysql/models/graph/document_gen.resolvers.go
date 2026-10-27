@@ -34,14 +34,12 @@ func (r *mutationResolver) CreateDocuments(ctx context.Context, inputs []*gqlmod
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateDocument(ctx context.Context, id int, input gqlmodel.UpdateDocumentInput) (*models.Document, error) {
-	setIn := translateUpdateDocumentInput(input)
-	hasSet := hasUpdateDocumentSetFields(input)
-	return r.M.UpdateDocument(ctx, id, setIn, hasSet)
+	return r.M.UpdateDocument(ctx, id, translateUpdateDocumentRequest(input))
 }
 
 // UpdateDocuments is the resolver for the updateDocuments field.
 func (r *mutationResolver) UpdateDocuments(ctx context.Context, filter gqlmodel.DocumentFilter, input gqlmodel.UpdateDocumentInput) ([]*models.Document, error) {
-	return r.M.UpdateDocuments(ctx, translateDocumentFilter(&filter), translateUpdateDocumentInput(input))
+	return r.M.UpdateDocuments(ctx, translateDocumentFilter(&filter), translateUpdateDocumentRequest(input))
 }
 
 // UpsertDocument is the resolver for the upsertDocument field.

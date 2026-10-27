@@ -58,7 +58,7 @@ input BinaryKeySort {
 input CreateBinaryKeyInput {
   id: Bytes!
   name: String!
-  createdAt: DateTime!
+  createdAt: DateTime
 }
 input UpdateBinaryKeyInput {
   name: String

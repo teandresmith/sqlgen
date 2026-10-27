@@ -63,7 +63,7 @@ input CreateEntryInput {
   memo: NullString
   amount: Decimal!
   upstreamRef: UUID
-  createdAt: Time!
+  createdAt: Time
 }
 input UpdateEntryInput {
   accountID: Int64

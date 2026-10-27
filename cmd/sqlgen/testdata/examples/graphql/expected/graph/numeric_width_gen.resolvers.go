@@ -11,7 +11,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models/graph/sqlgenresolver"
 )
 
 // CreateNumericWidth is the resolver for the createNumericWidth field.
@@ -33,111 +32,12 @@ func (r *mutationResolver) CreateNumericWidths(ctx context.Context, inputs []*gq
 
 // UpdateNumericWidth is the resolver for the updateNumericWidth field.
 func (r *mutationResolver) UpdateNumericWidth(ctx context.Context, id uuid1.UUID, input gqlmodel.UpdateNumericWidthInput) (*models.NumericWidth, error) {
-	if input.Small != nil && input.SmallInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"small\" cannot be both set and incremented in one mutation")
-	}
-	if input.SmallInc != nil && input.SmallDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"small\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.SmallN != nil && input.SmallNInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"small_n\" cannot be both set and incremented in one mutation")
-	}
-	if input.SmallNInc != nil && input.SmallNDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"small_n\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Ratio != nil && input.RatioInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"ratio\" cannot be both set and incremented in one mutation")
-	}
-	if input.RatioInc != nil && input.RatioDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"ratio\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.RatioN != nil && input.RatioNInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"ratio_n\" cannot be both set and incremented in one mutation")
-	}
-	if input.RatioNInc != nil && input.RatioNDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"ratio_n\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateNumericWidthInput(input)
-	hasSet := hasUpdateNumericWidthSetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.NumericWidthIncrementColumn]
-	if input.SmallInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.NumericWidthIncrementColumn]{
-			Column: models.NumericWidthIncrementSmall,
-			Amount: int(*input.SmallInc),
-		})
-	}
-	if input.SmallDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.NumericWidthIncrementColumn]{
-			Column: models.NumericWidthIncrementSmall,
-			Amount: -int(*input.SmallDec),
-		})
-	}
-	if input.SmallNInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.NumericWidthIncrementColumn]{
-			Column: models.NumericWidthIncrementSmallN,
-			Amount: int(*input.SmallNInc),
-		})
-	}
-	if input.SmallNDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.NumericWidthIncrementColumn]{
-			Column: models.NumericWidthIncrementSmallN,
-			Amount: -int(*input.SmallNDec),
-		})
-	}
-	if input.RatioInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.NumericWidthIncrementColumn]{
-			Column: models.NumericWidthIncrementRatio,
-			Amount: int(*input.RatioInc),
-		})
-	}
-	if input.RatioDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.NumericWidthIncrementColumn]{
-			Column: models.NumericWidthIncrementRatio,
-			Amount: -int(*input.RatioDec),
-		})
-	}
-	if input.RatioNInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.NumericWidthIncrementColumn]{
-			Column: models.NumericWidthIncrementRatioN,
-			Amount: int(*input.RatioNInc),
-		})
-	}
-	if input.RatioNDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.NumericWidthIncrementColumn]{
-			Column: models.NumericWidthIncrementRatioN,
-			Amount: -int(*input.RatioNDec),
-		})
-	}
-	return r.M.UpdateNumericWidth(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateNumericWidth(ctx, id, translateUpdateNumericWidthRequest(input))
 }
 
 // UpdateNumericWidths is the resolver for the updateNumericWidths field.
 func (r *mutationResolver) UpdateNumericWidths(ctx context.Context, filter gqlmodel.NumericWidthFilter, input gqlmodel.UpdateNumericWidthInput) ([]*models.NumericWidth, error) {
-	if input.Small != nil && input.SmallInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"small\" cannot be both set and incremented in one mutation")
-	}
-	if input.SmallInc != nil && input.SmallDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"small\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.SmallN != nil && input.SmallNInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"small_n\" cannot be both set and incremented in one mutation")
-	}
-	if input.SmallNInc != nil && input.SmallNDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"small_n\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.Ratio != nil && input.RatioInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"ratio\" cannot be both set and incremented in one mutation")
-	}
-	if input.RatioInc != nil && input.RatioDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"ratio\" cannot be both incremented and decremented in one mutation")
-	}
-	if input.RatioN != nil && input.RatioNInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"ratio_n\" cannot be both set and incremented in one mutation")
-	}
-	if input.RatioNInc != nil && input.RatioNDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update numeric_widths: column \"ratio_n\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateNumericWidths(ctx, translateNumericWidthFilter(&filter), translateUpdateNumericWidthInput(input))
+	return r.M.UpdateNumericWidths(ctx, translateNumericWidthFilter(&filter), translateUpdateNumericWidthRequest(input))
 }
 
 // UpsertNumericWidth is the resolver for the upsertNumericWidth field.

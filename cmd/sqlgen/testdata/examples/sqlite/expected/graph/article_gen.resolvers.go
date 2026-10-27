@@ -34,14 +34,12 @@ func (r *mutationResolver) CreateArticles(ctx context.Context, inputs []*gqlmode
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateArticle(ctx context.Context, id int, input gqlmodel.UpdateArticleInput) (*models.Article, error) {
-	setIn := translateUpdateArticleInput(input)
-	hasSet := hasUpdateArticleSetFields(input)
-	return r.M.UpdateArticle(ctx, id, setIn, hasSet)
+	return r.M.UpdateArticle(ctx, id, translateUpdateArticleRequest(input))
 }
 
 // UpdateArticles is the resolver for the updateArticles field.
 func (r *mutationResolver) UpdateArticles(ctx context.Context, filter gqlmodel.ArticleFilter, input gqlmodel.UpdateArticleInput) ([]*models.Article, error) {
-	return r.M.UpdateArticles(ctx, translateArticleFilter(&filter), translateUpdateArticleInput(input))
+	return r.M.UpdateArticles(ctx, translateArticleFilter(&filter), translateUpdateArticleRequest(input))
 }
 
 // UpsertArticle is the resolver for the upsertArticle field.

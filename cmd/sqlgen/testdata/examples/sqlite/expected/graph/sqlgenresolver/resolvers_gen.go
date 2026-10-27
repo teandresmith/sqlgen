@@ -8,6 +8,7 @@ import (
 	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models"
+	"github.com/teandresmith/sqlgen/comparator"
 	"github.com/teandresmith/sqlgen/sql"
 )
 
@@ -19,8 +20,9 @@ import (
 //
 // Q/M methods take model-side types only — that breaks the cycle that would
 // otherwise form between this sub-package and graph (graph's gqlgen-generated
-// input types depend on graph's package; seed-side translation maps them
-// onto these methods' model-shape parameters).
+// input types depend on graph's package; the graph package's regenerated
+// translators map them onto these methods' parameters, an update input onto
+// the Update<T>Request this package declares).
 
 // Q is the query helper struct for sqlgen-managed Query.* fields.
 type Q struct {
@@ -40,8 +42,8 @@ type IncrementOp[T comparable] struct {
 }
 
 // InvalidInputError builds a gqlerror.Error tagged with INVALID_INPUT for
-// runtime conflict checks on input operators. Exported so
-// seed files in the parent graph package can call it directly.
+// runtime conflict checks on input operators. Exported so the input
+// translators in the parent graph package can call it directly.
 func InvalidInputError(msg string) error {
 	return &gqlerror.Error{
 		Message:    msg,
@@ -146,14 +148,26 @@ func (m *M) CreateArticles(ctx context.Context, inputs []*models.CreateArticleIn
 	return res, nil
 }
 
+// UpdateArticleRequest is one updateArticle /
+// updateArticles input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateArticleRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateArticleInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateArticle resolves the single-row update mutation for articles.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateArticle(ctx context.Context, id int, setIn *models.UpdateArticleInput, hasSet bool) (*models.Article, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateArticle(ctx context.Context, id int, input UpdateArticleRequest) (*models.Article, error) {
 	fo := articleFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Articles().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.ArticleFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Articles().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.ArticleFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.ArticleFieldOptions](ctx) {
 				f(o)
 			}
@@ -174,11 +188,11 @@ func (m *M) UpdateArticle(ctx context.Context, id int, setIn *models.UpdateArtic
 }
 
 // UpdateArticles resolves the bulk update-where mutation for articles.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateArticles(ctx context.Context, filter *models.ArticleFilter, setIn *models.UpdateArticleInput) ([]*models.Article, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateArticles(ctx context.Context, filter *models.ArticleFilter, input UpdateArticleRequest) ([]*models.Article, error) {
 	fo := articleFieldOptionsFromContext(ctx)
-	res, err := m.Client.Articles().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.ArticleFieldOptions]) {
+	res, err := m.Client.Articles().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ArticleFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.ArticleFieldOptions](ctx) {
 			f(o)
@@ -355,14 +369,26 @@ func (m *M) CreateAssets(ctx context.Context, inputs []*models.CreateAssetInput)
 	return res, nil
 }
 
+// UpdateAssetRequest is one updateAsset /
+// updateAssets input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateAssetRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateAssetInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateAsset resolves the single-row update mutation for assets.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateAsset(ctx context.Context, id int, setIn *models.UpdateAssetInput, hasSet bool) (*models.Asset, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateAsset(ctx context.Context, id int, input UpdateAssetRequest) (*models.Asset, error) {
 	fo := assetFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Assets().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.AssetFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Assets().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.AssetFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.AssetFieldOptions](ctx) {
 				f(o)
 			}
@@ -383,11 +409,11 @@ func (m *M) UpdateAsset(ctx context.Context, id int, setIn *models.UpdateAssetIn
 }
 
 // UpdateAssets resolves the bulk update-where mutation for assets.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateAssets(ctx context.Context, filter *models.AssetFilter, setIn *models.UpdateAssetInput) ([]*models.Asset, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateAssets(ctx context.Context, filter *models.AssetFilter, input UpdateAssetRequest) ([]*models.Asset, error) {
 	fo := assetFieldOptionsFromContext(ctx)
-	res, err := m.Client.Assets().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.AssetFieldOptions]) {
+	res, err := m.Client.Assets().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.AssetFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.AssetFieldOptions](ctx) {
 			f(o)
@@ -655,14 +681,26 @@ func (m *M) CreateBadges(ctx context.Context, inputs []*models.CreateBadgeInput)
 	return res, nil
 }
 
+// UpdateBadgeRequest is one updateBadge /
+// updateBadges input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBadgeRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBadgeInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateBadge resolves the single-row update mutation for badges.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateBadge(ctx context.Context, code string, setIn *models.UpdateBadgeInput, hasSet bool) (*models.Badge, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBadge(ctx context.Context, code string, input UpdateBadgeRequest) (*models.Badge, error) {
 	fo := badgeFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Badges().Update(ctx, code, setIn, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Badges().Update(ctx, code, input.Set, func(o *models.CallOptions[models.BadgeFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
 				f(o)
 			}
@@ -683,11 +721,11 @@ func (m *M) UpdateBadge(ctx context.Context, code string, setIn *models.UpdateBa
 }
 
 // UpdateBadges resolves the bulk update-where mutation for badges.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateBadges(ctx context.Context, filter *models.BadgeFilter, setIn *models.UpdateBadgeInput) ([]*models.Badge, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBadges(ctx context.Context, filter *models.BadgeFilter, input UpdateBadgeRequest) ([]*models.Badge, error) {
 	fo := badgeFieldOptionsFromContext(ctx)
-	res, err := m.Client.Badges().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.BadgeFieldOptions]) {
+	res, err := m.Client.Badges().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BadgeFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.BadgeFieldOptions](ctx) {
 			f(o)
@@ -827,14 +865,26 @@ func (m *M) CreateBinaryKeys(ctx context.Context, inputs []*models.CreateBinaryK
 	return res, nil
 }
 
+// UpdateBinaryKeyRequest is one updateBinaryKey /
+// updateBinaryKeys input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBinaryKeyRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBinaryKeyInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateBinaryKey resolves the single-row update mutation for binary_keys.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateBinaryKey(ctx context.Context, id []byte, setIn *models.UpdateBinaryKeyInput, hasSet bool) (*models.BinaryKey, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBinaryKey(ctx context.Context, id []byte, input UpdateBinaryKeyRequest) (*models.BinaryKey, error) {
 	fo := binaryKeyFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.BinaryKeys().Update(ctx, id, setIn, func(o *models.CallOptions[models.BinaryKeyFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.BinaryKeys().Update(ctx, id, input.Set, func(o *models.CallOptions[models.BinaryKeyFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.BinaryKeyFieldOptions](ctx) {
 				f(o)
 			}
@@ -855,11 +905,11 @@ func (m *M) UpdateBinaryKey(ctx context.Context, id []byte, setIn *models.Update
 }
 
 // UpdateBinaryKeys resolves the bulk update-where mutation for binary_keys.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateBinaryKeys(ctx context.Context, filter *models.BinaryKeyFilter, setIn *models.UpdateBinaryKeyInput) ([]*models.BinaryKey, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBinaryKeys(ctx context.Context, filter *models.BinaryKeyFilter, input UpdateBinaryKeyRequest) ([]*models.BinaryKey, error) {
 	fo := binaryKeyFieldOptionsFromContext(ctx)
-	res, err := m.Client.BinaryKeys().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.BinaryKeyFieldOptions]) {
+	res, err := m.Client.BinaryKeys().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BinaryKeyFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.BinaryKeyFieldOptions](ctx) {
 			f(o)
@@ -1127,14 +1177,26 @@ func (m *M) CreateBinaryKeyEvents(ctx context.Context, inputs []*models.CreateBi
 	return res, nil
 }
 
+// UpdateBinaryKeyEventRequest is one updateBinaryKeyEvent /
+// updateBinaryKeyEvents input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBinaryKeyEventRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBinaryKeyEventInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateBinaryKeyEvent resolves the single-row update mutation for binary_key_events.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateBinaryKeyEvent(ctx context.Context, id int, setIn *models.UpdateBinaryKeyEventInput, hasSet bool) (*models.BinaryKeyEvent, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBinaryKeyEvent(ctx context.Context, id int, input UpdateBinaryKeyEventRequest) (*models.BinaryKeyEvent, error) {
 	fo := binaryKeyEventFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.BinaryKeyEvents().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.BinaryKeyEventFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.BinaryKeyEvents().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.BinaryKeyEventFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.BinaryKeyEventFieldOptions](ctx) {
 				f(o)
 			}
@@ -1155,11 +1217,11 @@ func (m *M) UpdateBinaryKeyEvent(ctx context.Context, id int, setIn *models.Upda
 }
 
 // UpdateBinaryKeyEvents resolves the bulk update-where mutation for binary_key_events.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateBinaryKeyEvents(ctx context.Context, filter *models.BinaryKeyEventFilter, setIn *models.UpdateBinaryKeyEventInput) ([]*models.BinaryKeyEvent, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBinaryKeyEvents(ctx context.Context, filter *models.BinaryKeyEventFilter, input UpdateBinaryKeyEventRequest) ([]*models.BinaryKeyEvent, error) {
 	fo := binaryKeyEventFieldOptionsFromContext(ctx)
-	res, err := m.Client.BinaryKeyEvents().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.BinaryKeyEventFieldOptions]) {
+	res, err := m.Client.BinaryKeyEvents().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BinaryKeyEventFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.BinaryKeyEventFieldOptions](ctx) {
 			f(o)
@@ -1299,14 +1361,26 @@ func (m *M) CreateCategories(ctx context.Context, inputs []*models.CreateCategor
 	return res, nil
 }
 
+// UpdateCategoryRequest is one updateCategory /
+// updateCategories input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateCategoryRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateCategoryInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateCategory resolves the single-row update mutation for categories.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateCategory(ctx context.Context, id int, setIn *models.UpdateCategoryInput, hasSet bool) (*models.Category, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateCategory(ctx context.Context, id int, input UpdateCategoryRequest) (*models.Category, error) {
 	fo := categoryFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Categories().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.CategoryFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Categories().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.CategoryFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.CategoryFieldOptions](ctx) {
 				f(o)
 			}
@@ -1327,11 +1401,11 @@ func (m *M) UpdateCategory(ctx context.Context, id int, setIn *models.UpdateCate
 }
 
 // UpdateCategories resolves the bulk update-where mutation for categories.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateCategories(ctx context.Context, filter *models.CategoryFilter, setIn *models.UpdateCategoryInput) ([]*models.Category, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateCategories(ctx context.Context, filter *models.CategoryFilter, input UpdateCategoryRequest) ([]*models.Category, error) {
 	fo := categoryFieldOptionsFromContext(ctx)
-	res, err := m.Client.Categories().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.CategoryFieldOptions]) {
+	res, err := m.Client.Categories().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.CategoryFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.CategoryFieldOptions](ctx) {
 			f(o)
@@ -1496,16 +1570,69 @@ func (m *M) CreateDigitLeadingColumns(ctx context.Context, inputs []*models.Crea
 	return res, nil
 }
 
+// UpdateDigitLeadingColumnRequest is one updateDigitLeadingColumn /
+// updateDigitLeadingColumns input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateDigitLeadingColumnRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateDigitLeadingColumnInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet            bool
+	Col2010RevenueInc *int
+	Col2010RevenueDec *int
+	Col2024QuotaInc   *int
+	Col2024QuotaDec   *int
+}
+
 // UpdateDigitLeadingColumn resolves the single-row update mutation for digit_leading_columns.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then dispatches `_set` → `_inc` → `_dec` in
+// order and re-fetches the entity so the mutation result reflects the
 // post-dispatch state.
-func (m *M) UpdateDigitLeadingColumn(ctx context.Context, id int, setIn *models.UpdateDigitLeadingColumnInput, hasSet bool, incOps []IncrementOp[models.DigitLeadingColumnIncrementColumn]) (*models.DigitLeadingColumn, error) {
+func (m *M) UpdateDigitLeadingColumn(ctx context.Context, id int, input UpdateDigitLeadingColumnRequest) (*models.DigitLeadingColumn, error) {
+	if input.Set.Col2010Revenue.IsSet() && input.Col2010RevenueInc != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both set and incremented in one mutation")
+	}
+	if input.Col2010RevenueInc != nil && input.Col2010RevenueDec != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Col2024Quota.IsSet() && input.Col2024QuotaInc != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both set and incremented in one mutation")
+	}
+	if input.Col2024QuotaInc != nil && input.Col2024QuotaDec != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.DigitLeadingColumnIncrementColumn]
+	if input.Col2010RevenueInc != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2010Revenue,
+			Amount: *input.Col2010RevenueInc,
+		})
+	}
+	if input.Col2010RevenueDec != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2010Revenue,
+			Amount: -*input.Col2010RevenueDec,
+		})
+	}
+	if input.Col2024QuotaInc != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2024Quota,
+			Amount: *input.Col2024QuotaInc,
+		})
+	}
+	if input.Col2024QuotaDec != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2024Quota,
+			Amount: -*input.Col2024QuotaDec,
+		})
+	}
 	fo := digitLeadingColumnFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.DigitLeadingColumns().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.DigitLeadingColumns().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.DigitLeadingColumnFieldOptions](ctx) {
 				f(o)
 			}
@@ -1538,15 +1665,113 @@ func (m *M) UpdateDigitLeadingColumn(ctx context.Context, id int, setIn *models.
 }
 
 // UpdateDigitLeadingColumns resolves the bulk update-where mutation for digit_leading_columns.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateDigitLeadingColumns(ctx context.Context, filter *models.DigitLeadingColumnFilter, setIn *models.UpdateDigitLeadingColumnInput) ([]*models.DigitLeadingColumn, error) {
+// It takes the same input as updateDigitLeadingColumn, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateDigitLeadingColumns(ctx context.Context, filter *models.DigitLeadingColumnFilter, input UpdateDigitLeadingColumnRequest) ([]*models.DigitLeadingColumn, error) {
+	if input.Set.Col2010Revenue.IsSet() && input.Col2010RevenueInc != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both set and incremented in one mutation")
+	}
+	if input.Col2010RevenueInc != nil && input.Col2010RevenueDec != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2010_revenue\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Col2024Quota.IsSet() && input.Col2024QuotaInc != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both set and incremented in one mutation")
+	}
+	if input.Col2024QuotaInc != nil && input.Col2024QuotaDec != nil {
+		return nil, InvalidInputError("update digit_leading_columns: column \"2024_quota\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.DigitLeadingColumnIncrementColumn]
+	if input.Col2010RevenueInc != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2010Revenue,
+			Amount: *input.Col2010RevenueInc,
+		})
+	}
+	if input.Col2010RevenueDec != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2010Revenue,
+			Amount: -*input.Col2010RevenueDec,
+		})
+	}
+	if input.Col2024QuotaInc != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2024Quota,
+			Amount: *input.Col2024QuotaInc,
+		})
+	}
+	if input.Col2024QuotaDec != nil {
+		incOps = append(incOps, IncrementOp[models.DigitLeadingColumnIncrementColumn]{
+			Column: models.DigitLeadingColumnIncrementCol2024Quota,
+			Amount: -*input.Col2024QuotaDec,
+		})
+	}
 	fo := digitLeadingColumnFieldOptionsFromContext(ctx)
-	res, err := m.Client.DigitLeadingColumns().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.DigitLeadingColumnFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.DigitLeadingColumns().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.DigitLeadingColumnFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.DigitLeadingColumn
+	err := m.Client.WithTx(ctx, "update_digit_leading_column_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.DigitLeadingColumns().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.DigitLeadingColumnFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.DigitLeadingColumn{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.DigitLeadingColumns().Increment(ctx, row.ID, models.IncrementInput[models.DigitLeadingColumnIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.DigitLeadingColumnFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read, and soft-delete scoping drops a row
+		// the set fields soft-deleted, as the operator-free path does.
+		res, err = m.Client.DigitLeadingColumns().GetMany(ctx, &models.GetDigitLeadingColumnsInput{
+			Filter: &models.DigitLeadingColumnFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.DigitLeadingColumnFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.DigitLeadingColumnFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -1682,14 +1907,26 @@ func (m *M) CreateDocuments(ctx context.Context, inputs []*models.CreateDocument
 	return res, nil
 }
 
+// UpdateDocumentRequest is one updateDocument /
+// updateDocuments input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateDocumentRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateDocumentInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateDocument resolves the single-row update mutation for documents.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateDocument(ctx context.Context, id int, setIn *models.UpdateDocumentInput, hasSet bool) (*models.Document, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateDocument(ctx context.Context, id int, input UpdateDocumentRequest) (*models.Document, error) {
 	fo := documentFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Documents().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.DocumentFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Documents().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.DocumentFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.DocumentFieldOptions](ctx) {
 				f(o)
 			}
@@ -1710,11 +1947,11 @@ func (m *M) UpdateDocument(ctx context.Context, id int, setIn *models.UpdateDocu
 }
 
 // UpdateDocuments resolves the bulk update-where mutation for documents.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateDocuments(ctx context.Context, filter *models.DocumentFilter, setIn *models.UpdateDocumentInput) ([]*models.Document, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateDocuments(ctx context.Context, filter *models.DocumentFilter, input UpdateDocumentRequest) ([]*models.Document, error) {
 	fo := documentFieldOptionsFromContext(ctx)
-	res, err := m.Client.Documents().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.DocumentFieldOptions]) {
+	res, err := m.Client.Documents().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.DocumentFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.DocumentFieldOptions](ctx) {
 			f(o)
@@ -1937,16 +2174,49 @@ func (m *M) CreateOrders(ctx context.Context, inputs []*models.CreateOrderInput)
 	return res, nil
 }
 
+// UpdateOrderRequest is one updateOrder /
+// updateOrders input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateOrderRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateOrderInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet   bool
+	TotalInc *int
+	TotalDec *int
+}
+
 // UpdateOrder resolves the single-row update mutation for orders.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then dispatches `_set` → `_inc` → `_dec` in
+// order and re-fetches the entity so the mutation result reflects the
 // post-dispatch state.
-func (m *M) UpdateOrder(ctx context.Context, id int, setIn *models.UpdateOrderInput, hasSet bool, incOps []IncrementOp[models.OrderIncrementColumn]) (*models.Order, error) {
+func (m *M) UpdateOrder(ctx context.Context, id int, input UpdateOrderRequest) (*models.Order, error) {
+	if input.Set.Total.IsSet() && input.TotalInc != nil {
+		return nil, InvalidInputError("update orders: column \"total\" cannot be both set and incremented in one mutation")
+	}
+	if input.TotalInc != nil && input.TotalDec != nil {
+		return nil, InvalidInputError("update orders: column \"total\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.OrderIncrementColumn]
+	if input.TotalInc != nil {
+		incOps = append(incOps, IncrementOp[models.OrderIncrementColumn]{
+			Column: models.OrderIncrementTotal,
+			Amount: *input.TotalInc,
+		})
+	}
+	if input.TotalDec != nil {
+		incOps = append(incOps, IncrementOp[models.OrderIncrementColumn]{
+			Column: models.OrderIncrementTotal,
+			Amount: -*input.TotalDec,
+		})
+	}
 	fo := orderFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Orders().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.OrderFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Orders().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.OrderFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.OrderFieldOptions](ctx) {
 				f(o)
 			}
@@ -1979,15 +2249,95 @@ func (m *M) UpdateOrder(ctx context.Context, id int, setIn *models.UpdateOrderIn
 }
 
 // UpdateOrders resolves the bulk update-where mutation for orders.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateOrders(ctx context.Context, filter *models.OrderFilter, setIn *models.UpdateOrderInput) ([]*models.Order, error) {
+// It takes the same input as updateOrder, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateOrders(ctx context.Context, filter *models.OrderFilter, input UpdateOrderRequest) ([]*models.Order, error) {
+	if input.Set.Total.IsSet() && input.TotalInc != nil {
+		return nil, InvalidInputError("update orders: column \"total\" cannot be both set and incremented in one mutation")
+	}
+	if input.TotalInc != nil && input.TotalDec != nil {
+		return nil, InvalidInputError("update orders: column \"total\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.OrderIncrementColumn]
+	if input.TotalInc != nil {
+		incOps = append(incOps, IncrementOp[models.OrderIncrementColumn]{
+			Column: models.OrderIncrementTotal,
+			Amount: *input.TotalInc,
+		})
+	}
+	if input.TotalDec != nil {
+		incOps = append(incOps, IncrementOp[models.OrderIncrementColumn]{
+			Column: models.OrderIncrementTotal,
+			Amount: -*input.TotalDec,
+		})
+	}
 	fo := orderFieldOptionsFromContext(ctx)
-	res, err := m.Client.Orders().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.OrderFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.OrderFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.Orders().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.OrderFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.OrderFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.Order
+	err := m.Client.WithTx(ctx, "update_order_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.Orders().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.OrderFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.OrderFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.Order{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.Orders().Increment(ctx, row.ID, models.IncrementInput[models.OrderIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.OrderFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.OrderFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read, and soft-delete scoping drops a row
+		// the set fields soft-deleted, as the operator-free path does.
+		res, err = m.Client.Orders().GetMany(ctx, &models.GetOrdersInput{
+			Filter: &models.OrderFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.OrderFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.OrderFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -2123,16 +2473,69 @@ func (m *M) CreateOrderItems(ctx context.Context, inputs []*models.CreateOrderIt
 	return res, nil
 }
 
+// UpdateOrderItemRequest is one updateOrderItem /
+// updateOrderItems input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateOrderItemRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateOrderItemInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet       bool
+	QuantityInc  *int
+	QuantityDec  *int
+	UnitPriceInc *int
+	UnitPriceDec *int
+}
+
 // UpdateOrderItem resolves the single-row update mutation for order_items.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then dispatches `_set` → `_inc` → `_dec` in
+// order and re-fetches the entity so the mutation result reflects the
 // post-dispatch state.
-func (m *M) UpdateOrderItem(ctx context.Context, id int, setIn *models.UpdateOrderItemInput, hasSet bool, incOps []IncrementOp[models.OrderItemIncrementColumn]) (*models.OrderItem, error) {
+func (m *M) UpdateOrderItem(ctx context.Context, id int, input UpdateOrderItemRequest) (*models.OrderItem, error) {
+	if input.Set.Quantity.IsSet() && input.QuantityInc != nil {
+		return nil, InvalidInputError("update order_items: column \"quantity\" cannot be both set and incremented in one mutation")
+	}
+	if input.QuantityInc != nil && input.QuantityDec != nil {
+		return nil, InvalidInputError("update order_items: column \"quantity\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.UnitPrice.IsSet() && input.UnitPriceInc != nil {
+		return nil, InvalidInputError("update order_items: column \"unit_price\" cannot be both set and incremented in one mutation")
+	}
+	if input.UnitPriceInc != nil && input.UnitPriceDec != nil {
+		return nil, InvalidInputError("update order_items: column \"unit_price\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.OrderItemIncrementColumn]
+	if input.QuantityInc != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementQuantity,
+			Amount: *input.QuantityInc,
+		})
+	}
+	if input.QuantityDec != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementQuantity,
+			Amount: -*input.QuantityDec,
+		})
+	}
+	if input.UnitPriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementUnitPrice,
+			Amount: *input.UnitPriceInc,
+		})
+	}
+	if input.UnitPriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementUnitPrice,
+			Amount: -*input.UnitPriceDec,
+		})
+	}
 	fo := orderItemFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.OrderItems().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.OrderItems().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.OrderItemFieldOptions](ctx) {
 				f(o)
 			}
@@ -2165,15 +2568,113 @@ func (m *M) UpdateOrderItem(ctx context.Context, id int, setIn *models.UpdateOrd
 }
 
 // UpdateOrderItems resolves the bulk update-where mutation for order_items.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateOrderItems(ctx context.Context, filter *models.OrderItemFilter, setIn *models.UpdateOrderItemInput) ([]*models.OrderItem, error) {
+// It takes the same input as updateOrderItem, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateOrderItems(ctx context.Context, filter *models.OrderItemFilter, input UpdateOrderItemRequest) ([]*models.OrderItem, error) {
+	if input.Set.Quantity.IsSet() && input.QuantityInc != nil {
+		return nil, InvalidInputError("update order_items: column \"quantity\" cannot be both set and incremented in one mutation")
+	}
+	if input.QuantityInc != nil && input.QuantityDec != nil {
+		return nil, InvalidInputError("update order_items: column \"quantity\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.UnitPrice.IsSet() && input.UnitPriceInc != nil {
+		return nil, InvalidInputError("update order_items: column \"unit_price\" cannot be both set and incremented in one mutation")
+	}
+	if input.UnitPriceInc != nil && input.UnitPriceDec != nil {
+		return nil, InvalidInputError("update order_items: column \"unit_price\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.OrderItemIncrementColumn]
+	if input.QuantityInc != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementQuantity,
+			Amount: *input.QuantityInc,
+		})
+	}
+	if input.QuantityDec != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementQuantity,
+			Amount: -*input.QuantityDec,
+		})
+	}
+	if input.UnitPriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementUnitPrice,
+			Amount: *input.UnitPriceInc,
+		})
+	}
+	if input.UnitPriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.OrderItemIncrementColumn]{
+			Column: models.OrderItemIncrementUnitPrice,
+			Amount: -*input.UnitPriceDec,
+		})
+	}
 	fo := orderItemFieldOptionsFromContext(ctx)
-	res, err := m.Client.OrderItems().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.OrderItemFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.OrderItems().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.OrderItemFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.OrderItem
+	err := m.Client.WithTx(ctx, "update_order_item_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.OrderItems().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.OrderItemFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.OrderItem{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.OrderItems().Increment(ctx, row.ID, models.IncrementInput[models.OrderItemIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.OrderItemFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read, and soft-delete scoping drops a row
+		// the set fields soft-deleted, as the operator-free path does.
+		res, err = m.Client.OrderItems().GetMany(ctx, &models.GetOrderItemsInput{
+			Filter: &models.OrderItemFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.OrderItemFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.OrderItemFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -2309,14 +2810,26 @@ func (m *M) CreateOwners(ctx context.Context, inputs []*models.CreateOwnerInput)
 	return res, nil
 }
 
+// UpdateOwnerRequest is one updateOwner /
+// updateOwners input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateOwnerRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateOwnerInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateOwner resolves the single-row update mutation for owners.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateOwner(ctx context.Context, ownerKey int, setIn *models.UpdateOwnerInput, hasSet bool) (*models.Owner, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateOwner(ctx context.Context, ownerKey int, input UpdateOwnerRequest) (*models.Owner, error) {
 	fo := ownerFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Owners().Update(ctx, int64(ownerKey), setIn, func(o *models.CallOptions[models.OwnerFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Owners().Update(ctx, int64(ownerKey), input.Set, func(o *models.CallOptions[models.OwnerFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.OwnerFieldOptions](ctx) {
 				f(o)
 			}
@@ -2337,11 +2850,11 @@ func (m *M) UpdateOwner(ctx context.Context, ownerKey int, setIn *models.UpdateO
 }
 
 // UpdateOwners resolves the bulk update-where mutation for owners.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateOwners(ctx context.Context, filter *models.OwnerFilter, setIn *models.UpdateOwnerInput) ([]*models.Owner, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateOwners(ctx context.Context, filter *models.OwnerFilter, input UpdateOwnerRequest) ([]*models.Owner, error) {
 	fo := ownerFieldOptionsFromContext(ctx)
-	res, err := m.Client.Owners().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.OwnerFieldOptions]) {
+	res, err := m.Client.Owners().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.OwnerFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.OwnerFieldOptions](ctx) {
 			f(o)
@@ -2609,14 +3122,26 @@ func (m *M) CreateOwnerProfiles(ctx context.Context, inputs []*models.CreateOwne
 	return res, nil
 }
 
+// UpdateOwnerProfileRequest is one updateOwnerProfile /
+// updateOwnerProfiles input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateOwnerProfileRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateOwnerProfileInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateOwnerProfile resolves the single-row update mutation for owner_profiles.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateOwnerProfile(ctx context.Context, id int, setIn *models.UpdateOwnerProfileInput, hasSet bool) (*models.OwnerProfile, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateOwnerProfile(ctx context.Context, id int, input UpdateOwnerProfileRequest) (*models.OwnerProfile, error) {
 	fo := ownerProfileFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.OwnerProfiles().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.OwnerProfileFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.OwnerProfiles().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.OwnerProfileFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.OwnerProfileFieldOptions](ctx) {
 				f(o)
 			}
@@ -2637,11 +3162,11 @@ func (m *M) UpdateOwnerProfile(ctx context.Context, id int, setIn *models.Update
 }
 
 // UpdateOwnerProfiles resolves the bulk update-where mutation for owner_profiles.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateOwnerProfiles(ctx context.Context, filter *models.OwnerProfileFilter, setIn *models.UpdateOwnerProfileInput) ([]*models.OwnerProfile, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateOwnerProfiles(ctx context.Context, filter *models.OwnerProfileFilter, input UpdateOwnerProfileRequest) ([]*models.OwnerProfile, error) {
 	fo := ownerProfileFieldOptionsFromContext(ctx)
-	res, err := m.Client.OwnerProfiles().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.OwnerProfileFieldOptions]) {
+	res, err := m.Client.OwnerProfiles().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.OwnerProfileFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.OwnerProfileFieldOptions](ctx) {
 			f(o)
@@ -2781,16 +3306,69 @@ func (m *M) CreateProducts(ctx context.Context, inputs []*models.CreateProductIn
 	return res, nil
 }
 
+// UpdateProductRequest is one updateProduct /
+// updateProducts input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateProductRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateProductInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet      bool
+	PriceInc    *int
+	PriceDec    *int
+	WeightKgInc *int
+	WeightKgDec *int
+}
+
 // UpdateProduct resolves the single-row update mutation for products.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then dispatches `_set` → `_inc` → `_dec` in
+// order and re-fetches the entity so the mutation result reflects the
 // post-dispatch state.
-func (m *M) UpdateProduct(ctx context.Context, id int, setIn *models.UpdateProductInput, hasSet bool, incOps []IncrementOp[models.ProductIncrementColumn]) (*models.Product, error) {
+func (m *M) UpdateProduct(ctx context.Context, id int, input UpdateProductRequest) (*models.Product, error) {
+	if input.Set.Price.IsSet() && input.PriceInc != nil {
+		return nil, InvalidInputError("update products: column \"price\" cannot be both set and incremented in one mutation")
+	}
+	if input.PriceInc != nil && input.PriceDec != nil {
+		return nil, InvalidInputError("update products: column \"price\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.WeightKg.IsSet() && input.WeightKgInc != nil {
+		return nil, InvalidInputError("update products: column \"weight_kg\" cannot be both set and incremented in one mutation")
+	}
+	if input.WeightKgInc != nil && input.WeightKgDec != nil {
+		return nil, InvalidInputError("update products: column \"weight_kg\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.ProductIncrementColumn]
+	if input.PriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementPrice,
+			Amount: *input.PriceInc,
+		})
+	}
+	if input.PriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementPrice,
+			Amount: -*input.PriceDec,
+		})
+	}
+	if input.WeightKgInc != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementWeightKg,
+			Amount: *input.WeightKgInc,
+		})
+	}
+	if input.WeightKgDec != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementWeightKg,
+			Amount: -*input.WeightKgDec,
+		})
+	}
 	fo := productFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Products().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.ProductFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Products().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.ProductFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
 				f(o)
 			}
@@ -2823,15 +3401,113 @@ func (m *M) UpdateProduct(ctx context.Context, id int, setIn *models.UpdateProdu
 }
 
 // UpdateProducts resolves the bulk update-where mutation for products.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateProducts(ctx context.Context, filter *models.ProductFilter, setIn *models.UpdateProductInput) ([]*models.Product, error) {
+// It takes the same input as updateProduct, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateProducts(ctx context.Context, filter *models.ProductFilter, input UpdateProductRequest) ([]*models.Product, error) {
+	if input.Set.Price.IsSet() && input.PriceInc != nil {
+		return nil, InvalidInputError("update products: column \"price\" cannot be both set and incremented in one mutation")
+	}
+	if input.PriceInc != nil && input.PriceDec != nil {
+		return nil, InvalidInputError("update products: column \"price\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.WeightKg.IsSet() && input.WeightKgInc != nil {
+		return nil, InvalidInputError("update products: column \"weight_kg\" cannot be both set and incremented in one mutation")
+	}
+	if input.WeightKgInc != nil && input.WeightKgDec != nil {
+		return nil, InvalidInputError("update products: column \"weight_kg\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.ProductIncrementColumn]
+	if input.PriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementPrice,
+			Amount: *input.PriceInc,
+		})
+	}
+	if input.PriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementPrice,
+			Amount: -*input.PriceDec,
+		})
+	}
+	if input.WeightKgInc != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementWeightKg,
+			Amount: *input.WeightKgInc,
+		})
+	}
+	if input.WeightKgDec != nil {
+		incOps = append(incOps, IncrementOp[models.ProductIncrementColumn]{
+			Column: models.ProductIncrementWeightKg,
+			Amount: -*input.WeightKgDec,
+		})
+	}
 	fo := productFieldOptionsFromContext(ctx)
-	res, err := m.Client.Products().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.ProductFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.Products().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ProductFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.Product
+	err := m.Client.WithTx(ctx, "update_product_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.Products().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ProductFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.Product{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.Products().Increment(ctx, row.ID, models.IncrementInput[models.ProductIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.ProductFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read, and soft-delete scoping drops a row
+		// the set fields soft-deleted, as the operator-free path does.
+		res, err = m.Client.Products().GetMany(ctx, &models.GetProductsInput{
+			Filter: &models.ProductFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.ProductFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -3034,14 +3710,26 @@ func (m *M) CreateProductTagLabels(ctx context.Context, inputs []*models.CreateP
 	return res, nil
 }
 
+// UpdateProductTagLabelRequest is one updateProductTagLabel /
+// updateProductTagLabels input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateProductTagLabelRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateProductTagLabelInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateProductTagLabel resolves the single-row update mutation for product_tag_labels.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateProductTagLabel(ctx context.Context, productID int, tagName string, label string, setIn *models.UpdateProductTagLabelInput, hasSet bool) (*models.ProductTagLabel, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateProductTagLabel(ctx context.Context, productID int, tagName string, label string, input UpdateProductTagLabelRequest) (*models.ProductTagLabel, error) {
 	fo := productTagLabelFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.ProductTagLabels().Update(ctx, models.ProductTagLabelPK{ProductID: int64(productID), TagName: tagName, Label: label}, setIn, func(o *models.CallOptions[models.ProductTagLabelFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.ProductTagLabels().Update(ctx, models.ProductTagLabelPK{ProductID: int64(productID), TagName: tagName, Label: label}, input.Set, func(o *models.CallOptions[models.ProductTagLabelFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.ProductTagLabelFieldOptions](ctx) {
 				f(o)
 			}
@@ -3062,11 +3750,11 @@ func (m *M) UpdateProductTagLabel(ctx context.Context, productID int, tagName st
 }
 
 // UpdateProductTagLabels resolves the bulk update-where mutation for product_tag_labels.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateProductTagLabels(ctx context.Context, filter *models.ProductTagLabelFilter, setIn *models.UpdateProductTagLabelInput) ([]*models.ProductTagLabel, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateProductTagLabels(ctx context.Context, filter *models.ProductTagLabelFilter, input UpdateProductTagLabelRequest) ([]*models.ProductTagLabel, error) {
 	fo := productTagLabelFieldOptionsFromContext(ctx)
-	res, err := m.Client.ProductTagLabels().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.ProductTagLabelFieldOptions]) {
+	res, err := m.Client.ProductTagLabels().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ProductTagLabelFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.ProductTagLabelFieldOptions](ctx) {
 			f(o)
@@ -3206,14 +3894,26 @@ func (m *M) CreateProfiles(ctx context.Context, inputs []*models.CreateProfileIn
 	return res, nil
 }
 
+// UpdateProfileRequest is one updateProfile /
+// updateProfiles input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateProfileRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateProfileInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateProfile resolves the single-row update mutation for profiles.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateProfile(ctx context.Context, id int, setIn *models.UpdateProfileInput, hasSet bool) (*models.Profile, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateProfile(ctx context.Context, id int, input UpdateProfileRequest) (*models.Profile, error) {
 	fo := profileFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Profiles().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.ProfileFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Profiles().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.ProfileFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.ProfileFieldOptions](ctx) {
 				f(o)
 			}
@@ -3234,11 +3934,11 @@ func (m *M) UpdateProfile(ctx context.Context, id int, setIn *models.UpdateProfi
 }
 
 // UpdateProfiles resolves the bulk update-where mutation for profiles.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateProfiles(ctx context.Context, filter *models.ProfileFilter, setIn *models.UpdateProfileInput) ([]*models.Profile, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateProfiles(ctx context.Context, filter *models.ProfileFilter, input UpdateProfileRequest) ([]*models.Profile, error) {
 	fo := profileFieldOptionsFromContext(ctx)
-	res, err := m.Client.Profiles().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.ProfileFieldOptions]) {
+	res, err := m.Client.Profiles().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ProfileFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.ProfileFieldOptions](ctx) {
 			f(o)
@@ -3378,16 +4078,49 @@ func (m *M) CreateReservedWordColumns(ctx context.Context, inputs []*models.Crea
 	return res, nil
 }
 
+// UpdateReservedWordColumnRequest is one updateReservedWordColumn /
+// updateReservedWordColumns input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateReservedWordColumnRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateReservedWordColumnInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+	LenInc *int
+	LenDec *int
+}
+
 // UpdateReservedWordColumn resolves the single-row update mutation for reserved_word_columns.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then dispatches `_set` → `_inc` → `_dec` in
+// order and re-fetches the entity so the mutation result reflects the
 // post-dispatch state.
-func (m *M) UpdateReservedWordColumn(ctx context.Context, id int, setIn *models.UpdateReservedWordColumnInput, hasSet bool, incOps []IncrementOp[models.ReservedWordColumnIncrementColumn]) (*models.ReservedWordColumn, error) {
+func (m *M) UpdateReservedWordColumn(ctx context.Context, id int, input UpdateReservedWordColumnRequest) (*models.ReservedWordColumn, error) {
+	if input.Set.Len.IsSet() && input.LenInc != nil {
+		return nil, InvalidInputError("update reserved_word_columns: column \"len\" cannot be both set and incremented in one mutation")
+	}
+	if input.LenInc != nil && input.LenDec != nil {
+		return nil, InvalidInputError("update reserved_word_columns: column \"len\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.ReservedWordColumnIncrementColumn]
+	if input.LenInc != nil {
+		incOps = append(incOps, IncrementOp[models.ReservedWordColumnIncrementColumn]{
+			Column: models.ReservedWordColumnIncrementLen,
+			Amount: *input.LenInc,
+		})
+	}
+	if input.LenDec != nil {
+		incOps = append(incOps, IncrementOp[models.ReservedWordColumnIncrementColumn]{
+			Column: models.ReservedWordColumnIncrementLen,
+			Amount: -*input.LenDec,
+		})
+	}
 	fo := reservedWordColumnFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.ReservedWordColumns().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.ReservedWordColumns().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.ReservedWordColumnFieldOptions](ctx) {
 				f(o)
 			}
@@ -3420,15 +4153,95 @@ func (m *M) UpdateReservedWordColumn(ctx context.Context, id int, setIn *models.
 }
 
 // UpdateReservedWordColumns resolves the bulk update-where mutation for reserved_word_columns.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateReservedWordColumns(ctx context.Context, filter *models.ReservedWordColumnFilter, setIn *models.UpdateReservedWordColumnInput) ([]*models.ReservedWordColumn, error) {
+// It takes the same input as updateReservedWordColumn, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateReservedWordColumns(ctx context.Context, filter *models.ReservedWordColumnFilter, input UpdateReservedWordColumnRequest) ([]*models.ReservedWordColumn, error) {
+	if input.Set.Len.IsSet() && input.LenInc != nil {
+		return nil, InvalidInputError("update reserved_word_columns: column \"len\" cannot be both set and incremented in one mutation")
+	}
+	if input.LenInc != nil && input.LenDec != nil {
+		return nil, InvalidInputError("update reserved_word_columns: column \"len\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.ReservedWordColumnIncrementColumn]
+	if input.LenInc != nil {
+		incOps = append(incOps, IncrementOp[models.ReservedWordColumnIncrementColumn]{
+			Column: models.ReservedWordColumnIncrementLen,
+			Amount: *input.LenInc,
+		})
+	}
+	if input.LenDec != nil {
+		incOps = append(incOps, IncrementOp[models.ReservedWordColumnIncrementColumn]{
+			Column: models.ReservedWordColumnIncrementLen,
+			Amount: -*input.LenDec,
+		})
+	}
 	fo := reservedWordColumnFieldOptionsFromContext(ctx)
-	res, err := m.Client.ReservedWordColumns().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.ReservedWordColumnFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.ReservedWordColumns().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.ReservedWordColumnFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.ReservedWordColumn
+	err := m.Client.WithTx(ctx, "update_reserved_word_column_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.ReservedWordColumns().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.ReservedWordColumnFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.ReservedWordColumn{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.ReservedWordColumns().Increment(ctx, row.ID, models.IncrementInput[models.ReservedWordColumnIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.ReservedWordColumnFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read, and soft-delete scoping drops a row
+		// the set fields soft-deleted, as the operator-free path does.
+		res, err = m.Client.ReservedWordColumns().GetMany(ctx, &models.GetReservedWordColumnsInput{
+			Filter: &models.ReservedWordColumnFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.ReservedWordColumnFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.ReservedWordColumnFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -3564,14 +4377,26 @@ func (m *M) CreateSluggedRows(ctx context.Context, inputs []*models.CreateSlugge
 	return res, nil
 }
 
+// UpdateSluggedRowRequest is one updateSluggedRow /
+// updateSluggedRows input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateSluggedRowRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateSluggedRowInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateSluggedRow resolves the single-row update mutation for slugged_rows.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateSluggedRow(ctx context.Context, id int, setIn *models.UpdateSluggedRowInput, hasSet bool) (*models.SluggedRow, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateSluggedRow(ctx context.Context, id int, input UpdateSluggedRowRequest) (*models.SluggedRow, error) {
 	fo := sluggedRowFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.SluggedRows().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.SluggedRowFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.SluggedRows().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.SluggedRowFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.SluggedRowFieldOptions](ctx) {
 				f(o)
 			}
@@ -3592,11 +4417,11 @@ func (m *M) UpdateSluggedRow(ctx context.Context, id int, setIn *models.UpdateSl
 }
 
 // UpdateSluggedRows resolves the bulk update-where mutation for slugged_rows.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateSluggedRows(ctx context.Context, filter *models.SluggedRowFilter, setIn *models.UpdateSluggedRowInput) ([]*models.SluggedRow, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateSluggedRows(ctx context.Context, filter *models.SluggedRowFilter, input UpdateSluggedRowRequest) ([]*models.SluggedRow, error) {
 	fo := sluggedRowFieldOptionsFromContext(ctx)
-	res, err := m.Client.SluggedRows().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.SluggedRowFieldOptions]) {
+	res, err := m.Client.SluggedRows().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.SluggedRowFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.SluggedRowFieldOptions](ctx) {
 			f(o)
@@ -3736,14 +4561,26 @@ func (m *M) CreateTags(ctx context.Context, inputs []*models.CreateTagInput) ([]
 	return res, nil
 }
 
+// UpdateTagRequest is one updateTag /
+// updateTags input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateTagRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateTagInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
 // UpdateTag resolves the single-row update mutation for tags.
-// This table has no numeric non-PK columns, so no `_inc`/`_dec`
-// dispatch is generated and the IncrementColumn enum is omitted. The method
-// simply applies the set input (when non-empty) and re-fetches the entity.
-func (m *M) UpdateTag(ctx context.Context, id int, setIn *models.UpdateTagInput, hasSet bool) (*models.Tag, error) {
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateTag(ctx context.Context, id int, input UpdateTagRequest) (*models.Tag, error) {
 	fo := tagFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Tags().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.TagFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Tags().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.TagFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.TagFieldOptions](ctx) {
 				f(o)
 			}
@@ -3764,11 +4601,11 @@ func (m *M) UpdateTag(ctx context.Context, id int, setIn *models.UpdateTagInput,
 }
 
 // UpdateTags resolves the bulk update-where mutation for tags.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateTags(ctx context.Context, filter *models.TagFilter, setIn *models.UpdateTagInput) ([]*models.Tag, error) {
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateTags(ctx context.Context, filter *models.TagFilter, input UpdateTagRequest) ([]*models.Tag, error) {
 	fo := tagFieldOptionsFromContext(ctx)
-	res, err := m.Client.Tags().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.TagFieldOptions]) {
+	res, err := m.Client.Tags().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.TagFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.TagFieldOptions](ctx) {
 			f(o)
@@ -3945,16 +4782,109 @@ func (m *M) CreateUsers(ctx context.Context, inputs []*models.CreateUserInput) (
 	return res, nil
 }
 
+// UpdateUserRequest is one updateUser /
+// updateUsers input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateUserRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateUserInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet        bool
+	AgeInc        *int
+	AgeDec        *int
+	BalanceInc    *int
+	BalanceDec    *int
+	LoginCountInc *int
+	LoginCountDec *int
+	ScoreInc      *int
+	ScoreDec      *int
+}
+
 // UpdateUser resolves the single-row update mutation for users.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then dispatches `_set` → `_inc` → `_dec` in
+// order and re-fetches the entity so the mutation result reflects the
 // post-dispatch state.
-func (m *M) UpdateUser(ctx context.Context, id int, setIn *models.UpdateUserInput, hasSet bool, incOps []IncrementOp[models.UserIncrementColumn]) (*models.User, error) {
+func (m *M) UpdateUser(ctx context.Context, id int, input UpdateUserRequest) (*models.User, error) {
+	if input.Set.Age.IsSet() && input.AgeInc != nil {
+		return nil, InvalidInputError("update users: column \"age\" cannot be both set and incremented in one mutation")
+	}
+	if input.AgeInc != nil && input.AgeDec != nil {
+		return nil, InvalidInputError("update users: column \"age\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Balance.IsSet() && input.BalanceInc != nil {
+		return nil, InvalidInputError("update users: column \"balance\" cannot be both set and incremented in one mutation")
+	}
+	if input.BalanceInc != nil && input.BalanceDec != nil {
+		return nil, InvalidInputError("update users: column \"balance\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.LoginCount.IsSet() && input.LoginCountInc != nil {
+		return nil, InvalidInputError("update users: column \"login_count\" cannot be both set and incremented in one mutation")
+	}
+	if input.LoginCountInc != nil && input.LoginCountDec != nil {
+		return nil, InvalidInputError("update users: column \"login_count\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Score.IsSet() && input.ScoreInc != nil {
+		return nil, InvalidInputError("update users: column \"score\" cannot be both set and incremented in one mutation")
+	}
+	if input.ScoreInc != nil && input.ScoreDec != nil {
+		return nil, InvalidInputError("update users: column \"score\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.UserIncrementColumn]
+	if input.AgeInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementAge,
+			Amount: *input.AgeInc,
+		})
+	}
+	if input.AgeDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementAge,
+			Amount: -*input.AgeDec,
+		})
+	}
+	if input.BalanceInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementBalance,
+			Amount: *input.BalanceInc,
+		})
+	}
+	if input.BalanceDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementBalance,
+			Amount: -*input.BalanceDec,
+		})
+	}
+	if input.LoginCountInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementLoginCount,
+			Amount: *input.LoginCountInc,
+		})
+	}
+	if input.LoginCountDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementLoginCount,
+			Amount: -*input.LoginCountDec,
+		})
+	}
+	if input.ScoreInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementScore,
+			Amount: *input.ScoreInc,
+		})
+	}
+	if input.ScoreDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementScore,
+			Amount: -*input.ScoreDec,
+		})
+	}
 	fo := userFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Users().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.UserFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Users().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.UserFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.UserFieldOptions](ctx) {
 				f(o)
 			}
@@ -3987,15 +4917,149 @@ func (m *M) UpdateUser(ctx context.Context, id int, setIn *models.UpdateUserInpu
 }
 
 // UpdateUsers resolves the bulk update-where mutation for users.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateUsers(ctx context.Context, filter *models.UserFilter, setIn *models.UpdateUserInput) ([]*models.User, error) {
+// It takes the same input as updateUser, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateUsers(ctx context.Context, filter *models.UserFilter, input UpdateUserRequest) ([]*models.User, error) {
+	if input.Set.Age.IsSet() && input.AgeInc != nil {
+		return nil, InvalidInputError("update users: column \"age\" cannot be both set and incremented in one mutation")
+	}
+	if input.AgeInc != nil && input.AgeDec != nil {
+		return nil, InvalidInputError("update users: column \"age\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Balance.IsSet() && input.BalanceInc != nil {
+		return nil, InvalidInputError("update users: column \"balance\" cannot be both set and incremented in one mutation")
+	}
+	if input.BalanceInc != nil && input.BalanceDec != nil {
+		return nil, InvalidInputError("update users: column \"balance\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.LoginCount.IsSet() && input.LoginCountInc != nil {
+		return nil, InvalidInputError("update users: column \"login_count\" cannot be both set and incremented in one mutation")
+	}
+	if input.LoginCountInc != nil && input.LoginCountDec != nil {
+		return nil, InvalidInputError("update users: column \"login_count\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.Score.IsSet() && input.ScoreInc != nil {
+		return nil, InvalidInputError("update users: column \"score\" cannot be both set and incremented in one mutation")
+	}
+	if input.ScoreInc != nil && input.ScoreDec != nil {
+		return nil, InvalidInputError("update users: column \"score\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.UserIncrementColumn]
+	if input.AgeInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementAge,
+			Amount: *input.AgeInc,
+		})
+	}
+	if input.AgeDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementAge,
+			Amount: -*input.AgeDec,
+		})
+	}
+	if input.BalanceInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementBalance,
+			Amount: *input.BalanceInc,
+		})
+	}
+	if input.BalanceDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementBalance,
+			Amount: -*input.BalanceDec,
+		})
+	}
+	if input.LoginCountInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementLoginCount,
+			Amount: *input.LoginCountInc,
+		})
+	}
+	if input.LoginCountDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementLoginCount,
+			Amount: -*input.LoginCountDec,
+		})
+	}
+	if input.ScoreInc != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementScore,
+			Amount: *input.ScoreInc,
+		})
+	}
+	if input.ScoreDec != nil {
+		incOps = append(incOps, IncrementOp[models.UserIncrementColumn]{
+			Column: models.UserIncrementScore,
+			Amount: -*input.ScoreDec,
+		})
+	}
 	fo := userFieldOptionsFromContext(ctx)
-	res, err := m.Client.Users().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.UserFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.UserFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.Users().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.UserFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.UserFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.User
+	err := m.Client.WithTx(ctx, "update_user_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.Users().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.UserFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.UserFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.User{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.Users().Increment(ctx, row.ID, models.IncrementInput[models.UserIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.UserFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.UserFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read, and soft-delete scoping drops a row
+		// the set fields soft-deleted, as the operator-free path does.
+		res, err = m.Client.Users().GetMany(ctx, &models.GetUsersInput{
+			Filter: &models.UserFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.UserFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.UserFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)
@@ -4259,16 +5323,69 @@ func (m *M) CreateWarehouses(ctx context.Context, inputs []*models.CreateWarehou
 	return res, nil
 }
 
+// UpdateWarehouseRequest is one updateWarehouse /
+// updateWarehouses input on its way from the graph package:
+// the column values as the model's update input, and each `_inc` / `_dec`
+// operator amount as the client sent it (nil when absent). The methods below
+// own every rule about how the two combine.
+type UpdateWarehouseRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateWarehouseInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet           bool
+	PriceInc         *int
+	PriceDec         *int
+	NullablePriceInc *int
+	NullablePriceDec *int
+}
+
 // UpdateWarehouse resolves the single-row update mutation for warehouses.
-// The input carries paired `<col>_inc` / `<col>_dec` operators
-// for every numeric column. The seed-side conflict checks reject illegal
-// pairings; this method dispatches `_set` → `_inc` → `_dec` in order and
-// re-fetches the entity afterwards so the mutation result reflects the
+// The input carries paired `<col>_inc` / `<col>_dec` operators for every
+// numeric column. Illegal pairings are rejected with INVALID_INPUT before
+// anything is written; the method then dispatches `_set` → `_inc` → `_dec` in
+// order and re-fetches the entity so the mutation result reflects the
 // post-dispatch state.
-func (m *M) UpdateWarehouse(ctx context.Context, id int, setIn *models.UpdateWarehouseInput, hasSet bool, incOps []IncrementOp[models.WarehouseIncrementColumn]) (*models.Warehouse, error) {
+func (m *M) UpdateWarehouse(ctx context.Context, id int, input UpdateWarehouseRequest) (*models.Warehouse, error) {
+	if input.Set.Price.IsSet() && input.PriceInc != nil {
+		return nil, InvalidInputError("update warehouses: column \"price\" cannot be both set and incremented in one mutation")
+	}
+	if input.PriceInc != nil && input.PriceDec != nil {
+		return nil, InvalidInputError("update warehouses: column \"price\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.NullablePrice.IsSet() && input.NullablePriceInc != nil {
+		return nil, InvalidInputError("update warehouses: column \"nullable_price\" cannot be both set and incremented in one mutation")
+	}
+	if input.NullablePriceInc != nil && input.NullablePriceDec != nil {
+		return nil, InvalidInputError("update warehouses: column \"nullable_price\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.WarehouseIncrementColumn]
+	if input.PriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementPrice,
+			Amount: *input.PriceInc,
+		})
+	}
+	if input.PriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementPrice,
+			Amount: -*input.PriceDec,
+		})
+	}
+	if input.NullablePriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementNullablePrice,
+			Amount: *input.NullablePriceInc,
+		})
+	}
+	if input.NullablePriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementNullablePrice,
+			Amount: -*input.NullablePriceDec,
+		})
+	}
 	fo := warehouseFieldOptionsFromContext(ctx)
-	if hasSet {
-		if _, err := m.Client.Warehouses().Update(ctx, int64(id), setIn, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
+	if input.HasSet {
+		if _, err := m.Client.Warehouses().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
 			for _, f := range callOptionsFromHTTP[models.WarehouseFieldOptions](ctx) {
 				f(o)
 			}
@@ -4301,15 +5418,113 @@ func (m *M) UpdateWarehouse(ctx context.Context, id int, setIn *models.UpdateWar
 }
 
 // UpdateWarehouses resolves the bulk update-where mutation for warehouses.
-// `_inc` / `_dec` operators are dispatched per-row internally by the unified
-// client, so the seed only needs to pass the translated set input.
-func (m *M) UpdateWarehouses(ctx context.Context, filter *models.WarehouseFilter, setIn *models.UpdateWarehouseInput) ([]*models.Warehouse, error) {
+// It takes the same input as updateWarehouse, with the same `_inc` /
+// `_dec` pairing rules. Without an operator it is UpdateWhere alone. With
+// one, the set fields, the operators and the read-back run in one
+// transaction: UpdateWhere applies the set fields and reports the rows the
+// filter matched, each operator is applied to every one of those rows, and
+// the rows are read back in one GetMany with the request's field selection.
+func (m *M) UpdateWarehouses(ctx context.Context, filter *models.WarehouseFilter, input UpdateWarehouseRequest) ([]*models.Warehouse, error) {
+	if input.Set.Price.IsSet() && input.PriceInc != nil {
+		return nil, InvalidInputError("update warehouses: column \"price\" cannot be both set and incremented in one mutation")
+	}
+	if input.PriceInc != nil && input.PriceDec != nil {
+		return nil, InvalidInputError("update warehouses: column \"price\" cannot be both incremented and decremented in one mutation")
+	}
+	if input.Set.NullablePrice.IsSet() && input.NullablePriceInc != nil {
+		return nil, InvalidInputError("update warehouses: column \"nullable_price\" cannot be both set and incremented in one mutation")
+	}
+	if input.NullablePriceInc != nil && input.NullablePriceDec != nil {
+		return nil, InvalidInputError("update warehouses: column \"nullable_price\" cannot be both incremented and decremented in one mutation")
+	}
+	var incOps []IncrementOp[models.WarehouseIncrementColumn]
+	if input.PriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementPrice,
+			Amount: *input.PriceInc,
+		})
+	}
+	if input.PriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementPrice,
+			Amount: -*input.PriceDec,
+		})
+	}
+	if input.NullablePriceInc != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementNullablePrice,
+			Amount: *input.NullablePriceInc,
+		})
+	}
+	if input.NullablePriceDec != nil {
+		incOps = append(incOps, IncrementOp[models.WarehouseIncrementColumn]{
+			Column: models.WarehouseIncrementNullablePrice,
+			Amount: -*input.NullablePriceDec,
+		})
+	}
 	fo := warehouseFieldOptionsFromContext(ctx)
-	res, err := m.Client.Warehouses().UpdateWhere(ctx, filter, setIn, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
-		o.FieldOptions = fo
-		for _, f := range callOptionsFromHTTP[models.WarehouseFieldOptions](ctx) {
-			f(o)
+	if len(incOps) == 0 {
+		res, err := m.Client.Warehouses().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.WarehouseFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return nil, mapErrorToGQL(err)
 		}
+		return res, nil
+	}
+	var res []*models.Warehouse
+	err := m.Client.WithTx(ctx, "update_warehouse_where_inc", func(ctx context.Context) error {
+		// An input with no set field writes nothing here and still returns the
+		// matched rows, after the same empty-filter guard every bulk write
+		// applies. Every column is read, so each row carries its key.
+		matched, err := m.Client.Warehouses().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.WarehouseFieldOptions](ctx) {
+				f(o)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		res = []*models.Warehouse{}
+		if len(matched) == 0 {
+			return nil
+		}
+		keys := make([]int64, 0, len(matched))
+		for _, row := range matched {
+			for _, op := range incOps {
+				if err := m.Client.Warehouses().Increment(ctx, row.ID, models.IncrementInput[models.WarehouseIncrementColumn]{
+					Column: op.Column,
+					Amount: op.Amount,
+				}, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
+					for _, f := range callOptionsFromHTTP[models.WarehouseFieldOptions](ctx) {
+						f(o)
+					}
+				}); err != nil {
+					return err
+				}
+			}
+			keys = append(keys, row.ID)
+		}
+		// One read for every matched row, with the request's field selection,
+		// so relationship loading stays batched. It bypasses the cache only:
+		// the writes above defer their cache invalidation to commit, and a
+		// read-through here would answer with the rows' pre-mutation state.
+		// Query hooks run as on any read, and soft-delete scoping drops a row
+		// the set fields soft-deleted, as the operator-free path does.
+		res, err = m.Client.Warehouses().GetMany(ctx, &models.GetWarehousesInput{
+			Filter: &models.WarehouseFilter{ID: &comparator.Number[int64]{In: keys}},
+			Limit:  new(0),
+		}, func(o *models.CallOptions[models.WarehouseFieldOptions]) {
+			o.FieldOptions = fo
+			for _, f := range callOptionsFromHTTP[models.WarehouseFieldOptions](ctx) {
+				f(o)
+			}
+			o.SkipCache = true
+		})
+		return err
 	})
 	if err != nil {
 		return nil, mapErrorToGQL(err)

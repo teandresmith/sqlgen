@@ -34,14 +34,12 @@ func (r *mutationResolver) CreateProductTagLabels(ctx context.Context, inputs []
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateProductTagLabel(ctx context.Context, productID int, tagName string, label string, input gqlmodel.UpdateProductTagLabelInput) (*models.ProductTagLabel, error) {
-	setIn := translateUpdateProductTagLabelInput(input)
-	hasSet := hasUpdateProductTagLabelSetFields(input)
-	return r.M.UpdateProductTagLabel(ctx, productID, tagName, label, setIn, hasSet)
+	return r.M.UpdateProductTagLabel(ctx, productID, tagName, label, translateUpdateProductTagLabelRequest(input))
 }
 
 // UpdateProductTagLabels is the resolver for the updateProductTagLabels field.
 func (r *mutationResolver) UpdateProductTagLabels(ctx context.Context, filter gqlmodel.ProductTagLabelFilter, input gqlmodel.UpdateProductTagLabelInput) ([]*models.ProductTagLabel, error) {
-	return r.M.UpdateProductTagLabels(ctx, translateProductTagLabelFilter(&filter), translateUpdateProductTagLabelInput(input))
+	return r.M.UpdateProductTagLabels(ctx, translateProductTagLabelFilter(&filter), translateUpdateProductTagLabelRequest(input))
 }
 
 // UpsertProductTagLabel is the resolver for the upsertProductTagLabel field.

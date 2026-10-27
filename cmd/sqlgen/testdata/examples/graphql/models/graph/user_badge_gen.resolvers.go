@@ -34,14 +34,12 @@ func (r *mutationResolver) CreateUserBadges(ctx context.Context, inputs []*gqlmo
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateUserBadge(ctx context.Context, id int, input gqlmodel.UpdateUserBadgeInput) (*models.UserBadge, error) {
-	setIn := translateUpdateUserBadgeInput(input)
-	hasSet := hasUpdateUserBadgeSetFields(input)
-	return r.M.UpdateUserBadge(ctx, id, setIn, hasSet)
+	return r.M.UpdateUserBadge(ctx, id, translateUpdateUserBadgeRequest(input))
 }
 
 // UpdateUserBadges is the resolver for the updateUserBadges field.
 func (r *mutationResolver) UpdateUserBadges(ctx context.Context, filter gqlmodel.UserBadgeFilter, input gqlmodel.UpdateUserBadgeInput) ([]*models.UserBadge, error) {
-	return r.M.UpdateUserBadges(ctx, translateUserBadgeFilter(&filter), translateUpdateUserBadgeInput(input))
+	return r.M.UpdateUserBadges(ctx, translateUserBadgeFilter(&filter), translateUpdateUserBadgeRequest(input))
 }
 
 // UpsertUserBadge is the resolver for the upsertUserBadge field.

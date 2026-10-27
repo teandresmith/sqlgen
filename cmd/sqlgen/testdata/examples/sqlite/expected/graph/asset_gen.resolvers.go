@@ -34,14 +34,12 @@ func (r *mutationResolver) CreateAssets(ctx context.Context, inputs []*gqlmodel.
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateAsset(ctx context.Context, id int, input gqlmodel.UpdateAssetInput) (*models.Asset, error) {
-	setIn := translateUpdateAssetInput(input)
-	hasSet := hasUpdateAssetSetFields(input)
-	return r.M.UpdateAsset(ctx, id, setIn, hasSet)
+	return r.M.UpdateAsset(ctx, id, translateUpdateAssetRequest(input))
 }
 
 // UpdateAssets is the resolver for the updateAssets field.
 func (r *mutationResolver) UpdateAssets(ctx context.Context, filter gqlmodel.AssetFilter, input gqlmodel.UpdateAssetInput) ([]*models.Asset, error) {
-	return r.M.UpdateAssets(ctx, translateAssetFilter(&filter), translateUpdateAssetInput(input))
+	return r.M.UpdateAssets(ctx, translateAssetFilter(&filter), translateUpdateAssetRequest(input))
 }
 
 // UpsertAsset is the resolver for the upsertAsset field.

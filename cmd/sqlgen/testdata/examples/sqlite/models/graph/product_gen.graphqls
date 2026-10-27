@@ -77,9 +77,9 @@ input CreateProductInput {
   title: String!
   price: Float!
   weightKg: Float
-  inStock: Boolean!
+  inStock: Boolean
   sku: String!
-  createdAt: DateTime!
+  createdAt: DateTime
 }
 input UpdateProductInput {
   categoryID: Int

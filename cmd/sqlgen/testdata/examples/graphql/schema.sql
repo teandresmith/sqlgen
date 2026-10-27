@@ -326,11 +326,12 @@ CREATE TYPE workspace_note_kind_enum AS ENUM (
 -- this example was uuid/text/int only, so a view over it could not reach the
 -- enum family or the JSONB family at all.
 --
--- Both are NOT NULL, and a DEFAULT does NOT excuse a column from the create
--- input: every NOT NULL non-generated column is required on Create<T>Input
--- (`kind: WorkspaceNoteKindEnum!` / `labels: JSON!`), the same rule that makes
--- `pinned_order` and `created_at` required above. The two createWorkspaceNote
--- call sites in tests/tenant_update_input_test.go pass both.
+-- Both are NOT NULL with a DEFAULT, so the Go CreateWorkspaceNoteInput holds
+-- them as omittable and Create<T>Input mirrors that: `kind:
+-- WorkspaceNoteKindEnum` / `labels: JSON`, optional like `pinned_order` and
+-- `created_at`, with the default applying when the client leaves one out
+-- (PRD §26.4). The two createWorkspaceNote call sites in
+-- tests/tenant_update_input_test.go pass both anyway.
 --
 -- `parent_id` is a self-referential FK, and it is the one column that
 -- makes two otherwise-unreachable GraphQL shapes testable in this example.

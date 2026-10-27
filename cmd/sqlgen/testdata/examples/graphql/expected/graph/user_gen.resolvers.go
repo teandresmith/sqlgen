@@ -35,14 +35,12 @@ func (r *mutationResolver) CreateUsers(ctx context.Context, inputs []*gqlmodel.C
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateUser(ctx context.Context, id uuid1.UUID, input gqlmodel.UpdateUserInput) (*models.User, error) {
-	setIn := translateUpdateUserInput(input)
-	hasSet := hasUpdateUserSetFields(input)
-	return r.M.UpdateUser(ctx, id, setIn, hasSet)
+	return r.M.UpdateUser(ctx, id, translateUpdateUserRequest(input))
 }
 
 // UpdateUsers is the resolver for the updateUsers field.
 func (r *mutationResolver) UpdateUsers(ctx context.Context, filter gqlmodel.UserFilter, input gqlmodel.UpdateUserInput) ([]*models.User, error) {
-	return r.M.UpdateUsers(ctx, translateUserFilter(&filter), translateUpdateUserInput(input))
+	return r.M.UpdateUsers(ctx, translateUserFilter(&filter), translateUpdateUserRequest(input))
 }
 
 // UpsertUser is the resolver for the upsertUser field.

@@ -33692,7 +33692,7 @@ func (ec *executionContext) unmarshalInputAssetAttachmentsCreateInput(ctx contex
 			it.Name = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -34051,7 +34051,7 @@ func (ec *executionContext) unmarshalInputAssetInvoicesCreateInput(ctx context.C
 			it.Name = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -34148,7 +34148,7 @@ func (ec *executionContext) unmarshalInputAssetPrimaryDocumentCreateInput(ctx co
 			it.Name = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -34709,14 +34709,14 @@ func (ec *executionContext) unmarshalInputCategoryProductsCreateInput(ctx contex
 			it.Price = data
 		case "stock":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("stock"))
-			data, err := ec.unmarshalNInt2int(ctx, v)
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Stock = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -34989,7 +34989,7 @@ func (ec *executionContext) unmarshalInputCreateAssetInput(ctx context.Context, 
 			it.Name = data
 		case "declaredCategories":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("declaredCategories"))
-			data, err := ec.unmarshalNDocumentEntityTypeEnum2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚐDocumentEntityTypeEnumᚄ(ctx, v)
+			data, err := ec.unmarshalODocumentEntityTypeEnum2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚐDocumentEntityTypeEnumᚄ(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35003,7 +35003,7 @@ func (ec *executionContext) unmarshalInputCreateAssetInput(ctx context.Context, 
 			it.PrimaryCategory = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35105,7 +35105,7 @@ func (ec *executionContext) unmarshalInputCreateCategoryInput(ctx context.Contex
 			it.Description = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35200,7 +35200,7 @@ func (ec *executionContext) unmarshalInputCreateDocumentInput(ctx context.Contex
 			it.Name = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35430,14 +35430,14 @@ func (ec *executionContext) unmarshalInputCreateFilterProbeInput(ctx context.Con
 		switch k {
 		case "doc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("doc"))
-			data, err := ec.unmarshalNJSON2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐJSON(ctx, v)
+			data, err := ec.unmarshalOJSON2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐJSON(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Doc = data
 		case "tags":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("tags"))
-			data, err := ec.unmarshalNString2ᚕstringᚄ(ctx, v)
+			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35451,21 +35451,21 @@ func (ec *executionContext) unmarshalInputCreateFilterProbeInput(ctx context.Con
 			it.TagsN = data
 		case "flags":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("flags"))
-			data, err := ec.unmarshalNBoolean2ᚕboolᚄ(ctx, v)
+			data, err := ec.unmarshalOBoolean2ᚕboolᚄ(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Flags = data
 		case "weights":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("weights"))
-			data, err := ec.unmarshalNFloat2ᚕfloat64ᚄ(ctx, v)
+			data, err := ec.unmarshalOFloat2ᚕfloat64ᚄ(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Weights = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35627,28 +35627,28 @@ func (ec *executionContext) unmarshalInputCreateNumericWidthInput(ctx context.Co
 			it.RatioN = data
 		case "smalls":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("smalls"))
-			data, err := ec.unmarshalNInt2ᚕint16ᚄ(ctx, v)
+			data, err := ec.unmarshalOInt2ᚕint16ᚄ(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Smalls = data
 		case "scores":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("scores"))
-			data, err := ec.unmarshalNInt2ᚕint32ᚄ(ctx, v)
+			data, err := ec.unmarshalOInt2ᚕint32ᚄ(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Scores = data
 		case "bigs":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("bigs"))
-			data, err := ec.unmarshalNInt2ᚕint64ᚄ(ctx, v)
+			data, err := ec.unmarshalOInt2ᚕint64ᚄ(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Bigs = data
 		case "ratios":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("ratios"))
-			data, err := ec.unmarshalNFloat2ᚕfloat32ᚄ(ctx, v)
+			data, err := ec.unmarshalOFloat2ᚕfloat32ᚄ(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35662,7 +35662,7 @@ func (ec *executionContext) unmarshalInputCreateNumericWidthInput(ctx context.Co
 			it.ScoresN = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35699,7 +35699,7 @@ func (ec *executionContext) unmarshalInputCreateOrderInput(ctx context.Context, 
 			it.UserID = data
 		case "total":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("total"))
-			data, err := ec.unmarshalNDecimal2githubᚗcomᚋshopspringᚋdecimalᚐDecimal(ctx, v)
+			data, err := ec.unmarshalODecimal2ᚖgithubᚗcomᚋshopspringᚋdecimalᚐDecimal(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35713,7 +35713,7 @@ func (ec *executionContext) unmarshalInputCreateOrderInput(ctx context.Context, 
 			it.Notes = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35771,7 +35771,7 @@ func (ec *executionContext) unmarshalInputCreateOrderItemInput(ctx context.Conte
 			it.ProductID = data
 		case "quantity":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("quantity"))
-			data, err := ec.unmarshalNInt2int(ctx, v)
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35799,7 +35799,7 @@ func (ec *executionContext) unmarshalInputCreateOrderItemInput(ctx context.Conte
 			it.SourceIP = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35887,7 +35887,7 @@ func (ec *executionContext) unmarshalInputCreateProductInput(ctx context.Context
 			it.Price = data
 		case "stock":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("stock"))
-			data, err := ec.unmarshalNInt2int(ctx, v)
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -35901,7 +35901,7 @@ func (ec *executionContext) unmarshalInputCreateProductInput(ctx context.Context
 			it.CategoryID = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -36010,7 +36010,7 @@ func (ec *executionContext) unmarshalInputCreateProfileInput(ctx context.Context
 			it.Settings = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -36166,7 +36166,7 @@ func (ec *executionContext) unmarshalInputCreateScalarProbeInput(ctx context.Con
 			it.ObservedAt = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -36298,7 +36298,7 @@ func (ec *executionContext) unmarshalInputCreateUserCredentialInput(ctx context.
 			it.LastLoginAt = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -36349,7 +36349,7 @@ func (ec *executionContext) unmarshalInputCreateUserInput(ctx context.Context, o
 			it.Metadata = data
 		case "isActive":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("isActive"))
-			data, err := ec.unmarshalNBoolean2bool(ctx, v)
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -36370,7 +36370,7 @@ func (ec *executionContext) unmarshalInputCreateUserInput(ctx context.Context, o
 			it.ClientIP = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -36472,7 +36472,7 @@ func (ec *executionContext) unmarshalInputCreateWorkspaceNoteInput(ctx context.C
 		switch k {
 		case "workspaceID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("workspaceID"))
-			data, err := ec.unmarshalNUUID2uuidᚐUUID(ctx, v)
+			data, err := ec.unmarshalOUUID2ᚖuuidᚐUUID(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -36493,28 +36493,28 @@ func (ec *executionContext) unmarshalInputCreateWorkspaceNoteInput(ctx context.C
 			it.Body = data
 		case "pinnedOrder":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("pinnedOrder"))
-			data, err := ec.unmarshalNInt2int(ctx, v)
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.PinnedOrder = data
 		case "kind":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("kind"))
-			data, err := ec.unmarshalNWorkspaceNoteKindEnum2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚐWorkspaceNoteKindEnum(ctx, v)
+			data, err := ec.unmarshalOWorkspaceNoteKindEnum2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚐWorkspaceNoteKindEnum(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Kind = data
 		case "labels":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("labels"))
-			data, err := ec.unmarshalNJSON2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐJSON(ctx, v)
+			data, err := ec.unmarshalOJSON2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐJSON(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Labels = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -36609,7 +36609,7 @@ func (ec *executionContext) unmarshalInputCreateWorkspaceSettingInput(ctx contex
 			it.Value = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -39966,7 +39966,7 @@ func (ec *executionContext) unmarshalInputOrderOrderItemsCreateInput(ctx context
 			it.ProductID = data
 		case "quantity":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("quantity"))
-			data, err := ec.unmarshalNInt2int(ctx, v)
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -39994,7 +39994,7 @@ func (ec *executionContext) unmarshalInputOrderOrderItemsCreateInput(ctx context
 			it.SourceIP = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -40228,7 +40228,7 @@ func (ec *executionContext) unmarshalInputProductOrderItemsCreateInput(ctx conte
 			it.OrderID = data
 		case "quantity":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("quantity"))
-			data, err := ec.unmarshalNInt2int(ctx, v)
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -40256,7 +40256,7 @@ func (ec *executionContext) unmarshalInputProductOrderItemsCreateInput(ctx conte
 			it.SourceIP = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -41012,7 +41012,7 @@ func (ec *executionContext) unmarshalInputUpdateAssetInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.PrimaryCategory = data
+			it.PrimaryCategory = graphql.OmittableOf(data)
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
@@ -41114,7 +41114,7 @@ func (ec *executionContext) unmarshalInputUpdateCategoryInput(ctx context.Contex
 			if err != nil {
 				return it, err
 			}
-			it.Description = data
+			it.Description = graphql.OmittableOf(data)
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
@@ -41283,7 +41283,7 @@ func (ec *executionContext) unmarshalInputUpdateEventInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.UserID = data
+			it.UserID = graphql.OmittableOf(data)
 		case "action":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("action"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
@@ -41304,14 +41304,14 @@ func (ec *executionContext) unmarshalInputUpdateEventInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.ProcessedAt = data
+			it.ProcessedAt = graphql.OmittableOf(data)
 		case "adjustment":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("adjustment"))
 			data, err := ec.unmarshalONullDecimal2ᚖgithubᚗcomᚋshopspringᚋdecimalᚐNullDecimal(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Adjustment = data
+			it.Adjustment = graphql.OmittableOf(data)
 		case "adjustment_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("adjustment_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -41332,7 +41332,7 @@ func (ec *executionContext) unmarshalInputUpdateEventInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.RetryCount = data
+			it.RetryCount = graphql.OmittableOf(data)
 		case "retryCount_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("retryCount_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -41353,28 +41353,28 @@ func (ec *executionContext) unmarshalInputUpdateEventInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.Succeeded = data
+			it.Succeeded = graphql.OmittableOf(data)
 		case "mac":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("mac"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.MAC = data
+			it.MAC = graphql.OmittableOf(data)
 		case "osName":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("osName"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.OSName = data
+			it.OSName = graphql.OmittableOf(data)
 		case "ioCount":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("ioCount"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.IOCount = data
+			it.IOCount = graphql.OmittableOf(data)
 		case "ioCount_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("ioCount_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -41395,35 +41395,35 @@ func (ec *executionContext) unmarshalInputUpdateEventInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.PKVal = data
+			it.PKVal = graphql.OmittableOf(data)
 		case "fkVal":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("fkVal"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.FKVal = data
+			it.FKVal = graphql.OmittableOf(data)
 		case "asciiArt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("asciiArt"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.ASCIIArt = data
+			it.ASCIIArt = graphql.OmittableOf(data)
 		case "csvData":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("csvData"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.CSVData = data
+			it.CSVData = graphql.OmittableOf(data)
 		case "tcpPort":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("tcpPort"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.TCPPort = data
+			it.TCPPort = graphql.OmittableOf(data)
 		case "tcpPort_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("tcpPort_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -41444,35 +41444,35 @@ func (ec *executionContext) unmarshalInputUpdateEventInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.Utf8Body = data
+			it.Utf8Body = graphql.OmittableOf(data)
 		case "http2Flag":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("http2Flag"))
 			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.HTTP2Flag = data
+			it.HTTP2Flag = graphql.OmittableOf(data)
 		case "line2ID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("line2ID"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Line2ID = data
+			it.Line2ID = graphql.OmittableOf(data)
 		case "address2ID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("address2ID"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Address2ID = data
+			it.Address2ID = graphql.OmittableOf(data)
 		case "s3URL":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("s3URL"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.S3URL = data
+			it.S3URL = graphql.OmittableOf(data)
 		}
 	}
 	return it, nil
@@ -41516,7 +41516,7 @@ func (ec *executionContext) unmarshalInputUpdateFilterProbeInput(ctx context.Con
 			if err != nil {
 				return it, err
 			}
-			it.TagsN = data
+			it.TagsN = graphql.OmittableOf(data)
 		case "flags":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("flags"))
 			data, err := ec.unmarshalOBoolean2ᚕboolᚄ(ctx, v)
@@ -41655,7 +41655,7 @@ func (ec *executionContext) unmarshalInputUpdateNumericWidthInput(ctx context.Co
 			if err != nil {
 				return it, err
 			}
-			it.SmallN = data
+			it.SmallN = graphql.OmittableOf(data)
 		case "smallN_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("smallN_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -41697,7 +41697,7 @@ func (ec *executionContext) unmarshalInputUpdateNumericWidthInput(ctx context.Co
 			if err != nil {
 				return it, err
 			}
-			it.RatioN = data
+			it.RatioN = graphql.OmittableOf(data)
 		case "ratioN_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("ratioN_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -41746,7 +41746,7 @@ func (ec *executionContext) unmarshalInputUpdateNumericWidthInput(ctx context.Co
 			if err != nil {
 				return it, err
 			}
-			it.ScoresN = data
+			it.ScoresN = graphql.OmittableOf(data)
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
@@ -41811,7 +41811,7 @@ func (ec *executionContext) unmarshalInputUpdateOrderInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.Notes = data
+			it.Notes = graphql.OmittableOf(data)
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
@@ -41825,14 +41825,14 @@ func (ec *executionContext) unmarshalInputUpdateOrderInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.UpdatedAt = data
+			it.UpdatedAt = graphql.OmittableOf(data)
 		case "deletedAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("deletedAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.DeletedAt = data
+			it.DeletedAt = graphql.OmittableOf(data)
 		}
 	}
 	return it, nil
@@ -41918,14 +41918,14 @@ func (ec *executionContext) unmarshalInputUpdateOrderItemInput(ctx context.Conte
 			if err != nil {
 				return it, err
 			}
-			it.ExternalRef = data
+			it.ExternalRef = graphql.OmittableOf(data)
 		case "sourceIP":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("sourceIP"))
 			data, err := ec.unmarshalOIPAddr2ᚖnetᚋnetipᚐAddr(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.SourceIP = data
+			it.SourceIP = graphql.OmittableOf(data)
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
@@ -42006,7 +42006,7 @@ func (ec *executionContext) unmarshalInputUpdateProductInput(ctx context.Context
 			if err != nil {
 				return it, err
 			}
-			it.Description = data
+			it.Description = graphql.OmittableOf(data)
 		case "price":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("price"))
 			data, err := ec.unmarshalODecimal2ᚖgithubᚗcomᚋshopspringᚋdecimalᚐDecimal(ctx, v)
@@ -42069,14 +42069,14 @@ func (ec *executionContext) unmarshalInputUpdateProductInput(ctx context.Context
 			if err != nil {
 				return it, err
 			}
-			it.UpdatedAt = data
+			it.UpdatedAt = graphql.OmittableOf(data)
 		case "deletedAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("deletedAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.DeletedAt = data
+			it.DeletedAt = graphql.OmittableOf(data)
 		}
 	}
 	return it, nil
@@ -42150,21 +42150,21 @@ func (ec *executionContext) unmarshalInputUpdateProfileInput(ctx context.Context
 			if err != nil {
 				return it, err
 			}
-			it.Bio = data
+			it.Bio = graphql.OmittableOf(data)
 		case "avatarURL":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("avatarURL"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.AvatarURL = data
+			it.AvatarURL = graphql.OmittableOf(data)
 		case "settings":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("settings"))
 			data, err := ec.unmarshalOJSON2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐJSON(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Settings = data
+			it.Settings = graphql.OmittableOf(data)
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
@@ -42215,7 +42215,7 @@ func (ec *executionContext) unmarshalInputUpdateScalarProbeInput(ctx context.Con
 			if err != nil {
 				return it, err
 			}
-			it.Signature = data
+			it.Signature = graphql.OmittableOf(data)
 		case "dur":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("dur"))
 			data, err := ec.unmarshalODuration2ᚖtimeᚐDuration(ctx, v)
@@ -42229,7 +42229,7 @@ func (ec *executionContext) unmarshalInputUpdateScalarProbeInput(ctx context.Con
 			if err != nil {
 				return it, err
 			}
-			it.DurN = data
+			it.DurN = graphql.OmittableOf(data)
 		case "addr":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("addr"))
 			data, err := ec.unmarshalOIP2netᚐIP(ctx, v)
@@ -42243,7 +42243,7 @@ func (ec *executionContext) unmarshalInputUpdateScalarProbeInput(ctx context.Con
 			if err != nil {
 				return it, err
 			}
-			it.AddrN = data
+			it.AddrN = graphql.OmittableOf(data)
 		case "netBlock":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("netBlock"))
 			data, err := ec.unmarshalOCIDR2ᚖnetᚐIPNet(ctx, v)
@@ -42257,7 +42257,7 @@ func (ec *executionContext) unmarshalInputUpdateScalarProbeInput(ctx context.Con
 			if err != nil {
 				return it, err
 			}
-			it.NetBlockN = data
+			it.NetBlockN = graphql.OmittableOf(data)
 		case "mac":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("mac"))
 			data, err := ec.unmarshalOMacAddr2netᚐHardwareAddr(ctx, v)
@@ -42271,28 +42271,28 @@ func (ec *executionContext) unmarshalInputUpdateScalarProbeInput(ctx context.Con
 			if err != nil {
 				return it, err
 			}
-			it.MACN = data
+			it.MACN = graphql.OmittableOf(data)
 		case "note":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("note"))
 			data, err := ec.unmarshalONullString2ᚖdatabaseᚋsqlᚐNullString(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Note = data
+			it.Note = graphql.OmittableOf(data)
 		case "flag":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("flag"))
 			data, err := ec.unmarshalONullBool2ᚖdatabaseᚋsqlᚐNullBool(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Flag = data
+			it.Flag = graphql.OmittableOf(data)
 		case "smallCount":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("smallCount"))
 			data, err := ec.unmarshalONullInt162ᚖdatabaseᚋsqlᚐNullInt16(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.SmallCount = data
+			it.SmallCount = graphql.OmittableOf(data)
 		case "smallCount_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("smallCount_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -42313,7 +42313,7 @@ func (ec *executionContext) unmarshalInputUpdateScalarProbeInput(ctx context.Con
 			if err != nil {
 				return it, err
 			}
-			it.MidCount = data
+			it.MidCount = graphql.OmittableOf(data)
 		case "midCount_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("midCount_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -42334,7 +42334,7 @@ func (ec *executionContext) unmarshalInputUpdateScalarProbeInput(ctx context.Con
 			if err != nil {
 				return it, err
 			}
-			it.BigCount = data
+			it.BigCount = graphql.OmittableOf(data)
 		case "bigCount_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("bigCount_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -42355,7 +42355,7 @@ func (ec *executionContext) unmarshalInputUpdateScalarProbeInput(ctx context.Con
 			if err != nil {
 				return it, err
 			}
-			it.Ratio = data
+			it.Ratio = graphql.OmittableOf(data)
 		case "ratio_inc":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("ratio_inc"))
 			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
@@ -42376,7 +42376,7 @@ func (ec *executionContext) unmarshalInputUpdateScalarProbeInput(ctx context.Con
 			if err != nil {
 				return it, err
 			}
-			it.ObservedAt = data
+			it.ObservedAt = graphql.OmittableOf(data)
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
@@ -42413,7 +42413,7 @@ func (ec *executionContext) unmarshalInputUpdateUserBadgeInput(ctx context.Conte
 			if err != nil {
 				return it, err
 			}
-			it.UserID = data
+			it.UserID = graphql.OmittableOf(data)
 		case "label":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("label"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
@@ -42464,7 +42464,7 @@ func (ec *executionContext) unmarshalInputUpdateUserCredentialInput(ctx context.
 			if err != nil {
 				return it, err
 			}
-			it.LastLoginAt = data
+			it.LastLoginAt = graphql.OmittableOf(data)
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
@@ -42515,7 +42515,7 @@ func (ec *executionContext) unmarshalInputUpdateUserInput(ctx context.Context, o
 			if err != nil {
 				return it, err
 			}
-			it.Metadata = data
+			it.Metadata = graphql.OmittableOf(data)
 		case "isActive":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("isActive"))
 			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
@@ -42529,14 +42529,14 @@ func (ec *executionContext) unmarshalInputUpdateUserInput(ctx context.Context, o
 			if err != nil {
 				return it, err
 			}
-			it.NewPassword = data
+			it.NewPassword = graphql.OmittableOf(data)
 		case "ipAddr":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("ipAddr"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.ClientIP = data
+			it.ClientIP = graphql.OmittableOf(data)
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
@@ -42550,14 +42550,14 @@ func (ec *executionContext) unmarshalInputUpdateUserInput(ctx context.Context, o
 			if err != nil {
 				return it, err
 			}
-			it.UpdatedAt = data
+			it.UpdatedAt = graphql.OmittableOf(data)
 		case "deletedAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("deletedAt"))
 			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.DeletedAt = data
+			it.DeletedAt = graphql.OmittableOf(data)
 		}
 	}
 	return it, nil
@@ -42645,7 +42645,7 @@ func (ec *executionContext) unmarshalInputUpdateWorkspaceNoteInput(ctx context.C
 			if err != nil {
 				return it, err
 			}
-			it.ParentID = data
+			it.ParentID = graphql.OmittableOf(data)
 		case "body":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("body"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
@@ -43988,7 +43988,7 @@ func (ec *executionContext) unmarshalInputUserOrdersCreateInput(ctx context.Cont
 		switch k {
 		case "total":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("total"))
-			data, err := ec.unmarshalNDecimal2githubᚗcomᚋshopspringᚋdecimalᚐDecimal(ctx, v)
+			data, err := ec.unmarshalODecimal2ᚖgithubᚗcomᚋshopspringᚋdecimalᚐDecimal(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -44002,7 +44002,7 @@ func (ec *executionContext) unmarshalInputUserOrdersCreateInput(ctx context.Cont
 			it.Notes = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -44143,7 +44143,7 @@ func (ec *executionContext) unmarshalInputWorkspaceNoteChildrenCreateInput(ctx c
 		switch k {
 		case "workspaceID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("workspaceID"))
-			data, err := ec.unmarshalNUUID2uuidᚐUUID(ctx, v)
+			data, err := ec.unmarshalOUUID2ᚖuuidᚐUUID(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -44157,28 +44157,28 @@ func (ec *executionContext) unmarshalInputWorkspaceNoteChildrenCreateInput(ctx c
 			it.Body = data
 		case "pinnedOrder":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("pinnedOrder"))
-			data, err := ec.unmarshalNInt2int(ctx, v)
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.PinnedOrder = data
 		case "kind":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("kind"))
-			data, err := ec.unmarshalNWorkspaceNoteKindEnum2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚐWorkspaceNoteKindEnum(ctx, v)
+			data, err := ec.unmarshalOWorkspaceNoteKindEnum2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚐWorkspaceNoteKindEnum(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Kind = data
 		case "labels":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("labels"))
-			data, err := ec.unmarshalNJSON2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐJSON(ctx, v)
+			data, err := ec.unmarshalOJSON2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐJSON(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Labels = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -44296,7 +44296,7 @@ func (ec *executionContext) unmarshalInputWorkspaceNoteDraftChildrenCreateInput(
 		switch k {
 		case "workspaceID":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("workspaceID"))
-			data, err := ec.unmarshalNUUID2uuidᚐUUID(ctx, v)
+			data, err := ec.unmarshalOUUID2ᚖuuidᚐUUID(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -44310,21 +44310,21 @@ func (ec *executionContext) unmarshalInputWorkspaceNoteDraftChildrenCreateInput(
 			it.Body = data
 		case "pinnedOrder":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("pinnedOrder"))
-			data, err := ec.unmarshalNInt2int(ctx, v)
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.PinnedOrder = data
 		case "labels":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("labels"))
-			data, err := ec.unmarshalNJSON2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐJSON(ctx, v)
+			data, err := ec.unmarshalOJSON2githubᚗcomᚋteandresmithᚋsqlgenᚋtypesᚐJSON(ctx, v)
 			if err != nil {
 				return it, err
 			}
 			it.Labels = data
 		case "createdAt":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("createdAt"))
-			data, err := ec.unmarshalNTime2timeᚐTime(ctx, v)
+			data, err := ec.unmarshalOTime2ᚖtimeᚐTime(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -54110,36 +54110,6 @@ func (ec *executionContext) marshalNDocumentEntityTypeEnum2githubᚗcomᚋteandr
 		return graphql.Null
 	}
 	return v
-}
-
-func (ec *executionContext) unmarshalNDocumentEntityTypeEnum2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚐDocumentEntityTypeEnumᚄ(ctx context.Context, v any) ([]models.DocumentEntityTypeEnum, error) {
-	vSlice := graphql.CoerceList(v)
-	var err error
-	res := make([]models.DocumentEntityTypeEnum, len(vSlice))
-	for i := range vSlice {
-		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
-		res[i], err = ec.unmarshalNDocumentEntityTypeEnum2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚐDocumentEntityTypeEnum(ctx, vSlice[i])
-		if err != nil {
-			return nil, err
-		}
-	}
-	return res, nil
-}
-
-func (ec *executionContext) marshalNDocumentEntityTypeEnum2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚐDocumentEntityTypeEnumᚄ(ctx context.Context, sel ast.SelectionSet, v []models.DocumentEntityTypeEnum) graphql.Marshaler {
-	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
-		fc := graphql.GetFieldContext(ctx)
-		fc.Result = &v[i]
-		return ec.marshalNDocumentEntityTypeEnum2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚐDocumentEntityTypeEnum(ctx, sel, v[i])
-	})
-
-	for _, e := range ret {
-		if e == graphql.Null {
-			return graphql.Null
-		}
-	}
-
-	return ret
 }
 
 func (ec *executionContext) unmarshalNDocumentFilter2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋgraphqlᚋmodelsᚋgraphᚋmodelᚐDocumentFilter(ctx context.Context, v any) (model.DocumentFilter, error) {

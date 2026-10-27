@@ -34,14 +34,12 @@ func (r *mutationResolver) CreateCategories(ctx context.Context, inputs []*gqlmo
 // `_dec` operators on the input, and the seed delegates with the reduced
 // (set-only) signature exposed by Q/M.
 func (r *mutationResolver) UpdateCategory(ctx context.Context, id int, input gqlmodel.UpdateCategoryInput) (*models.Category, error) {
-	setIn := translateUpdateCategoryInput(input)
-	hasSet := hasUpdateCategorySetFields(input)
-	return r.M.UpdateCategory(ctx, id, setIn, hasSet)
+	return r.M.UpdateCategory(ctx, id, translateUpdateCategoryRequest(input))
 }
 
 // UpdateCategories is the resolver for the updateCategories field.
 func (r *mutationResolver) UpdateCategories(ctx context.Context, filter gqlmodel.CategoryFilter, input gqlmodel.UpdateCategoryInput) ([]*models.Category, error) {
-	return r.M.UpdateCategories(ctx, translateCategoryFilter(&filter), translateUpdateCategoryInput(input))
+	return r.M.UpdateCategories(ctx, translateCategoryFilter(&filter), translateUpdateCategoryRequest(input))
 }
 
 // UpsertCategory is the resolver for the upsertCategory field.

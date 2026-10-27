@@ -133,7 +133,7 @@ input CreateScalarProbeInput {
   bigCount: NullInt64
   ratio: NullFloat64
   observedAt: NullTime
-  createdAt: Time!
+  createdAt: Time
 }
 input UpdateScalarProbeInput {
   label: String

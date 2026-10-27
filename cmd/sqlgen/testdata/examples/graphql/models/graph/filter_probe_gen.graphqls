@@ -63,12 +63,12 @@ input FilterProbeSort {
   direction: SortDirection!
 }
 input CreateFilterProbeInput {
-  doc: JSON!
-  tags: [String!]!
+  doc: JSON
+  tags: [String!]
   tagsN: [String!]
-  flags: [Boolean!]!
-  weights: [Float!]!
-  createdAt: Time!
+  flags: [Boolean!]
+  weights: [Float!]
+  createdAt: Time
 }
 input UpdateFilterProbeInput {
   doc: JSON

@@ -69,11 +69,11 @@ input OrderItemSort {
 input CreateOrderItemInput {
   orderID: UUID!
   productID: UUID!
-  quantity: Int!
+  quantity: Int
   unitPrice: Decimal!
   externalRef: String
   sourceIP: IPAddr
-  createdAt: Time!
+  createdAt: Time
 }
 input UpdateOrderItemInput {
   orderID: UUID

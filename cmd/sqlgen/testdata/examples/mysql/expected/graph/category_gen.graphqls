@@ -109,10 +109,10 @@ input CategoryProductsCreateInput {
   title: String!
   price: Float!
   weightKg: Float
-  inStock: Boolean!
+  inStock: Boolean
   sku: String!
   attributes: JSON!
-  createdAt: Time!
+  createdAt: Time
 }
 
 extend type Mutation {

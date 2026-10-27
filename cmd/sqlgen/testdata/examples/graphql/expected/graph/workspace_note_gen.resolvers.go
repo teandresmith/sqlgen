@@ -11,7 +11,6 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models"
 	gqlmodel "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models/graph/model"
-	"github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/graphql/models/graph/sqlgenresolver"
 )
 
 // CreateWorkspaceNote is the resolver for the createWorkspaceNote field.
@@ -33,39 +32,12 @@ func (r *mutationResolver) CreateWorkspaceNotes(ctx context.Context, inputs []*g
 
 // UpdateWorkspaceNote is the resolver for the updateWorkspaceNote field.
 func (r *mutationResolver) UpdateWorkspaceNote(ctx context.Context, id uuid1.UUID, input gqlmodel.UpdateWorkspaceNoteInput) (*models.WorkspaceNote, error) {
-	if input.PinnedOrder != nil && input.PinnedOrderInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update workspace_notes: column \"pinned_order\" cannot be both set and incremented in one mutation")
-	}
-	if input.PinnedOrderInc != nil && input.PinnedOrderDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update workspace_notes: column \"pinned_order\" cannot be both incremented and decremented in one mutation")
-	}
-	setIn := translateUpdateWorkspaceNoteInput(input)
-	hasSet := hasUpdateWorkspaceNoteSetFields(input)
-	var incOps []sqlgenresolver.IncrementOp[models.WorkspaceNoteIncrementColumn]
-	if input.PinnedOrderInc != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.WorkspaceNoteIncrementColumn]{
-			Column: models.WorkspaceNoteIncrementPinnedOrder,
-			Amount: int(*input.PinnedOrderInc),
-		})
-	}
-	if input.PinnedOrderDec != nil {
-		incOps = append(incOps, sqlgenresolver.IncrementOp[models.WorkspaceNoteIncrementColumn]{
-			Column: models.WorkspaceNoteIncrementPinnedOrder,
-			Amount: -int(*input.PinnedOrderDec),
-		})
-	}
-	return r.M.UpdateWorkspaceNote(ctx, id, setIn, hasSet, incOps)
+	return r.M.UpdateWorkspaceNote(ctx, id, translateUpdateWorkspaceNoteRequest(input))
 }
 
 // UpdateWorkspaceNotes is the resolver for the updateWorkspaceNotes field.
 func (r *mutationResolver) UpdateWorkspaceNotes(ctx context.Context, filter gqlmodel.WorkspaceNoteFilter, input gqlmodel.UpdateWorkspaceNoteInput) ([]*models.WorkspaceNote, error) {
-	if input.PinnedOrder != nil && input.PinnedOrderInc != nil {
-		return nil, sqlgenresolver.InvalidInputError("update workspace_notes: column \"pinned_order\" cannot be both set and incremented in one mutation")
-	}
-	if input.PinnedOrderInc != nil && input.PinnedOrderDec != nil {
-		return nil, sqlgenresolver.InvalidInputError("update workspace_notes: column \"pinned_order\" cannot be both incremented and decremented in one mutation")
-	}
-	return r.M.UpdateWorkspaceNotes(ctx, translateWorkspaceNoteFilter(&filter), translateUpdateWorkspaceNoteInput(input))
+	return r.M.UpdateWorkspaceNotes(ctx, translateWorkspaceNoteFilter(&filter), translateUpdateWorkspaceNoteRequest(input))
 }
 
 // UpsertWorkspaceNote is the resolver for the upsertWorkspaceNote field.
