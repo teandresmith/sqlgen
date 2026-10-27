@@ -101,6 +101,7 @@ func TestBulkUpdateOperators_PairingIsInvalidInput(t *testing.T) {
 		input string
 	}{
 		{name: "set and increment on one column", input: `{ retryCount: 9, retryCount_inc: 1 }`},
+		{name: "set and decrement on one column", input: `{ retryCount: 9, retryCount_dec: 1 }`},
 		{name: "increment and decrement on one column", input: `{ retryCount_inc: 1, retryCount_dec: 1 }`},
 		{name: "explicit null and increment on one column", input: `{ retryCount: null, retryCount_inc: 1 }`},
 	}

@@ -510,7 +510,7 @@ func TestResolvers_MutationResultNullability(t *testing.T) {
 
 func TestResolvers_IncDec_DispatchOrder(t *testing.T) {
 	// M.UpdateProduct in sqlgenresolver owns the whole dispatch: it builds
-	// the incOps slice in inc-then-dec order and runs set-then-incOps. The
+	// the incOps slice and runs set-then-incOps. The
 	// seed only delegates, so a column added later is dispatched without
 	// touching it.
 	apiCtx := resolverAPIContext(t, resolverTestSchema(), nil)
@@ -553,11 +553,32 @@ func TestResolvers_IncDec_RuntimeConflictGuards(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			body := extractFunc(t, out, method)
 			mustContain(t, body, "input.Set.Stock.IsSet() && input.StockInc != nil")
+			mustContain(t, body, "input.Set.Stock.IsSet() && input.StockDec != nil")
 			mustContain(t, body, "input.StockInc != nil && input.StockDec != nil")
 			mustContain(t, body, `InvalidInputError("update products: column \"stock\" cannot be both set and incremented in one mutation")`)
+			mustContain(t, body, `InvalidInputError("update products: column \"stock\" cannot be both set and decremented in one mutation")`)
 			mustContain(t, body, `InvalidInputError("update products: column \"stock\" cannot be both incremented and decremented in one mutation")`)
 		})
 	}
+
+	// update<T>WithRelated reads its operators off the gqlgen input, so its
+	// collector in input_translate_gen.go carries the same three guards.
+	t.Run("updateAccountWithRelatedIncrementOps", func(t *testing.T) {
+		translate := incrementNestedRenderer(t)("api/input-translate")
+		_, body, found := strings.Cut(translate, "func updateAccountWithRelatedIncrementOps(")
+		if !found {
+			t.Fatalf("no updateAccountWithRelatedIncrementOps in rendered input translation:\n%s", translate)
+		}
+		body, _, _ = strings.Cut(body, "\n}\n")
+		mustContainAll(t, body,
+			"p.Balance != nil && p.BalanceInc != nil",
+			"p.Balance != nil && p.BalanceDec != nil",
+			"p.BalanceInc != nil && p.BalanceDec != nil",
+			`InvalidInputError("update accounts with related: column \"balance\" cannot be both set and incremented in one mutation")`,
+			`InvalidInputError("update accounts with related: column \"balance\" cannot be both set and decremented in one mutation")`,
+			`InvalidInputError("update accounts with related: column \"balance\" cannot be both incremented and decremented in one mutation")`,
+		)
+	})
 
 	// InvalidInputError is exported from sqlgenresolver — Q/M template emits the
 	// helper definition tagging gqlerror with INVALID_INPUT.

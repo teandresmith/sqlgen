@@ -1432,7 +1432,7 @@ func BuildAPIContext(tables []TableContext, views []ViewContext, enums []EnumCon
 	exposedTargets := apiExposedTargets(cfg, tables, views)
 
 	for _, tc := range tables {
-		if !tableAPIEnabled(cfg, tc.TableName, tc.Schema) {
+		if !tableAPIExposed(cfg, &tc) {
 			continue
 		}
 		at, err := buildOneAPITable(cfg, g, tc, scalarsByName, translatorsByName, binds, usedEnumsByName, exposedTargets)

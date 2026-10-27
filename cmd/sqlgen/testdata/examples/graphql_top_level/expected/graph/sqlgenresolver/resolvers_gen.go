@@ -222,16 +222,15 @@ func (m *M) UpsertCategory(ctx context.Context, input *models.CreateCategoryInpu
 }
 
 // DeleteCategory resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteCategory(ctx context.Context, id int) (bool, error) {
 	if err := m.Client.Categories().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.CategoryFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.CategoryFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -351,12 +350,15 @@ type UpdateProductRequest struct {
 // UpdateProduct resolves the single-row update mutation for products.
 // The input carries paired `<col>_inc` / `<col>_dec` operators for every
 // numeric column. Illegal pairings are rejected with INVALID_INPUT before
-// anything is written; the method then dispatches `_set` → `_inc` → `_dec` in
-// order and re-fetches the entity so the mutation result reflects the
-// post-dispatch state.
+// anything is written; the method then applies `_set`, then each column's
+// `_inc` / `_dec` as a signed Increment, and re-fetches the entity so the
+// mutation result reflects the post-dispatch state.
 func (m *M) UpdateProduct(ctx context.Context, id uuid.UUID, input UpdateProductRequest) (*models.Product, error) {
 	if input.Set.Price.IsSet() && input.PriceInc != nil {
 		return nil, InvalidInputError("update products: column \"price\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Price.IsSet() && input.PriceDec != nil {
+		return nil, InvalidInputError("update products: column \"price\" cannot be both set and decremented in one mutation")
 	}
 	if input.PriceInc != nil && input.PriceDec != nil {
 		return nil, InvalidInputError("update products: column \"price\" cannot be both incremented and decremented in one mutation")
@@ -418,6 +420,9 @@ func (m *M) UpdateProduct(ctx context.Context, id uuid.UUID, input UpdateProduct
 func (m *M) UpdateProducts(ctx context.Context, filter *models.ProductFilter, input UpdateProductRequest) ([]*models.Product, error) {
 	if input.Set.Price.IsSet() && input.PriceInc != nil {
 		return nil, InvalidInputError("update products: column \"price\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Price.IsSet() && input.PriceDec != nil {
+		return nil, InvalidInputError("update products: column \"price\" cannot be both set and decremented in one mutation")
 	}
 	if input.PriceInc != nil && input.PriceDec != nil {
 		return nil, InvalidInputError("update products: column \"price\" cannot be both incremented and decremented in one mutation")
@@ -521,16 +526,15 @@ func (m *M) UpsertProduct(ctx context.Context, input *models.CreateProductInput)
 }
 
 // DeleteProduct resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteProduct(ctx context.Context, id uuid.UUID) (bool, error) {
 	if err := m.Client.Products().HardDelete(ctx, id, func(o *models.CallOptions[models.ProductFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.ProductFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil

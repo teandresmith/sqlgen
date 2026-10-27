@@ -177,9 +177,9 @@ type Update{{ $t.StructName }}Request struct {
 {{- if $t.UpdateOps }}
 // The input carries paired `<col>_inc` / `<col>_dec` operators for every
 // numeric column. Illegal pairings are rejected with INVALID_INPUT before
-// anything is written; the method then dispatches `_set` → `_inc` → `_dec` in
-// order and re-fetches the entity so the mutation result reflects the
-// post-dispatch state.
+// anything is written; the method then applies `_set`, then each column's
+// `_inc` / `_dec` as a signed Increment, and re-fetches the entity so the
+// mutation result reflects the post-dispatch state.
 {{- else }}
 // This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
 // generated. The method applies the set input (when non-empty) and
@@ -190,6 +190,9 @@ func (m *M) Update{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs
 {{- range $op := $t.UpdateOps }}
 	if input.Set.{{ $op.SetGoField }}.IsSet() && input.{{ $op.IncGoField }} != nil {
 		return nil, InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.{{ $op.SetGoField }}.IsSet() && input.{{ $op.DecGoField }} != nil {
+		return nil, InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both set and decremented in one mutation")
 	}
 	if input.{{ $op.IncGoField }} != nil && input.{{ $op.DecGoField }} != nil {
 		return nil, InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both incremented and decremented in one mutation")
@@ -261,6 +264,9 @@ func (m *M) Update{{ $t.StructNamePlural }}(ctx context.Context, filter *{{ $pkg
 {{- range $op := $t.UpdateOps }}
 	if input.Set.{{ $op.SetGoField }}.IsSet() && input.{{ $op.IncGoField }} != nil {
 		return nil, InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.{{ $op.SetGoField }}.IsSet() && input.{{ $op.DecGoField }} != nil {
+		return nil, InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both set and decremented in one mutation")
 	}
 	if input.{{ $op.IncGoField }} != nil && input.{{ $op.DecGoField }} != nil {
 		return nil, InvalidInputError("update {{ $t.SQLTable }}: column \"{{ $op.SQLName }}\" cannot be both incremented and decremented in one mutation")
@@ -390,16 +396,15 @@ func (m *M) Upsert{{ $t.StructName }}(ctx context.Context, input *{{ $pkg }}.Cre
 
 {{- if and $t.Operations.HardDelete (not $t.Operations.SoftDelete) }}
 // Delete{{ $t.StructName }} resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) Delete{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (bool, error) {
 	if err := m.Client.{{ $t.ClientAccessor }}().HardDelete(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
 		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, {{ $pkg }}.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -429,16 +434,15 @@ func (m *M) Delete{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs
 
 {{- if and $t.Operations.HardDelete $t.Operations.SoftDelete }}
 // HardDelete{{ $t.StructName }} resolves the explicit hard-delete mutation
-// when both delete variants are enabled. Returns Boolean!.
+// when both delete variants are enabled. Returns Boolean!: true whenever the
+// delete ran without error, whether or not the row existed — the client's
+// HardDelete is idempotent.
 func (m *M) HardDelete{{ $t.StructName }}(ctx context.Context, {{ pkGoArgs $t.PKArgs }}) (bool, error) {
 	if err := m.Client.{{ $t.ClientAccessor }}().HardDelete(ctx, {{ pkConvert $pkg $t.StructName $t.PKArgs }}, func(o *{{ $pkg }}.CallOptions[{{ $pkg }}.{{ $t.StructName }}FieldOptions]) {
 		for _, f := range callOptionsFromHTTP[{{ $pkg }}.{{ $t.StructName }}FieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, {{ $pkg }}.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil

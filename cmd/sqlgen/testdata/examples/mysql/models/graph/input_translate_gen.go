@@ -1051,6 +1051,9 @@ func updateOrderWithRelatedIncrementOps(in gqlmodel.UpdateOrderWithRelatedInput)
 	if p.Total != nil && p.TotalInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update orders with related: column \"total\" cannot be both set and incremented in one mutation")
 	}
+	if p.Total != nil && p.TotalDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update orders with related: column \"total\" cannot be both set and decremented in one mutation")
+	}
 	if p.TotalInc != nil && p.TotalDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update orders with related: column \"total\" cannot be both incremented and decremented in one mutation")
 	}
@@ -1407,11 +1410,17 @@ func updateProductWithRelatedIncrementOps(in gqlmodel.UpdateProductWithRelatedIn
 	if p.Price != nil && p.PriceInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update products with related: column \"price\" cannot be both set and incremented in one mutation")
 	}
+	if p.Price != nil && p.PriceDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update products with related: column \"price\" cannot be both set and decremented in one mutation")
+	}
 	if p.PriceInc != nil && p.PriceDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update products with related: column \"price\" cannot be both incremented and decremented in one mutation")
 	}
 	if p.WeightKg.IsSet() && p.WeightKgInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update products with related: column \"weight_kg\" cannot be both set and incremented in one mutation")
+	}
+	if p.WeightKg.IsSet() && p.WeightKgDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update products with related: column \"weight_kg\" cannot be both set and decremented in one mutation")
 	}
 	if p.WeightKgInc != nil && p.WeightKgDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update products with related: column \"weight_kg\" cannot be both incremented and decremented in one mutation")
@@ -2208,11 +2217,17 @@ func updateUserWithRelatedIncrementOps(in gqlmodel.UpdateUserWithRelatedInput) (
 	if p.Age.IsSet() && p.AgeInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"age\" cannot be both set and incremented in one mutation")
 	}
+	if p.Age.IsSet() && p.AgeDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"age\" cannot be both set and decremented in one mutation")
+	}
 	if p.AgeInc != nil && p.AgeDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"age\" cannot be both incremented and decremented in one mutation")
 	}
 	if p.Balance != nil && p.BalanceInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"balance\" cannot be both set and incremented in one mutation")
+	}
+	if p.Balance != nil && p.BalanceDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"balance\" cannot be both set and decremented in one mutation")
 	}
 	if p.BalanceInc != nil && p.BalanceDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"balance\" cannot be both incremented and decremented in one mutation")
@@ -2220,11 +2235,17 @@ func updateUserWithRelatedIncrementOps(in gqlmodel.UpdateUserWithRelatedInput) (
 	if p.LoginCount != nil && p.LoginCountInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"login_count\" cannot be both set and incremented in one mutation")
 	}
+	if p.LoginCount != nil && p.LoginCountDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"login_count\" cannot be both set and decremented in one mutation")
+	}
 	if p.LoginCountInc != nil && p.LoginCountDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"login_count\" cannot be both incremented and decremented in one mutation")
 	}
 	if p.Rating.IsSet() && p.RatingInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"rating\" cannot be both set and incremented in one mutation")
+	}
+	if p.Rating.IsSet() && p.RatingDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"rating\" cannot be both set and decremented in one mutation")
 	}
 	if p.RatingInc != nil && p.RatingDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"rating\" cannot be both incremented and decremented in one mutation")
@@ -2232,11 +2253,17 @@ func updateUserWithRelatedIncrementOps(in gqlmodel.UpdateUserWithRelatedInput) (
 	if p.Score.IsSet() && p.ScoreInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"score\" cannot be both set and incremented in one mutation")
 	}
+	if p.Score.IsSet() && p.ScoreDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"score\" cannot be both set and decremented in one mutation")
+	}
 	if p.ScoreInc != nil && p.ScoreDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"score\" cannot be both incremented and decremented in one mutation")
 	}
 	if p.TinyFlag.IsSet() && p.TinyFlagInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"tiny_flag\" cannot be both set and incremented in one mutation")
+	}
+	if p.TinyFlag.IsSet() && p.TinyFlagDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"tiny_flag\" cannot be both set and decremented in one mutation")
 	}
 	if p.TinyFlagInc != nil && p.TinyFlagDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"tiny_flag\" cannot be both incremented and decremented in one mutation")
@@ -2244,11 +2271,17 @@ func updateUserWithRelatedIncrementOps(in gqlmodel.UpdateUserWithRelatedInput) (
 	if p.MediumVal.IsSet() && p.MediumValInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"medium_val\" cannot be both set and incremented in one mutation")
 	}
+	if p.MediumVal.IsSet() && p.MediumValDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"medium_val\" cannot be both set and decremented in one mutation")
+	}
 	if p.MediumValInc != nil && p.MediumValDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"medium_val\" cannot be both incremented and decremented in one mutation")
 	}
 	if p.BigUnsigned.IsSet() && p.BigUnsignedInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"big_unsigned\" cannot be both set and incremented in one mutation")
+	}
+	if p.BigUnsigned.IsSet() && p.BigUnsignedDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"big_unsigned\" cannot be both set and decremented in one mutation")
 	}
 	if p.BigUnsignedInc != nil && p.BigUnsignedDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update users with related: column \"big_unsigned\" cannot be both incremented and decremented in one mutation")

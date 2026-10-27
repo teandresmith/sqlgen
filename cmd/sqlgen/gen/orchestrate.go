@@ -2207,7 +2207,7 @@ func resolverKeyImports(apiCtx *APIContext) []string {
 // what is actually used. Each flag corresponds to one conditional import.
 type resolverFileFeatures struct {
 	HasResolverMethod bool // any query or mutation resolver method (drives `context`)
-	NeedsErrorsImport bool // any resolver branch calls errors.Is — Get, HardDelete/SoftDelete/Restore (`errors`)
+	NeedsErrorsImport bool // any resolver branch calls errors.Is — Get, SoftDelete, Restore (`errors`)
 	HasList           bool // any <T>List (Paginate) resolver (drives `sql`)
 }
 
@@ -2218,10 +2218,11 @@ func computeResolverFileFeatures(apiCtx *APIContext) resolverFileFeatures {
 		if hasAnyResolverOp(o) {
 			f.HasResolverMethod = true
 		}
-		// The Get branch collapses ErrNotFound → (nil, nil), so
-		// any table with Get enabled — not just delete-class ops — pulls in
-		// the `errors` package.
-		if o.Get || o.HardDelete || o.SoftDelete || o.Restore {
+		// The Get, SoftDelete and Restore branches collapse ErrNotFound →
+		// (nil, nil), so they pull in the `errors` package. HardDelete does
+		// not: the client's HardDelete is idempotent and never returns
+		// ErrNotFound, so its resolver maps any error straight through.
+		if o.Get || o.SoftDelete || o.Restore {
 			f.NeedsErrorsImport = true
 		}
 		if o.Paginate {

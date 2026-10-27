@@ -175,12 +175,15 @@ type UpdateAccountRequest struct {
 // UpdateAccount resolves the single-row update mutation for accounts.
 // The input carries paired `<col>_inc` / `<col>_dec` operators for every
 // numeric column. Illegal pairings are rejected with INVALID_INPUT before
-// anything is written; the method then dispatches `_set` → `_inc` → `_dec` in
-// order and re-fetches the entity so the mutation result reflects the
-// post-dispatch state.
+// anything is written; the method then applies `_set`, then each column's
+// `_inc` / `_dec` as a signed Increment, and re-fetches the entity so the
+// mutation result reflects the post-dispatch state.
 func (m *M) UpdateAccount(ctx context.Context, id int64, input UpdateAccountRequest) (*models.Account, error) {
 	if input.Set.ExternalRef.IsSet() && input.ExternalRefInc != nil {
 		return nil, InvalidInputError("update accounts: column \"external_ref\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.ExternalRef.IsSet() && input.ExternalRefDec != nil {
+		return nil, InvalidInputError("update accounts: column \"external_ref\" cannot be both set and decremented in one mutation")
 	}
 	if input.ExternalRefInc != nil && input.ExternalRefDec != nil {
 		return nil, InvalidInputError("update accounts: column \"external_ref\" cannot be both incremented and decremented in one mutation")
@@ -188,11 +191,17 @@ func (m *M) UpdateAccount(ctx context.Context, id int64, input UpdateAccountRequ
 	if input.Set.SmallCount.IsSet() && input.SmallCountInc != nil {
 		return nil, InvalidInputError("update accounts: column \"small_count\" cannot be both set and incremented in one mutation")
 	}
+	if input.Set.SmallCount.IsSet() && input.SmallCountDec != nil {
+		return nil, InvalidInputError("update accounts: column \"small_count\" cannot be both set and decremented in one mutation")
+	}
 	if input.SmallCountInc != nil && input.SmallCountDec != nil {
 		return nil, InvalidInputError("update accounts: column \"small_count\" cannot be both incremented and decremented in one mutation")
 	}
 	if input.Set.MidCount.IsSet() && input.MidCountInc != nil {
 		return nil, InvalidInputError("update accounts: column \"mid_count\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.MidCount.IsSet() && input.MidCountDec != nil {
+		return nil, InvalidInputError("update accounts: column \"mid_count\" cannot be both set and decremented in one mutation")
 	}
 	if input.MidCountInc != nil && input.MidCountDec != nil {
 		return nil, InvalidInputError("update accounts: column \"mid_count\" cannot be both incremented and decremented in one mutation")
@@ -200,17 +209,26 @@ func (m *M) UpdateAccount(ctx context.Context, id int64, input UpdateAccountRequ
 	if input.Set.BigCount.IsSet() && input.BigCountInc != nil {
 		return nil, InvalidInputError("update accounts: column \"big_count\" cannot be both set and incremented in one mutation")
 	}
+	if input.Set.BigCount.IsSet() && input.BigCountDec != nil {
+		return nil, InvalidInputError("update accounts: column \"big_count\" cannot be both set and decremented in one mutation")
+	}
 	if input.BigCountInc != nil && input.BigCountDec != nil {
 		return nil, InvalidInputError("update accounts: column \"big_count\" cannot be both incremented and decremented in one mutation")
 	}
 	if input.Set.Ratio.IsSet() && input.RatioInc != nil {
 		return nil, InvalidInputError("update accounts: column \"ratio\" cannot be both set and incremented in one mutation")
 	}
+	if input.Set.Ratio.IsSet() && input.RatioDec != nil {
+		return nil, InvalidInputError("update accounts: column \"ratio\" cannot be both set and decremented in one mutation")
+	}
 	if input.RatioInc != nil && input.RatioDec != nil {
 		return nil, InvalidInputError("update accounts: column \"ratio\" cannot be both incremented and decremented in one mutation")
 	}
 	if input.Set.Balance.IsSet() && input.BalanceInc != nil {
 		return nil, InvalidInputError("update accounts: column \"balance\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Balance.IsSet() && input.BalanceDec != nil {
+		return nil, InvalidInputError("update accounts: column \"balance\" cannot be both set and decremented in one mutation")
 	}
 	if input.BalanceInc != nil && input.BalanceDec != nil {
 		return nil, InvalidInputError("update accounts: column \"balance\" cannot be both incremented and decremented in one mutation")
@@ -333,11 +351,17 @@ func (m *M) UpdateAccounts(ctx context.Context, filter *models.AccountFilter, in
 	if input.Set.ExternalRef.IsSet() && input.ExternalRefInc != nil {
 		return nil, InvalidInputError("update accounts: column \"external_ref\" cannot be both set and incremented in one mutation")
 	}
+	if input.Set.ExternalRef.IsSet() && input.ExternalRefDec != nil {
+		return nil, InvalidInputError("update accounts: column \"external_ref\" cannot be both set and decremented in one mutation")
+	}
 	if input.ExternalRefInc != nil && input.ExternalRefDec != nil {
 		return nil, InvalidInputError("update accounts: column \"external_ref\" cannot be both incremented and decremented in one mutation")
 	}
 	if input.Set.SmallCount.IsSet() && input.SmallCountInc != nil {
 		return nil, InvalidInputError("update accounts: column \"small_count\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.SmallCount.IsSet() && input.SmallCountDec != nil {
+		return nil, InvalidInputError("update accounts: column \"small_count\" cannot be both set and decremented in one mutation")
 	}
 	if input.SmallCountInc != nil && input.SmallCountDec != nil {
 		return nil, InvalidInputError("update accounts: column \"small_count\" cannot be both incremented and decremented in one mutation")
@@ -345,11 +369,17 @@ func (m *M) UpdateAccounts(ctx context.Context, filter *models.AccountFilter, in
 	if input.Set.MidCount.IsSet() && input.MidCountInc != nil {
 		return nil, InvalidInputError("update accounts: column \"mid_count\" cannot be both set and incremented in one mutation")
 	}
+	if input.Set.MidCount.IsSet() && input.MidCountDec != nil {
+		return nil, InvalidInputError("update accounts: column \"mid_count\" cannot be both set and decremented in one mutation")
+	}
 	if input.MidCountInc != nil && input.MidCountDec != nil {
 		return nil, InvalidInputError("update accounts: column \"mid_count\" cannot be both incremented and decremented in one mutation")
 	}
 	if input.Set.BigCount.IsSet() && input.BigCountInc != nil {
 		return nil, InvalidInputError("update accounts: column \"big_count\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.BigCount.IsSet() && input.BigCountDec != nil {
+		return nil, InvalidInputError("update accounts: column \"big_count\" cannot be both set and decremented in one mutation")
 	}
 	if input.BigCountInc != nil && input.BigCountDec != nil {
 		return nil, InvalidInputError("update accounts: column \"big_count\" cannot be both incremented and decremented in one mutation")
@@ -357,11 +387,17 @@ func (m *M) UpdateAccounts(ctx context.Context, filter *models.AccountFilter, in
 	if input.Set.Ratio.IsSet() && input.RatioInc != nil {
 		return nil, InvalidInputError("update accounts: column \"ratio\" cannot be both set and incremented in one mutation")
 	}
+	if input.Set.Ratio.IsSet() && input.RatioDec != nil {
+		return nil, InvalidInputError("update accounts: column \"ratio\" cannot be both set and decremented in one mutation")
+	}
 	if input.RatioInc != nil && input.RatioDec != nil {
 		return nil, InvalidInputError("update accounts: column \"ratio\" cannot be both incremented and decremented in one mutation")
 	}
 	if input.Set.Balance.IsSet() && input.BalanceInc != nil {
 		return nil, InvalidInputError("update accounts: column \"balance\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Balance.IsSet() && input.BalanceDec != nil {
+		return nil, InvalidInputError("update accounts: column \"balance\" cannot be both set and decremented in one mutation")
 	}
 	if input.BalanceInc != nil && input.BalanceDec != nil {
 		return nil, InvalidInputError("update accounts: column \"balance\" cannot be both incremented and decremented in one mutation")
@@ -525,16 +561,15 @@ func (m *M) UpsertAccount(ctx context.Context, input *models.CreateAccountInput)
 }
 
 // HardDeleteAccount resolves the explicit hard-delete mutation
-// when both delete variants are enabled. Returns Boolean!.
+// when both delete variants are enabled. Returns Boolean!: true whenever the
+// delete ran without error, whether or not the row existed — the client's
+// HardDelete is idempotent.
 func (m *M) HardDeleteAccount(ctx context.Context, id int64) (bool, error) {
 	if err := m.Client.Accounts().HardDelete(ctx, id, func(o *models.CallOptions[models.AccountFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.AccountFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
@@ -691,12 +726,15 @@ type UpdateEntryRequest struct {
 // UpdateEntry resolves the single-row update mutation for entries.
 // The input carries paired `<col>_inc` / `<col>_dec` operators for every
 // numeric column. Illegal pairings are rejected with INVALID_INPUT before
-// anything is written; the method then dispatches `_set` → `_inc` → `_dec` in
-// order and re-fetches the entity so the mutation result reflects the
-// post-dispatch state.
+// anything is written; the method then applies `_set`, then each column's
+// `_inc` / `_dec` as a signed Increment, and re-fetches the entity so the
+// mutation result reflects the post-dispatch state.
 func (m *M) UpdateEntry(ctx context.Context, id int64, input UpdateEntryRequest) (*models.Entry, error) {
 	if input.Set.Amount.IsSet() && input.AmountInc != nil {
 		return nil, InvalidInputError("update entries: column \"amount\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Amount.IsSet() && input.AmountDec != nil {
+		return nil, InvalidInputError("update entries: column \"amount\" cannot be both set and decremented in one mutation")
 	}
 	if input.AmountInc != nil && input.AmountDec != nil {
 		return nil, InvalidInputError("update entries: column \"amount\" cannot be both incremented and decremented in one mutation")
@@ -758,6 +796,9 @@ func (m *M) UpdateEntry(ctx context.Context, id int64, input UpdateEntryRequest)
 func (m *M) UpdateEntries(ctx context.Context, filter *models.EntryFilter, input UpdateEntryRequest) ([]*models.Entry, error) {
 	if input.Set.Amount.IsSet() && input.AmountInc != nil {
 		return nil, InvalidInputError("update entries: column \"amount\" cannot be both set and incremented in one mutation")
+	}
+	if input.Set.Amount.IsSet() && input.AmountDec != nil {
+		return nil, InvalidInputError("update entries: column \"amount\" cannot be both set and decremented in one mutation")
 	}
 	if input.AmountInc != nil && input.AmountDec != nil {
 		return nil, InvalidInputError("update entries: column \"amount\" cannot be both incremented and decremented in one mutation")
@@ -861,16 +902,15 @@ func (m *M) UpsertEntry(ctx context.Context, input *models.CreateEntryInput) (*m
 }
 
 // DeleteEntry resolves the bare `delete<Table>` mutation when
-// only hard delete is enabled. Returns Boolean!.
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
 func (m *M) DeleteEntry(ctx context.Context, id int64) (bool, error) {
 	if err := m.Client.Entries().HardDelete(ctx, id, func(o *models.CallOptions[models.EntryFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.EntryFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return false, nil
-		}
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil

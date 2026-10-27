@@ -175,6 +175,9 @@ func {{ $n.IncrementOpsFunc }}(in {{ $gqlPrefix }}{{ $n.UpdateInputName }}) ([]{
 	if {{ if $op.SetGqlgenOmittable }}p.{{ $op.SetGoField }}.IsSet(){{ else }}p.{{ $op.SetGoField }} != nil{{ end }} && p.{{ $op.IncGoField }} != nil {
 		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }} with related: column \"{{ $op.SQLName }}\" cannot be both set and incremented in one mutation")
 	}
+	if {{ if $op.SetGqlgenOmittable }}p.{{ $op.SetGoField }}.IsSet(){{ else }}p.{{ $op.SetGoField }} != nil{{ end }} && p.{{ $op.DecGoField }} != nil {
+		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }} with related: column \"{{ $op.SQLName }}\" cannot be both set and decremented in one mutation")
+	}
 	if p.{{ $op.IncGoField }} != nil && p.{{ $op.DecGoField }} != nil {
 		return nil, {{ $sqlgenPkg }}.InvalidInputError("update {{ $t.SQLTable }} with related: column \"{{ $op.SQLName }}\" cannot be both incremented and decremented in one mutation")
 	}

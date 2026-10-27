@@ -1786,6 +1786,9 @@ func updateOrderWithRelatedIncrementOps(in gqlmodel.UpdateOrderWithRelatedInput)
 	if p.Total != nil && p.TotalInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update orders with related: column \"total\" cannot be both set and incremented in one mutation")
 	}
+	if p.Total != nil && p.TotalDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update orders with related: column \"total\" cannot be both set and decremented in one mutation")
+	}
 	if p.TotalInc != nil && p.TotalDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update orders with related: column \"total\" cannot be both incremented and decremented in one mutation")
 	}
@@ -2206,11 +2209,17 @@ func updateProductWithRelatedIncrementOps(in gqlmodel.UpdateProductWithRelatedIn
 	if p.Price != nil && p.PriceInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update products with related: column \"price\" cannot be both set and incremented in one mutation")
 	}
+	if p.Price != nil && p.PriceDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update products with related: column \"price\" cannot be both set and decremented in one mutation")
+	}
 	if p.PriceInc != nil && p.PriceDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update products with related: column \"price\" cannot be both incremented and decremented in one mutation")
 	}
 	if p.Stock != nil && p.StockInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update products with related: column \"stock\" cannot be both set and incremented in one mutation")
+	}
+	if p.Stock != nil && p.StockDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update products with related: column \"stock\" cannot be both set and decremented in one mutation")
 	}
 	if p.StockInc != nil && p.StockDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update products with related: column \"stock\" cannot be both incremented and decremented in one mutation")
@@ -3559,6 +3568,9 @@ func updateWorkspaceNoteWithRelatedIncrementOps(in gqlmodel.UpdateWorkspaceNoteW
 	}
 	if p.PinnedOrder != nil && p.PinnedOrderInc != nil {
 		return nil, sqlgenresolver.InvalidInputError("update workspace_notes with related: column \"pinned_order\" cannot be both set and incremented in one mutation")
+	}
+	if p.PinnedOrder != nil && p.PinnedOrderDec != nil {
+		return nil, sqlgenresolver.InvalidInputError("update workspace_notes with related: column \"pinned_order\" cannot be both set and decremented in one mutation")
 	}
 	if p.PinnedOrderInc != nil && p.PinnedOrderDec != nil {
 		return nil, sqlgenresolver.InvalidInputError("update workspace_notes with related: column \"pinned_order\" cannot be both incremented and decremented in one mutation")

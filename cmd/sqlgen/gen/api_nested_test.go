@@ -1049,14 +1049,12 @@ func incrementNestedSchema() *parser.Schema {
 	}
 }
 
-// TestAPINestedTemplates_IncrementBranch renders the one branch no users-based
-// fixture reaches: an update wrapper whose flat half carries `_inc` / `_dec`.
-// It pins the ruling (the increments run in the nested mutation's own
-// transaction) and the read-back's hook skip, which keeps the cache from
-// answering the mutation with the pre-mutation row while the writes' own
-// invalidation waits for commit (PRD §9.9.6). The E2E example compiles the
-// branch; this is the gate `make check` runs.
-func TestAPINestedTemplates_IncrementBranch(t *testing.T) {
+// incrementNestedRenderer builds the API context for incrementNestedSchema
+// with nested mutations on and accounts.Entries declared, and returns a
+// renderer that executes one API template against it and fails the test
+// unless the output parses as Go.
+func incrementNestedRenderer(t *testing.T) func(name string) string {
+	t.Helper()
 	input := apiTestInput(t, incrementNestedSchema())
 	cfg := input.Config
 	cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
@@ -1089,6 +1087,18 @@ func TestAPINestedTemplates_IncrementBranch(t *testing.T) {
 		}
 		return src
 	}
+	return render
+}
+
+// TestAPINestedTemplates_IncrementBranch renders the one branch no users-based
+// fixture reaches: an update wrapper whose flat half carries `_inc` / `_dec`.
+// It pins the ruling (the increments run in the nested mutation's own
+// transaction) and the read-back's hook skip, which keeps the cache from
+// answering the mutation with the pre-mutation row while the writes' own
+// invalidation waits for commit (PRD §9.9.6). The E2E example compiles the
+// branch; this is the gate `make check` runs.
+func TestAPINestedTemplates_IncrementBranch(t *testing.T) {
+	render := incrementNestedRenderer(t)
 
 	resolvers := render("api/resolvers")
 	mustContainAll(t, resolvers,
