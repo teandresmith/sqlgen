@@ -19,7 +19,7 @@
 | config.connection.sqlite-missing-file | A SQLite database file that does not exist is a connection error; sqlgen does not create it | `unit: cmd/sqlgen/cli: TestParseSchema_SQLiteMissingDatabaseFile` | sqlite |  |
 
 ## §4.13 Config Validation Rules
-<!-- prd: 4.13 sha256: 410d9a5a5cf4fcff -->
+<!-- prd: 4.13 sha256: 8ae22daa78aaae1e -->
 
 One row per rule and matrix column. A rule's `fires` row carries the rule's PRD wording; the
 other columns are the message the PRD states, the PRD severity, reporting together with other
@@ -269,6 +269,9 @@ errors (§4.13), and agreement with the §4.14 JSON Schema.
 | config.manifest-breadcrumbs-disabled | `manifest.breadcrumbs.*: true` with `manifest.enabled: false` is an error | `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_BreadcrumbsRequireEnabled/claude_md true is error`; `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_BreadcrumbsRequireEnabled/agents_md true is error`; `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_BreadcrumbsRequireEnabled/package_doc true is error` | all | config-validation: manifest-breadcrumbs-disabled × fires |
 | config.manifest-breadcrumbs-disabled.severity | Reported as an error | `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_BreadcrumbsRequireEnabled/claude_md true is error` | all | config-validation: manifest-breadcrumbs-disabled × severity |
 | config.manifest-breadcrumbs-disabled.together | Reported together with the other validation errors of the run, not one at a time | `unit: cmd/sqlgen/config: TestValidatePreParse_ReportsEachRuleWithTheOthers/manifest breadcrumb with the manifest off` | all | config-validation: manifest-breadcrumbs-disabled × together |
+| config.table-events-enabled-global-off | `tables.<name>.events.enabled: true` with `events.enabled` off (or no `events` block) is an error | `unit: cmd/sqlgen/config: TestValidatePreParse_EventsPerTableOptInForbidden/table opt-in under global off is an error`; `unit: cmd/sqlgen/config: TestValidatePreParse_EventsPerTableOptInForbidden/table opt-in with no events block is an error`; `unit: cmd/sqlgen/config: TestValidatePreParse_EventsPerTableOptInForbidden/table opt-out under global off is valid`; `unit: cmd/sqlgen/config: TestValidatePreParse_EventsPerTableOptInForbidden/table opt-in under global on is valid` | all | config-validation: table-events-enabled-global-off × fires |
+| config.table-events-enabled-global-off.severity | Reported as an error | `unit: cmd/sqlgen/config: TestValidatePreParse_EventsPerTableOptInForbidden/table opt-in under global off is an error` | all | config-validation: table-events-enabled-global-off × severity |
+| config.table-events-enabled-global-off.together | Reported together with the other validation errors of the run, not one at a time | `unit: cmd/sqlgen/config: TestValidatePreParse_ReportsEachRuleWithTheOthers/table events opt-in under a global opt-out` | all | config-validation: table-events-enabled-global-off × together |
 | config.manifest-embed-disabled | `manifest.embed_in_client: true` with `manifest.enabled: false` is an error | `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_EmbedRequiresEnabled/embed true is error` | all | config-validation: manifest-embed-disabled × fires |
 | config.manifest-embed-disabled.severity | Reported as an error | `unit: cmd/sqlgen/config: TestValidatePreParse_Manifest_EmbedRequiresEnabled/embed true is error` | all | config-validation: manifest-embed-disabled × severity |
 | config.manifest-embed-disabled.together | Reported together with the other validation errors of the run, not one at a time | `unit: cmd/sqlgen/config: TestValidatePreParse_ReportsEachRuleWithTheOthers/manifest embed with the manifest off` | all | config-validation: manifest-embed-disabled × together |
@@ -451,6 +454,8 @@ errors (§4.13), and agreement with the §4.14 JSON Schema.
 | config-validation: table-manifest-enabled-global-off × schema | §4.14: the per-table opt-in against the global flag is a cross-field rule the schema does not express | |
 | config-validation: manifest-breadcrumbs-disabled × message | §4.13 states no message content for this rule | |
 | config-validation: manifest-breadcrumbs-disabled × schema | §4.14: a flag's dependence on `manifest.enabled` is a cross-field rule the schema does not express | |
+| config-validation: table-events-enabled-global-off × message | §4.13 states no message content for this rule | |
+| config-validation: table-events-enabled-global-off × schema | §4.14: a per-table flag's dependence on the global `events.enabled` is a cross-field rule the schema does not express | |
 | config-validation: manifest-embed-disabled × message | §4.13 states no message content for this rule | |
 | config-validation: manifest-embed-disabled × schema | §4.14: a flag's dependence on `manifest.enabled` is a cross-field rule the schema does not express | |
 | config-validation: manifest-mcp-emit-disabled × message | §4.13 states no message content for this rule | |

@@ -191,7 +191,6 @@ generation:
     json_per_entity_dir: entities       # default (used when json_layout: per_entity; relative to markdown_dir)
     markdown_dir: manifest              # default (relative to output.dir)
     include_examples: true              # default: true (canonical example per entity)
-    include_internal: false             # default: false (skip exclude_columns, system views)
     breadcrumbs:                        # each default true when manifest.enabled
       claude_md:   true                 # emit <output.dir>/CLAUDE.md
       agents_md:   true                 # emit <output.dir>/AGENTS.md
@@ -223,7 +222,6 @@ type ManifestConfig struct {
     JSONPerEntityDir string            `yaml:"json_per_entity_dir,omitempty"`
     MarkdownDir      string            `yaml:"markdown_dir,omitempty"`
     IncludeExamples  *bool             `yaml:"include_examples,omitempty"`
-    IncludeInternal  *bool             `yaml:"include_internal,omitempty"`
     Breadcrumbs      BreadcrumbsConfig `yaml:"breadcrumbs,omitempty"`
     EmbedInClient    *bool             `yaml:"embed_in_client,omitempty"`
 }
@@ -261,7 +259,7 @@ Parallel to PRD §4.6's general per-table override rule:
 2. Global `generation.manifest.enabled`.
 3. Default: `false`.
 
-Pointer types (`*bool`) for `IncludeExamples` / `IncludeInternal` so unset
+Pointer types (`*bool`) for `IncludeExamples` so unset
 distinguishes from explicit false — matches the existing PRD §4.6
 convention for nullable booleans.
 

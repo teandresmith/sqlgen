@@ -670,7 +670,7 @@ Each entry in the `tables` map customizes a specific table. Key is the table nam
 | `exclude_relationships` | `[]string` | Disable auto-detected relationships by name. E.g., `[Company, AssignedTo]`. |
 | `relationships` | `[]TableRelationship` | Explicitly defined relationships. If a manual relationship resolves to the same Go field name as an auto-detected one, the manual definition replaces it — with a non-fatal warning. See [13.4](#134-manual-relationship-configuration). |
 | `cache` | `TableCacheConfig` | Per-table cache overrides (`enabled`, `ttl` — tri-state pointers; unset means inherit global). A per-table `enabled: true` can opt into caching even when global `cache.enabled: false`. See [Section 27](#27-caching). |
-| `events` | `TableEventConfig` | Per-table event overrides (enabled). Overrides global `events`. See [Section 28](#28-event-system). |
+| `events` | `TableEventConfig` | Per-table event override (`enabled`). It only opts a table out: `enabled: true` while global `events.enabled` is off is a validation error. See [Section 28](#28-event-system). |
 | `tenancy` | `TableTenancyConfig` | Per-table tenancy overrides (`enabled`, `column`, `required`, `type` — tri-state pointers; unset means inherit global). Use to opt tables out of tenant scoping or to override the tenant column name for legacy schemas. See [Section 29](#29-tenancy). |
 | `api` | `TableAPIConfig` | Per-table API settings. `{enabled: bool, path: string}`. See [26.10](#2610-per-table-api-configuration). |
 | `nested_mutations` | `TableNestedMutationsConfig` | Per-table nested-mutation settings — the optional edge allowlist and its per-edge options. See [Nested mutations per table](#nested-mutations-per-table) below and [9.9](#99-nested-mutations). |
@@ -1252,6 +1252,7 @@ The config is validated immediately after loading, before parsing or generation 
 | **`tables.<name>.manifest.enabled: true` with global `manifest.enabled: false`** | Error | Per-table flag is opt-*out* only. Cannot opt a single entity in without the package-level opt-in. |
 | **`manifest.breadcrumbs.*: true` with `manifest.enabled: false`** | Error | Breadcrumbs only make sense when there is a manifest to point at. |
 | **`manifest.embed_in_client: true` with `manifest.enabled: false`** | Error | The runtime methods only make sense when a manifest is being emitted to embed. |
+| **`tables.<name>.events.enabled: true` with `events.enabled` off** | Error | A per-table `events.enabled` only opts a table out (§28.8); event hooks are generated only under the global flag. |
 | **`manifest.mcp.emit_project_config: true` with `manifest.enabled: false`** | Error | The MCP registration entry points at the emitted manifest; without one there is nothing to serve. See [31.2](#312-configuration). |
 | **`manifest.mcp.project_configs` entry absolute or escaping the module root** | Error | Every target must be a module-root-relative path; absolute paths, empty entries, and any `..` segment are rejected. Enforced regardless of the enabled state (the opt-out removal path walks the same targets). See [31.2](#312-configuration). |
 | **`column_map.<col>.name` is not a valid exported Go identifier** | Error | The override becomes a generated struct field, so it must be a legal Go identifier starting with an upper-case letter. A PascalCase keyword (`Type`, `Map`) is accepted. See [8.5](#85-naming-rules). |
@@ -13598,7 +13599,7 @@ The generated Go service implementation follows the same pattern as GraphQL reso
 
 ## 27. Caching
 
-Caching is injected via the hook mechanism (section 21) and configured via `sqlgen.yml`. No caching code is generated until `cache.enabled: true` is set. The cache layer depends on the event system (section 28) for the `FromEventSubscriber` adapter.
+Caching is injected via the hook mechanism (section 21) and configured via `sqlgen.yml`. No caching code is generated until caching resolves on for some table: global `cache.enabled: true`, or a per-table `enabled: true` (27.2). The cache layer depends on the event system (section 28) for the `FromEventSubscriber` adapter.
 
 ### 27.1 Overview
 
@@ -14715,6 +14716,8 @@ tables:
       enabled: false                # don't publish events for audit log writes (avoid recursion)
 ```
 
+A per-table `events.enabled` only opts a table out. A table publishes events when global `events.enabled` is `true` and the table does not set `enabled: false`; `tables.<name>.events.enabled: true` while global `events.enabled` is off is a validation error (§4.13).
+
 **Runtime config (`event.Config`):**
 
 Provided at client construction via `WithEventPublisher`:
@@ -15451,7 +15454,6 @@ generation:
     json_per_entity_dir: entities       # default (relative to markdown_dir)
     markdown_dir: manifest              # default (relative to output.dir)
     include_examples: true              # default: true (canonical example per entity)
-    include_internal: false             # default: false (skip exclude_columns, system views)
     breadcrumbs:                        # each default true when manifest.enabled
       claude_md:   true                 # emit <output.dir>/CLAUDE.md
       agents_md:   true                 # emit <output.dir>/AGENTS.md
@@ -15473,10 +15475,9 @@ generation:
 | `json_per_entity_dir` | `string` | `entities` | Subdirectory under `markdown_dir` for per-entity JSON files in `per_entity` layout. Cannot equal `markdown_dir`, start with `_`, be absolute, or escape via `..`. |
 | `markdown_dir` | `string` | `manifest` | Subdirectory under `output.dir` for the markdown directory. Cannot be `.`, equal an existing PRD §8.3 artifact subdir, start with `_`, be absolute, or escape via `..`. |
 | `include_examples` | `bool` | `true` | When false, per-entity `examples` arrays are stripped. Conventions examples in `_conventions.md` are always retained. |
-| `include_internal` | `bool` | `false` | When true, columns listed in `exclude_columns` and system views are included. Off by default to keep the manifest a "consumer-facing surface" view. |
-| `breadcrumbs.claude_md` | `bool` | `true` | Emit `<output.dir>/CLAUDE.md` pointing at the manifest. |
+| `breadcrumbs.claude_md` | `bool` | `true` | Emit `<output.dir>/CLAUDE.md` pointing at the manifest: `<markdown_dir>/_index.md`, or `<markdown_dir>/<json_filename>` when `formats` has no `markdown`. |
 | `breadcrumbs.agents_md` | `bool` | `true` | Emit `<output.dir>/AGENTS.md` (identical content). |
-| `breadcrumbs.package_doc` | `bool` | `true` | Inject a one-line manifest pointer into `models_gen.go`'s package doc comment. |
+| `breadcrumbs.package_doc` | `bool` | `true` | Inject a one-line manifest pointer into `models_gen.go`'s package doc comment (into the client file, `output.client.file`, when there is no `models_gen.go`: under `file_per_table`, or with no tables): `// Package <name> is generated by sqlgen. AI agents: read <markdown_dir>/_index.md before consuming this package.`, naming `<markdown_dir>/<json_filename>` instead when `formats` has no `markdown`. |
 | `embed_in_client` | `bool` | `true` | Generate the three `Client.Manifest()` / `ManifestEntity()` / `ManifestVersion()` methods + the embed-file. |
 | `mcp` | block | emission on when enabled | Project-local MCP registration (`.mcp.json`) emission — `emit_project_config`, `project_configs`, `server_key`, `command_template`. Global-only (no per-table analogue). Normative spec + defaults in §31.2. |
 
@@ -15533,8 +15534,8 @@ When `manifest.enabled: true`, the following files are emitted under `<output.di
     ├── manifest_gen.json           # top-level JSON (full inline in single layout, index in per_entity)
     ├── _index.md                   # entity scan table (cross-references _conventions.md)
     ├── _conventions.md             # error sentinels, pagination, comparators, soft-delete, CallOptions, Comparator + Omittable surface walkthrough
-    ├── users.md                    # one markdown file per entity, named after the SQL table verbatim
-    ├── posts.md
+    ├── user.md                     # one markdown file per entity, named by its file_prefix (see File naming)
+    ├── post.md
     ├── ...
     └── entities/                   # only present in per_entity layout
         ├── users.json              # full per-entity JSON
@@ -15575,7 +15576,7 @@ The single ownership rule: **sqlgen only overwrites or stale-deletes a breadcrum
 
 The marker is authored **only** by sqlgen when it writes the complete file; it is never part of the pasteable pointer block, so a consumer who pastes the block into their own `CLAUDE.md` does not thereby hand the file to sqlgen. The marker deliberately does not say "DO NOT EDIT" — ownership here is soft and adoptable, unlike the hard `// Code generated by sqlgen. DO NOT EDIT.` claim on `*_gen.go` files. This rule applies identically to the layered-mode `graph/CLAUDE.md` / `graph/AGENTS.md` breadcrumbs. The `models_gen.go` package-doc pointer (`breadcrumbs.package_doc`) is unaffected — it lives inside a fully sqlgen-owned `DO NOT EDIT` file.
 
-**Stale-file cleanup** (PRD §23.8). All manifest artifacts participate in stale-file cleanup. Removing a table from the schema removes its per-entity markdown / JSON file on next generation. Setting `manifest.enabled: false` after a prior `true` removes the entire manifest directory and the breadcrumb files **that carry the provenance marker** (see *Breadcrumb ownership* above — user-owned or user-adopted breadcrumbs are never deleted).
+**Stale-file cleanup** (PRD §23.8). All manifest artifacts participate in stale-file cleanup. Removing a table from the schema removes its per-entity markdown / JSON file on next generation. While the manifest stays enabled, dropping a format from `formats` removes that format's artifacts on the next generation (`markdown`: every `.md` file in the owned `markdown_dir`, `_index.md`, `_conventions.md` and the per-entity files among them; `json`: the `json_filename` artifact and the per-entity `*.json` files), under the *Directory ownership* rule below, and disabling GraphQL removes the graph breadcrumbs that carry the provenance marker from the configured graph dir. Setting `manifest.enabled: false` after a prior `true` removes the entire manifest directory and the breadcrumb files **that carry the provenance marker** (see *Breadcrumb ownership* above — user-owned or user-adopted breadcrumbs are never deleted).
 
 **Directory ownership.** "After a prior `true`" is a **precondition, not a description of timing** — the generator MUST establish it before removing `<output.dir>/<markdown_dir>/`, and MUST leave the directory untouched when it cannot. The disabled branch runs on *every* generation (the manifest is off by default, §30.2), `output.dir` defaults to `.` (§4.2), and `markdown_dir` defaults to `manifest` — so the resolved path routinely lands on a directory the consumer owns and sqlgen has never written. Ownership is established from the emitted content, requiring no marker file and no state carried between runs: the directory is sqlgen's when it contains either
 
@@ -15586,9 +15587,9 @@ The marker is authored **only** by sqlgen when it writes the complete file; it i
 
 This rule governs the directory removal only. The per-entity pruning inside an *enabled* manifest directory is driven by the current entity set, and the per-entity JSON directory is dropped after a `per_entity` → `single` flip by removing the `*.json` files sqlgen emits there and then the directory itself only if nothing else remains.
 
-**Determinism** (PRD §5.7). Manifest emission is deterministic byte-for-byte given an unchanged schema + config. The only non-deterministic field is `generated_at`, which the generator accepts a `--manifest-timestamp` flag to fix for golden tests. All collections are sorted lexicographically by stable key. JSON is written via `json.MarshalIndent` with HTML-escaping disabled.
+**Determinism** (PRD §5.7). Manifest emission is deterministic byte-for-byte given an unchanged schema + config. The only non-deterministic field is `generated_at`, which the generator accepts a `--manifest-timestamp` flag to fix for golden tests. `columns[]` keeps the table's declaration order and `methods.query[]` / `methods.mutation[]` keep the generated method order; every other collection is sorted lexicographically by stable key. JSON is written via `json.MarshalIndent` with HTML-escaping disabled.
 
-**GraphQL breadcrumbs** (PRD §26.5.8). When GraphQL is enabled, the generated `graph/` package receives breadcrumb files (`graph/CLAUDE.md`, `graph/AGENTS.md`) rather than its own `manifest/` directory — only the models package gets a `manifest/`. The breadcrumbs point at three sources: the models manifest (via a relative path computed from the resolved graph dir, so it adapts whether graph is nested under models or a top-level sibling), the `*_gen.graphqls` files in the same directory (self-describing GraphQL schema), and PRD §26 (project-invariant resolver / walker / middleware semantics).
+**GraphQL breadcrumbs** (PRD §26.5.8). When GraphQL is enabled, the generated `graph/` package receives breadcrumb files (`graph/CLAUDE.md`, `graph/AGENTS.md`) rather than its own `manifest/` directory — only the models package gets a `manifest/`. The breadcrumbs point at three sources: the models manifest (its `_index.md`, or its `json_filename` artifact when `formats` has no `markdown`, via a relative path computed from the resolved graph dir, so it adapts whether graph is nested under models or a top-level sibling), the `*_gen.graphqls` files in the same directory (self-describing GraphQL schema), and the doc comments on the generated resolver, walker and middleware Go files in that directory.
 
 ### 30.4 JSON Schema
 
@@ -15627,8 +15628,8 @@ The on-disk JSON has two layouts, controlled by `json_layout`:
   "generation_config": { ... },
   "layout": "per_entity",
   "entities": [
-    { "name": "User", "table": "users", "kind": "table", "file": "entities/users.json" },
-    { "name": "Post", "table": "posts", "kind": "table", "file": "entities/posts.json" }
+    { "name": "User", "table": "users", "kind": "table", "file": "entities/user.json" },
+    { "name": "Post", "table": "posts", "kind": "table", "file": "entities/post.json" }
   ],
   "enums":  [ ... ],
   "extras": [ ... ]
@@ -15760,7 +15761,7 @@ Package-wide reference, answered once. Per-entity entries cross-reference rather
 }
 ```
 
-**View entries** use `kind: "view"`, `pk.kind: "none"` (when no declared PK), `relationships: []`, and a `source` field carrying the view's definition: the annotation file's text under `files`, or the definition the database stores under `database` ([6.1](#61-source-modes)). A **materialized view** ([16.5](#165-materialized-views-postgresql)) additionally carries `materialized: true` (omitted otherwise) and advertises `Refresh` / `RefreshConcurrently` under `methods.mutation[]` with their canonical `sql_bodies` (`REFRESH MATERIALIZED VIEW [CONCURRENTLY] ...`); `RefreshConcurrently` lists `database.ErrRefreshConcurrentlyInTx` in `errors` — qualified, because [§22.1](#221-generated-error-types)'s re-export list has eight entries and this is not one of them, so the bare spelling would name a symbol the generated package does not declare.
+**View entries** use `kind: "view"`, `pk.kind: "none"` (when no declared PK), `relationships: []`, and a `source` field carrying the view's definition: the annotation file's text under `files`, or the definition the database stores under `database` ([6.1](#61-source-modes)). A **materialized view** ([16.5](#165-materialized-views-postgresql)) additionally carries `materialized: true` (omitted otherwise) and advertises `Refresh` / `RefreshConcurrently` under `methods.mutation[]` with their canonical `sql_bodies` (`REFRESH MATERIALIZED VIEW [CONCURRENTLY] ...`); `RefreshConcurrently` lists `database.ErrRefreshConcurrentlyInTx` in `errors` — qualified, because [§22.1](#221-generated-error-types)'s re-export list has ten entries and this is not one of them, so the bare spelling would name a symbol the generated package does not declare.
 
 **A tenanted view populates `features.tenancy`.** Tenancy detection covers every generated entity, views included ([29.2.5](#2925-view-tenancy)), so a view carrying the effective tenant column has its reads scoped exactly as a table's are and the manifest must say so. Reporting `features.tenancy: null` on a scoped view is not a harmless omission: it tells every manifest consumer — the MCP server ([31](#31-mcp-server)), an agent, a drift check — that the view's rows are globally visible when they are not. Two fields differ from the table shape, both because a view has no write path:
 
@@ -15772,6 +15773,10 @@ Package-wide reference, answered once. Per-entity entries cross-reference rather
 **Other per-entity features on a view.** `events`, `soft_delete` and `cache` are always `null`. A view emits no events and has no soft-delete column. `features.cache` is `null` even on a cached view ([27.11](#2711-view-cache-invalidation)) because the block's three fields do not describe a view: a view's `invalidate_on` names *source tables* where a table's `features.cache.invalidates_on` names *methods on the entity itself*, and a view has no read-through path ([29.2.5](#2925-view-tenancy)), so `key_pattern` and `hydration` would describe a key that is never written or read. `null` is the accurate answer; a populated block would be a guess an agent reads as fact.
 
 **`files[]` follows `output.layout`.** It names the generated Go file(s) carrying the entity's own body, and the spelling is layout-dependent: `["models_gen.go"]` for a table and `["views_gen.go"]` for a view under the default `single_file`, `["<file_prefix>_gen.go"]` for either under `file_per_table` ([§4.5](#45-outputconfig)). The builder reads `gen`'s file-naming function — the same one the emission path calls — rather than recomputing the stem, so the two cannot disagree. Publishing one layout's spelling unconditionally would send every consumer on the other layout, `sqlgen_get_entity` over MCP ([§31](#31-mcp-server)) included, to a path that does not resolve. The field is the entity's *body* file, not an index of every file mentioning it: package-wide artifacts that carry per-entity members under either layout — `sorter_gen.go`, `cache_gen.go`, `event_hooks_gen.go`, the GraphQL `*_gen.graphqls` — are found through `conventions` and `features`, not here.
+
+**Optional members are omitted when empty.** The sample above shows every member; the emitted JSON leaves out a member that has no value rather than writing `null`, `""` or `[]`: `schema`, a column's `default`, `default_kind`, `auto` and `check`, `features.audit_columns`, and the other optional members marked as such (`access` / `redacted`, `materialized`). A consumer reads an absent member as its zero value. `comment` is always written (`""` when there is none, [30.7](#307-extended-schema-metadata)), and so are the four `features` blocks (`null` when the feature is off).
+
+**`examples`** holds canonical Go lines built from the entity's generated methods, fields and types: `read` a `Get` call (when `Get` is generated) and a `GetMany` call filtering on a real column, `write` a `Create` call and an `Update` call (when generated). A view carries `read` lines only. `include_examples: false` omits the block.
 
 **Composite-PK entities** use `pk.kind: "composite"` with `pk.struct` naming the generated `<Entity>PK` struct.
 
@@ -15799,11 +15804,11 @@ Package-wide reference, answered once. Per-entity entries cross-reference rather
 
 The list is read from the templates, never back-formed from a documentation example. That is the same rule [§30.4.1](#3041-conventions-block) states for `error_sentinels[]`, applied to the block that contains `errors[]`, and it binds in both directions: a plausible-sounding method the templates do not emit (`FindByID`, `FindBy<Col>` per UNIQUE index, `List`, `Walk`, `Delete`, `Upsert<Target>` per conflict target) must not appear, and a real one must not be omitted — `Increment`, `ExistsWhere`, `Paginate`, `Connection`, `CreateMany`, `UpdateMany`, `UpdateWhere`, `Restore`, and the six `*Many` / `*Where` delete and restore forms carry the conditions above. Param and return types are read the same way.
 
-**Signature convention.** `params` omits the leading `ctx context.Context` and the trailing variadic `opts ...func(*CallOptions[…])` that every generated method carries; `returns` names the non-error result and is the empty string when the method returns only `error`; the error side lives in `errors[]`. `errors[]` lists the sentinels the generated body can actually reach — `Get` carries `ErrNotFound` ([§9.8.2](#982-get)), the idempotent by-PK deletes and `Restore` carry none ([§9.5](#95-edge-case-behaviors)), `Update` and `Increment` carry it only under `strict_updates`, the `*Where` methods carry `ErrEmptyFilter`, and `Connection` carries `ErrInvalidCursor`. `UpdateMany` does **not** carry `ErrNotFound` under any setting: it issues `Update`'s statement per item, and an item whose primary key matches no row is skipped and records no affected key ([9.5](#95-edge-case-behaviors)).
+**Signature convention.** `params` omits the leading `ctx context.Context` and the trailing variadic `opts ...func(*CallOptions[…])` that every generated method carries; `returns` names the non-error result and is the empty string when the method returns only `error`; the error side lives in `errors[]`. `errors[]` lists the sentinels the generated body can actually reach — `Get` carries `ErrNotFound` ([§9.8.2](#982-get)), the idempotent by-PK deletes and `Restore` carry none ([§9.5](#95-edge-case-behaviors)), `Update` and `Increment` carry it only under `strict_updates`, the mutating `*Where` methods (`UpdateWhere` and the delete and restore forms) carry `ErrEmptyFilter`, and `Connection` carries `ErrInvalidCursor`. `UpdateMany` does **not** carry `ErrNotFound` under any setting: it issues `Update`'s statement per item, and an item whose primary key matches no row is skipped and records no affected key ([9.5](#95-edge-case-behaviors)).
 
 **Per-method `sql_bodies` (added 2026-05-15).** Each method under `methods.query[]` and `methods.mutation[]` carries an optional `sql_bodies: {<dialect>: <canonical SQL>}` map describing the statement *that method* issues. Single-key map for single-dialect packages; placeholders are dialect-rendered (`$1` for postgres, `?` for mysql/sqlite). Captured deterministically from the SQL-build pipeline that emits the `_gen.go` query bodies. Consumed by MCP §31 `sqlgen_show_sql`. See `docs/design/MANIFEST.md` §5.3 for the full shape.
 
-A method that issues no statement of its own carries **no `sql_bodies` key at all** rather than a plausible-looking invention: `Paginate` and `Connection` compose `Count` and `GetMany`, and MCP reports `-32005 METHOD_SQL_UNAVAILABLE` for them.
+A method that issues no statement of its own carries **no `sql_bodies` key at all** rather than a plausible-looking invention: `Paginate` and `Connection` compose `Count` and `GetMany`, and `CreateWithRelated` / `UpdateWithRelated` / `UpsertWithRelated` compose the entity's and its targets' own methods ([9.9](#99-nested-mutations)), and MCP reports `-32005 METHOD_SQL_UNAVAILABLE` for them.
 
 Clauses the generated code assembles from caller input at call time are rendered as **placeholder tokens**. An expansion would name columns and placeholder positions the statement does not carry, and the real column set is already published in the entity's `columns[]` block. The token set:
 
@@ -15918,8 +15923,8 @@ The manifest carries metadata that goes beyond what's expressible in Go types al
 | `default_kind` | per-column | One of `literal` (constant value), `function` (e.g., `gen_random_uuid()`, `CURRENT_TIMESTAMP`), `expression` (anything else). Lets consumers distinguish a value the caller must supply from one the database supplies. |
 | `access` + `redacted` | per-column | `access` is the resolved role (`public` / `read_only` / `write_only` / `hidden` / `internal`); `redacted` is `true` for `write_only` / `internal`. Additive optional fields (default `public` / `false`) — omitted rendering is `public`. Tell MCP / AI tooling which columns are server-only and must not be advertised for exposure. `sql_bodies` stay accurate (real server SQL); the `redacted` marker is what suppresses value-surfacing, not SQL rewriting. See [Section 32](#32-column-access-control). |
 | `features.events.{enabled, types[], payload_shape}` | top-level | Populated only when `events.enabled: true` for the entity. |
-| `features.cache.{key_pattern, invalidates_on[]}` | top-level | Populated only when cache is configured. `key_pattern` uses `{column}` template syntax; `invalidates_on[]` lists method names per PRD §27. |
-| `methods[].sql_bodies` | per-method (query / mutation) | Per-dialect map `{<dialect>: <canonical SQL>}` captured from the SQL-build pipeline, describing the statement that method issues. Single-key map for single-dialect packages. Placeholders dialect-rendered (`$1`/`?`); clauses assembled from caller input at call time use the token set of [§30.4.2](#3042-entity-shape). Omitted entirely for `Paginate` / `Connection`, which issue no statement of their own. Added 2026-05-15 for MCP §31 `sqlgen_show_sql`. |
+| `features.cache.{key_pattern, invalidates_on[]}` | top-level | Populated only when cache is configured. `key_pattern` uses `{column}` template syntax; `invalidates_on[]` lists the entity's generated methods that [27.7](#277-cache-behavior-by-operation) says invalidate (`Update`, `Upsert`, `Increment`, `SoftDelete`, `HardDelete`, `Restore` and their `*Many` / `*Where` forms), in the entity's method order; `Create` / `CreateMany` set the cache rather than invalidate it and are not listed. |
+| `methods[].sql_bodies` | per-method (query / mutation) | Per-dialect map `{<dialect>: <canonical SQL>}` captured from the SQL-build pipeline, describing the statement that method issues. Single-key map for single-dialect packages. Placeholders dialect-rendered (`$1`/`?`); clauses assembled from caller input at call time use the token set of [§30.4.2](#3042-entity-shape). Omitted entirely for `Paginate` / `Connection` and the `…WithRelated` methods, which issue no statement of their own. Added 2026-05-15 for MCP §31 `sqlgen_show_sql`. |
 | `generation_config` | top-level | Resolved (post-precedence, secret-stripped) feature-toggle snapshot — boolean + small-scalar surface only. See §30.4.3. Added 2026-05-15 for MCP §31 `sqlgen://config` resource. |
 
 **GraphQL schema description wiring.** As a side-effect of capturing `Table.Comment` / `Column.Comment` for the manifest, the GraphQL templates (`cmd/sqlgen/gen/templates/api/schema.graphqls.tmpl`) are updated to emit the captured comments in `"""description"""` blocks instead of template-rendered placeholders. The manifest and the `.graphqls` files agree on entity and column descriptions after this lands.
@@ -15957,7 +15962,7 @@ The server is a **read-only consumer** of `manifest_gen.json` — it never parse
 
 | Flag | Default | Description |
 |---|---|---|
-| `--manifest <path>` | walk up from CWD for `manifest_gen.json` | Manifest to serve. Startup fails with `-32001 MANIFEST_NOT_FOUND` if discovery misses. |
+| `--manifest <path>` | walk up from CWD for `manifest_gen.json` | Manifest to serve. Startup fails with `-32001 MANIFEST_NOT_FOUND` if discovery misses (see §31.4 for how a startup failure is reported). |
 | `--stdio` | `true` | JSON-RPC 2.0 over stdin/stdout (agent clients spawn the server per session; stdout carries only JSON-RPC — all logging goes to stderr). |
 | `--http <port>` | off | Additionally serve Streamable HTTP at `http://127.0.0.1:<port>/mcp` — **loopback-bound only** (any non-loopback bind is refused at flag-parse), **stateless** (no session; no server-pushed notifications). Can coexist with stdio. |
 | `--watch` / `--no-watch` | watch on | Reload the manifest on fsnotify change (mutually exclusive flags). |
@@ -15984,10 +15989,10 @@ Validation (§4.13 parallel): `emit_project_config: true` with `manifest.enabled
 Emission runs as the **last manifest-stage step** of `sqlgen generate` (after breadcrumbs, §30.3), once per `project_configs` target; a per-target failure is reported without aborting the remaining targets, and the run exits non-zero if any target failed. Each target gets the same merge contract:
 
 - The entry carries three `x-sqlgen-*` sentinel markers: `x-sqlgen-managed: true` (ownership), `x-sqlgen-manifest: <path>` (the merge match key, compared as absolute paths), `x-sqlgen-generator-version` (informational). Standard MCP clients ignore unknown `x-*` fields.
-- Matching entry → updated in place (key and position preserved). No match → new entry under `server_key`; if that key is held by a consumer-authored entry (no managed marker), sqlgen warns and registers under the next free key (`sqlgen-2`, `-3`, …).
+- Matching entry → updated in place (key preserved). No match → new entry under `server_key`; if that key is held by a consumer-authored entry (no managed marker), sqlgen warns and registers under the next free key (`sqlgen-2`, `-3`, …).
 - **Stale-entry cleanup:** a managed entry whose `x-sqlgen-manifest` file **no longer exists on disk** is removed (the `output.dir`-moved case). File existence is the disambiguator that lets multi-package monorepo siblings coexist in one `.mcp.json` — a sibling's manifest is on disk, so its entry survives. Consequence: a sibling whose manifest is gitignored or not yet generated is treated as stale and swept; regenerate the sibling to restore its entry.
 - Other tools' entries and consumer-authored entries are never touched, including their exact numeric value forms. A removal run that matches nothing leaves the file byte-untouched.
-- Output is canonical (2-space indent, alphabetically sorted keys at every level; first run normalizes formatting, subsequent runs are byte-stable) and written atomically (tmp → fsync → rename). Invalid JSON in an existing target fails loudly with line/col — never overwritten.
+- Output is canonical (2-space indent, alphabetically sorted keys at every level; first run normalizes formatting, subsequent runs are byte-stable) and written atomically (tmp → fsync → rename). Invalid JSON in an existing target fails loudly with line/col — never overwritten. That covers a truncated document (the position just past its last byte), an empty file (`1:1`), and content after the JSON document (the position of its first byte).
 - `emit_project_config: false` (or disabling the manifest) removes sqlgen's managed entries on the next generation; the file is deleted when `mcpServers` empties and no other top-level fields remain.
 - `command_template`, when set, is rendered via `text/template` with `{{ manifest_path }}` and split with shell-style tokenization (quotes group tokens; no shell is ever invoked) to become the entry's `command` + `args`.
 
@@ -16028,7 +16033,7 @@ Surface notes (normative):
 | `sqlgen://manifest` | Full `manifest_gen.json` | `application/json` |
 | `sqlgen://entity/<name>` | Per-entity JSON | `application/json` |
 | `sqlgen://conventions` | Conventions block | `application/json` |
-| `sqlgen://config` | Resolved generation-config block (features on/off, dialect, package, etc.) | `application/json` |
+| `sqlgen://config` | The manifest's resolved `generation_config` block (§30.4.3): feature toggles only | `application/json` |
 
 `sqlgen://manifest` always serves the full document; above a 256 KB threshold the read result carries a size warning (in the MCP `_meta` channel) advising targeted tool calls instead. `sqlgen://config` surfaces the manifest's top-level `generation_config` (§30.4); a manifest predating that addendum yields `{}` plus a warning. `sqlgen://entity/<name>` is served via an RFC 6570 resource template (listed under `resources/templates/list`; the three fixed URIs under `resources/list`).
 
@@ -16059,14 +16064,15 @@ MCP is a JSON-RPC 2.0 surface. The server implements the MCP server side via the
 | `-32005` | `METHOD_SQL_UNAVAILABLE` — `show_sql` but the manifest predates `methods[].sql_bodies`, or no body for the resolved dialect |
 | `-32006` | `METHOD_NOT_FOUND` — `show_sql` on a method name not defined for the named entity |
 
-Standard JSON-RPC errors (`-32700`/`-32600`/`-32601`/`-32602`/`-32603`) apply as-is.
+Standard JSON-RPC errors (`-32700`/`-32600`/`-32601`/`-32602`/`-32603`) apply as-is. **Known limitation:** the transport layer is the Go SDK's, and its replies to malformed traffic are its own. On stdio, a line that is not JSON or a request missing `"jsonrpc"` ends the session with no `-32700` / `-32600` reply, and an unknown method is answered with code `0` rather than `-32601`.
 
 **Typo-tolerant suggestions.** `-32003`/`-32004`/`-32006` carry a `suggestions: [string, ...]` array: Levenshtein distance ≤ 2 against the appropriate candidate set, case-insensitive, top 3, sorted by distance then lexicographically, empty when nothing is within threshold.
 
 **Error channels (normative).** The codes above surface through two channels, matching how MCP clients actually consume them:
 
 - **Per-tool business errors** (`-32003`…`-32006`, `-32603` from a tool body) are **MCP `IsError` tool results**, not protocol-level JSON-RPC errors: the text content is a human/LLM-readable message with suggestions inlined, and the structured content is a flattened `{code, message, suggestions}` envelope (`suggestions` at the top level, not nested under `data`). This keeps the code and suggestions visible to the LLM for self-correction — a protocol-level error from a tool handler is collapsed to an opaque transport error by real client libraries — and the session stays usable.
-- **Protocol-level errors** are used where no tool-result channel exists: startup/load failures (`-32001`/`-32002`) and resource reads (`sqlgen://entity/<unknown>` → JSON-RPC error `-32003` with `data.suggestions`, suggestions also inlined into the message for clients that collapse coded errors).
+- **Startup failures** (`-32001`/`-32002`) happen before any transport opens, so no JSON-RPC reply exists: `sqlgen mcp serve` exits 1 and its stderr line names the code and its name (`Error: -32001 MANIFEST_NOT_FOUND: <message>`).
+- **Protocol-level errors** are used where no tool-result channel exists: resource reads (`sqlgen://entity/<unknown>` → JSON-RPC error `-32003` with `data.suggestions`, suggestions also inlined into the message for clients that collapse coded errors).
 
 ### 31.5 Versioning Policy
 

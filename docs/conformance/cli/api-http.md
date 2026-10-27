@@ -2,7 +2,7 @@
 
 <!-- seeding: in-progress -->
 
-REST (§26.8), per-call options via HTTP headers (§26.11) and gRPC (§26.13). The code and tests live in `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. REST and gRPC are not generated yet (`docs/tracker/IMPLEMENTATION_ORDER.md` Appendix D.1, and gRPC is future work), so their rows record the PRD's promises as untested planned work, not defects.
+REST (§26.8), per-call options via HTTP headers (§26.11) and gRPC (§26.13). The code and tests live in `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. REST and gRPC are not generated yet (REST is deferred and gRPC is future work), so their rows record the PRD's promises as untested planned work, not defects.
 
 ## §26.8 REST API (Supplementary)
 <!-- prd: 26.8 sha256: 76a7d06cc3d95798 -->

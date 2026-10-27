@@ -7,7 +7,7 @@
 The MCP server (§31): configuration and `.mcp.json` emission, the tool, resource and prompt surface, the protocol and versioning. The `mcp-surface` matrix has one row per §31.3 tool, resource and prompt; `listed` is the element listed under its PRD name (`tools/list`, `resources/list`, `resources/templates/list` or `prompts/list`), `output` its §31.3 output or body for a valid input, `deterministic` a byte-equal response on repeat against an unchanged manifest, and `error` the coded failure §31.3 and §31.4 give it.
 
 ## §31 MCP Server
-<!-- prd: 31 sha256: 158864ec5494c42e -->
+<!-- prd: 31 sha256: 35b8539fbd0c2d21 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -18,19 +18,20 @@ The MCP server (§31): configuration and `.mcp.json` emission, the tool, resourc
 | mcp.cfg.stdio-default-transport | The server serves over stdio by default | `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all |  |
 | mcp.cfg.http-opt-in-serves | When opted in, the server serves over loopback Streamable HTTP | `integration: cmd/sqlgen/mcp/integration: TestHTTPLifecycle` | all |  |
 | mcp.cfg.http-off-by-default | Without the opt-in, no HTTP endpoint is served | | all |  |
-| mcp.cfg.emits-mcp-json | Generation emits `.mcp.json` at the module root | `unit: cmd/sqlgen/cli: TestEmitMCPProjectConfigsMultiTarget`; `unit: cmd/sqlgen/config: TestLoadConfig_ManifestMCPDefaults/omitted mcp block gets full defaults` | all |  |
+| mcp.cfg.emits-mcp-json | Generation emits `.mcp.json` at the module root | | all |  |
 
 ## §31.2 Configuration
-<!-- prd: 31.2 sha256: 0ec3cba0dcf0381f -->
+<!-- prd: 31.2 sha256: e119a58e13ace29d -->
 
 ### Server-side CLI flags
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| mcp.cfg.flags-present | `sqlgen mcp serve` takes `--manifest`, `--stdio`, `--http`, `--watch`, `--no-watch`, `--log` and `--log-level` | `unit: cmd/sqlgen/cli: TestMCPServe_HelpListsFlags`; `unit: cmd/sqlgen/cli: TestCompletion_CoversAllFlags/mcp serve` | all |  |
+| mcp.cfg.flags-present | `sqlgen mcp serve` takes `--manifest`, `--stdio`, `--http`, `--watch`, `--no-watch`, `--log` and `--log-level` | `unit: cmd/sqlgen/cli: TestCompletion_CoversAllFlags/mcp serve` | all |  |
 | mcp.cfg.manifest-flag-serves-path | `--manifest <path>` serves the manifest at that path | `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all |  |
-| mcp.cfg.manifest-discovery | Without `--manifest`, the server walks up from the working directory to the nearest `manifest_gen.json` | `unit: cmd/sqlgen/mcp: TestDiscoverManifest/walks up to the manifest` | all |  |
-| mcp.cfg.manifest-discovery-miss | When discovery finds no manifest, startup fails with `-32001 MANIFEST_NOT_FOUND` | `unit: cmd/sqlgen/mcp: TestDiscoverManifest/not found is -32001` | all |  |
+| mcp.cfg.manifest-discovery | Manifest discovery walks up to the nearest `manifest_gen.json` | `unit: cmd/sqlgen/mcp: TestDiscoverManifest/walks up to the manifest` | all |  |
+| mcp.cfg.manifest-discovery.cwd | Without `--manifest`, the server starts discovery from the working directory | | all |  |
+| mcp.cfg.manifest-discovery-miss | When discovery finds no manifest, startup fails with `-32001 MANIFEST_NOT_FOUND` | | all |  |
 | mcp.cfg.stdio-default-true | `--stdio` defaults to `true`: with no transport flag the server speaks JSON-RPC 2.0 over stdin and stdout | `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all |  |
 | mcp.cfg.stdout-json-rpc-only | stdout carries only JSON-RPC: a session that logs (a watch reload logs at `info`) stays parseable | `integration: cmd/sqlgen/mcp/integration: TestStdioWatchReloadNotifiesAndServesNewData` | all |  |
 | mcp.cfg.logging-to-stderr | All logging goes to stderr by default | | all |  |
@@ -39,7 +40,8 @@ The MCP server (§31): configuration and `.mcp.json` emission, the tool, resourc
 | mcp.cfg.http-loopback-only | The HTTP transport is loopback-bound only: a non-loopback bind is refused when flags are parsed, before serving | `unit: cmd/sqlgen/mcp: TestResolveHTTPAddr/wildcard bind refused`; `unit: cmd/sqlgen/mcp: TestResolveHTTPAddr/wildcard ipv6 refused`; `unit: cmd/sqlgen/mcp: TestResolveHTTPAddr/external ip refused`; `unit: cmd/sqlgen/mcp: TestResolveHTTPAddr/public ip refused`; `unit: cmd/sqlgen/mcp: TestResolveHTTPAddr/hostname refused`; `unit: cmd/sqlgen/cli: TestMCPServe_RefusesNonLoopbackHTTP` | all |  |
 | mcp.cfg.http-stateless-no-session | The HTTP transport is stateless: it keeps no session | | all |  |
 | mcp.cfg.http-no-push | The HTTP transport pushes no server notifications | `integration: cmd/sqlgen/mcp/integration: TestHTTPWatchReloadNoPushClientRefetches` | all |  |
-| mcp.cfg.http-coexists-stdio | `--http` can run alongside stdio in one process | `unit: cmd/sqlgen/mcp: TestRunGracefulShutdown/stdio and http coexist` | all |  |
+| mcp.cfg.http-coexists-stdio | `--http` binds while stdio is enabled, in one process | `unit: cmd/sqlgen/mcp: TestRunGracefulShutdown/stdio and http coexist` | all |  |
+| mcp.cfg.http-coexists-stdio.stdio-serves | With `--http` running, stdio still serves requests in the same process | | all |  |
 | mcp.cfg.watch-default-on | Watch mode is on by default | `integration: cmd/sqlgen/mcp/integration: TestStdioWatchReloadNotifiesAndServesNewData` | all |  |
 | mcp.cfg.watch-reloads | With watch on, the server reloads the manifest when an fsnotify event reports a change | `unit: cmd/sqlgen/mcp: TestWatcherReloadsOnWrite`; `unit: cmd/sqlgen/mcp: TestWatcherSurvivesRenameReplace` | all |  |
 | mcp.cfg.no-watch-disables | `--no-watch` turns reloading off: a changed manifest is not reloaded | | all |  |
@@ -78,7 +80,7 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 |---|---|---|---|---|
 | mcp.cfg.emit-last-step | Emission runs as the last manifest-stage step of `sqlgen generate`, after breadcrumbs | | all |  |
 | mcp.cfg.emit-per-target | Emission runs once per `project_configs` target | `unit: cmd/sqlgen/cli: TestEmitMCPProjectConfigsMultiTarget` | all |  |
-| mcp.cfg.emit-failure-reported | A per-target failure is reported, naming the target | `unit: cmd/sqlgen/cli: TestEmitMCPProjectConfigsFailureDoesNotBlockOtherTargets`; `unit: cmd/sqlgen/mcp: TestMergeReadOnlyDirFails`; `unit: cmd/sqlgen/cli: TestDiff_ManifestStageFailureOutsidePreview/invalid project MCP config refused` | all |  |
+| mcp.cfg.emit-failure-reported | A per-target failure is reported, naming the target | `unit: cmd/sqlgen/cli: TestEmitMCPProjectConfigsFailureDoesNotBlockOtherTargets`; `unit: cmd/sqlgen/mcp: TestMergeReadOnlyDirFails` | all |  |
 | mcp.cfg.emit-failure-continues | A per-target failure does not abort the remaining targets | `unit: cmd/sqlgen/cli: TestEmitMCPProjectConfigsFailureDoesNotBlockOtherTargets` | all |  |
 | mcp.cfg.emit-failure-exit | `sqlgen generate` exits non-zero when any target failed | `unit: cmd/sqlgen/cli: TestDiff_ManifestStageFailureOutsidePreview/invalid project MCP config refused` | all |  |
 
@@ -91,16 +93,15 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 | mcp.cfg.merge.sentinel-version | The emitted entry carries `x-sqlgen-generator-version` | `unit: cmd/sqlgen/mcp: TestMergeCreatesNewFile` | all |  |
 | mcp.cfg.merge.match-key | A managed entry whose `x-sqlgen-manifest` names the manifest being emitted is the matching entry. A managed entry naming another manifest does not match | `unit: cmd/sqlgen/mcp: TestMergeUpdatesManagedEntryInPlace`; `unit: cmd/sqlgen/mcp: TestMergeMonorepoSiblingsCoexist` | all |  |
 | mcp.cfg.merge.match-absolute | The match compares `x-sqlgen-manifest` values as absolute paths | | all |  |
-| mcp.cfg.merge.update-in-place | A matching entry is updated in place, without a second entry being added | `unit: cmd/sqlgen/mcp: TestMergeUpdatesManagedEntryInPlace` | all |  |
+| mcp.cfg.merge.update-in-place | A matching entry is updated in place under its key, without a second entry being added | `unit: cmd/sqlgen/mcp: TestMergeUpdatesManagedEntryInPlace` | all |  |
 | mcp.cfg.merge.key-preserved | Updating a matching entry keeps its key | `unit: cmd/sqlgen/mcp: TestMergeUpdatesManagedEntryInPlace` | all |  |
-| mcp.cfg.merge.position-preserved | Updating a matching entry keeps its position | | all |  |
 | mcp.cfg.merge.no-match-new-entry | With no matching entry, a new entry is added under `server_key` | `unit: cmd/sqlgen/mcp: TestMergeCreatesNewFile`; `unit: cmd/sqlgen/mcp: TestMergeUpsertAppendsAlongsideOtherTools` | all |  |
 | mcp.cfg.merge.collision-warns | When `server_key` is held by an entry without the managed marker, sqlgen warns | `unit: cmd/sqlgen/mcp: TestMergeUnmanagedCollisionPicksFreeKeyAndWarns` | all |  |
 | mcp.cfg.merge.collision-next-key | On that collision, the entry is registered under the next free key, `sqlgen-2` | `unit: cmd/sqlgen/mcp: TestMergeUnmanagedCollisionPicksFreeKeyAndWarns` | all |  |
 | mcp.cfg.merge.collision-key-sequence | When `sqlgen-2` is also taken, the next free key is `sqlgen-3`, and so on | | all |  |
 | mcp.cfg.merge.stale-swept | A managed entry whose `x-sqlgen-manifest` file no longer exists on disk is removed | `unit: cmd/sqlgen/mcp: TestMergeStaleEntryCleanupOnOutputDirMove` | all |  |
 | mcp.cfg.merge.sibling-survives | A managed entry whose manifest is on disk (a monorepo sibling) survives | `unit: cmd/sqlgen/mcp: TestMergeMonorepoSiblingsCoexist` | all |  |
-| mcp.cfg.merge.absent-sibling-swept | A sibling whose manifest is not on disk (gitignored or not yet generated) is treated as stale and swept | `unit: cmd/sqlgen/mcp: TestMergeStaleEntryCleanupOnOutputDirMove` | all |  |
+| mcp.cfg.merge.absent-sibling-swept | A sibling whose manifest is not on disk (gitignored or not yet generated) is treated as stale and swept | | all |  |
 | mcp.cfg.merge.other-tools-untouched | Other tools' entries are never touched | `unit: cmd/sqlgen/mcp: TestMergeUpsertAppendsAlongsideOtherTools`; `unit: cmd/sqlgen/mcp: TestMergeRemovePreservesOtherEntries` | all |  |
 | mcp.cfg.merge.consumer-entries-untouched | Consumer-authored entries are never touched | `unit: cmd/sqlgen/mcp: TestMergeUnmanagedCollisionPicksFreeKeyAndWarns` | all |  |
 | mcp.cfg.merge.numeric-forms | Untouched entries keep the exact form of their numeric values | `unit: cmd/sqlgen/mcp: TestMergePreservesSiblingNumericForm` | all |  |
@@ -110,9 +111,12 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 | mcp.cfg.merge.first-run-normalizes | The first run normalizes an existing file's formatting to the canonical form | | all |  |
 | mcp.cfg.merge.byte-stable | Subsequent runs are byte-stable | `unit: cmd/sqlgen/mcp: TestMergeCanonicalFormatIsIdempotent` | all |  |
 | mcp.cfg.merge.atomic-write | The file is written atomically (tmp, then fsync, then rename) | | all |  |
-| mcp.cfg.merge.invalid-json-fails | Invalid JSON in an existing target fails the merge | `unit: cmd/sqlgen/mcp: TestMergeInvalidJSONFailsWithoutOverwrite`; `unit: cmd/sqlgen/cli: TestDiff_ManifestStageFailureOutsidePreview/invalid project MCP config refused` | all |  |
+| mcp.cfg.merge.invalid-json-fails | Invalid JSON in an existing target fails the merge | | all |  |
 | mcp.cfg.merge.invalid-json-line-col | The invalid-JSON failure names the line and column | | all |  |
-| mcp.cfg.merge.invalid-json-not-overwritten | A target holding invalid JSON is never overwritten | `unit: cmd/sqlgen/mcp: TestMergeInvalidJSONFailsWithoutOverwrite` | all |  |
+| mcp.cfg.merge.invalid-json-truncated | A truncated document fails at the position just past its last byte | | all |  |
+| mcp.cfg.merge.invalid-json-empty | An empty target fails as invalid JSON at `1:1` | | all |  |
+| mcp.cfg.merge.invalid-json-trailing | Content after the JSON document fails at the position of its first byte | | all |  |
+| mcp.cfg.merge.invalid-json-not-overwritten | A target holding invalid JSON is never overwritten | | all |  |
 | mcp.cfg.merge.opt-out-removes | `emit_project_config: false` removes sqlgen's managed entries on the next generation | `unit: cmd/sqlgen/cli: TestEmitMCPProjectConfigsOptOutRemoves` | all |  |
 | mcp.cfg.merge.manifest-off-removes | Disabling the manifest removes sqlgen's managed entries on the next generation | `unit: cmd/sqlgen/cli: TestEmitMCPProjectConfigsManifestDisabledRemovesWithDefaults` | all |  |
 | mcp.cfg.merge.remove-deletes-empty | The file is deleted when removal empties `mcpServers` and no other top-level field remains | `unit: cmd/sqlgen/mcp: TestMergeRemoveDeletesEntryAndEmptyFile`; `unit: cmd/sqlgen/cli: TestEmitMCPProjectConfigsOptOutRemoves` | all |  |
@@ -132,18 +136,18 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 | mcp.cfg.anchor-no-go-mod | sqlgen performs no `go.mod` discovery to find the module root | | all |  |
 
 ## §31.3 Tool, Resource & Prompt Surface
-<!-- prd: 31.3 sha256: 253cd0ed1348a8fd -->
+<!-- prd: 31.3 sha256: 517a2a4c6441603b -->
 
 ### Naming and tool guarantees
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | mcp.surface.tool-prefix | Every tool name is prefixed `sqlgen_` | `unit: cmd/sqlgen/mcp: TestDispatchListsAllElevenTools`; `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all |  |
-| mcp.surface.resource-scheme | Every resource URI uses the `sqlgen://` scheme | `unit: cmd/sqlgen/mcp: TestDispatchListsThreeFixedResources`; `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all |  |
-| mcp.surface.prompt-prefix | Every prompt name is kebab-case with a `sqlgen-` prefix | `unit: cmd/sqlgen/mcp: TestDispatchListsThreePrompts` | all |  |
+| mcp.surface.resource-scheme | Every resource URI uses the `sqlgen://` scheme | | all |  |
+| mcp.surface.prompt-prefix | Every prompt name is kebab-case with a `sqlgen-` prefix | | all |  |
 | mcp.surface.tools-read-only | Every tool is read-only | | all |  |
 | mcp.surface.tools-side-effect-free | Every tool is side-effect-free: a call changes neither the served manifest nor any file | | all |  |
-| mcp.surface.tools-idempotent | Every tool is idempotent: a repeat call returns the same response | `unit: cmd/sqlgen/mcp: TestDispatch_Deterministic` | all |  |
+| mcp.surface.tools-idempotent | Every tool is idempotent: a repeat call returns the same response | | all |  |
 
 ### Tools
 
@@ -154,7 +158,8 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 | mcp.surface.list-entities.kind | `kind: "table"` or `"view"` limits the list to that kind | `unit: cmd/sqlgen/mcp: TestListEntities/kind=view`; `unit: cmd/sqlgen/mcp: TestListEntities/kind=table excludes the view` | all |  |
 | mcp.surface.list-entities.deterministic | `sqlgen_list_entities` is byte-equal on repeat against an unchanged manifest | `unit: cmd/sqlgen/mcp: TestDispatch_Deterministic/list_entities` | all | mcp-surface: list-entities × deterministic |
 | mcp.surface.get-entity.listed | `sqlgen_get_entity` is listed by `tools/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsAllElevenTools`; `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all | mcp-surface: get-entity × listed |
-| mcp.surface.get-entity.output | `sqlgen_get_entity({name})` returns the full entity JSON | `unit: cmd/sqlgen/mcp: TestGetEntity/found returns full record`; `unit: cmd/sqlgen/mcp: TestDispatchCallToolReturnsStructuredContent` | all | mcp-surface: get-entity × output |
+| mcp.surface.get-entity.output | `sqlgen_get_entity({name})` returns the entity JSON with its columns and example | `unit: cmd/sqlgen/mcp: TestGetEntity/found returns full record`; `unit: cmd/sqlgen/mcp: TestDispatchCallToolReturnsStructuredContent` | all | mcp-surface: get-entity × output |
+| mcp.surface.get-entity.output.methods-relationships-filter-sort | The `sqlgen_get_entity({name})` entity JSON includes the entity's methods, relationships, filter and sort | | all |  |
 | mcp.surface.get-entity.deterministic | `sqlgen_get_entity` is byte-equal on repeat against an unchanged manifest | `unit: cmd/sqlgen/mcp: TestDispatch_Deterministic/get_entity`; `unit: cmd/sqlgen/mcp: TestDispatch_Deterministic/get_entity_compact` | all | mcp-surface: get-entity × deterministic |
 | mcp.surface.get-entity.error | `sqlgen_get_entity` on an unknown name fails with `-32003 ENTITY_NOT_FOUND` carrying suggestions | `unit: cmd/sqlgen/mcp: TestGetEntity/unknown name yields -32003 with suggestions`; `unit: cmd/sqlgen/mcp: TestDispatchNotFoundIsToolError` | all | mcp-surface: get-entity × error |
 | mcp.surface.find-method.listed | `sqlgen_find_method` is listed by `tools/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsAllElevenTools`; `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all | mcp-surface: find-method × listed |
@@ -162,10 +167,10 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 | mcp.surface.find-method.deterministic | `sqlgen_find_method` is byte-equal on repeat against an unchanged manifest | `unit: cmd/sqlgen/mcp: TestDispatch_Deterministic/find_method` | all | mcp-surface: find-method × deterministic |
 | mcp.surface.find-referencing.listed | `sqlgen_find_referencing` is listed by `tools/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsAllElevenTools`; `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all | mcp-surface: find-referencing × listed |
 | mcp.surface.find-referencing.output | `sqlgen_find_referencing({table})` returns `[{entity, relationship_name, kind, fk_columns}]` | | all | mcp-surface: find-referencing × output |
-| mcp.surface.find-referencing.deterministic | `sqlgen_find_referencing` is byte-equal on repeat against an unchanged manifest | `unit: cmd/sqlgen/mcp: TestDispatch_Deterministic/find_referencing`; `unit: cmd/sqlgen/mcp: TestFindReferencingKindTiebreak` | all | mcp-surface: find-referencing × deterministic |
+| mcp.surface.find-referencing.deterministic | `sqlgen_find_referencing` is byte-equal on repeat against an unchanged manifest | `unit: cmd/sqlgen/mcp: TestDispatch_Deterministic/find_referencing` | all | mcp-surface: find-referencing × deterministic |
 | mcp.surface.describe-relationship.listed | `sqlgen_describe_relationship` is listed by `tools/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsAllElevenTools`; `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all | mcp-surface: describe-relationship × listed |
 | mcp.surface.describe-relationship.output | `sqlgen_describe_relationship({entity, relationship})` returns the join shape: the edge's kind, its target entity, and the junction for an m2m edge | `unit: cmd/sqlgen/mcp: TestDescribeRelationship/m2m relationship with junction and target summary` | all | mcp-surface: describe-relationship × output |
-| mcp.surface.describe-relationship.fk-columns | For an FK edge, the join shape gives the FK columns | `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle`; `unit: cmd/sqlgen/mcp: TestDescribeRelationship/compact drops the target summary but keeps join shape` | all |  |
+| mcp.surface.describe-relationship.fk-columns | For an FK edge, the join shape gives the FK columns | `unit: cmd/sqlgen/mcp: TestDescribeRelationship/compact drops the target summary but keeps join shape` | all |  |
 | mcp.surface.describe-relationship.references | For an FK edge, the join shape gives the columns the FK columns reference | | all |  |
 | mcp.surface.describe-relationship.filter | The join shape gives the edge's filter clause | | all |  |
 | mcp.surface.describe-relationship.deterministic | `sqlgen_describe_relationship` is byte-equal on repeat against an unchanged manifest | `unit: cmd/sqlgen/mcp: TestDispatch_Deterministic/describe_relationship` | all | mcp-surface: describe-relationship × deterministic |
@@ -182,7 +187,7 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 | mcp.surface.get-example.error | `sqlgen_get_example` on an unknown entity fails with `-32003` carrying suggestions | `unit: cmd/sqlgen/mcp: TestGetExample/unknown entity yields -32003` | all | mcp-surface: get-example × error |
 | mcp.surface.find-join-path.listed | `sqlgen_find_join_path` is listed by `tools/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsAllElevenTools`; `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all | mcp-surface: find-join-path × listed |
 | mcp.surface.find-join-path.output | `sqlgen_find_join_path({from, to})` returns `[{hops, path: [{entity, relationship}]}]` | `unit: cmd/sqlgen/mcp: TestFindJoinPath/two hops through Post`; `unit: cmd/sqlgen/mcp: TestFindJoinPath/one hop` | all | mcp-surface: find-join-path × output |
-| mcp.surface.find-join-path.deterministic | `sqlgen_find_join_path` is byte-equal on repeat against an unchanged manifest | `unit: cmd/sqlgen/mcp: TestDispatch_Deterministic/find_join_path` | all | mcp-surface: find-join-path × deterministic |
+| mcp.surface.find-join-path.deterministic | `sqlgen_find_join_path` is byte-equal on repeat against an unchanged manifest | | all | mcp-surface: find-join-path × deterministic |
 | mcp.surface.find-join-path.error | `sqlgen_find_join_path` on an unknown `from` or `to` entity fails with `-32003` carrying suggestions | `unit: cmd/sqlgen/mcp: TestFindJoinPath/unknown from/to yields -32003` | all | mcp-surface: find-join-path × error |
 | mcp.surface.show-sql.listed | `sqlgen_show_sql` is listed by `tools/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsAllElevenTools`; `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all | mcp-surface: show-sql × listed |
 | mcp.surface.show-sql.output | `sqlgen_show_sql({entity, method})` returns `{sql, params: [{name, type}], dialect}` | `unit: cmd/sqlgen/mcp: TestShowSQL/resolves the active dialect` | all | mcp-surface: show-sql × output |
@@ -199,14 +204,15 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 | mcp.surface.validate-manifest.listed | `sqlgen_validate_manifest` is listed by `tools/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsAllElevenTools`; `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all | mcp-surface: validate-manifest × listed |
 | mcp.surface.validate-manifest.output | `sqlgen_validate_manifest({})` returns `{valid, schema_version, errors: [{field, msg}]}` | `unit: cmd/sqlgen/mcp: TestValidateManifest/in-memory manifest is valid` | all | mcp-surface: validate-manifest × output |
 | mcp.surface.validate-manifest.deterministic | `sqlgen_validate_manifest` is byte-equal on repeat against an unchanged manifest | `unit: cmd/sqlgen/mcp: TestDispatch_Deterministic/validate_manifest` | all | mcp-surface: validate-manifest × deterministic |
-| mcp.surface.validate-manifest.error | A manifest failing validation yields `valid: false` and a non-empty `errors` list | `unit: cmd/sqlgen/mcp: TestValidateManifest/invalid manifest reports flattened errors` | all | mcp-surface: validate-manifest × error |
+| mcp.surface.validate-manifest.error | A manifest failing validation yields `valid: false` and a non-empty `errors` list | `unit: cmd/sqlgen/mcp: TestValidateManifest/invalid manifest reports flattened errors` | all |  |
 
 ### Surface notes
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | mcp.surface.compact.get-entity-drops | `compact: true` on `sqlgen_get_entity` drops example snippets, long-form descriptions, `check`, `default_kind` and `indexes[]` | `unit: cmd/sqlgen/mcp: TestGetEntity/compact drops verbose fields` | all |  |
-| mcp.surface.compact.get-entity-retains | `compact: true` on `sqlgen_get_entity` keeps the required identity (names, types, PK kind, FK columns, method signatures, join shape, filter sub-categories) | `unit: cmd/sqlgen/mcp: TestGetEntity/compact drops verbose fields`; `unit: cmd/sqlgen/mcp: TestGetEntity_MaterializedViewMarker` | all |  |
+| mcp.surface.compact.get-entity-retains | `compact: true` on `sqlgen_get_entity` keeps the PK kind | `unit: cmd/sqlgen/mcp: TestGetEntity/compact drops verbose fields` | all |  |
+| mcp.surface.compact.get-entity-retains.identity | `compact: true` on `sqlgen_get_entity` keeps the rest of the required identity: names, types, FK columns, method signatures, join shape and filter sub-categories | | all |  |
 | mcp.surface.compact.describe-relationship-retains | `compact: true` on `sqlgen_describe_relationship` keeps the join shape | `unit: cmd/sqlgen/mcp: TestDescribeRelationship/compact drops the target summary but keeps join shape` | all |  |
 | mcp.surface.compact.get-example-no-op | `compact` on `sqlgen_get_example` is accepted and is a no-op: the snippets are returned unchanged | | all |  |
 | mcp.surface.find-referencing.every-edge | `sqlgen_find_referencing` returns every FK edge pointing at the given table | `unit: cmd/sqlgen/mcp: TestFindReferencing/users referenced by posts FK and both m2m junction sides`; `unit: cmd/sqlgen/mcp: TestFindReferencing/posts referenced by comments FK from both relationship sides` | all |  |
@@ -230,7 +236,7 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 | mcp.surface.show-sql.dialect-override | The `dialect` argument overrides the active dialect | `unit: cmd/sqlgen/mcp: TestShowSQL/dialect override without a matching body yields -32005` | all |  |
 | mcp.surface.health.no-data-leak | `sqlgen_health` is a pure diagnostic: its response carries no manifest data beyond its listed fields | `unit: cmd/sqlgen/mcp: TestHealth/fresh load` | all |  |
 | mcp.surface.health-ok-false | `ok: false` means a failed reload left the prior good manifest serving | `unit: cmd/sqlgen/mcp: TestStoreReloadRetainsGoodOnFailure`; `unit: cmd/sqlgen/mcp: TestWatcherRetainsGoodOnInvalidReload` | all |  |
-| mcp.surface.validate-manifest.loaded | With no `path`, `sqlgen_validate_manifest` validates the loaded manifest | `unit: cmd/sqlgen/mcp: TestValidateManifest/in-memory manifest is valid` | all |  |
+| mcp.surface.validate-manifest.loaded | With no `path`, `sqlgen_validate_manifest` validates the loaded manifest | | all |  |
 | mcp.surface.validate-manifest.in-memory | With no `path`, validation runs in memory and does not re-read the manifest from disk | | all |  |
 | mcp.surface.validate-manifest.path | With `path`, `sqlgen_validate_manifest` validates that file | `unit: cmd/sqlgen/mcp: TestValidateManifest/path mode validates without swapping the loaded manifest`; `unit: cmd/sqlgen/mcp: TestValidateManifest/invalid manifest reports flattened errors` | all |  |
 | mcp.surface.validate-manifest.no-swap | Validating a `path` does not swap the served manifest | `unit: cmd/sqlgen/mcp: TestValidateManifest/path mode validates without swapping the loaded manifest` | all |  |
@@ -240,18 +246,20 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| mcp.surface.manifest-resource.listed | `sqlgen://manifest` is listed by `resources/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsThreeFixedResources` | all | mcp-surface: manifest-resource × listed |
+| mcp.surface.manifest-resource.listed | `sqlgen://manifest` is listed by `resources/list` | | all | mcp-surface: manifest-resource × listed |
 | mcp.surface.manifest-resource.output | `sqlgen://manifest` serves the full `manifest_gen.json` as `application/json` | `unit: cmd/sqlgen/mcp: TestManifestResourceServesRawWithoutWarningWhenSmall` | all | mcp-surface: manifest-resource × output |
 | mcp.surface.manifest-resource.always-full | Above the 256 KB threshold `sqlgen://manifest` still serves the full document | `unit: cmd/sqlgen/mcp: TestManifestResourceWarnsAboveThreshold`; `unit: cmd/sqlgen/mcp: TestDispatchManifestWarningSurvivesToClient` | all |  |
-| mcp.surface.manifest-resource.size-warning | Above 256 KB, the read result carries a size warning in the MCP `_meta` channel. Below it, there is no warning | `unit: cmd/sqlgen/mcp: TestManifestResourceWarnsAboveThreshold`; `unit: cmd/sqlgen/mcp: TestDispatchManifestWarningSurvivesToClient`; `unit: cmd/sqlgen/mcp: TestManifestResourceServesRawWithoutWarningWhenSmall` | all |  |
+| mcp.surface.manifest-resource.size-warning | Above the size threshold, the read result carries a size warning in the MCP `_meta` channel. Below it, there is no warning | `unit: cmd/sqlgen/mcp: TestManifestResourceWarnsAboveThreshold`; `unit: cmd/sqlgen/mcp: TestDispatchManifestWarningSurvivesToClient`; `unit: cmd/sqlgen/mcp: TestManifestResourceServesRawWithoutWarningWhenSmall` | all |  |
+| mcp.surface.manifest-resource.size-warning.threshold | The size-warning threshold is 256 KB | | all |  |
 | mcp.surface.manifest-resource.warning-advice | The size warning advises targeted tool calls instead | | all |  |
 | mcp.surface.entity-resource.listed | `sqlgen://entity/<name>` is served through an RFC 6570 template listed by `resources/templates/list`, not by `resources/list` | | all | mcp-surface: entity-resource × listed |
-| mcp.surface.entity-resource.not-in-resources-list | The entity template is not listed by `resources/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsThreeFixedResources` | all |  |
+| mcp.surface.entity-resource.not-in-resources-list | The entity template is not listed by `resources/list` | | all |  |
 | mcp.surface.entity-resource.output | `sqlgen://entity/<name>` serves that entity's JSON as `application/json` | `unit: cmd/sqlgen/mcp: TestEntityResourceServesFullRecord`; `unit: cmd/sqlgen/mcp: TestDispatchReadsEntityViaTemplate` | all | mcp-surface: entity-resource × output |
 | mcp.surface.entity-resource.error | Reading `sqlgen://entity/<unknown>` fails with the JSON-RPC error `-32003` with `data.suggestions`. The suggestions also appear inline in the message | `unit: cmd/sqlgen/mcp: TestEntityResourceUnknownNameIsCodedErrorWithSuggestions`; `unit: cmd/sqlgen/mcp: TestDispatchUnknownEntityResourceSurfacesError` | all | mcp-surface: entity-resource × error |
-| mcp.surface.conventions-resource.listed | `sqlgen://conventions` is listed by `resources/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsThreeFixedResources` | all | mcp-surface: conventions-resource × listed |
-| mcp.surface.conventions-resource.output | `sqlgen://conventions` serves the conventions block as `application/json` | `unit: cmd/sqlgen/mcp: TestConventionsResourceMatchesManifest`; `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all | mcp-surface: conventions-resource × output |
-| mcp.surface.config-resource.listed | `sqlgen://config` is listed by `resources/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsThreeFixedResources` | all | mcp-surface: config-resource × listed |
+| mcp.surface.conventions-resource.listed | `sqlgen://conventions` is listed by `resources/list` | | all | mcp-surface: conventions-resource × listed |
+| mcp.surface.conventions-resource.output | `sqlgen://conventions` is served as `application/json` | `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all |  |
+| mcp.surface.conventions-resource.output.block | `sqlgen://conventions` serves the conventions block | | all | mcp-surface: conventions-resource × output |
+| mcp.surface.config-resource.listed | `sqlgen://config` is listed by `resources/list` | | all | mcp-surface: config-resource × listed |
 | mcp.surface.config-resource.output | `sqlgen://config` serves the manifest's top-level `generation_config` as `application/json` | `unit: cmd/sqlgen/mcp: TestConfigResourceServesGenerationConfigWhenPresent`; `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all | mcp-surface: config-resource × output |
 | mcp.surface.config-resource.dialect-package | The `sqlgen://config` body includes the dialect and the package | | all |  |
 | mcp.surface.config-resource.fallback | A manifest predating `generation_config` yields `{}` plus a warning | `unit: cmd/sqlgen/mcp: TestConfigResourceFallsBackWhenAbsent` | all |  |
@@ -261,19 +269,19 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| mcp.surface.write-query.listed | `sqlgen-write-query` is listed by `prompts/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsThreePrompts` | all | mcp-surface: write-query × listed |
+| mcp.surface.write-query.listed | `sqlgen-write-query` is listed by `prompts/list` | | all | mcp-surface: write-query × listed |
 | mcp.surface.write-query.output | `sqlgen-write-query({entity, goal})` asks the LLM to write a sqlgen query against `{entity}` that accomplishes `{goal}`, with both arguments substituted | `unit: cmd/sqlgen/mcp: TestExpandWriteQuerySubstitutesArguments`; `unit: cmd/sqlgen/mcp: TestDispatchGetPromptExpands` | all | mcp-surface: write-query × output |
 | mcp.surface.write-query.loads | `sqlgen-write-query` loads `sqlgen_get_entity` and `sqlgen_get_conventions` | `unit: cmd/sqlgen/mcp: TestExpandWriteQuerySubstitutesArguments` | all |  |
 | mcp.surface.write-query.not-compact | `sqlgen-write-query` loads the entity with `compact: false` | | all |  |
 | mcp.surface.write-query.go-snippet | `sqlgen-write-query` asks for a Go snippet referencing real method names from the entity's manifest entry | | all |  |
 | mcp.surface.write-query.error | `sqlgen-write-query` with a required argument missing fails with `-32602` | `unit: cmd/sqlgen/mcp: TestExpandMissingRequiredArgIsInvalidParams/write-query missing goal`; `unit: cmd/sqlgen/mcp: TestExpandMissingRequiredArgIsInvalidParams/write-query blank goal` | all | mcp-surface: write-query × error |
-| mcp.surface.add-relationship-usage.listed | `sqlgen-add-relationship-usage` is listed by `prompts/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsThreePrompts` | all | mcp-surface: add-relationship-usage × listed |
+| mcp.surface.add-relationship-usage.listed | `sqlgen-add-relationship-usage` is listed by `prompts/list` | | all | mcp-surface: add-relationship-usage × listed |
 | mcp.surface.add-relationship-usage.output | `sqlgen-add-relationship-usage({entity, relationship})` loads `sqlgen_describe_relationship({entity, relationship})`, with both arguments substituted | `unit: cmd/sqlgen/mcp: TestExpandAddRelationshipSubstitutesArguments` | all | mcp-surface: add-relationship-usage × output |
 | mcp.surface.add-relationship-usage.example | `sqlgen-add-relationship-usage` loads the entity's example | | all |  |
 | mcp.surface.add-relationship-usage.walkthrough | `sqlgen-add-relationship-usage` walks the user through preloading, joining and writing across the relationship | | all |  |
 | mcp.surface.add-relationship-usage.caveats | `sqlgen-add-relationship-usage` includes the pagination and filter caveats from the conventions block | | all |  |
 | mcp.surface.add-relationship-usage.error | `sqlgen-add-relationship-usage` with a required argument missing fails with `-32602` | `unit: cmd/sqlgen/mcp: TestExpandMissingRequiredArgIsInvalidParams/add-relationship missing relationship` | all | mcp-surface: add-relationship-usage × error |
-| mcp.surface.debug-not-found.listed | `sqlgen-debug-not-found` is listed by `prompts/list` | `unit: cmd/sqlgen/mcp: TestDispatchListsThreePrompts` | all | mcp-surface: debug-not-found × listed |
+| mcp.surface.debug-not-found.listed | `sqlgen-debug-not-found` is listed by `prompts/list` | | all | mcp-surface: debug-not-found × listed |
 | mcp.surface.debug-not-found.output | `sqlgen-debug-not-found({entity, method?})` diagnoses a `NotFound` from `{method}`, or from any method on `{entity}` when `method` is omitted | `unit: cmd/sqlgen/mcp: TestExpandDebugNotFoundBranchesOnMethod` | all | mcp-surface: debug-not-found × output |
 | mcp.surface.debug-not-found.loads-entity | `sqlgen-debug-not-found` loads `sqlgen_get_entity({entity})` | | all |  |
 | mcp.surface.debug-not-found.loads-sentinels | `sqlgen-debug-not-found` loads the conventions block's error-sentinel section | | all |  |
@@ -284,7 +292,7 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 | mcp.surface.prompts.degrade | Clients without prompt support degrade cleanly | | all |  |
 
 ## §31.4 Protocol
-<!-- prd: 31.4 sha256: 27b9c141fd974168 -->
+<!-- prd: 31.4 sha256: 259c8c97fea78796 -->
 
 ### SDK, handshake, version negotiation
 
@@ -300,7 +308,7 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| mcp.proto.stdio-newline-json | The stdio transport is newline-delimited JSON-RPC 2.0 over stdin/stdout: each message is one JSON line | `example: postgres: TestMCP_FullSurface`; `example: mysql: TestMCP_FullSurface`; `example: sqlite: TestMCP_FullSurface`; `example: graphql: TestMCP_FullSurface`; `integration: cmd/sqlgen/mcp/integration: TestStdioLifecycle` | all | |
+| mcp.proto.stdio-newline-json | The stdio transport is newline-delimited JSON-RPC 2.0 over stdin/stdout: each message is one JSON line | `example: postgres: TestMCP_FullSurface`; `example: mysql: TestMCP_FullSurface`; `example: sqlite: TestMCP_FullSurface`; `example: graphql: TestMCP_FullSurface` | all |  |
 | mcp.proto.stdio-push | The stdio transport delivers server-pushed notifications to the client | `integration: cmd/sqlgen/mcp/integration: TestStdioWatchReloadNotifiesAndServesNewData` | all | |
 | mcp.proto.http-endpoint | Streamable HTTP serves MCP at `http://127.0.0.1:<port>/mcp` | `integration: cmd/sqlgen/mcp/integration: TestHTTPLifecycle` | all | |
 | mcp.proto.http-single-endpoint | `/mcp` is the only HTTP endpoint: no other path serves MCP | | all | |
@@ -315,9 +323,9 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| mcp.proto.err-manifest-not-found-given | `-32001` `MANIFEST_NOT_FOUND` when no manifest is at the given `--manifest` path | `unit: cmd/sqlgen/mcp: TestStoreLoadErrors/missing file` | all | |
-| mcp.proto.err-manifest-not-found-discovered | `-32001` when discovery (walking up from CWD) finds no manifest | `unit: cmd/sqlgen/mcp: TestDiscoverManifest/not found is -32001` | all | |
-| mcp.proto.err-manifest-invalid | `-32002` `MANIFEST_INVALID` when the manifest fails JSON Schema validation | `unit: cmd/sqlgen/mcp: TestStoreLoadErrors/structurally invalid: missing required fields` | all | |
+| mcp.proto.err-manifest-not-found-given | `-32001` `MANIFEST_NOT_FOUND` when no manifest is at the given `--manifest` path | | all |  |
+| mcp.proto.err-manifest-not-found-discovered | `-32001` when discovery (walking up from CWD) finds no manifest | | all |  |
+| mcp.proto.err-manifest-invalid | `-32002` `MANIFEST_INVALID` when the manifest fails JSON Schema validation | | all |  |
 | mcp.proto.err-entity-not-found | `-32003` `ENTITY_NOT_FOUND` for an unknown entity name | `unit: cmd/sqlgen/mcp: TestGetEntity/unknown name yields -32003 with suggestions`; `unit: cmd/sqlgen/mcp: TestShowSQL/unknown entity yields -32003`; `unit: cmd/sqlgen/mcp: TestDescribeRelationship/unknown entity yields -32003`; `unit: cmd/sqlgen/mcp: TestGetExample/unknown entity yields -32003` | all | |
 | mcp.proto.err-relationship-not-found | `-32004` `RELATIONSHIP_NOT_FOUND` for a relationship name not on the named entity | `unit: cmd/sqlgen/mcp: TestDescribeRelationship/unknown relationship yields -32004 with suggestions` | all | |
 | mcp.proto.err-sql-unavailable-predates | `-32005` `METHOD_SQL_UNAVAILABLE` when `show_sql` targets a method that carries no `sql_bodies` (a manifest predating them) | `unit: cmd/sqlgen/mcp: TestShowSQL/method without sql_bodies yields -32005` | all | |
@@ -334,12 +342,14 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | mcp.proto.suggest-on-not-found | `-32003`, `-32004` and `-32006` carry a `suggestions` string array | `unit: cmd/sqlgen/mcp: TestGetEntity/unknown name yields -32003 with suggestions`; `unit: cmd/sqlgen/mcp: TestDescribeRelationship/unknown relationship yields -32004 with suggestions`; `unit: cmd/sqlgen/mcp: TestShowSQL/unknown method yields -32006 with suggestions` | all | |
-| mcp.proto.suggest-candidate-set | Suggestions come from the right candidate set: entity names for `-32003`, the entity's relationship names for `-32004`, the entity's method names for `-32006` | `unit: cmd/sqlgen/mcp: TestGetEntity/unknown name yields -32003 with suggestions`; `unit: cmd/sqlgen/mcp: TestDescribeRelationship/unknown relationship yields -32004 with suggestions`; `unit: cmd/sqlgen/mcp: TestShowSQL/unknown method yields -32006 with suggestions` | all | |
+| mcp.proto.suggest-candidate-set | Suggestions come from the candidate set of the missing kind: entity names for `-32003`, relationship names for `-32004`, method names for `-32006` | `unit: cmd/sqlgen/mcp: TestGetEntity/unknown name yields -32003 with suggestions`; `unit: cmd/sqlgen/mcp: TestDescribeRelationship/unknown relationship yields -32004 with suggestions`; `unit: cmd/sqlgen/mcp: TestShowSQL/unknown method yields -32006 with suggestions` | all |  |
+| mcp.proto.suggest-candidate-set.entity-scoped | For `-32004` and `-32006` the candidates are the named entity's own relationship or method names | | all |  |
 | mcp.proto.suggest-threshold | A candidate is suggested only within Levenshtein distance ≤ 2 | `unit: cmd/sqlgen/mcp: TestSuggest/within threshold, sorted by distance then name`; `unit: cmd/sqlgen/mcp: TestSuggest/nothing within threshold yields empty`; `unit: cmd/sqlgen/mcp: TestLevenshtein` | all | |
-| mcp.proto.suggest-case-insensitive | Matching is case-insensitive | `unit: cmd/sqlgen/mcp: TestSuggest/case-insensitive match` | all | |
+| mcp.proto.suggest-case-insensitive | Matching is case-insensitive | | all |  |
 | mcp.proto.suggest-top-3 | At most 3 suggestions are returned | `unit: cmd/sqlgen/mcp: TestSuggest/top-3 cap` | all | |
-| mcp.proto.suggest-order | Suggestions are sorted by distance, then lexicographically | `unit: cmd/sqlgen/mcp: TestSuggest/within threshold, sorted by distance then name`; `unit: cmd/sqlgen/mcp: TestSuggest/distance tie broken lexicographically`; `unit: cmd/sqlgen/mcp: TestSuggest/top-3 cap` | all | |
-| mcp.proto.suggest-empty | `suggestions` is empty, not absent, when nothing is within the threshold | `unit: cmd/sqlgen/mcp: TestSuggest/nothing within threshold yields empty`; `unit: cmd/sqlgen/mcp: TestSuggest/empty candidate set yields empty` | all | |
+| mcp.proto.suggest-order | Suggestions at the same distance are sorted lexicographically | `unit: cmd/sqlgen/mcp: TestSuggest/distance tie broken lexicographically`; `unit: cmd/sqlgen/mcp: TestSuggest/top-3 cap` | all |  |
+| mcp.proto.suggest-order.distance-first | Suggestions are sorted by distance first | | all |  |
+| mcp.proto.suggest-empty | `suggestions` is empty, not absent, when nothing is within the threshold | | all |  |
 
 ### Error channels
 
@@ -351,7 +361,7 @@ The rule rows proper live in `config.md` (`config.manifest-mcp-emit-disabled`, `
 | mcp.proto.tool-error-envelope-code-suggestions | The structured content is a flattened envelope: `code` and `suggestions` at the top level, not nested under `data` | `unit: cmd/sqlgen/mcp: TestDispatchNotFoundIsToolError`; `example: postgres: TestMCP_FullSurface` | all | |
 | mcp.proto.tool-error-envelope-message | The structured envelope carries `message` | | all | |
 | mcp.proto.tool-error-session-usable | After a tool business error the session stays usable | `unit: cmd/sqlgen/mcp: TestDispatchNotFoundIsToolError` | all | |
-| mcp.proto.startup-protocol-error | A startup/load failure (`-32001` / `-32002`) is reported as a protocol-level error, not a tool result | | all | |
+| mcp.proto.startup-stderr | A startup failure (`-32001` / `-32002`) opens no transport: `sqlgen mcp serve` exits 1 and its stderr line names the code and its name (`Error: -32001 MANIFEST_NOT_FOUND: <message>`) | | all | |
 | mcp.proto.resource-unknown-entity-code | Reading `sqlgen://entity/<unknown>` is a JSON-RPC error with code `-32003` | `unit: cmd/sqlgen/mcp: TestEntityResourceUnknownNameIsCodedErrorWithSuggestions`; `example: postgres: TestMCP_FullSurface`; `example: mysql: TestMCP_FullSurface`; `example: sqlite: TestMCP_FullSurface`; `example: graphql: TestMCP_FullSurface` | all | |
 | mcp.proto.resource-unknown-entity-data-suggestions | That error carries `data.suggestions` | `unit: cmd/sqlgen/mcp: TestEntityResourceUnknownNameIsCodedErrorWithSuggestions`; `example: postgres: TestMCP_FullSurface` | all | |
 | mcp.proto.resource-unknown-entity-message-suggestions | The suggestions are also inlined into the error message, so they survive a client that collapses coded errors | `unit: cmd/sqlgen/mcp: TestEntityResourceUnknownNameIsCodedErrorWithSuggestions`; `unit: cmd/sqlgen/mcp: TestDispatchUnknownEntityResourceSurfacesError` | all | |
@@ -378,6 +388,7 @@ Not drafted as rows (informative): "the MCP surface versions with the manifest `
 | mcp-surface: find-referencing × error | §31.3: `sqlgen_find_referencing` takes a table name and is assigned no failure. §31.4's codes name entities, relationships and methods, not tables | |
 | mcp-surface: get-conventions × error | §31.3: `sqlgen_get_conventions` takes `{}` and is assigned no failure | |
 | mcp-surface: health × error | §31.3: `sqlgen_health` takes `{}`. `ok: false` is a field of a successful response, not a coded failure | |
+| mcp-surface: validate-manifest × error | §31.3: `sqlgen_validate_manifest` reports a failing manifest as `valid: false` with `errors`, a field of a successful response, and §31.4 assigns it no code | |
 | mcp-surface: manifest-resource × deterministic | §31.3 promises byte-equal repeat responses for tools only | |
 | mcp-surface: entity-resource × deterministic | §31.3 promises byte-equal repeat responses for tools only | |
 | mcp-surface: conventions-resource × deterministic | §31.3 promises byte-equal repeat responses for tools only | |
@@ -423,7 +434,6 @@ Behavior the code has, most of it pinned by tests, that no PRD text states. Each
 | gap.mcp.unreadable-manifest-internal | A manifest path that exists but cannot be read (a directory, permission denied) fails startup with `-32603`, not `-32001` | `unit: cmd/sqlgen/mcp: TestStoreLoadReadErrorIsInternal` | §31.4 | |
 | gap.mcp.malformed-json-manifest-invalid | A manifest that is not JSON at all is `-32002` `MANIFEST_INVALID` (the PRD defines -32002 as failing JSON Schema validation) | `unit: cmd/sqlgen/mcp: TestStoreLoadErrors/malformed json` | §31.4 | |
 | gap.mcp.schema-version-mismatch-warns | A schema-valid manifest whose `schema_version` differs from the one sqlgen was built against loads, serves, and logs a warning | `unit: cmd/sqlgen/mcp: TestStoreSchemaVersionMismatch` | §31.5 | |
-| gap.mcp.startup-failure-exit-1 | A startup load failure exits 1 with `Error: <message>` on stderr | | §31.4, §23.9 | |
 | gap.mcp.unknown-tool-invalid-params | `tools/call` with an unknown tool name is a JSON-RPC `-32602` protocol error (probe: `unknown tool "sqlgen_nope"`), not an IsError result | | §31.4 | |
 | gap.mcp.bad-tool-args-is-error-text | Tool arguments that fail the input schema (e.g. `name: 5`) give an `IsError` result with text only and no `{code, …}` envelope (SDK-generated) | | §31.4 | |
 | gap.mcp.non-coded-tool-error | A tool error that is not a coded tool error becomes an SDK `IsError` result with text and no envelope (`tools.go:60`). No tool reaches this path today | | §31.4 | |
