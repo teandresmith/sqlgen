@@ -907,6 +907,97 @@ database versions it ran against.
      type errors, so compile a probe before closing a codegen defect; and tell agents who probe
      the shared tree to keep their probe file compiling, since one agent's broken probe stopped
      another's `go test`.
+
+   **Fourth slice, API generation, GraphQL (§26), recorded 2026-10-27:**
+   - **Scope.** §26 intro, §26.2–§26.7, §26.9, §26.10, §26.12 and §16.4's GraphQL rows (the ones
+     the first gen slice deferred). §26.8 REST, §26.11 HTTP headers and §26.13 gRPC are left for a
+     later slice: their map entries have no rows yet.
+   - **Split first.** `cli/gen.md` had 1026 rows, so all of §26 and the `api-generation` matrix
+     moved to a new `cli/api.md` before seeding. At 840 rows it split again: `cli/api.md` keeps
+     the matrix and §26.5–§26.12 (608 rows, including the 48 schema matrix rows, under a §26.4
+     anchor of its own), and `cli/api-schema.md` takes §26–§26.4.1 and §16.4 (251). `api.md` is
+     still past ruling 7's ~500, because a row can only name a matrix its own file declares.
+     Neither file lists a package: the API code and its tests live in `cmd/sqlgen/gen`, whose
+     orphan check stays with `gen.md`, and the rows claim `gen`, `config`, `cli`, `wrapper`,
+     `types`, golden and example tests.
+   - **Matrix shape.** The header did not change. Its 29 rows are the per-entity surface: 11
+     schema types (object type, the two envelopes, filter, sort, create and update inputs, the
+     `_inc` / `_dec` operators, relationship field, relationship filter member, nested inputs),
+     3 queries, 11 mutations and 4 resolver-layer pieces (walker, filter and sort translators,
+     envelope aliases). The user fixed the columns: `single-pk` a plain one-column-PK table,
+     `composite-pk`, `no-pk`, `soft-delete`, `tenanted`, `view` a regular view (materialized-view
+     rows carry no cell). `object-type × no-pk` is one row asserting the whole surface is absent,
+     and the other 28 `no-pk` cells are `n/a` citing §9.4b. A cell where §26 says nothing about the
+     shape is still a row: the shape gets the element.
+   - **Anchors.** 20: §26, §26.2–§26.4.1, §26.5, §26.5.1–§26.5.8, §26.6, §26.7, §26.9, §26.10,
+     §26.12 and §16.4, with unnumbered subsections (field casing, PK columns in the create input,
+     comparator projection, type-name ownership, views, generated artifacts) as `###` headings.
+     The §26 anchor hashes the whole chapter, so any §26 edit trips it.
+   - **Rows seeded: 859**, 158 of them on 146 matrix cells, plus **28 `n/a`**; none needed an
+     `accepted` date. Four mapping agents (schema and scalars; resolver surface and walker;
+     filter / sort / mutation translation; errors, wrapper and config) drafted 840 rows in about
+     17 minutes.
+   - **Gaps.** At seeding 106 rows were untested. After the new tests, 11 are: 8 are Phase 32.7
+     composite-FK work (relationship fields, filter members and nested families on a composite-PK
+     parent or a multi-pair edge), one needs a live MySQL database (any unique violation takes the
+     nested upsert's update branch), and two state nothing observable (no business logic, no
+     row-level security beyond tenancy).
+   - **Defects: 9 fixed**, each with a fail-first test:
+     1. `update<T>s` checked the `_inc` / `_dec` pairings and then dropped the operators.
+     2. The per-column operator dispatch lived in the gqlgen-owned seed, written once, so the
+        example advertised `retryCount_inc` and three more operators its seed never applied. The
+        seeds are one-line delegations now, the dispatch is in the regenerated `M` methods, and
+        the five GraphQL examples' seeds were migrated (no compatibility shim: unreleased).
+     3. An explicit `null` could not clear a nullable column: gqlgen's plain pointers made it look
+        omitted. The wrapper merges a per-field `omittable` key, which sqlgen owns.
+     4. A NOT NULL column with a default was required in the GraphQL create input though
+        omittable in Go.
+     5. `max_depth` / `max_complexity` were parsed and never read, and `graph/server.go` was never
+        written. A regenerated `limits_gen.go` (gqlgen's complexity limit and a relationship-depth
+        extension) and a one-shot `server.go` that applies it are emitted now.
+     6. A table with no API-readable column emitted a field-less type and an empty sort enum,
+        which gqlparser rejects; it now has no API surface, decided by the same predicate as the
+        edges into it. Validation keeps primary keys readable, so this is defense in depth.
+     7. `<field>` with `<field>_dec` was accepted, while `<field>` with `<field>_inc` was rejected
+        for the reason that applies to both.
+     8. and 9. Review of the new bulk path found its read-back skipping query hooks and issuing
+        one `Get` per row (N+1, against §25.1); it skips only the cache and reads back with one
+        `GetMany` now.
+   - **PRD amendments: 18**, all ruled or following a fix: to-one relationship fields are nullable
+     whatever the FK; the composite-type → object row is dropped (§8.3 stores composites as
+     jsonb); `_inc` / `_dec` are `Int`; the walker guard is sqlgen's own tests, not a generated
+     one; the generated-artifacts table and paths match the code, and the `gqlgen.yml` row says
+     the wrapper reads it; `omittable` joins the sqlgen-owned keys; operators dispatch as signed
+     `Increment`s with at most one of a column's set, `_inc` and `_dec`; the codegen set/inc bullet
+     is dropped; count-only is `<table>List(filter) { totalCount }` (`limit: 0` pages everything
+     under §9.4c); hard delete returns `true` without error (the client delete is idempotent);
+     camel-case examples use `productID`; plus the §26.6 limits file and depth rule, the
+     unreadable-table sentence, the defaulted create-input example and four `Decrement` mentions.
+     **PRD gaps: 44**, all open, among them the primary key absent from the GraphQL filter,
+     to-one edges with no filter member, and a row the bulk call soft-deletes skipping its
+     operator.
+   - **Tests written.** 28 new test files (9 `gen`, 3 `cli`, 2 `config`, 3 `wrapper`, 1 `types`,
+     10 in the `graphql` example, one of them inside its generated `sqlgenresolver` package, which
+     only `make check-examples` runs), by two fail-first agents, two fix agents, three
+     test-writing agents with assigned helper prefixes, and by hand.
+   - **Review.** Four sqlgen-reviewer passes. They found the bulk path's hook skip and N+1, a
+     soft-delete NOT_FOUND it caused, an uncompiled composite-key branch (probed, then rendered by
+     a golden), `set` with `_dec`, rows claiming more than their tests (the MySQL engine half, the
+     validate lint), and stale PRD sentences, all fixed. Eleven adjacent findings went to
+     `backlog.md`; two of them were later settled by rulings and removed.
+   - **Report.** `make conformance` at `24b8f7e2`: 2520 rows, 2465 pass, 0 fail, 0 skip, 0 not
+     run, 55 untested (11 in `cli/api.md`, 28 in `cli/gen.md`, 7 each in `cli/config.md` and
+     `cli/gotype.md`, 2 in `client.md`); all 251 `cli/api-schema.md` rows pass.
+   - **Time.** About 7 hours of wall time over two days: 30 minutes to split and scope, 17 to map
+     with four agents, then 9 defect stops in four rounds of rulings, two fix agents, three
+     test-writing agents, four review passes and the gates.
+   - **For the next slice (REST, headers, gRPC):** the seed-once rule makes anything rendered into
+     a gqlgen-owned seed a stale-code risk, so check every seeded body for logic before mapping;
+     an agent's "this test covers X" deserves the same check as "no such X exists", since two rows
+     claimed an engine behavior their test did not run; a test inside an example's generated
+     package runs only under `make check-examples`, so prefer the example's `tests` package; and
+     a mapping agent's suspected defect is cheaper to confirm with a fail-first test before the
+     ruling than after, which is what made nine rulings quick.
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
