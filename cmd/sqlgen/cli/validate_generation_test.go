@@ -58,9 +58,9 @@ func TestValidate_reachesGenerationPhase(t *testing.T) {
 				t.Fatalf("validate returned nil error; stdout = %q", stdout)
 			}
 
-			var ee *exitError
-			if !errors.As(err, &ee) || ee.code != ExitConfig {
-				t.Errorf("expected exit code %d (config), got error: %v", ExitConfig, err)
+			// A resolution error is a generation failure, as under generate.
+			if ee, ok := errors.AsType[*exitError](err); !ok || ee.code != ExitGeneration {
+				t.Errorf("expected exit code %d (generation), got error: %v", ExitGeneration, err)
 			}
 			if !strings.Contains(stderr, tt.wantErr) {
 				t.Errorf("stderr = %q, want it to contain %q", stderr, tt.wantErr)

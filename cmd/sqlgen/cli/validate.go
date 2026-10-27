@@ -19,13 +19,9 @@ func makeValidateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 		errOut := cmd.ErrOrStderr()
 
 		// 1. Load config.
-		cfg, err := config.LoadConfig(flags.config)
+		cfg, err := loadConfig(flags, errOut)
 		if err != nil {
-			_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
-			if flags.config == "" {
-				_, _ = fmt.Fprintln(errOut, "Hint: run 'sqlgen init' to create a config file")
-			}
-			return &exitError{code: ExitConfig, err: err}
+			return err
 		}
 
 		var allErrors []string
@@ -86,11 +82,13 @@ func makeValidateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 			// schema are valid" and then failed on the next generate.
 			// ValidateGeneration builds the contexts in memory and discards
 			// them: no templates are loaded and no files are written.
+			// A resolution error is a generation failure, as it is under
+			// generate and lint.
 			genWarnings, err := gen.ValidateGeneration(schema, cfg)
 			allGenWarnings = append(allGenWarnings, genWarnings...)
 			if err != nil {
 				if exitCode == ExitSuccess {
-					exitCode = ExitConfig
+					exitCode = ExitGeneration
 				}
 				allErrors = append(allErrors, splitJoinedErrors(err)...)
 			}

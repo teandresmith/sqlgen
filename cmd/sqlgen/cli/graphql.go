@@ -31,7 +31,7 @@ func newGraphQLCmd(flags *cliFlags) *cobra.Command {
 	}
 	cmd.AddCommand(newGraphQLInitCmd(flags))
 	cmd.AddCommand(newGraphQLGenCmd(flags))
-	return cmd
+	return asParent(cmd)
 }
 
 // newGraphQLInitCmd builds the one-shot scaffold subcommand. The scaffold
@@ -40,14 +40,17 @@ func newGraphQLCmd(flags *cliFlags) *cobra.Command {
 func newGraphQLInitCmd(flags *cliFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
+		Args:  usageArgs(cobra.NoArgs),
 		Short: "Scaffold a starter gqlgen.yml (no-op if the file already exists)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := config.LoadConfig(flags.config)
+			errOut := cmd.ErrOrStderr()
+			cfg, err := loadConfig(flags, errOut)
 			if err != nil {
-				return &exitError{code: ExitConfig, err: err}
+				return err
 			}
 			cfgPath := graphQLConfigPath(cfg)
 			if err := wrapper.Init(cfgPath); err != nil {
+				_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
 				return &exitError{code: ExitGeneration, err: err}
 			}
 			if !flags.quiet {
@@ -78,6 +81,7 @@ func newGraphQLInitCmd(flags *cliFlags) *cobra.Command {
 func newGraphQLGenCmd(flags *cliFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "gen",
+		Args:  usageArgs(cobra.NoArgs),
 		Short: "Run gqlgen against a merged config (sqlgen + consumer entries)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			errOut := cmd.ErrOrStderr()
@@ -95,6 +99,7 @@ func newGraphQLGenCmd(flags *cliFlags) *cobra.Command {
 			_, err = runGraphQLGen(cmd.Context(), cfg, schema, runGraphQLGenOptions{
 				Stdout: cmd.OutOrStdout(),
 				Stderr: errOut,
+				Quiet:  flags.quiet,
 			})
 			return err
 		},
@@ -109,6 +114,9 @@ func newGraphQLGenCmd(flags *cliFlags) *cobra.Command {
 type runGraphQLGenOptions struct {
 	Stdout io.Writer
 	Stderr io.Writer
+	// Quiet discards the gqlgen subprocess's stdout and the merge warnings;
+	// errors and the subprocess's stderr still reach Stderr.
+	Quiet bool
 }
 
 // runGraphQLGen builds the sqlgen-owned API context from cfg + schema,
@@ -158,7 +166,9 @@ func runGraphQLGen(ctx context.Context, cfg *config.RootConfig, schema *parser.S
 		return nil, &exitError{code: ExitGeneration, err: err}
 	}
 	if apiCtx == nil {
-		return nil, &exitError{code: ExitConfig, err: fmt.Errorf("api context is empty — nothing to generate")}
+		err := fmt.Errorf("api context is empty — nothing to generate")
+		_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
+		return nil, &exitError{code: ExitConfig, err: err}
 	}
 	// BuildAPIContext leaves the resolver-side fields blank; the
 	// seed/merge templates need ModelsPackage / ClientName /
@@ -172,7 +182,7 @@ func runGraphQLGen(ctx context.Context, cfg *config.RootConfig, schema *parser.S
 
 	module := readModulePath(".")
 	input, mergeWarnings := buildMergeInput(cfg, apiCtx, module)
-	printManifestWarnings(errOut, mergeWarnings, false)
+	printManifestWarnings(errOut, mergeWarnings, opts.Quiet)
 
 	seeds, managed, err := buildSeedsAndManagedFields(apiCtx, cfg)
 	if err != nil {
@@ -181,7 +191,7 @@ func runGraphQLGen(ctx context.Context, cfg *config.RootConfig, schema *parser.S
 	}
 
 	stdout := opts.Stdout
-	if stdout == nil {
+	if stdout == nil || opts.Quiet {
 		stdout = io.Discard
 	}
 	res, err := wrapper.Gen(ctx, wrapper.GenOptions{

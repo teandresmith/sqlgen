@@ -8,7 +8,7 @@
 <!-- matrix: access-control rows=role cols=go-client,api-in,api-out,filter,sort,event-payload,cache,manifest -->
 
 ## §8.1 Template Engine
-<!-- prd: 8.1 sha256: 6963bac8b0eef6a6 -->
+<!-- prd: 8.1 sha256: 5448a479b5e3e0e7 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -107,7 +107,7 @@
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| gen.layout.single-file | `single_file` puts all table code in one file in a single package | `golden: postgres` | all | |
+| gen.layout.single-file | `single_file` puts all table code in one file in a single package | `golden: postgres`; `unit: cmd/sqlgen/cli: TestSingleFileLayout` | all |  |
 | gen.layout.file-per-table | `file_per_table` writes one file per table, `dir/{table}_gen.go`, in a single package | `unit: cmd/sqlgen/gen: TestGenerate_FilePerTableStems` | all | |
 
 ## §8.5 Naming Rules
@@ -485,7 +485,7 @@ Rows of the `naming` matrix are the rows of the §8.5 tables: the acronym exampl
 | gen.pk-strategy.retrieval-mysql-caller | MySQL `caller` strategy uses the supplied PK and performs no retrieval | | mysql | |
 | gen.pk-strategy.retrieval-composite | A composite key is used as supplied on every dialect, with no retrieval | | all | |
 | gen.pk-strategy.resolution-order | PK handling resolves `primary_key.columns` first, then `primary_key.strategy`, then auto-detection from schema and dialect | `unit: cmd/sqlgen/gen: TestBuildTableContexts_PKOverride_FillsEmpty`; `unit: cmd/sqlgen/gen: TestCreateInputFieldClassification_callerPK` | all | |
-| gen.pk-strategy.columns-override-silent | `primary_key.columns` silently takes precedence over an auto-detected PK, with no warning | `unit: cmd/sqlgen/gen: TestBuildTableContexts_PKOverride_WinsOverAutoDetect` | all | |
+| gen.pk-strategy.columns-override-silent | `primary_key.columns` silently takes precedence over an auto-detected PK, with no warning | `unit: cmd/sqlgen/gen: TestBuildTableContexts_PKOverride_WinsOverAutoDetect`; `unit: cmd/sqlgen/cli: TestApplyPrimaryKeyOverrides` | all |  |
 | gen.pk-strategy.columns-override-order | `primary_key.columns` declaration order is the generated `<Table>PK` field order | `unit: cmd/sqlgen/gen: TestBuildTableContexts_PKOverride_CompositePreservesOrder` | all | |
 | gen.pk-strategy.columns-override-equivalent | Every downstream path (`Get` / `Update` / `Exists` signatures, `<Table>PK` emission, cache keys, event PKs) reads only the resolved PK set, so an override behaves exactly like a schema `PRIMARY KEY` | `unit: cmd/sqlgen/gen: TestBuildTableContexts_NoPK_WithOverride_NotSkipped` | all | |
 
@@ -615,6 +615,7 @@ Rows of the `naming` matrix are the rows of the §8.5 tables: the acronym exampl
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
+| gen.omittable.generated-column-excluded | A `GENERATED ALWAYS AS (...)` column is excluded from the create and update inputs: computed by the database, never writable | `unit: cmd/sqlgen/cli: TestGenerate_GeneratedColumnHasNoWriteSurface` | all |  |
 | artifacts.create-input.soft-delete | On a soft-delete table the soft delete column is an `omittable.Value[T]` field of `Create{Table}Input` | `unit: cmd/sqlgen/gen: TestCreateInputTemplate_requiredVsOmittableFields` | all | generated-artifacts: create-input × soft-delete |
 
 ## §11.1 Generated Filter Struct
@@ -773,6 +774,13 @@ Rows of the `naming` matrix are the rows of the §8.5 tables: the acronym exampl
 | gen.sorter.same-package | Sorter types are generated in the same package as the table code (`output.dir` / `output.package`) | `golden: postgres` | all | |
 | gen.sorter.emission-order | Sorter structs are emitted in struct-name order, and each struct's methods in SQL column-name order | `unit: cmd/sqlgen/gen: TestBuildSorterContext_sortsTablesAndColumns` | all | |
 | gen.sorter.tables-only | Sorters are generated for tables only; views and materialized views get none, and their `GetMany` takes `sql.Sort` directly | | all | |
+
+## §16 Views
+<!-- prd: 16 sha256: 82b05f7439a27379 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| gen.views.ddl-view-skipped-warning | A `CREATE VIEW` / `CREATE OR REPLACE VIEW` / `CREATE MATERIALIZED VIEW` in `input.paths` is skipped with a warning suggesting introspection or `input.views`, not an error | `unit: cmd/sqlgen/cli: TestParseSchema_PrintsParserWarnings` | all |  |
 
 ## §16.3 Column Type Resolution
 <!-- prd: 16.3 sha256: 2adabbec2ded0c13 -->

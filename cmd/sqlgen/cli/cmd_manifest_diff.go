@@ -31,7 +31,7 @@ func newManifestDiffCmd(flags *cliFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "diff <old> <new>",
 		Short: "Show a structured schema-evolution diff between two manifests",
-		Args:  cobra.ExactArgs(2),
+		Args:  usageArgs(cobra.ExactArgs(2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runManifestDiff(cmd, flags, args[0], args[1], jsonOut)
 		},

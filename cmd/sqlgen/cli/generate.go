@@ -24,13 +24,9 @@ func makeGenerateRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 		errOut := cmd.ErrOrStderr()
 
 		// 1. Load config.
-		cfg, err := config.LoadConfig(flags.config)
+		cfg, err := loadConfig(flags, errOut)
 		if err != nil {
-			_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
-			if flags.config == "" {
-				_, _ = fmt.Fprintln(errOut, "Hint: run 'sqlgen init' to create a config file")
-			}
-			return &exitError{code: ExitConfig, err: err}
+			return err
 		}
 
 		// 2. Validate phase 1 (pre-parse).
@@ -217,6 +213,7 @@ func chainGraphQLGenIfEnabled(cmd *cobra.Command, cfg *config.RootConfig, flags 
 	res, err := runGraphQLGen(cmd.Context(), cfg, schema, runGraphQLGenOptions{
 		Stdout: out,
 		Stderr: errOut,
+		Quiet:  flags.quiet,
 	})
 	if err != nil {
 		return nil, err

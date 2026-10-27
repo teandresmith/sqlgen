@@ -45,7 +45,9 @@ func makeDiffRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 
 		tmpDir, err := os.MkdirTemp("", "sqlgen-diff-*")
 		if err != nil {
-			return &exitError{code: ExitGeneration, err: fmt.Errorf("creating temp dir: %w", err)}
+			err = fmt.Errorf("creating temp dir: %w", err)
+			_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
+			return &exitError{code: ExitGeneration, err: err}
 		}
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 
@@ -57,7 +59,9 @@ func makeDiffRunE(flags *cliFlags) func(*cobra.Command, []string) error {
 
 		changes, err := diffFiles(result, cfg)
 		if err != nil {
-			return &exitError{code: ExitGeneration, err: fmt.Errorf("comparing files: %w", err)}
+			err = fmt.Errorf("comparing files: %w", err)
+			_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
+			return &exitError{code: ExitGeneration, err: err}
 		}
 
 		if len(changes) == 0 {

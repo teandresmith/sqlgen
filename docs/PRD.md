@@ -1178,7 +1178,7 @@ extras:
 
 ### 4.13 Config Validation Rules
 
-The config is validated immediately after loading, before parsing or generation begins. All validation errors are reported together (not one at a time) so the consumer can fix them in one pass. Validation errors cause the CLI to exit with code `2`.
+The config is validated immediately after loading, before parsing or generation begins. All validation errors are reported together (not one at a time) so the consumer can fix them in one pass. Validation errors cause the CLI to exit with code `2`, except the resolution-level rules (phase 3 below): they are found while the generator's contexts are built, so they exit `1` like any other generation error ([23.9](#239-exit-codes)), under `generate`, `validate` and `lint` alike.
 
 | Rule | Severity | Message |
 |------|----------|---------|
@@ -2381,7 +2381,7 @@ For MySQL and SQLite, message parsing tests cover known message formats and grac
 
 **Unit tests:** Each CLI command has tests covering:
 - `init`: generates valid YAML, prompts for dialect in TTY mode, defaults to postgres in non-TTY
-- `validate`: reports all errors together (not one at a time), exit code 2 on validation failure
+- `validate`: reports all errors together (not one at a time), exit code 2 on a config-validation failure and 1 on a resolution-level one
 - `lint`: detects hook table/type mismatches, invalid operations for table, correct exit codes per `--fail-on` severity
 - `diff`: correct file-level summary (create/modify/delete), exit code 0 for no changes, 1 for changes
 - `generate`: correct file output, stale file cleanup in `file_per_table` mode, generated header includes CLI version
@@ -11698,7 +11698,7 @@ The CLI is minimal and extendable:
 | `sqlgen lint` | Static analysis of consumer Go code. Validates hook registrations, type compatibility, and common mistakes. See [23.7](#237-sqlgen-lint). |
 | `sqlgen diff` | Preview what files would be created, modified, or deleted compared to existing generated files. Does not write anything. |
 | `sqlgen completion` | Generate shell completion scripts. Supports `bash`, `zsh`, `fish`, and `powershell`. |
-| `sqlgen manifest validate <path>` | Validate a generated `manifest_gen.json` against its JSON Schema (`$schema` URL). CI-friendly exit codes: 0 success, 1 schema failure, 2 I/O failure. Only available when the consumer has manifest emission enabled. See [30.8](#308-cli-tooling). |
+| `sqlgen manifest validate <path>` | Validate a generated `manifest_gen.json` against its JSON Schema (`$schema` URL). CI-friendly exit codes: 0 success, 1 schema failure, 2 I/O failure. It validates a manifest that manifest emission wrote; the command itself is always available and reads no `sqlgen.yml`. See [30.8](#308-cli-tooling). |
 | `sqlgen manifest diff <old> <new>` | Structured schema-evolution diff between two manifests. Walks entities / columns / methods / sentinels / features and prints additions, removals, changes. Supports `--json` for machine-readable output. Exit code 0 if no diff, 1 if any diff. See [30.8](#308-cli-tooling). |
 | `sqlgen mcp serve` | Serve the generated manifest to AI agents over MCP: 11 read-only tools + 4 resources + 3 prompts, stdio by default (agent clients spawn the server per session), optional loopback-only Streamable HTTP via `--http <port>`, manifest watch-reload on by default. Registration is normally the generated `.mcp.json` (§31.2), not a manual step. See [31](#31-mcp-server). |
 
@@ -11707,7 +11707,7 @@ The CLI is minimal and extendable:
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `--config` | `-c` | `sqlgen.yml` or `sqlgen.yaml` | Path to config file. |
-| `--verbose` | `-v` | `false` | Verbose output: show parsed tables, generated files, timing. |
+| `--verbose` | `-v` | `false` | Verbose output: show the parsed table, view and enum counts, the generated files, and timing. |
 | `--quiet` | `-q` | `false` | Suppress all output except errors. |
 | `--no-graphql` | | `false` | (`sqlgen generate` only) Skip the chained `sqlgen graphql gen` invocation when `api.graphql.enabled: true`. Equivalent to `SQLGEN_NO_GRAPHQL=1`. Use when running gqlgen in a separate CI step or migrating incrementally. |
 | `--version` | | | Print version and exit. |
@@ -11772,6 +11772,8 @@ $ sqlgen diff
 4 files would change (1 created, 2 modified, 1 deleted)
 ```
 
+A category with no files is left out of the summary line, and the count reads `N files` whatever `N` is (`1 files would change (1 modified)`).
+
 Exit code `0` when there are no changes, `1` when changes are detected. Useful in CI to verify generated code is up to date.
 
 Coverage is every file `generate` writes, not just `output.dir`: when `api.graphql.enabled: true`
@@ -11822,7 +11824,7 @@ Every fact the rules test is read off a built table context rather than re-deriv
 # Lint the output package (default: output.dir from config)
 sqlgen lint
 
-# Lint additional paths where hooks are registered
+# Lint other directories where hooks are registered (replaces the default output.dir)
 sqlgen lint --paths ./internal/hooks,./cmd/server
 
 # CI-friendly: exit code 1 on errors, 0 on warnings/info only
@@ -11833,11 +11835,11 @@ sqlgen lint --fail-on error
 
 ```
 $ sqlgen lint --paths ./internal/hooks
-  error  internal/hooks/products.go:15  ForMutation[*CreateProductInput, *Product](TableUsers, ...)
+  error  internal/hooks/products.go:15  ForMutation[*CreateProductInput, *User](TableUsers, ...)
          type mismatch: CreateProductInput belongs to TableProducts, not TableUsers
 
-  warn   internal/hooks/audit.go:42    ForMutation filtered on OpSoftDelete for table "audit_logs"
-         table "audit_logs" has no soft delete column — hook will never fire
+  warn   internal/hooks/audit.go:42  ForMutation[*CreateAuditLogInput, *AuditLog](TableAuditLogs, ...)
+         table "audit_logs" has no soft delete column — hook will never fire for OpSoftDelete
 
 2 issues (1 error, 1 warning)
 ```
@@ -11846,8 +11848,10 @@ $ sqlgen lint --paths ./internal/hooks
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--paths` | `output.dir` | Comma-separated list of directories to scan for hook registrations. |
+| `--paths` | `output.dir` | Comma-separated list of directories to scan for hook registrations. Replaces the default rather than adding to it; list `output.dir` too to scan both. |
 | `--fail-on` | `error` | Minimum severity to trigger a non-zero exit code: `error`, `warning`, or `info`. |
+
+A mismatch is reported per type argument: a call whose two type arguments both belong to another table gives two findings, each naming its type. Each finding prints its severity (`error`, `warn` or `info`), its `file:line`, and the hook call rebuilt from the source (the function, its type arguments as written, pointers and slices included, without package qualifiers, and the table constant), then the explanation on the next line; a warning's explanation ends by naming the operation the hook filters on. The last line counts the findings, as `N issues (…)` whatever `N` is.
 
 Exit code `0` when no issues at or above `--fail-on` severity, `1` otherwise.
 
@@ -11870,12 +11874,14 @@ Two feature areas carry their own governed exceptions to the `_gen.go`-only rule
 | `0` | Success |
 | `1` | Generation error (template failure, file write error) |
 | `2` | Config error (invalid YAML, validation failure) |
-| `3` | Schema error (parse failure, ambiguous table names, constraint violations), under every `input.source` |
+| `3` | Schema error (parse failure, a table defined twice, constraint violations), under every `input.source`. An ambiguous bare config key is a config error instead ([5.5](#55-schema-qualification--table-naming)) |
 | `4` | Connection error: connecting to the database, or a catalog query during introspection, failed. Nothing else exits `4` |
+
+A usage error (an unknown command, an unknown or malformed flag, an invalid flag value such as `lint --fail-on bogus`, or a wrong or invalid argument such as `completion nushell`) exits `2`, like a config error. Every failing command prints its error to stderr, whatever the code, so no command exits non-zero silently. `diff` and `manifest diff` exiting `1` because they found changes is a result, not a failure: the listing on stdout reports it and nothing goes to stderr. The `manifest validate` and `manifest diff` codes in [23.1](#231-commands) are their own.
 
 ### 23.10 Watch Mode
 
-sqlgen provides no watch mode. There is no `--watch` flag and no file-monitoring behavior on any command; `sqlgen generate` is a one-shot invocation, wired into `go generate` or a build step by the consumer.
+sqlgen provides no watch mode for code generation. No command regenerates code when a file changes, and `generate`, `validate`, `diff` and `lint` have no `--watch` flag; `sqlgen generate` is a one-shot invocation, wired into `go generate` or a build step by the consumer. The one file-watching behavior is `sqlgen mcp serve`, which reloads the generated manifest on change (`--watch`, on by default; [31](#31-mcp-server)).
 
 ---
 

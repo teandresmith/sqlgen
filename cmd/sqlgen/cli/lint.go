@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	goparser "go/parser"
 	"go/token"
+	"go/types"
 	"io"
 	"os"
 	"path/filepath"
@@ -26,6 +27,7 @@ func newLintCmd(flags *cliFlags) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "lint",
+		Args:  usageArgs(cobra.NoArgs),
 		Short: "Static analysis of hook registrations in consumer Go code",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
@@ -33,7 +35,7 @@ func newLintCmd(flags *cliFlags) *cobra.Command {
 
 			threshold, err := parseSeverity(failOn)
 			if err != nil {
-				return err
+				return &usageError{err: err}
 			}
 
 			cfg, schema, err := loadAndValidate(cmd.Context(), flags, errOut)
@@ -70,10 +72,9 @@ func newLintCmd(flags *cliFlags) *cobra.Command {
 			formatLintOutput(out, issues)
 
 			if hasIssuesAtOrAbove(issues, threshold) {
-				return &exitError{
-					code: ExitGeneration,
-					err:  fmt.Errorf("lint found issues at or above %q severity", failOn),
-				}
+				err := fmt.Errorf("lint found issues at or above %q severity", failOn)
+				_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
+				return &exitError{code: ExitGeneration, err: err}
 			}
 
 			return nil
@@ -82,6 +83,8 @@ func newLintCmd(flags *cliFlags) *cobra.Command {
 
 	cmd.Flags().StringVar(&paths, "paths", "", "comma-separated directories to scan (default: output.dir from config)")
 	cmd.Flags().StringVar(&failOn, "fail-on", "error", "minimum severity to trigger non-zero exit: error, warning, info")
+	// The only error is an undefined flag name; fail-on is defined above.
+	_ = cmd.RegisterFlagCompletionFunc("fail-on", cobra.FixedCompletions([]string{"error", "warning", "info"}, cobra.ShellCompDirectiveNoFileComp))
 
 	return cmd
 }
@@ -365,9 +368,10 @@ func parseHookCall(fset *token.FileSet, callExpr *ast.CallExpr, filePath string)
 		return hookCall{}, false
 	}
 
-	var typeParams []string
+	var typeParams, spellings []string
 	for _, idx := range indices {
 		typeParams = append(typeParams, extractTypeName(idx))
+		spellings = append(spellings, typeArgSpelling(idx))
 	}
 
 	var tableConst string
@@ -376,7 +380,7 @@ func parseHookCall(fset *token.FileSet, callExpr *ast.CallExpr, filePath string)
 	}
 
 	pos := fset.Position(callExpr.Pos())
-	code := formatCallSnippet(funcName, typeParams, tableConst)
+	code := formatCallSnippet(funcName, spellings, tableConst)
 
 	return hookCall{
 		File:       filePath,
@@ -402,6 +406,37 @@ func extractTypeName(expr ast.Expr) string {
 		return "[]" + extractTypeName(e.Elt)
 	default:
 		return ""
+	}
+}
+
+// typeArgSpelling spells a type argument as the source writes it, pointers
+// and slices included, with package qualifiers dropped: `[]*models.User`
+// spells `[]*User`.
+func typeArgSpelling(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.StarExpr:
+		return "*" + typeArgSpelling(e.X)
+	case *ast.Ident:
+		return e.Name
+	case *ast.SelectorExpr:
+		return e.Sel.Name
+	case *ast.ArrayType:
+		if e.Len != nil {
+			return "[" + types.ExprString(e.Len) + "]" + typeArgSpelling(e.Elt)
+		}
+		return "[]" + typeArgSpelling(e.Elt)
+	case *ast.MapType:
+		return "map[" + typeArgSpelling(e.Key) + "]" + typeArgSpelling(e.Value)
+	case *ast.IndexExpr:
+		return typeArgSpelling(e.X) + "[" + typeArgSpelling(e.Index) + "]"
+	case *ast.IndexListExpr:
+		args := make([]string, len(e.Indices))
+		for i, idx := range e.Indices {
+			args[i] = typeArgSpelling(idx)
+		}
+		return typeArgSpelling(e.X) + "[" + strings.Join(args, ", ") + "]"
+	default:
+		return types.ExprString(expr)
 	}
 }
 
@@ -498,17 +533,14 @@ func extractOpConst(expr ast.Expr) string {
 	return ""
 }
 
-// formatCallSnippet reconstructs a readable code snippet from a parsed hook call.
-func formatCallSnippet(funcName string, typeParams []string, tableConst string) string {
-	var typeParamStr string
-	if len(typeParams) > 0 {
-		formatted := make([]string, len(typeParams))
-		for i, tp := range typeParams {
-			formatted[i] = "*" + tp
-		}
-		typeParamStr = "[" + strings.Join(formatted, ", ") + "]"
+// formatCallSnippet reconstructs a readable code snippet from a parsed hook
+// call; typeArgs are spelled as the source writes them.
+func formatCallSnippet(funcName string, typeArgs []string, tableConst string) string {
+	var typeArgStr string
+	if len(typeArgs) > 0 {
+		typeArgStr = "[" + strings.Join(typeArgs, ", ") + "]"
 	}
-	return fmt.Sprintf("%s%s(%s, ...)", funcName, typeParamStr, tableConst)
+	return fmt.Sprintf("%s%s(%s, ...)", funcName, typeArgStr, tableConst)
 }
 
 // validateHookCall checks a single hook call against the type registry and

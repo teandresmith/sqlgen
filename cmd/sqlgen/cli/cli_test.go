@@ -95,7 +95,7 @@ output:
 func TestConfigDiscovery_explicitPath(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "custom.yml")
-	writeTestConfig(t, cfgPath, "postgres")
+	writeTestConfig(t, cfgPath)
 	writeSQLFile(t, dir, "CREATE TABLE users (id serial PRIMARY KEY, name text NOT NULL);")
 
 	// Run with explicit --config pointing to our custom file.
@@ -111,7 +111,7 @@ func TestConfigDiscovery_explicitPath(t *testing.T) {
 
 func TestConfigDiscovery_findsYml(t *testing.T) {
 	dir := t.TempDir()
-	writeTestConfig(t, filepath.Join(dir, "sqlgen.yml"), "postgres")
+	writeTestConfig(t, filepath.Join(dir, "sqlgen.yml"))
 	writeSQLFile(t, dir, "CREATE TABLE users (id serial PRIMARY KEY, name text NOT NULL);")
 
 	// Change to the temp dir and run without --config.
@@ -135,7 +135,7 @@ func TestConfigDiscovery_findsYml(t *testing.T) {
 
 func TestConfigDiscovery_findsYaml(t *testing.T) {
 	dir := t.TempDir()
-	writeTestConfig(t, filepath.Join(dir, "sqlgen.yaml"), "postgres")
+	writeTestConfig(t, filepath.Join(dir, "sqlgen.yaml"))
 	writeSQLFile(t, dir, "CREATE TABLE users (id serial PRIMARY KEY, name text NOT NULL);")
 
 	origDir, err := os.Getwd()
@@ -1132,9 +1132,10 @@ func TestStaleCleanup_noCleanupInSingleFileMode(t *testing.T) {
 		t.Fatalf("generate failed: %v", err)
 	}
 
-	// Plant an orphaned _gen.go file.
+	// Plant an orphaned _gen.go file carrying sqlgen's own header, so the
+	// file_per_table sweep would delete it; only the layout keeps it here.
 	orphan := filepath.Join(outputDir, "old_table_gen.go")
-	if err := os.WriteFile(orphan, []byte("package models\n"), 0o600); err != nil {
+	if err := os.WriteFile(orphan, []byte(gen.Header(Version)+"\n\npackage models\n"), 0o600); err != nil {
 		t.Fatalf("writing orphan: %v", err)
 	}
 
@@ -1225,11 +1226,13 @@ CREATE TABLE products (id serial PRIMARY KEY, title text NOT NULL);
 
 // --- Test helpers ---
 
-func writeTestConfig(t *testing.T, path, dialect string) {
+// writeTestConfig writes a postgres config that reads the schema from the
+// config's own directory and writes into its output subdirectory.
+func writeTestConfig(t *testing.T, path string) {
 	t.Helper()
 	dir := filepath.Dir(path)
 	content := []byte(`input:
-  dialect: ` + dialect + `
+  dialect: postgres
   paths:
     - "` + dir + `"
 output:

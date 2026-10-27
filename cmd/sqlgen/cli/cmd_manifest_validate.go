@@ -39,7 +39,7 @@ func newManifestValidateCmd(flags *cliFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate <path>",
 		Short: "Validate a manifest JSON file against its JSON Schema",
-		Args:  cobra.ExactArgs(1),
+		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runManifestValidate(cmd, flags, args[0])
 		},

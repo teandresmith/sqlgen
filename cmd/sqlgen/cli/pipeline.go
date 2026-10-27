@@ -28,13 +28,9 @@ import (
 // applyPrimaryKeyOverrides — see that function for why the order is
 // load-bearing in both directions.
 func loadAndValidate(ctx context.Context, flags *cliFlags, errOut io.Writer) (*config.RootConfig, *parser.Schema, error) {
-	cfg, err := config.LoadConfig(flags.config)
+	cfg, err := loadConfig(flags, errOut)
 	if err != nil {
-		_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
-		if flags.config == "" {
-			_, _ = fmt.Fprintln(errOut, "Hint: run 'sqlgen init' to create a config file")
-		}
-		return nil, nil, &exitError{code: ExitConfig, err: err}
+		return nil, nil, err
 	}
 
 	warnings, err := config.ValidatePreParse(cfg)
@@ -65,6 +61,22 @@ func loadAndValidate(ctx context.Context, flags *cliFlags, errOut io.Writer) (*c
 	printManifestWarnings(errOut, parser.DetectRelationships(schema), flags.quiet)
 
 	return cfg, schema, nil
+}
+
+// loadConfig loads the config file named by --config, or the discovered one.
+// On failure it prints the error to errOut — plus a hint to run `sqlgen init`
+// when the file was discovered rather than named — and returns an *exitError
+// with ExitConfig.
+func loadConfig(flags *cliFlags, errOut io.Writer) (*config.RootConfig, error) {
+	cfg, err := config.LoadConfig(flags.config)
+	if err != nil {
+		_, _ = fmt.Fprintf(errOut, "Error: %v\n", err)
+		if flags.config == "" {
+			_, _ = fmt.Fprintln(errOut, "Hint: run 'sqlgen init' to create a config file")
+		}
+		return nil, &exitError{code: ExitConfig, err: err}
+	}
+	return cfg, nil
 }
 
 // applyPrimaryKeyOverrides resolves every tables.<name>.primary_key.columns

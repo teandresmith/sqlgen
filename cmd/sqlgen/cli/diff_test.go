@@ -100,7 +100,7 @@ func orDefault(v, fallback string) string {
 
 func writeFileOrFail(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil { //nolint:gosec // test-local temp tree
 		t.Fatalf("writing %s: %v", path, err)
 	}
 }
