@@ -12144,7 +12144,7 @@ The `field_casing` option controls the naming convention used for fields and arg
 
 | Value | Behavior | Example |
 |-------|----------|---------|
-| `camel_case` (default) | Standard GraphQL convention; emitted GraphQL field names are camelCase | `createdAt`, `productId`, `companyName` |
+| `camel_case` (default) | Standard GraphQL convention; emitted GraphQL field names are camelCase, with [§8.5](#85-naming-rules)'s acronym casing | `createdAt`, `productID`, `companyName` |
 | `snake_case` | Preserves SQL column naming | `created_at`, `product_id`, `company_name` |
 
 The config key uses snake_case for uniformity with other sqlgen config; the *emitted* GraphQL field names are camelCase or snake_case per the chosen value.
@@ -12157,7 +12157,7 @@ The config key uses snake_case for uniformity with other sqlgen config; the *emi
 | Field names | Controlled by `field_casing` | `createdAt` or `created_at` |
 | Query/Mutation names | Always camelCase | `product`, `products`, `createProduct` |
 | Enum values | Always SCREAMING_SNAKE_CASE; digit-leading column names take §8.5's `col_` guard | `ASC`, `DESC`, `CREATED_AT`, `COL_2010_REVENUE` |
-| Argument names | Controlled by `field_casing` | `productId` or `product_id` |
+| Argument names | Controlled by `field_casing` | `productID` or `product_id` |
 
 The `camel_case` default follows the [GraphQL specification's naming recommendations](https://spec.graphql.org/October2021/#sec-Names) and is expected by most GraphQL clients (Apollo, Relay, urql). Use `snake_case` only when consumers expect raw column names or when migrating from an existing snake_case GraphQL API.
 
@@ -12210,7 +12210,7 @@ The SQL schema maps directly to a GraphQL schema:
 | Offset pagination (root) | `<Type>ListResult { items, totalCount, offset, limit, hasMore }` envelope | Distinct from `[T!]!` so relationships and root-list shapes don't collide; `totalCount` removes the need for a separate count resolver; `hasMore` mirrors the runtime `PaginateResult[T].HasMore` (§14.1) so clients paginate without recomputing `offset + limit < totalCount` |
 | `api.operations` mask (e.g. `read_only`) / `api.enabled: false` | Excludes Mutations or whole type | Global or per-table |
 
-**A relationship field exists only when its target is on the API.** The three relationship rows above apply to an edge whose target is itself exposed. The target may be a table or, through a declared relationship, a view. When the target is hidden (`api.enabled: false` on the table or view, [§26.10](#2610-per-table-api-configuration); or, for a table, every column dropped by [§32.2](#322-roles)), the parent's object type omits the field. It also omits the walker case ([§26.5.2](#2652-field-selection-translation--the-central-mechanism)), the filter member ([§26.5.3](#2653-filter--sort--pagination-translation)) and the nested member ([§9.9.4](#994-eligibility-rules) **E7**). Kept, the field would name a type the schema never declares, and gqlgen would reject the whole document. It drops silently, like E7, because there is no config error to report: `exclude_relationships` is the only way to remove an edge, and it removes the edge from the Go client too. The Go client keeps the edge: `api` gates the API, never the client.
+**A relationship field exists only when its target is on the API.** The three relationship rows above apply to an edge whose target is itself exposed. The target may be a table or, through a declared relationship, a view. When the target is hidden (`api.enabled: false` on the table or view, [§26.10](#2610-per-table-api-configuration); or, for a table, every column dropped by [§32.2](#322-roles)), the parent's object type omits the field. It also omits the walker case ([§26.5.2](#2652-field-selection-translation--the-central-mechanism)), the filter member ([§26.5.3](#2653-filter--sort--pagination-translation)) and the nested member ([§9.9.4](#994-eligibility-rules) **E7**). Kept, the field would name a type the schema never declares, and gqlgen would reject the whole document. It drops silently, like E7, because there is no config error to report: `exclude_relationships` is the only way to remove an edge, and it removes the edge from the Go client too. The Go client keeps the edge: `api` gates the API, never the client. A table with no API-readable column is hidden on its own surface too: it gets no object type, envelope, input or root field, exactly as under `api.enabled: false`.
 
 Field naming follows `api.graphql.field_casing` — accepted values `camel_case` (default) or `snake_case`. Type names always PascalCase, Query/Mutation root names always camelCase, Enum values always SCREAMING_SNAKE_CASE (a value derived from a digit-leading column name carries [§8.5](#85-naming-rules)'s `col_` guard — `2010_revenue` → `COL_2010_REVENUE`).
 
@@ -12687,7 +12687,7 @@ Generated resolvers are **concrete implementations** of the gqlgen-generated res
 
 #### 26.5.1 Exposed Resolver Surface
 
-Not every method on the unified client becomes a root resolver. The exposed surface is curated to match the conventions established by Hasura, PostGraphile, and Prisma's GraphQL plugins, which keeps the schema small and predictable. Per-row computed mutations (`Increment`, `Decrement`) are folded into update inputs as **input operators**, not separate root fields — see §26.5.4.
+Not every method on the unified client becomes a root resolver. The exposed surface is curated to match the conventions established by Hasura, PostGraphile, and Prisma's GraphQL plugins, which keeps the schema small and predictable. Per-row computed mutations (`Increment`, for increments and decrements alike) are folded into update inputs as **input operators**, not separate root fields — see §26.5.4.
 
 **Views.** The table below is the **per-table** surface. A view's surface is the read-only subset — object type, envelopes, filter / sort inputs, and the `<view>` / `<views>` / `<view>List` queries, never a mutation — enumerated in full under [§26.4 Views on the GraphQL surface](#views-on-the-graphql-surface). The `Excluded` table below applies to views unchanged.
 
@@ -12700,7 +12700,7 @@ Not every method on the unified client becomes a root resolver. The exposed surf
 | `<table>List(filter, sort, limit, offset): <Type>ListResult!` query (offset) | `api.operations` includes `paginate` | `Paginate` (sort threads through `translate<T>Sort` into `PaginateInput.Sort`, see §26.5.3) |
 | `create<Table>(input)` mutation | `api.operations` includes `create` | `Create` |
 | `create<Table>s(inputs)` mutation | `api.operations` includes `create_many` | `CreateMany` |
-| `update<Table>(id, input)` mutation | `api.operations` includes `update` | `Update` (with `_inc` / `_dec` input operators dispatching to `Increment` / `Decrement` server-side) |
+| `update<Table>(id, input)` mutation | `api.operations` includes `update` | `Update` (with `_inc` / `_dec` input operators dispatching to `Increment` server-side, a `_dec` as a negative delta) |
 | `update<Table>s(filter, input)` mutation | `api.operations` includes `update_where` | `UpdateWhere` |
 | `upsert<Table>(input)` mutation | `api.operations` includes `upsert` AND the table emits `<Table>ConflictPK` ([9.5](#upsert-conflict-keys)) | `Upsert` |
 | `create<Table>WithRelated(input)` mutation | `nested_mutations` enables the `create` family for the table, the table has an eligible relationship, and `api.operations` includes `create_with_related` and `create` (below) | `CreateWithRelated` |
@@ -12716,11 +12716,11 @@ Not every method on the unified client becomes a root resolver. The exposed surf
 | Excluded method | Why | How to express in GraphQL instead |
 |-----------------|-----|-----------------------------------|
 | `Exists` | redundant with single-by-PK | `<table>(id)` returns null when missing |
-| `Count` | folded into `<Type>Connection.totalCount` and `<Type>ListResult.totalCount` | `<table>List(filter, limit: 0).totalCount` for "count only, no rows" |
+| `Count` | folded into `<Type>Connection.totalCount` and `<Type>ListResult.totalCount` | `<table>List(filter) { totalCount }` for "count only, no rows" — the count-only envelope ([§26.5.2](#2652-field-selection-translation--the-central-mechanism)) costs one `COUNT` |
 | `GetMany(ids)` | derivable | `<table>s(filter: { id: { in: [...] } })` |
 | `UpdateMany(items)` | a batch of per-row updates, each with its own key and input, has no idiomatic GraphQL shape | `update<Table>` per row, or `update<Table>s(filter, input)` where one input applies to every row |
 | `Find(filter)` | derivable | `<table>s(filter, first: 1)` then take edge |
-| `Increment` / `Decrement` | per-row computed mutations idiomatically belong inside update inputs | `update<Table>(id, input: { stock_inc: 5 })` — see §26.5.4 |
+| `Increment` (and decrementing through it) | per-row computed mutations idiomatically belong inside update inputs | `update<Table>(id, input: { stock_inc: 5 })` — see §26.5.4 |
 | `UpsertMany` | no batch-upsert mutation is generated; the batch form exists for server-side composition, and the M2M `connect` verb that needs it reaches it through [9.9](#99-nested-mutations) rather than through a root field | `upsert<Table>` per row, or `create<Table>s` where the rows are known to be new |
 | Tx primitives, savepoints | transaction lifecycle is server-internal | not exposed; the consumer composes mutations in a single request and wraps them in a transaction with gqlgen middleware |
 | `Restore` (when soft delete is disabled) | meaningless | not generated |
@@ -12795,13 +12795,13 @@ The three `…WithRelated` mutations ([9.9](#99-nested-mutations)) are additive:
 
 **A `…WithRelated` mutation requires its flat mutation on the API.** `api.operations` masks `create_with_related`, `update_with_related` and `upsert_with_related` the way it masks every other operation. On the masked set, each one implies the base it composes. So masking `create` off the API also removes `create<Table>WithRelated`. Without that, a mask written to leave one hand-guarded door into a table would leave a second, generated door through the nested mutation. For the same reason, a family whose flat input is suppressed (the table has no API-writable column) is not emitted. The requirement is on the masked operations, not on the emitted flat mutation, and there is one case where the two differ: on a table that emits no `<Table>ConflictPK`, `upsert<Table>WithRelated` still needs `upsert` on the mask but survives without `upsert<Table>`, taking a required `conflictTarget` (above). Naming a nested mutation beside its masked-off base, as in `create_with_related: true` beside `create: false` in one mask, is a config error ([4.13](#413-config-validation-rules)) rather than a silent drop.
 
-**`update<Table>WithRelated` applies its `_inc` / `_dec` operators in its own transaction.** The flat member is `Update<Table>Input`, so it carries the operator pair [26.5.4](#2654-mutation-translation) adds, and `UpdateWithRelated` takes no increments. When any operator is set, the resolver runs three steps inside one transaction: `UpdateWithRelated` as a savepoint, then the `Increment` calls, then the read-back. The nested mutation therefore stays the single atomic write [9.9](#99-nested-mutations) promises. It does not commit its nested rows and then fail on an increment. The pairing rules of 26.5.4 apply unchanged: setting and incrementing one column, or incrementing and decrementing it, is `INVALID_INPUT`. This differs deliberately from `update<Table>`, whose sequence 26.5.4 does not wrap.
+**`update<Table>WithRelated` applies its `_inc` / `_dec` operators in its own transaction.** The flat member is `Update<Table>Input`, so it carries the operator pair [26.5.4](#2654-mutation-translation) adds, and `UpdateWithRelated` takes no increments. When any operator is set, the resolver runs three steps inside one transaction: `UpdateWithRelated` as a savepoint, then the `Increment` calls, then the read-back. The nested mutation therefore stays the single atomic write [9.9](#99-nested-mutations) promises. It does not commit its nested rows and then fail on an increment. The pairing rules of 26.5.4 apply unchanged: a column set together with its `_inc` or `_dec`, or incremented and decremented at once, is `INVALID_INPUT`. This differs deliberately from `update<Table>`, whose sequence 26.5.4 does not wrap.
 
 **Nested error attribution reaches the client.** A failure inside a nested block carries `extensions.path: ["<Edge>"]` naming the relationship that failed, read off `*NestedMutationError.Edge` ([22.2](#222-constraint-errors)) rather than parsed out of the message. See [26.5.5](#2655-error-mapping) for the code mapping.
 
 **A hidden entity gets no nested member.** An edge whose target is `api.enabled: false`, or whose nested input would expose an `api`-hidden column, is absent from the nested input type on the GraphQL surface — the write-side mirror of the read side-channel rule ([9.9](#99-nested-mutations), rule **E7**). The same holds one level down, for a target that stays exposed but masks what a verb writes through. `create` needs the target's API `create`. An O2M / has-one `connect` / `disconnect` / `clear` needs the target's mask to keep `update_where`, the key that gates the target's own filter-scoped update. A verb the target's mask removes is absent from both blocks, and an edge left with no verb gets no member. The Go surface is unaffected: `api` gates the API, never the client.
 
-**Mutation-result nullability rules:** `create<Table>` / `update<Table>` / `upsert<Table>` / `create<Table>s` / `update<Table>s` return non-nullable (`Product!` / `[Product!]!`) — failures surface as GraphQL errors, never null results. Delete-class mutations (`softDelete<Table>`, `restore<Table>`) return nullable `Product` so the client can distinguish "not found" (null) from "internal error" (GraphQL error). Hard delete returns `Boolean!` (true on delete, false on missing).
+**Mutation-result nullability rules:** `create<Table>` / `update<Table>` / `upsert<Table>` / `create<Table>s` / `update<Table>s` return non-nullable (`Product!` / `[Product!]!`) — failures surface as GraphQL errors, never null results. Delete-class mutations (`softDelete<Table>`, `restore<Table>`) return nullable `Product` so the client can distinguish "not found" (null) from "internal error" (GraphQL error). Hard delete returns `Boolean!`: `true` once the delete ran without error, whether or not the row existed, since the client's `HardDelete` is idempotent ([§9](#9-generated-client-operations)).
 
 #### 26.5.2 Field Selection Translation — The Central Mechanism
 
@@ -12950,7 +12950,7 @@ func translateCreateProductInput(in CreateProductInput) *<pkg>.CreateProductInpu
 
 The omittable distinction is important: GraphQL "null" and "omitted" are distinguishable in input types, and `omittable.Value[T]` preserves that. PRD §17 (omittable) is the source of truth.
 
-**Increment / Decrement as input operators.** `Increment` and `Decrement` are not exposed as separate root mutations (see §26.5.1 for rationale). Instead, the generated `UpdateProductInput` carries paired `_inc` / `_dec` fields for every numeric column the schema defines.
+**Increment / Decrement as input operators.** `Increment` is not exposed as a separate root mutation, for increments or decrements (see §26.5.1 for rationale). Instead, the generated `UpdateProductInput` carries paired `_inc` / `_dec` fields for every numeric column the schema defines.
 
 The operator pair is part of the increment surface, not a separate feature: it dispatches to the client's generated `Increment` method and the `<Table>IncrementColumn` enum, which exist only when the table has an incrementable column ([4.6 Operations](#operations)); column-level eligibility is the same test, see [8.2](#82-generated-artifacts-per-table). `increment` has no `api.operations` key: the operators sit on `Update<Table>Input`, which is emitted whenever the mask leaves an update mutation (`update` or `update_where`). Every operator is typed `Int`, whatever the column's own GraphQL type (`price_inc: Int` on a `Decimal` column): the client's `Increment` takes an integer amount, so a delta is always a whole number. Following the Hasura / Prisma convention, the client sets at most one of `<field>`, `<field>_inc`, `<field>_dec` per column per request.
 
@@ -12975,7 +12975,7 @@ func translateUpdateProductInput(ctx context.Context, in UpdateProductInput) upd
     if in.Name      != nil { plan.set.Name  = omittable.Set(*in.Name) }
     if in.Stock     != nil { plan.set.Stock = omittable.Set(*in.Stock) }
     if in.StockInc  != nil { plan.inc = append(plan.inc, columnDelta{Col: "stock", Delta: *in.StockInc}) }
-    if in.StockDec  != nil { plan.dec = append(plan.dec, columnDelta{Col: "stock", Delta: *in.StockDec}) }
+    if in.StockDec  != nil { plan.inc = append(plan.inc, columnDelta{Col: "stock", Delta: -*in.StockDec}) }
     // ...
     return plan
 }
@@ -12984,12 +12984,10 @@ func translateUpdateProductInput(ctx context.Context, in UpdateProductInput) upd
 The mutation resolver runs the plan in this order, all on the same client instance so any `Tx` wrapping middleware sees one logical update:
 
 1. `Update(id, plan.set)` — only if any `_set` fields are present.
-2. For each `inc` entry: `Increment(id, col, delta)`.
-3. For each `dec` entry: `Decrement(id, col, delta)`.
+2. For each operator, column by column: `Increment(id, col, delta)`, a `_dec` being a negative delta. A column takes at most one of `<field>`, `<field>_inc` and `<field>_dec` per request (below), so the order across columns is not observable.
 
 **Validation rules:**
-- Codegen rejects an input that mixes `_set` and `_inc` for the same column: an absolute assignment and a relative delta on one column have no defined composition order.
-- At runtime, the resolver returns a `gqlerror` with `extensions.code = INVALID_INPUT` if both `_set` and `_inc` arrive for the same column. `_inc` and `_dec` for the same column in one call is also rejected.
+- The resolver returns a `gqlerror` with `extensions.code = INVALID_INPUT` if both `_set` and `_inc`, or both `_set` and `_dec`, arrive for the same column — an absolute assignment and a relative delta on one column have no defined composition order. `_inc` and `_dec` for the same column in one call is also rejected.
 
 **Bulk inputs.** `createProducts` takes `[CreateProductInput!]!` (a list of the regular create input). `updateProducts` takes a single `UpdateProductInput` plus a `ProductFilterInput` — same input shape as the one-row update, applied to every row matching the filter. Bulk variants share the same `_inc` / `_dec` translation.
 
@@ -13050,9 +13048,10 @@ func (r *M) CreateProduct(ctx context.Context, input CreateProductInput) (*<pkg>
 }
 
 func (r *M) DeleteProduct(ctx context.Context, id string) (bool, error) {
-    err := r.client.Products.HardDelete(ctx, id)
-    if errors.Is(err, sqlgen.ErrNotFound) { return false, nil }
-    return err == nil, err
+    if err := r.client.Products.HardDelete(ctx, id); err != nil {
+        return false, mapErrorToGQL(err)
+    }
+    return true, nil
 }
 ```
 
