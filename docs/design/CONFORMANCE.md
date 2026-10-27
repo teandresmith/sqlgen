@@ -1088,6 +1088,105 @@ database versions it ran against.
      that passes either way); a fix that copies options through internal hops needs the hops
      enumerated first, since forced internal toggles look like the caller's; and a cobra leaf
      command needs an `Args` check, since one without it accepts and drops extra arguments.
+
+   **Sixth slice, manifest (§30) and MCP server (§31), recorded 2026-10-27:**
+   - **Scope.** §30, §30.2–§30.5, §30.7 and §30.8; §31 and §31.2–§31.5; gen.md's five
+     `access-control × manifest` cells and the composite-PK parent keeping its manifest entries;
+     and the 8 `cmd/sqlgen/cli` tests the CLI slice left orphaned. §30.1, §30.6 and §31.1 stay
+     where the map puts them. Planned work, untested rather than defects: Phase 32.3 (the key-list
+     `fk` / `junction` / `constraint` shape, `schema_version` `0.2.0`, MCP `fk_columns`) and the
+     manifest JSON Schema 1.0.0 freeze.
+   - **Split first.** About 600 rows were estimated against ruling 7's ~500, so `cli/manifest.md`
+     kept §30 and `cmd/sqlgen/manifest`, and a new `cli/mcp.md` took §31, `cmd/sqlgen/mcp` and
+     `mcp/integration`; the README file list and ownership map followed.
+   - **Matrix shape.** Two matrices, declared with the user. `manifest-artifacts`: the 11 §30.3
+     artifacts (the two breadcrumbs, the package-doc pointer, the embed file, the JSON, `_index.md`,
+     `_conventions.md`, per-entity markdown and JSON, the graph breadcrumb pair) × `emitted`,
+     `gated`, `removed-when-disabled`, `ownership`, `deterministic`; 2 `n/a` (the package-doc
+     pointer and the embed file sit in DO NOT EDIT files). `mcp-surface`: the 11 tools, 4
+     resources and 3 prompts × `listed`, `output`, `deterministic`, `error`; 16 `n/a` (§31.3
+     promises byte-equality for tools only; no failure input for the list, health and fixed-resource
+     elements; `validate-manifest`'s `valid: false` is a result, not an error). The
+     `access-control × manifest` cells assert each role's canonical-JSON column entry; the
+     markdown table's omission of the markers and `sql_bodies` staying real SQL are rows with no
+     cell.
+   - **Anchors.** 15: §30, §30.2, §30.3, §30.4, §30.4.1–§30.4.3, §30.5, §30.7, §30.8, §31,
+     §31.2–§31.5. The §30 and §31 anchors hash whole chapters, so any edit in them trips their rows.
+   - **Rows seeded: 743**, 468 in `manifest.md` (65 on matrix cells), 267 in `mcp.md` (60), and
+     8 in `gen.md`, plus 3 `config.md` rows for a new §4.13 rule. Four mapping agents drafted 708
+     in about 15 minutes.
+   - **Claim check before tests.** Four read-only checkers given the defect shapes flagged 51 of
+     about 577 tested rows (1 in 11): substring checks that could not tie a value to its column,
+     a determinism test that built a fresh store per call, `listed` rows compared against the
+     code's own constants, a `.mcp.json` line/col check matching the colon after the path, and
+     fixtures where the condition never arose. 63 rows were edited and 16 split.
+   - **Gaps.** At seeding 181 rows were untested. Four test-writing agents with assigned helper
+     prefixes filled 154; a review pass then found the method-order test compared only checked-in
+     goldens (reverting the builder still passed it), four partial rows, hand-rolled waits and a
+     racy subprocess harness, all fixed, and the tests renamed from their batch prefixes. 26 stay
+     untested: 15 Phase 32.3 and freeze rows, 6 release-process rules, the 3 go-sdk replies below,
+     and 2 rows with nothing observable. Every test in the three packages backs a row or is
+     listed as unclaimed (19, with reasons).
+   - **Defects: 13**, each confirmed with a fail-first test; 12 fixed, one ruled out of the PRD:
+     1. `breadcrumbs.package_doc` was never read; `models_gen.go` (the client file when there is
+        none) now carries the pointer.
+     2. `generation_config.views` read the `views:` config map, so five goldens with views said
+        `false`.
+     3. `generation_config.cache` / `events` read the global flag, not each table's resolution.
+     4. Per-entity `examples` were always empty, so `sqlgen_get_example` returned nothing; they
+        are generated from the entity's methods and a test vets every line of three goldens.
+     5. `features.cache.invalidates_on` was a fixed list naming `Delete`, which no method has.
+     6. A format dropped from `formats`, or GraphQL disabled, left its artifacts behind.
+     7. `.mcp.json` with trailing content was accepted and rewritten without it.
+     8. A truncated or empty `.mcp.json` failed with no line and column.
+     9. `mcp serve`'s startup failures did not name `-32001` / `-32002`.
+     10. gen ignored a per-table `cache.enabled: true` under a global false, which §4.8 and §27.2
+         allow; the manifest fix had reported `features.cache` for code that did not exist.
+     11. Manifest methods were in an order matching neither the interface nor the implementation.
+     12. `--manifest-timestamp` wrote any string into `generated_at`.
+     13. `include_internal` was never read; ruled out of the PRD and the config.
+
+     Review of the fixes found four more, fixed in the same commits: example lines used
+     `uuid.New()`, which gofrs lacks; ID filters used `"example"` on any column; breadcrumbs
+     pointed at markdown a json-only run had deleted; and graph-breadcrumb cleanup reached
+     `<output.dir>/graph` with no `api` block. Two go-sdk behaviors are ruled a known limitation:
+     an unknown method gets code `0`, and malformed stdio input ends the session with no
+     `-32700` / `-32600`. An upstream issue is drafted, not filed.
+   - **PRD amendments: 26**, all ruled or following a fix, among them: the package-doc pointer's
+     form and file; breadcrumbs following `formats`; stale cleanup on a format flip and a GraphQL
+     disable; which collections are sorted and which keep source order (corrected once, after a
+     fill test showed the first wording false); omitted-when-empty members; `examples` content;
+     `invalidates_on` per §27.7; `…WithRelated` methods carrying no `sql_bodies`; the graph
+     breadcrumb's third pointer; `.mcp.json` line/col cases and "key preserved"; startup failures
+     on stderr; `sqlgen://config` serving `generation_config`; the go-sdk limitation; the §27
+     cache opt-in; per-table `events.enabled` opt-out only, with a new §4.13 rule; the RFC3339
+     timestamp; and four slips (`user.md`, ten re-exported sentinels, `ErrEmptyFilter` on the
+     mutating `*Where` methods only, the `entities/user.json` example). **PRD gaps: 48** (16
+     `manifest.md`, 32 `mcp.md`), all open.
+   - **Tests written.** 23 new test files across `manifest`, `mcp`, `cli`, `gen`, `config` and
+     `cmd/sqlgen` (the example-line compile check), by two fail-first agents, five fix agents,
+     four test-writing agents and a review-fix agent. Source-mode parity tests run against live
+     databases and are registered as `integration:`. Golden churn: the manifest files of the
+     eight manifest-enabled examples, plus 14 `models_gen.go` and 2 `client_gen.go` for the
+     pointer.
+   - **Review.** Three sqlgen-reviewer passes, each finding real defects: the four above, then the
+     method-order test that guarded nothing. The CLI slice's lesson held: an agent's "this test
+     covers X" was wrong for 1 row in 11 here, down from 1 in 6, because the checkers ran before
+     any test was written.
+   - **Report.** `make conformance` at `<commit>`: 3588 rows, 3456 pass, 0 fail, 0 skip, 0 not
+     run, 132 untested (51 in `cli/api-http.md`, 27 in `cli/gen.md`, 16 in `cli/manifest.md`,
+     11 in `cli/api.md`, 10 in `cli/mcp.md`, 7 each in `cli/config.md` and `cli/gotype.md`, 2 in
+     `client.md`, 1 in `cli/commands.md`).
+   - **Time.** About 4 hours of wall time: 20 minutes to scope and split, 15 to map with four
+     agents, the claim check, seven rounds of questions (26, four of them the matrix and split), seven fix agents, four
+     test-writing agents, three review passes and the gates.
+   - **For the next slice:** a fix ruled for the manifest can describe behavior the generator
+     does not have (the cache opt-in), so check that the code a fix reports on actually exists
+     before shipping the report; a test that compares two committed outputs guards nothing that
+     produces them, so mutate the producer once and watch the test fail; a PRD amendment drafted
+     in a ruling question is a claim too, so give it the same fill test before it lands; agents
+     writing tests in batches name them after the batch, so assign descriptive names in the
+     brief; and a rename map applied by script must remap refs to deleted tests, not drop them.
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
