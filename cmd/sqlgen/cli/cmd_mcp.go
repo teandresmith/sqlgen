@@ -127,7 +127,14 @@ func runMCPServe(cmd *cobra.Command, f *mcpServeFlags) error {
 		_ = logFile.Close()
 	}
 	if runErr != nil {
-		_, _ = fmt.Fprintf(errOut, "Error: %v\n", runErr)
+		// A startup failure carrying a reserved code (-32001 MANIFEST_NOT_FOUND,
+		// -32002 MANIFEST_INVALID) names it on stderr; no JSON-RPC reply is sent
+		// because the server never started.
+		if mcpErr, ok := errors.AsType[*mcp.Error](runErr); ok {
+			_, _ = fmt.Fprintf(errOut, "Error: %d %s: %v\n", int(mcpErr.Code), mcpErr.Code, runErr)
+		} else {
+			_, _ = fmt.Fprintf(errOut, "Error: %v\n", runErr)
+		}
 		return &exitError{code: ExitGeneration, err: runErr}
 	}
 	return nil

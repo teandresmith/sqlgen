@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -94,19 +95,9 @@ func Merge(opts MergeOptions) ([]string, error) {
 		return nil, fmt.Errorf("reading %s: %w", opts.ConfigPath, err)
 	}
 
-	// UseNumber keeps sibling entries' numeric values in their exact source
-	// form across the re-encode — §3.4 promises other tools' entries are
-	// never touched, and a float64 round-trip could rewrite large integers.
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var root map[string]any
-	if err := dec.Decode(&root); err != nil {
-		return nil, invalidJSONError(opts.ConfigPath, raw, err)
-	}
-	if root == nil {
-		// A literal `null` document parses cleanly into a nil map; treat it
-		// like an empty object so the upsert below can populate it.
-		root = map[string]any{}
+	root, err := decodeConfig(raw, opts.ConfigPath)
+	if err != nil {
+		return nil, err
 	}
 	servers, err := serversMap(root, opts.ConfigPath)
 	if err != nil {
@@ -141,6 +132,34 @@ func Merge(opts MergeOptions) ([]string, error) {
 		return warnings, nil
 	}
 	return warnings, writeAtomic(cfgPath, root)
+}
+
+// decodeConfig parses an existing project config as exactly one JSON object.
+// Every failure names the line and column and leaves the file untouched (§31.2).
+func decodeConfig(raw []byte, configPath string) (map[string]any, error) {
+	// UseNumber keeps sibling entries' numeric values in their exact source
+	// form across the re-encode — §3.4 promises other tools' entries are
+	// never touched, and a float64 round-trip could rewrite large integers.
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var root map[string]any
+	if err := dec.Decode(&root); err != nil {
+		return nil, invalidJSONError(configPath, raw, err)
+	}
+	// One JSON value is the whole document: anything but whitespace after it
+	// makes the target invalid JSON, refused rather than rewritten from its
+	// first value (§31.2).
+	if off := trailingContentOffset(raw, dec.InputOffset()); off >= 0 {
+		line, col := offsetLineCol(raw, off)
+		return nil, fmt.Errorf("parse %s:%d:%d: invalid character %q after top-level value (refusing to overwrite invalid JSON)",
+			configPath, line, col, raw[off])
+	}
+	if root == nil {
+		// A literal `null` document parses cleanly into a nil map; treat it
+		// like an empty object so the upsert can populate it.
+		root = map[string]any{}
+	}
+	return root, nil
 }
 
 // applyUpsert creates or refreshes the sqlgen-managed entry: an entry
@@ -261,7 +280,7 @@ func sweepStaleEntries(servers map[string]any, moduleRoot, manifestAbs string) b
 		if p == "" || pAbs == manifestAbs {
 			continue
 		}
-		if _, err := os.Stat(pAbs); errors.Is(err, fs.ErrNotExist) {
+		if _, err := os.Stat(pAbs); errors.Is(err, fs.ErrNotExist) { //nolint:gosec // existence probe only: a managed entry's own manifest path is stat'ed, never opened or written
 			delete(servers, k)
 			changed = true
 		}
@@ -401,19 +420,35 @@ func tokenizeCommand(s string) ([]string, error) {
 }
 
 // invalidJSONError wraps a JSON parse failure with line/col context (§3.4:
-// "fail loudly with line/col; never overwrite silently").
+// "fail loudly with line/col; never overwrite silently"). Every failure names
+// a position: a syntax or type error its reported offset, and a document that
+// ends early (truncated, empty, or whitespace-only) the position just past its
+// last byte. A syntax error points at the offending byte itself.
 func invalidJSONError(configPath string, raw []byte, err error) error {
-	var offset int64 = -1
+	offset := int64(len(raw))
 	if syn, ok := errors.AsType[*json.SyntaxError](err); ok {
-		offset = syn.Offset
+		// Offset counts the offending byte; point at it, not past it.
+		offset = max(syn.Offset-1, 0)
 	} else if typ, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
 		offset = typ.Offset
+	} else if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		err = errors.New("unexpected end of JSON input")
 	}
-	if offset >= 0 {
-		line, col := offsetLineCol(raw, offset)
-		return fmt.Errorf("parse %s:%d:%d: %w (refusing to overwrite invalid JSON)", configPath, line, col, err)
+	line, col := offsetLineCol(raw, offset)
+	return fmt.Errorf("parse %s:%d:%d: %w (refusing to overwrite invalid JSON)", configPath, line, col, err)
+}
+
+// trailingContentOffset returns the offset of the first non-whitespace byte at
+// or after from, or -1 when only JSON whitespace remains.
+func trailingContentOffset(raw []byte, from int64) int64 {
+	for i := from; i < int64(len(raw)); i++ {
+		switch raw[i] {
+		case ' ', '\t', '\n', '\r':
+		default:
+			return i
+		}
 	}
-	return fmt.Errorf("parse %s: %w (refusing to overwrite invalid JSON)", configPath, err)
+	return -1
 }
 
 // offsetLineCol converts a byte offset into 1-based line and column numbers.
