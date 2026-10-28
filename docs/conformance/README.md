@@ -9,7 +9,9 @@ in [`docs/design/CONFORMANCE.md`](../design/CONFORMANCE.md) §3 and §5. `make r
 | File | Module | Test homes |
 |---|---|---|
 | [`runtime.md`](runtime.md) | Runtime: `sql`, `comparator`, `omittable`, `database` and drivers, `cache`, `tenancy`, `event`, `hook`, `types`, `manifest` | unit, integration |
-| [`parser.md`](parser.md) | Parser: `parser` and its dialect and `introspect` packages | unit, integration |
+| [`parser/dialects.md`](parser/dialects.md) | Parser: `parser/postgres`, `parser/mysql`, `parser/sqlite` (§5, §5.1, §5.2, and the `schema-model` matrix) | unit, integration |
+| [`parser/schema.md`](parser/schema.md) | Parser: `parser` (§5.3–§5.7, §16.1, §17.1) | unit, integration |
+| [`parser/introspect.md`](parser/introspect.md) | Parser: `parser/introspect` (§6–§6.4, §16.2) | unit, integration |
 | [`cli/config.md`](cli/config.md) | CLI: `cmd/sqlgen/config`; §4.3, §4.13 and §4.14, and the package's unclaimed tests | unit |
 | [`cli/config-fields.md`](cli/config-fields.md) | CLI: config fields (§4, §4.1, §4.2, §4.4–§4.12, and the `config-fields` and `config-resolution` matrices); no package of its own, its rows claim `cmd/sqlgen/config`, `gen`, `gotype`, `cli` and example tests | unit, golden, example |
 | [`cli/config-features.md`](cli/config-features.md) | CLI: cache, event and tenancy config (§27.2, §28.8, §29.2, §29.11, and the `feature-fields` and `feature-resolution` matrices); no package of its own | unit, golden, example |
@@ -171,19 +173,19 @@ another file also cites is still owned once.
 | §4.12 Full Example | cli/config-fields.md |
 | §4.13 Config Validation Rules | cli/config.md |
 | §4.14 Config JSON Schema (editor support) | cli/config.md |
-| §5 SQL Parsing | parser.md |
-| §5.1 Schema Model | parser.md |
-| §5.2 Dialect Parsers | parser.md |
-| §5.3 Relationship Detection | parser.md |
-| §5.4 Soft Delete Column Detection | parser.md |
-| §5.5 Schema Qualification & Table Naming | parser.md |
-| §5.6 Multi-File Parsing Order | parser.md |
-| §5.7 Deterministic Output | parser.md |
-| §6 Database Introspection | parser.md |
-| §6.1 Source Modes | parser.md |
-| §6.2 Introspector Interface | parser.md |
-| §6.3 Dialect Introspection Capabilities | parser.md |
-| §6.4 Filtering | parser.md |
+| §5 SQL Parsing | parser/dialects.md |
+| §5.1 Schema Model | parser/dialects.md |
+| §5.2 Dialect Parsers | parser/dialects.md |
+| §5.3 Relationship Detection | parser/schema.md |
+| §5.4 Soft Delete Column Detection | parser/schema.md |
+| §5.5 Schema Qualification & Table Naming | parser/schema.md |
+| §5.6 Multi-File Parsing Order | parser/schema.md |
+| §5.7 Deterministic Output | parser/schema.md |
+| §6 Database Introspection | parser/introspect.md |
+| §6.1 Source Modes | parser/introspect.md |
+| §6.2 Introspector Interface | parser/introspect.md |
+| §6.3 Dialect Introspection Capabilities | parser/introspect.md |
+| §6.4 Filtering | parser/introspect.md |
 | §7 Type System | cli/gotype.md |
 | §7.1 Type Resolution Chain | cli/gotype.md |
 | §7.2 Built-In Type Mappings | cli/gotype.md |
@@ -243,13 +245,13 @@ another file also cites is still owned once.
 | §15.2 Generated Sorter Helpers | cli/gen.md |
 | §15.3 Usage in GetMany | client.md |
 | §16 Views | cli/gen.md |
-| §16.1 Annotation Files (File-Sourced Views) | parser.md |
-| §16.2 Introspected Views (DB-Sourced Views) | parser.md |
+| §16.1 Annotation Files (File-Sourced Views) | parser/schema.md |
+| §16.2 Introspected Views (DB-Sourced Views) | parser/introspect.md |
 | §16.3 Column Type Resolution | cli/gen.md |
 | §16.4 Generated Artifacts (Views vs Tables) | cli/gen.md |
 | §16.5 Materialized Views (PostgreSQL) | client.md |
 | §17 Soft Delete | client.md |
-| §17.1 Detection | parser.md |
+| §17.1 Detection | parser/schema.md |
 | §17.2 Column Types | cli/gen.md |
 | §17.3 Generated Behavior | client.md |
 | §17.4 Unique Constraint Consideration | informative |

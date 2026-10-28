@@ -51,6 +51,24 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | soft-delete.missing-key | `SoftDelete` on a key that does not exist returns `nil` (idempotent) | `example: sqlite: TestSoftDeleteAndRestore_MissingKey_ReturnNilNil_SQLite/SoftDelete` | all | |
 | restore.missing-key | `Restore` on a key that does not exist returns `nil` (idempotent): restoring a non-existent row is a no-op | `example: sqlite: TestSoftDeleteAndRestore_MissingKey_ReturnNilNil_SQLite/Restore` | all | |
 
+## §16.5.1 Dialect Scope
+<!-- prd: 16.5.1 sha256: 4231f90c985c79ec -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| matview.dialect.non-postgres-file-error | Under `input.dialect: mysql` or `sqlite` a `CREATE MATERIALIZED VIEW` annotation file is a hard parse error naming the dialect | `unit: parser/mysql: TestParseViewSQL_MaterializedRejected`; `unit: parser/sqlite: TestParseViewSQL_MaterializedRejected` | mysql, sqlite | |
+
+## §16.5.2 Discovery
+<!-- prd: 16.5.2 sha256: e974c9d83d0898b2 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| matview.discovery.pk-choice | Of a materialized view's qualifying unique indexes, the one with the fewest columns gives its primary key, ties broken by index name ascending, whatever order the indexes come in | `unit: parser/introspect: TestChooseMatviewPK` | postgres | |
+| matview.file.or-replace-error | `CREATE OR REPLACE MATERIALIZED VIEW` in an annotation file is a parse error | `unit: parser/postgres: TestParseViewSQL_OrReplaceMaterializedRejected` | postgres | |
+| matview.file.pk-concurrently-refreshable | An annotation-file materialized view with `@pk` has those columns as its non-nullable primary key and is concurrently refreshable; without `@pk` it has no primary key and is not concurrently refreshable | `unit: parser: TestBuildView_Materialized` | postgres | |
+| matview.invariant.regular-never-concurrent | A regular (non-materialized) view is never concurrently refreshable, even with `@pk` | `unit: parser: TestBuildView_RegularViewNeverConcurrentlyRefreshable` | all | |
+| matview.overlay.pk-replaces-discovered | An overlay `@pk` on an introspected materialized view replaces its discovered primary key (the discovered columns stop being PK) and makes it concurrently refreshable | `unit: parser: TestMergeViewAnnotations_MatviewPKOverride` | postgres | |
+
 ## §17.3 Generated Behavior
 <!-- prd: 17.3 sha256: dce1144bfbcb5b6f -->
 
