@@ -776,7 +776,7 @@ Rows of the `naming` matrix are the rows of the §8.5 tables: the acronym exampl
 | gen.sorter.tables-only | Sorters are generated for tables only; views and materialized views get none, and their `GetMany` takes `sql.Sort` directly | | all | |
 
 ## §16 Views
-<!-- prd: 16 sha256: 82b05f7439a27379 -->
+<!-- prd: 16 sha256: 171313b688234ca3 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
