@@ -839,7 +839,7 @@ func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
 	switch stmt.RenameType { //nolint:exhaustive // only renames of what the model or the namespace holds are relevant
 	case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
 		if stmt.Relation != nil {
-			p.moveSkipped(p.relationKey(stmt.Relation), cmp.Or(stmt.Relation.Schemaname, p.defaultSchema)+"."+stmt.Newname)
+			return p.moveSkippedRelation(stmt.Relation, cmp.Or(stmt.Relation.Schemaname, p.defaultSchema), stmt.Newname)
 		}
 	case pg_query.ObjectType_OBJECT_TABLE:
 		if stmt.Relation == nil {
@@ -847,6 +847,9 @@ func (p *Parser) parseRename(stmt *pg_query.RenameStmt) error {
 		}
 		table, err := p.lookupTable(stmt.Relation)
 		if err != nil {
+			if p.skippedRelation(stmt.Relation) {
+				return p.moveSkippedRelation(stmt.Relation, cmp.Or(stmt.Relation.Schemaname, p.defaultSchema), stmt.Newname)
+			}
 			if stmt.MissingOk {
 				return nil
 			}
@@ -895,6 +898,9 @@ func (p *Parser) renameColumn(stmt *pg_query.RenameStmt) error {
 	}
 	table, err := p.lookupTable(stmt.Relation)
 	if err != nil {
+		if p.skippedRelation(stmt.Relation) {
+			return nil
+		}
 		if stmt.MissingOk {
 			return nil
 		}
@@ -955,6 +961,9 @@ func (p *Parser) renameTableConstraint(stmt *pg_query.RenameStmt) error {
 	}
 	table, err := p.lookupTable(stmt.Relation)
 	if err != nil {
+		if p.skippedRelation(stmt.Relation) {
+			return nil
+		}
 		if stmt.MissingOk {
 			return nil
 		}
@@ -1007,21 +1016,23 @@ func (p *Parser) renameIndex(rv *pg_query.RangeVar, newName string) {
 
 // parseAlterObjectSchema applies ALTER TABLE … SET SCHEMA, which pg_query
 // parses as an AlterObjectSchemaStmt, not an AlterTableStmt. A moved table is
-// rekeyed and a moved view or materialized view keeps its name reserved;
-// moving any other object is ignored.
+// rekeyed and a moved view, materialized view or partition keeps its name
+// reserved; moving any other object is ignored.
 func (p *Parser) parseAlterObjectSchema(stmt *pg_query.AlterObjectSchemaStmt) error {
 	if stmt.Relation == nil {
 		return nil
 	}
 	if stmt.ObjectType == pg_query.ObjectType_OBJECT_VIEW || stmt.ObjectType == pg_query.ObjectType_OBJECT_MATVIEW {
-		p.moveSkipped(p.relationKey(stmt.Relation), stmt.Newschema+"."+stmt.Relation.Relname)
-		return nil
+		return p.moveSkippedRelation(stmt.Relation, stmt.Newschema, stmt.Relation.Relname)
 	}
 	if stmt.ObjectType != pg_query.ObjectType_OBJECT_TABLE {
 		return nil
 	}
 	table, err := p.lookupTable(stmt.Relation)
 	if err != nil {
+		if p.skippedRelation(stmt.Relation) {
+			return p.moveSkippedRelation(stmt.Relation, stmt.Newschema, stmt.Relation.Relname)
+		}
 		if stmt.MissingOk {
 			return nil
 		}
@@ -1201,8 +1212,43 @@ func (p *Parser) skippedTable(names []string) bool {
 	return p.skipped[schema+"."+name]
 }
 
-// moveSkipped rekeys a renamed or moved view or materialized view, so a later
-// CREATE INDEX finds it under its new name.
+// skippedRelation reports whether rv names a relation the parser skips: a
+// plain view, a materialized view or a partition. A rename or move of one
+// rekeys it; every other ALTER action on it is skipped.
+func (p *Parser) skippedRelation(rv *pg_query.RangeVar) bool {
+	_, skipped := p.skipped[p.relationKey(rv)]
+	return skipped
+}
+
+// moveSkippedRelation follows RENAME TO or SET SCHEMA on a skipped relation,
+// so a later statement finds it under its new name. A name a relation in the
+// schema already has is refused, as PostgreSQL refuses it. A relation the
+// parser does not skip is left alone.
+func (p *Parser) moveSkippedRelation(rv *pg_query.RangeVar, newSchema, newName string) error {
+	schema := cmp.Or(rv.Schemaname, p.defaultSchema)
+	newKey := newSchema + "." + newName
+	if !p.skippedRelation(rv) || newKey == schema+"."+rv.Relname {
+		return nil
+	}
+	_, isTable := p.tableIndex[newKey]
+	if _, isSkipped := p.skipped[newKey]; isTable || isSkipped {
+		return fmt.Errorf("relation %s already exists", newKey)
+	}
+	p.moveSkipped(p.relationKey(rv), newKey)
+	for i := range p.schema.Partitions {
+		part := &p.schema.Partitions[i]
+		if part.Schema == schema && part.Name == rv.Relname {
+			part.Schema, part.Name = newSchema, newName
+		}
+		if part.ParentSchema == schema && part.ParentName == rv.Relname {
+			part.ParentSchema, part.ParentName = newSchema, newName
+		}
+	}
+	return nil
+}
+
+// moveSkipped rekeys a renamed or moved skipped relation, so a later CREATE
+// INDEX finds it under its new name.
 func (p *Parser) moveSkipped(oldKey, newKey string) {
 	if indexable, ok := p.skipped[oldKey]; ok {
 		delete(p.skipped, oldKey)
