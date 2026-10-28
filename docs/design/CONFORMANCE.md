@@ -78,7 +78,7 @@ generated client:
 | Registry file | Module / packages | PRD |
 |---|---|---|
 | `runtime.md` | `sql/`, `comparator/`, `omittable/`, `database/` and drivers, `cache/`, `tenancy/`, `event/`, `hook/`, `types/`, `manifest/` | §10, §11, §14, §15, §18, §19, §21, §22, §24, §27, §28, §29 (runtime), App. A, App. B |
-| `parser.md` | `parser/` and its dialect and `introspect` packages | §5, §6 |
+| `parser/` | split by package (§7 step 6): `dialects.md` (`postgres`, `mysql`, `sqlite`), `schema.md` (`parser`), `introspect.md` (`introspect`) | §5, §6, §16.1, §16.2, §17.1 |
 | `cli/` | `cmd/sqlgen/`, split by slice (§7 step 6): `config.md` (`config`), `gen.md` (`gen`), `gotype.md` (`gotype`), `api.md` and `api-schema.md` (§26, rows over `gen`), `commands.md` (`cmd/sqlgen`, `cli`, `wrapper`), `manifest.md` (`manifest`), `mcp.md` (`mcp`) | §4, §7, §8, §12, §13, §16, §23, §26, §30, §31, §32 |
 | `client.md` | The generated client, through the §4 suite | §9, §17, §20, §25, §29 (generated behavior) |
 
@@ -132,16 +132,16 @@ Each test home stays where it is best placed:
 | Hooks | hook type × lifecycle point | {fires, order, skip, panic recovery} | unit | §21 |
 | Omittable | `Value` states | {set, unset, null} × JSON round trip | unit | §10 |
 
-### 3.3 Parser (`parser.md`)
+### 3.3 Parser (`parser/`)
 
 | Matrix | Rows | Columns | Test home | PRD |
 |---|---|---|---|---|
-| Schema model | each §5.1 element (tables, columns, constraints, enums, sets, composite and domain types, comments, multi-schema) | dialect × source (`files`, `database`, `both`) | unit (files) + integration (database, both) | §5.1, §6.1, §6.3 |
-| Relationship detection | FK shapes (single, composite, self, junction, redundant) | dialect × source | unit + integration | §5.3 |
-| Soft-delete detection | column name × type | dialect | unit | §5.4 |
-| Qualification and ordering | qualified / unqualified names, multi-file order, default schema | dialect | unit | §5.5, §5.6 |
-| Determinism | each parse entry point | shuffled input order → identical model | unit | §5.7 |
-| Introspection filtering | include / exclude rules | dialect | integration | §6.4 |
+| Schema model | each §5.1 element and attribute (23) | dialect × source (`files`, `database`); `both` is the merge rows, since it seeds the file parser with the introspected schema | unit (files) + integration (database) | §5.1, §6.1, §6.3 |
+| Relationship detection | §5.3 FK shapes (22) | dialect, plus `source-parity`: detection is one function over the model | unit + integration | §5.3 |
+| Soft-delete detection | the §4.6 default columns | `detected`, `outranks-lower`: detection matches names only | unit | §5.4 |
+| Qualification | the §5.5 table's cases and its FK and view rules | dialect | unit | §5.5 |
+| Determinism | each sorted element | shuffled input order → sorted model | unit | §5.7 |
+| Introspection filtering | `schemas`, `exclude_schemas`, `tables` | dialect | integration | §6.4 |
 
 `INTROSPECTION.md` §6.5's parity matrix already follows this pattern for the `files` vs
 `database` axis: every cell is a passing test or a "—" with a reason. The parser registry absorbs
@@ -1289,6 +1289,84 @@ database versions it ran against.
      another's rule), assign the cell in the brief; parallel writers duplicate tests, so give each
      the others' file list; a mapping script must take only test references from an agent's cell,
      never its notes; and a fixture's backup directory must be unique per agent.
+
+   **Eighth slice, parser (§5, §6, §16.1, §16.2, §17.1), recorded 2026-10-28:**
+   - **Scope.** Every section the ownership map gave `parser.md`, its six declared matrices, the
+     450 top-level tests in `parser`, `parser/postgres`, `parser/mysql`, `parser/sqlite` and
+     `parser/introspect`, and the 17 cli tests `commands.md` could not claim. Phase 32's §5.3
+     detection landed in 32.2, so no §5.3 row waits on planned work.
+   - **Split first.** About 900 rows were estimated, so `parser.md` became a directory of three
+     per-package files: `parser/dialects.md` (`postgres`, `mysql`, `sqlite`; §5, §5.1, §5.2 and
+     `schema-model`), `parser/schema.md` (`parser`; §5.3–§5.7, §16.1, §17.1 and the
+     relationship, soft-delete, qualification and determinism matrices) and
+     `parser/introspect.md` (`introspect`; §6–§6.4, §16.2 and `introspection-filtering`). Each
+     carries its own packages' line, so each keeps its own unclaimed list.
+   - **Matrix shape, ruled before seeding.** `both` seeds the file parser with the introspected
+     schema and runs the same `ParseFiles`, and detection runs once on the final model, so the
+     source columns collapse where the code makes them identical. `schema-model`: 23 rows from
+     the §5.1 table's elements and attributes × dialect × {files, database} (138 cells, 26 `n/a`
+     from §5.1's No cells and §5.5). `relationship-detection`: 22 FK shapes from §5.3's rules ×
+     {postgres, mysql, sqlite, source-parity}. `soft-delete-detection`: the five §4.6 default
+     columns × {detected, outranks-lower}, since detection matches names only.
+     `determinism`: the seven sorted elements × shuffled-input, since one `Schema.Sort` serves
+     every source. `qualification` and `introspection-filtering` kept their declared shape.
+   - **Rows seeded: 1003** (423 in `dialects.md`, 353 in `schema.md`, 227 in `introspect.md`),
+     plus 11 new rows in other files for parser tests that back their sections, in
+     `cli/gen.md` (§16, §13.7) and `client.md` (new §16.5.1 and §16.5.2 anchors) and refs added
+     to 5 rows in `cli/gen.md` and `cli/gotype.md`. Seven mapping agents drafted about 990 rows
+     in about 15 minutes; 76 tests they handed to another agent's section were left orphaned and
+     a resolver placed them (31 refs on existing rows, 19 new rows, 26 unclaimed). 58 tests are
+     unclaimed with reasons.
+   - **Claim check before tests.** Six read-only checkers over about 840 tested rows dropped 63
+     refs and added 38 (1 row in 12, down from 1 in 4): presence-only constraint and flag tests,
+     a source-parity helper that checks its want edges only as a subset and so cannot show an
+     edge is absent, sort fixtures where schema-first and name-first orders agree, soft-delete
+     fixtures whose column order equalled the list order, a MATCH row never parsing `PARTIAL`,
+     `Match` oracles cited for message text, and a SQLite stored-DDL row resting on parity
+     whose two sides share the file parser. Six rows were split and four restated.
+   - **Gaps.** 176 untested rows went to five writers with assigned files and helper prefixes
+     (`pgw`, `msw`, `rdw`, `qvw`, `inw`); 173 were filled, 31 new test files, all mutation-checked
+     (a final pass ran the 61 mutations writers had deferred while I edited the producing files;
+     one test that passed for the wrong reason was tightened). 2 rows stay untested: the Go type
+     of a column beside a same-named domain (`gotype`'s job) and the MySQL/SQLite view files never
+     reaching the DDL parser (a cli routing test). One row was removed by ruling (below).
+   - **Defects: 3 ruled**, each with a fail-first test:
+     1. PostgreSQL `RENAME TO` / `RENAME COLUMN` / `RENAME CONSTRAINT` (and, found in review,
+        `SET SCHEMA`) on a skipped view, materialized view or partition failed with "table not
+        found"; they are skipped and rekey the relation. The review found the first fix let a
+        partition be renamed onto its parent, after which `DROP TABLE` overflowed the stack; a
+        name already in use is now refused.
+     2. MySQL `ALTER COLUMN … SET DEFAULT` / `DROP DEFAULT` were silently ignored; applied.
+     3. §16.1's unrecognized annotation directive was ignored silently; it now warns, naming the
+        directive and the file.
+   - **PRD amendments: 6**, all ruled: §5.2 lists MySQL `ALTER COLUMN SET/DROP DEFAULT` (and
+     Appendix B); §5.3 limits `REFERENCES t` with no column list to PostgreSQL and SQLite; §5.7
+     says columns keep their declared order; §6.1 scopes "the database's view stands" to
+     PostgreSQL and MySQL, since SQLite re-reads a re-created view; §6.1 states the catalog-view
+     type check for PostgreSQL only, as no other dialect can reach it; §16.1 limits
+     `CREATE OR REPLACE VIEW` to PostgreSQL and MySQL. Each landed with its rows' tests. **PRD
+     gaps: 58** new, all open. Four adjacent findings went to `backlog.md`.
+   - **Review.** Two sqlgen-reviewer passes: the first found the stack overflow; the second found
+     a leaked PostgreSQL 18 container (cleanup terminated it with the cancelled `t.Context()`),
+     view renames bypassing the collision check, an untested parent-rekey branch and an overlay
+     test that keyed the overlay itself, all fixed.
+   - **Completion sweep.** With the three parser files and `commands.md` set to `complete`,
+     `req-check` passes: no orphans, empty cells or uncovered sections. All four are flipped.
+   - **Report.** `make conformance` at `aaa5cf00`: 5098 rows, 4965 pass, 0 fail, 0 skip, 0 not run,
+     133 untested, 2 of them in the parser files. The first run failed one row: a `prealloc`
+     lint fix made the shape-parity helper return an empty slice where its no-edge case expects
+     `nil`, which `-short` had hidden; fixed in its own commit.
+   - **Effort.** Not timed. Mapping took about 15 minutes on seven agents; then the orphan
+     resolver, six claim checkers, four rounds of rulings (11 questions), five writers, a mutation
+     pass, two review passes with their fix-ups, and the gates.
+   - **For the next slice (gen.md):** a writer's mutation backup restored after I had edited
+     the same file wiped my edit, so freeze the files a writer may mutate while anyone else edits
+     them, or have writers mutate in one shell command (mutate, test, restore); a `prealloc`
+     lint fix turns a `nil` slice into an empty one, which `cmp.Diff` tells apart, and `-short`
+     hides the integration tests that catch it, so run them after lint fixes; a PRD edit under a
+     chapter anchor (`§16`) trips that anchor in another file, so rehash it in the PRD commit;
+     and a handoff to another agent's section is a claim that it will be cited, so resolve
+     handoffs before the completion sweep.
 
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read

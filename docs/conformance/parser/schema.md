@@ -1,6 +1,6 @@
 # Parser Requirements: Schema
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: parser -->
 <!-- matrix: relationship-detection rows=fk-shape cols=postgres,mysql,sqlite,source-parity -->
 <!-- matrix: soft-delete-detection rows=column cols=detected,outranks-lower -->

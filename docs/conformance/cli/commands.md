@@ -1,6 +1,6 @@
 # CLI Requirements: Commands
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: cmd/sqlgen cmd/sqlgen/cli cmd/sqlgen/wrapper -->
 <!-- matrix: commands rows=command cols=success,config-error,schema-error,generation-error -->
 

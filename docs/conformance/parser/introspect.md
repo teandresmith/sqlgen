@@ -1,6 +1,6 @@
 # Parser Requirements: Introspection
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: parser/introspect -->
 <!-- matrix: introspection-filtering rows=rule cols=postgres,mysql,sqlite -->
 

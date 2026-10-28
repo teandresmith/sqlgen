@@ -1,6 +1,6 @@
 # Parser Requirements: Dialect Parsers
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: parser/postgres parser/mysql parser/sqlite -->
 <!-- matrix: schema-model rows=element cols=postgres-files,postgres-database,mysql-files,mysql-database,sqlite-files,sqlite-database -->
 
