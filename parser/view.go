@@ -20,6 +20,9 @@ type ViewAnnotations struct {
 	PKColumns       []string
 	TypeOverrides   map[string]ViewTypeAnnotation
 	NullableColumns []string
+	// Unrecognized lists the directives the parser ignored, in file order,
+	// for the caller to warn about.
+	Unrecognized []string
 }
 
 // ViewSelectColumn represents a column extracted from a view's SELECT clause
@@ -172,16 +175,24 @@ func ParseViewAnnotations(content string) (*ViewAnnotations, error) {
 			}
 
 		default:
-			if colName, ok := strings.CutPrefix(directive, "@type"); ok {
-				if err := parseTypeDirective(annotations, strings.TrimSpace(colName), value); err != nil {
-					return nil, err
-				}
+			if err := parseOtherDirective(annotations, directive, value); err != nil {
+				return nil, err
 			}
-			// Unrecognized directives are ignored (per PRD).
 		}
 	}
 
 	return annotations, nil
+}
+
+// parseOtherDirective handles a directive that is neither @pk nor @nullable:
+// `@type <col>` is a type override, and any other directive is recorded as
+// unrecognized.
+func parseOtherDirective(annotations *ViewAnnotations, directive, value string) error {
+	if colName, ok := strings.CutPrefix(directive, "@type"); ok && (colName == "" || colName[0] == ' ' || colName[0] == '\t') {
+		return parseTypeDirective(annotations, strings.TrimSpace(colName), value)
+	}
+	annotations.Unrecognized = append(annotations.Unrecognized, directive)
+	return nil
 }
 
 // parseTypeDirective handles a single @type directive.

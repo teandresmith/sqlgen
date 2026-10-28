@@ -334,6 +334,9 @@ func parseViewFiles(dialect config.Dialect, defaultSchema string, viewPaths []st
 		if err != nil {
 			return nil, nil, fmt.Errorf("parsing annotations in %s: %w", file, err)
 		}
+		for _, directive := range annotations.Unrecognized {
+			schema.Warnings = append(schema.Warnings, fmt.Sprintf("%s: unrecognized annotation directive %s ignored", file, directive))
+		}
 
 		parsed, err := parseSQL(data)
 		if qe, ok := errors.AsType[*parser.ViewQueryError](err); ok && inDatabase[viewKey(qe.Schema, qe.Name)] {
