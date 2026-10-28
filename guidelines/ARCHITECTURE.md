@@ -140,6 +140,7 @@ github.com/teandresmith/sqlgen/cmd/sqlgen/       ← Module 3: CLI binary
 │   └── context_view.go                    ← View context builder
 ├── gotype/                                ← SQL-to-Go type mapping (generation-time only)
 │   ├── gotype.go                          ← Core type resolution + ScalarExtraction
+│   ├── literal/                           ← Leaf registry of Go type literals with a fixed import; shared by gotype and config
 │   ├── uuidgen.go                         ← Per-integration UUID generation expressions (PRD §7.4)
 │   ├── uuidstd/                           ← standard library uuid mapping (the default)
 │   ├── uuidgoogle/                        ← github.com/google/uuid mapping
@@ -298,7 +299,7 @@ Steps 1–11 emit into `output.dir`. The GraphQL API layer (step 12) emits into 
 | `cli/` | Command definitions; two pipelines: standard (config → parse → generate) and graphql (config → parse → generate → wrapper merge → gqlgen subprocess); lint AST analysis | Config validation rules, template execution, type resolution |
 | `config/` | YAML loading, validation, defaults, env var resolution (api / cache / manifest / tenancy blocks) | Schema parsing, code generation |
 | `gen/` | Template execution, file writing, context building, module path resolution, API/GraphQL layer orchestration + root-relative graph output-dir resolution | SQL building, type resolution |
-| `gotype/` | SQL-to-Go type mapping, import resolution, zero values, `ScalarExtraction` (resolver-aware guard/unwrap), per-integration UUID generation expressions (`UUIDIntegration`) | Runtime type behavior, which integration a given package selected (that is `gen/uuid_generation.go`, read off the built contexts) |
+| `gotype/` | SQL-to-Go type mapping, import resolution, zero values, `ScalarExtraction` (resolver-aware guard/unwrap), per-integration UUID generation expressions (`UUIDIntegration`); `literal/` holds the known-literal import registry `config` also reads | Runtime type behavior, which integration a given package selected (that is `gen/uuid_generation.go`, read off the built contexts) |
 | `internal/livedb/` | Test support for live-database tests, shared by the CLI suite and (with `TestE2EDatabaseTwin`) the E2E harness: lazy PostgreSQL/MySQL containers, per-test databases, the example setup applier, and the parity exceptions between `files` and `database` output (PRD §6.1). Imported only by `_test.go` files | Anything the `sqlgen` binary links |
 | `internal/reqcheck/`, `internal/cmd/reqcheck/` | Repository tooling behind `make req-check` and `make req-rehash`: parses `docs/PRD.md`, the registry files under `docs/conformance/` and the Go test sources they name (stdlib `go/parser` only), and runs the registry checks of `docs/design/CONFORMANCE.md` §5.3 | Anything the `sqlgen` binary links; running tests (the static check reads test sources, it never executes them) |
 | `manifest/` | Manifest document builder: read-only pass over parsed schema + config + `gen` contexts → `*Document`; per-method canonical SQL captured from runtime `sql/` builders; JSON/markdown emission | Runtime-embedded manifest (the `gen/` `manifest_embed` template) |

@@ -3,6 +3,7 @@ package gen
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -178,8 +179,21 @@ func reservedGeneratedStems(cfg *config.RootConfig) map[string]string {
 	for _, r := range generatedPackageStems {
 		reserved[r.name] = r.owner
 	}
-	for _, file := range []string{clientFileName(cfg), enumsFileName(cfg), typesFileName(cfg)} {
-		if stem := goFileStem(file); stem != "" {
+	if stem := goFileStem(clientFileName(cfg)); stem != "" {
+		reserved[stem] = clientFileName(cfg)
+	}
+	// The enums and types files claim a stem only when they land in
+	// output.dir, where the per-table files are written. Validation keeps them
+	// there, so the skip applies only to a config that was never validated.
+	var outputDir string
+	if cfg != nil {
+		outputDir = cfg.Output.Dir
+	}
+	for _, file := range []string{enumsFileName(cfg), typesFileName(cfg)} {
+		if !sameDir(filepath.Dir(outputFilePath(outputDir, file)), outputDir) {
+			continue
+		}
+		if stem := goFileStem(filepath.Base(file)); stem != "" {
 			reserved[stem] = file
 		}
 	}

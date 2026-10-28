@@ -245,8 +245,13 @@ func TestUpdateTemplate_noStrictUpdates(t *testing.T) {
 	ctx := testUpdateContext_noStrictUpdates()
 	output := executeUpdateTemplate(t, ctx, sql.NewPostgresDialect())
 
-	if strings.Contains(output, "ErrNotFound") {
-		t.Error("output without strict_updates should not contain ErrNotFound")
+	// Never returned. The only mention is the empty-update read-back, which
+	// maps the missing row to a nil entity and a nil error.
+	if strings.Contains(output, "return nil, ErrNotFound") {
+		t.Errorf("output without strict_updates should not return ErrNotFound\n\nfull output:\n%s", output)
+	}
+	if got := strings.Count(output, "ErrNotFound"); got != 1 || !strings.Contains(output, "if errors.Is(err, ErrNotFound) {\n\t\t\t\treturn nil, nil") {
+		t.Errorf("output without strict_updates should mention ErrNotFound once, to map the read-back's missing row to nil (got %d)\n\nfull output:\n%s", got, output)
 	}
 	// Counts the matched rows to gate the affected key, not to fail.
 	if !strings.Contains(output, "matched, err := execResult.RowsAffected()") {

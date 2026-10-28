@@ -55,7 +55,6 @@ tables:
 views:
   product_summary:
     struct_name: ProductSummary
-    sql: ./views/product_summary.sql
     cache:
       enabled: true
       ttl: "15m"

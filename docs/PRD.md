@@ -345,7 +345,6 @@ Controls where the schema is read from.
 | `schema` | `string` | `"*"` | — | PostgreSQL only: the schema that an unqualified table name, view name or `REFERENCES` target resolves to when parsing SQL files. `"*"` resolves to `public`. It does not filter which schemas are parsed or generated; `introspect.schemas` filters introspection. On MySQL/SQLite a value other than `"*"` is ignored with a warning ([4.13](#413-config-validation-rules)). See [5.5](#55-schema-qualification--table-naming). |
 | `paths` | `[]string` | `["."]` | — | SQL file/directory paths to parse (when source is `files` or `both`). Ignored under `source: database`, including the `["."]` default: no file is read. Setting it explicitly there warns ([4.13](#413-config-validation-rules)). |
 | `views` | `[]string` | `[]` | — | Paths to view annotation files or directories containing them. Files here are parsed exclusively as views — not as DDL. See [Section 16.1](#161-annotation-files-file-sourced-views). |
-| `parse_mode` | `string` | `"strict"` | `strict`, `merge` | How duplicate table definitions across files are handled. See [5.6](#56-multi-file-parsing-order). |
 | `connection` | `ConnectionConfig` | — | — | Required when `source` is `database` or `both`. |
 | `introspect` | `IntrospectConfig` | — | — | Schema/table filtering for introspection. Has no effect under `source: files`, and setting it there warns ([4.13](#413-config-validation-rules)). |
 
@@ -409,11 +408,13 @@ Controls where generated code is written. All artifact-specific paths default to
 |-------|------|---------|--------------|-------------|
 | `driver` | `string` | `"pgx"` | `pgx`, `stdlib` | Go database driver imported by generated code. |
 | `dir` | `string` | `"."` | — | Default output directory for all generated artifacts. |
-| `package` | `string` | derived from `dir` | — | Default Go package name. If omitted, derived from the directory name. |
+| `package` | `string` | derived from `dir` | — | Default Go package name. If omitted, derived from the name of the directory `dir` resolves to, so the default `"."` takes the working directory's name. |
 | `layout` | `string` | `"single_file"` | `single_file`, `file_per_table` | File layout strategy for tables. |
-| `enums` | `EnumOutputConfig` | — | — | Override output location for enums. |
-| `types` | `TypeOutputConfig` | — | — | Override output location for composite/domain types. |
+| `enums` | `EnumOutputConfig` | — | — | Override the enums file name. |
+| `types` | `TypeOutputConfig` | — | — | Override the composite/domain types file name. |
 | `client` | `ClientOutputConfig` | — | — | Unified client output settings. |
+
+The enums and types files are part of the models package: generated models name their types unqualified and never import another package for them. So each file must resolve to a path directly in `output.dir`, and its `package`, when set, must equal `output.package`. Anything else is a validation error naming the key ([4.13](#413-config-validation-rules)).
 
 **EnumOutputConfig:**
 
@@ -440,7 +441,7 @@ The unified client is always generated. It is the primary API surface for consum
 
 ### 4.6 GenerationConfig
 
-Global defaults that control how code is generated and how generated code behaves at runtime. **Every field in this section can be overridden per-table** in the `tables.<table>` config (see [4.8](#48-tableconfig-per-table)).
+Global defaults that control how code is generated and how generated code behaves at runtime. **`query_limit`, `batch_size`, `page_size`, `cursor_keys`, `exclude_columns` and `strict_updates` can be overridden per-table** in the `tables.<table>` config, and `uuid_version` through `tables.<table>.primary_key` (see [4.8](#48-tableconfig-per-table)). The other fields are global only; setting one under `tables.<table>` is an unknown key.
 
 Resolution order for any generation field:
 1. Table-level value (if set)
@@ -460,7 +461,7 @@ Resolution order for any generation field:
 | `page_size` | `int` | `100` | Default page size for pagination when none specified. |
 | `cursor_keys` | `[]string` | `["id"]` | Columns used for cursor encoding in keyset pagination. Applied as the default to every table and view unless overridden. When inherited (i.e. not explicitly set on a table/view), missing or nullable columns trigger a fallback instead of an error — see [4.13](#413-config-validation-rules). |
 | `uuid_version` | `string` | `"v4"` | UUID generation strategy for app-generated UUID PKs. `v4` = random, `v7` = time-ordered. |
-| `strict_updates` | `bool` | `true` | When true, `Update` and `Increment` return `ErrNotFound` if the target PK does not exist. When false, they return `nil` (idempotent). See [9.5](#95-edge-case-behaviors). |
+| `strict_updates` | `bool` | `true` | When true, `Update` and `Increment` return `ErrNotFound` if the target PK does not exist. When false, they return `nil` (idempotent), with or without fields to set, and `UpdateWithRelated` on a missing parent returns `nil` and writes nothing nested. See [9.5](#95-edge-case-behaviors). |
 
 #### Schema Detection
 
@@ -492,6 +493,8 @@ The `integer` type supports `0`/`1` soft delete patterns common in legacy schema
 Custom soft delete value mappings — `varchar` columns carrying `"yes"`/`"no"` or `"active"`/`"deleted"` — are out of scope. The supported column types are those listed above, and no other.
 
 **Default `update_columns`:** `[updated_at, updated_datetime, last_modified_at, modified_on]`
+
+The defaults apply only when a key is absent. An explicit empty list is kept: `soft_delete_columns: []` turns soft-delete detection off and `update_columns: []` turns update tracking off. `cursor_keys: []`, global or per table or view, is a validation error ([4.13](#413-config-validation-rules)): a cursor needs a key.
 
 #### Column Exclusion
 
@@ -665,19 +668,19 @@ Each entry in the `tables` map customizes a specific table. Key is the table nam
 |-------|------|-------------|
 | `struct_name` | `string` | Override Go struct name. Defaults to singular PascalCase of table name. |
 | `description` | `string` | Override Go doc comment for the struct. If omitted, the parsed SQL comment (`COMMENT ON TABLE` in PostgreSQL, inline `COMMENT` in MySQL) is used. If no SQL comment exists, no doc comment is generated. |
-| `overrides` | `OverrideConfig` | Table-specific type overrides (same structure as global). |
+| `overrides` | `OverrideConfig` | Table-specific type overrides: `types` only, with the same structure as the global `overrides.types`. `use_pointers` is global; setting it here is a validation error ([4.13](#413-config-validation-rules)). |
 | `primary_key` | `TablePrimaryKeyConfig` | Override PK strategy and/or declare PK columns for this table (`{strategy, uuid_version, columns}`). `columns` is the explicit column-set override used when the schema has no `PRIMARY KEY` clause — see [8.6 PK Column Override](#86-primary-key-strategy). |
 | `exclude_relationships` | `[]string` | Disable auto-detected relationships by name. E.g., `[Company, AssignedTo]`. |
 | `relationships` | `[]TableRelationship` | Explicitly defined relationships. If a manual relationship resolves to the same Go field name as an auto-detected one, the manual definition replaces it — with a non-fatal warning. See [13.4](#134-manual-relationship-configuration). |
 | `cache` | `TableCacheConfig` | Per-table cache overrides (`enabled`, `ttl` — tri-state pointers; unset means inherit global). A per-table `enabled: true` can opt into caching even when global `cache.enabled: false`. See [Section 27](#27-caching). |
 | `events` | `TableEventConfig` | Per-table event override (`enabled`). It only opts a table out: `enabled: true` while global `events.enabled` is off is a validation error. See [Section 28](#28-event-system). |
-| `tenancy` | `TableTenancyConfig` | Per-table tenancy overrides (`enabled`, `column`, `required`, `type` — tri-state pointers; unset means inherit global). Use to opt tables out of tenant scoping or to override the tenant column name for legacy schemas. See [Section 29](#29-tenancy). |
+| `tenancy` | `TableTenancyConfig` | Per-table tenancy overrides (`enabled`, `column`, `required`, `type` — tri-state pointers; unset means inherit global). Use to opt tables out of tenant scoping or to override the tenant column name for legacy schemas. `enabled` only opts a table out: `enabled: true` while global `tenancy.enabled` is off is a validation error. See [Section 29](#29-tenancy). |
 | `api` | `TableAPIConfig` | Per-table API settings. `{enabled: bool, path: string}`. See [26.10](#2610-per-table-api-configuration). |
 | `nested_mutations` | `TableNestedMutationsConfig` | Per-table nested-mutation settings — the optional edge allowlist and its per-edge options. See [Nested mutations per table](#nested-mutations-per-table) below and [9.9](#99-nested-mutations). |
 
 #### Generation Overrides
 
-Any field from `generation` can be set per-table to override the global default. Table-level values take precedence.
+These `generation` fields can be set per-table to override the global default; no other `generation` field can. Table-level values take precedence.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -984,8 +987,7 @@ Each entry in the `views` map defines a read-only view. Key is view identifier.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `struct_name` | `string` | Yes | Go struct name. |
-| `sql` | `string` | Yes | Path to SQL file containing the SELECT statement. |
+| `struct_name` | `string` | No | Override the Go struct name, which otherwise derives from the view name ([8.5](#85-naming-rules)). The view itself comes from `input.views` annotation files ([16.1](#161-annotation-files-file-sourced-views)) or introspection ([16.2](#162-introspected-views-db-sourced-views)), not from this block. |
 | `cache` | `ViewCacheConfig` | No | View cache overrides (`enabled`, `ttl` — tri-state pointers). **Opt-in:** views do NOT inherit global `cache.enabled`; a view is cached only when `view.cache.enabled: true` is set explicitly AND `invalidate_on` is non-empty. See [Section 27](#27-caching). |
 | `invalidate_on` | `[]string` | Conditional | Table names whose mutations invalidate this view's cache. **Required** when `cache.enabled: true` (hard validation error if missing). Table names must resolve to parsed tables that are included in generation (excluded tables are a hard error — no mutation hook fires for them). See [27.11](#2711-view-cache-invalidation). |
 | `cursor_keys` | `[]string` | No | Override `generation.cursor_keys` for this view. When set explicitly, every listed column must exist on this view and be NOT NULL (hard error). When omitted, the global value is applied if all its columns exist on the view and are NOT NULL; otherwise the view's `Connection` method is omitted with a warning. Views have no primary key, so there is no PK fallback. See [4.13](#413-config-validation-rules). |
@@ -1018,7 +1020,7 @@ Per-enum overrides live in the **top-level `enums:` map**, a sibling of `tables:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `struct_name` | `string` | Override the generated Go type name. Defaults to the PascalCased SQL enum name. |
+| `struct_name` | `string` | Override the generated Go type name. Defaults to the singular PascalCase of the SQL enum name, as a table's struct name does ([8.5](#85-naming-rules)). |
 | `description` | `string` | Go doc comment on the generated type. Overrides the SQL `COMMENT ON TYPE` when both are present. |
 
 ```yaml
@@ -1154,7 +1156,6 @@ tables:
 views:
   product_summary:
     struct_name: ProductSummary
-    sql: "./views/product_summary.sql"
     cache:
       enabled: true
       ttl: "15m"
@@ -1184,6 +1185,9 @@ The config is validated immediately after loading, before parsing or generation 
 |------|----------|---------|
 | **Driver/dialect mismatch** | Error | `output.driver: pgx` is only compatible with `input.dialect: postgres`. Using pgx with MySQL or SQLite is a validation error. |
 | **Table-level `cursor_keys` referencing non-existent columns** | Error | When `tables.<name>.cursor_keys` is set explicitly, every listed column must exist on that table. |
+| **An `extras` key or `fields` key that is not an exported Go identifier** | Error | An `extras` key is the generated struct's Go name and a `fields` key the field's Go name ([4.10](#410-extratype-custom-structs)), used as written; one that is not an exported Go identifier is a validation error naming the key. |
+| **An enums or types file outside the models package** | Error | `output.enums.file` / `output.types.file` must resolve directly into `output.dir`, and `output.enums.package` / `output.types.package`, when set, must equal `output.package` ([4.5](#45-outputconfig)). The error names the key. |
+| **An empty `cursor_keys` list** | Error | `generation.cursor_keys`, `tables.<name>.cursor_keys` or `views.<name>.cursor_keys` set to `[]`: a cursor needs at least one key column. Omit the key to inherit the default. |
 | **View-level `cursor_keys` referencing non-existent columns** | Error | When `views.<name>.cursor_keys` is set explicitly, every listed column must exist on that view. |
 | **Explicit `cursor_keys` naming a nullable column** | Error | When `tables.<name>.cursor_keys` or `views.<name>.cursor_keys` is set explicitly, every listed column must be NOT NULL: a NULL key value encodes into a cursor that cannot be decoded back, so no row past it can be paged to. A view column's nullability is the one [16.3](#163-column-type-resolution) resolves. The error names the table or view and the column. |
 | **Inherited `cursor_keys` naming a nullable column** | As a missing column | An inherited key that names a nullable column does not resolve, exactly as a missing one does: a table falls back to its primary key, a table without one and a view omit `Connection` with a warning (rules below). On a view, `@type` or `@pk` on the column makes it NOT NULL ([16.3](#163-column-type-resolution)). |
@@ -1227,6 +1231,7 @@ The config is validated immediately after loading, before parsing or generation 
 | **A `discriminator.value` the read paths cannot compare with its column** | Error *(resolution-level)* | A value of the wrong kind for a basic or enum column, a PostgreSQL `json` / `jsonb` column, or a SQLite column bound to `[]byte` or `types.JSON`. Each fails, or silently matches the wrong rows, on the edge's first read ([13.4.1](#1341-discriminator--the-structured-form-of-a-polymorphic-edge) **Validation**). The column's resolved Go binding decides it, so the rule runs after type resolution. The error names the relationship, the column, the value and the reason. |
 | **`sort` on an O2O relationship, or a malformed `sort` entry** | Error | An O2O edge is loaded by a `LEFT JOIN` in the parent query ([13.2](#132-loading-strategy)) and has no loader query of its own, so a static `sort` there would be ignored — the accept-and-drop shape. On O2M and M2M, every entry needs a `column`, and `direction` is `asc` or `desc` (either case); an empty column or an unknown direction would otherwise surface only as an SQL error on every load. The error names the relationship and the entry. |
 | **A `sort` column is not a column on the related table** | Error *(schema-level)* | The loader hands the static sort to the related table's query, so an unknown column would fail every relationship load at runtime. The error names the relationship, the column, and the related table. The check reads the parsed tables only, as the `discriminator.column` row's does: a target absent from them is left to relationship resolution, and a view target's sort column is not checked here — a bad one fails as an SQL error on the edge's first load. |
+| **A relationship missing `table`** | Error | [4.8](#48-tableconfig-per-table) marks `table` required: it names the related table. The error names the relationship and the key, and is reported alongside a missing `name` or `type`. |
 | **A relationship missing `name`** | Error | [4.8](#48-tableconfig-per-table) marks `name` required: it is the relationship's Go field on the entity struct. Without it an `o2o` edge panics the generator, and an `o2m` or `m2m` edge emits an entity-struct field with no name, so the generated package does not parse. The error names the relationship and the key, and is reported alongside a missing or invalid `type`. |
 | **A relationship missing the link key its type requires** | Error | [4.8](#48-tableconfig-per-table) marks `fk` required on `o2o` and `o2m`, and `junction` on `m2m`: each names what creates the link. Without `fk` an `o2m` edge generates a filter field on an empty column name and the generated package does not parse, and an `o2o` edge generates a `LEFT JOIN` on an empty identifier that fails on its first load; without `junction` an `m2m` edge generates a package that does not compile. The error names the relationship and the key. An entry whose `type` is missing or invalid reports the type error instead of a link-key error. |
 | **A relationship's `fk` is not a column where its type puts it** | Error *(schema-level)* | Every `fk` column of an `o2m` edge must be a column on the related table; the `fk` columns of an `o2o` edge must all be on this table (belongs-to) or all on the related table (has-one), since [13.1](#131-relationship-types) derives which one from where it is declared ([4.8](#48-tableconfig-per-table)). A column on neither side would otherwise be read as belongs-to: an `o2m` edge then fails in the Go compile of the generated package, and an `o2o` edge on its first load. The error names the relationship, the column, and the table or tables it was looked up on. `m2m` is not checked, since its link columns are the junction's own fields. The check reads the parsed tables only, as the `sort` row's does: a target absent from them, a view target included, is left to relationship resolution. |
@@ -1253,6 +1258,8 @@ The config is validated immediately after loading, before parsing or generation 
 | **`manifest.breadcrumbs.*: true` with `manifest.enabled: false`** | Error | Breadcrumbs only make sense when there is a manifest to point at. |
 | **`manifest.embed_in_client: true` with `manifest.enabled: false`** | Error | The runtime methods only make sense when a manifest is being emitted to embed. |
 | **`tables.<name>.events.enabled: true` with `events.enabled` off** | Error | A per-table `events.enabled` only opts a table out (§28.8); event hooks are generated only under the global flag. |
+| **`tables.<name>.tenancy.enabled: true` or `views.<name>.tenancy.enabled: true` with `tenancy.enabled` off** | Error | A per-entity `tenancy.enabled` only opts an entity out ([29.2.2](#2922-per-table-override)); no tenancy codegen runs without the global switch, so the opt-in would scope nothing. The error names the entity's key. |
+| **`tables.<name>.overrides.use_pointers` is set** | Error | The pointer policy is package-wide ([4.7](#47-overrideconfig)); a table's `overrides` block takes `types` only. The error names the key and points at the global `overrides.use_pointers`. |
 | **`manifest.mcp.emit_project_config: true` with `manifest.enabled: false`** | Error | The MCP registration entry points at the emitted manifest; without one there is nothing to serve. See [31.2](#312-configuration). |
 | **`manifest.mcp.project_configs` entry absolute or escaping the module root** | Error | Every target must be a module-root-relative path; absolute paths, empty entries, and any `..` segment are rejected. Enforced regardless of the enabled state (the opt-out removal path walks the same targets). See [31.2](#312-configuration). |
 | **`column_map.<col>.name` is not a valid exported Go identifier** | Error | The override becomes a generated struct field, so it must be a legal Go identifier starting with an upper-case letter. A PascalCase keyword (`Type`, `Map`) is accepted. See [8.5](#85-naming-rules). |
@@ -2287,7 +2294,7 @@ This catches template regressions without running the full generation pipeline.
 - Enum/composite/domain type parsing (PostgreSQL)
 - Relationship detection: O2O, O2M, M2M (junction table detection with composite PK)
 - Self-referential and circular FK handling
-- Multi-file parsing: strict mode (duplicate = error), merge mode (sequential apply, destructive DDL)
+- Multi-file parsing: sequential apply, a duplicate definition is an error, destructive DDL
 - Migration file filtering: `*.down.sql`/`*_down.sql` skipped, `*.up.sql`/`*_up.sql` included
 - Edge cases: reserved word column names, quoted identifiers, empty tables, tables with no PK
 
@@ -13654,7 +13661,6 @@ tables:
 views:
   product_summary:
     struct_name: ProductSummary
-    sql: "./views/product_summary.sql"
     cache:
       enabled: true
       ttl: "15m"
@@ -14185,7 +14191,6 @@ Config specifies which tables invalidate which views:
 views:
   product_summary:
     struct_name: ProductSummary
-    sql: "./views/product_summary.sql"
     cache:
       enabled: true
       ttl: "15m"
@@ -14980,7 +14985,7 @@ tables:
 
 | Field | Type | Description |
 |---|---|---|
-| `enabled` | `*bool` | Per-table opt-in/out. Overrides global. A table with `enabled: false` has no tenant filter regardless of whether the column exists. |
+| `enabled` | `*bool` | Per-table opt-out. A table with `enabled: false` has no tenant filter regardless of whether the column exists. `enabled: true` forces the table tenanted under the global switch (detection rule 5); while global `tenancy.enabled` is off it is a validation error ([4.13](#413-config-validation-rules)), since no tenancy codegen runs. |
 | `column` | `*string` | Per-table column name override. Useful for legacy schemas that predate a standardized column name. |
 | `required` | `*bool` | Per-table override of the fail-closed rule. |
 | `type` | `*TypeOverride` | Per-table type override. Rarely needed. |

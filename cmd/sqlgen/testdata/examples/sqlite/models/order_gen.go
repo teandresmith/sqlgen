@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"slices"
@@ -690,6 +691,7 @@ func (c *orderClient) multiInsertAndResolveIDs(ctx context.Context, conn databas
 // Update partially updates a order by primary key and returns the updated entity.
 // Only fields where IsSet() is true are included in the SET clause. If no fields are
 // set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns nil and no error if the primary key does not exist (strict_updates is disabled).
 func (c *orderClient) Update(ctx context.Context, id int64, input *UpdateOrderInput, opts ...func(*CallOptions[OrderFieldOptions])) (*Order, error) {
 	// Nil is a caller error, distinct from an empty-but-non-nil
 	// input — that one is the documented no-op returning the entity unchanged.
@@ -729,11 +731,19 @@ func (c *orderClient) Update(ctx context.Context, id int64, input *UpdateOrderIn
 				return nil, nil
 			}
 
-			return c.Get(ctx, id, func(o *CallOptions[OrderFieldOptions]) {
+			current, err := c.Get(ctx, id, func(o *CallOptions[OrderFieldOptions]) {
 				*o = options
 				o.SkipHooks = true
 				o.LockMode = sql.LockNone
 			})
+			// Without strict updates a key that matches no row is not an
+			// error: there is no current entity, so Update returns no entity
+			// and a nil error, exactly as it does after a write that matched
+			// nothing.
+			if errors.Is(err, ErrNotFound) {
+				return nil, nil
+			}
+			return current, err
 		}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
@@ -753,6 +763,11 @@ func (c *orderClient) Update(ctx context.Context, id int64, input *UpdateOrderIn
 		// key, so no cache entry is invalidated and no event is published.
 		if matched > 0 {
 			m.AffectedPKs = []any{id}
+		}
+		// Without strict updates that is not an error either: there is no
+		// row to read back, so Update returns no entity and a nil error.
+		if matched == 0 {
+			return nil, nil
 		}
 
 		// Empty FieldOptions — caller doesn't need the result

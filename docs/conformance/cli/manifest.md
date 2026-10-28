@@ -1,6 +1,6 @@
 # CLI Requirements: Manifest
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: cmd/sqlgen/manifest -->
 <!-- matrix: manifest-artifacts rows=artifact cols=emitted,gated,removed-when-disabled,ownership,deterministic -->
 

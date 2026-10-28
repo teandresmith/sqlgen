@@ -1,6 +1,6 @@
 # CLI Requirements: API Generation — REST, HTTP Headers and gRPC
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 
 REST (§26.8), per-call options via HTTP headers (§26.11) and gRPC (§26.13). The code and tests live in `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. REST and gRPC are not generated yet (REST is deferred and gRPC is future work), so their rows record the PRD's promises as untested planned work, not defects.
 

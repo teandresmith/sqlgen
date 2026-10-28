@@ -54,7 +54,6 @@ func TestValidateViewAPIOperations_MutationRejected(t *testing.T) {
 			tt.mutate(ops)
 			cfg := viewAPIConfig(config.ViewConfig{
 				StructName: "ProductSummary",
-				SQL:        "./views/product_summary.sql",
 				API:        &config.ViewAPIConfig{Operations: ops},
 			})
 
@@ -96,7 +95,6 @@ func TestValidateViewAPIOperations_ReadOpsAccepted(t *testing.T) {
 			tt.mutate(ops)
 			cfg := viewAPIConfig(config.ViewConfig{
 				StructName: "ProductSummary",
-				SQL:        "./views/product_summary.sql",
 				API:        &config.ViewAPIConfig{Operations: ops},
 			})
 			if _, err := config.ValidatePreParse(cfg); err != nil {
@@ -124,7 +122,6 @@ func TestValidateViewAPIOperations_ClientOnlyRejected(t *testing.T) {
 			tt.mutate(ops)
 			cfg := viewAPIConfig(config.ViewConfig{
 				StructName: "ProductSummary",
-				SQL:        "./views/product_summary.sql",
 				API:        &config.ViewAPIConfig{Operations: ops},
 			})
 			_, err := config.ValidatePreParse(cfg)
@@ -146,7 +143,6 @@ func TestValidateViewAPIOperations_ClientOnlyRejected(t *testing.T) {
 func TestValidateViewAPIOperations_RejectedWithoutTopLevelAPIBlock(t *testing.T) {
 	cfg := viewAPIConfig(config.ViewConfig{
 		StructName: "ProductSummary",
-		SQL:        "./views/product_summary.sql",
 		API: &config.ViewAPIConfig{
 			Operations: &config.Operations{Create: new(true)},
 		},
@@ -167,7 +163,6 @@ func TestValidateViewAPIOperations_RejectedWithoutTopLevelAPIBlock(t *testing.T)
 func TestValidateViewAPIOperations_PresetValidated(t *testing.T) {
 	cfg := viewAPIConfig(config.ViewConfig{
 		StructName: "ProductSummary",
-		SQL:        "./views/product_summary.sql",
 		API:        &config.ViewAPIConfig{Operations: &config.Operations{Preset: "write_only"}},
 	})
 	_, err := config.ValidatePreParse(cfg)
@@ -177,7 +172,6 @@ func TestValidateViewAPIOperations_PresetValidated(t *testing.T) {
 
 	cfg = viewAPIConfig(config.ViewConfig{
 		StructName: "ProductSummary",
-		SQL:        "./views/product_summary.sql",
 		API:        &config.ViewAPIConfig{Operations: &config.Operations{Preset: config.PresetReadOnly}},
 	})
 	if _, err := config.ValidatePreParse(cfg); err != nil {
@@ -192,7 +186,6 @@ func TestValidateViewAPIOptIn(t *testing.T) {
 	t.Run("enabled true under a global opt-out is an error", func(t *testing.T) {
 		cfg := viewAPIConfig(config.ViewConfig{
 			StructName: "ProductSummary",
-			SQL:        "./views/product_summary.sql",
 			API:        &config.ViewAPIConfig{Enabled: new(true)},
 		})
 		cfg.API.Enabled = false
@@ -211,7 +204,6 @@ func TestValidateViewAPIOptIn(t *testing.T) {
 	t.Run("enabled false under a global opt-out is fine", func(t *testing.T) {
 		cfg := viewAPIConfig(config.ViewConfig{
 			StructName: "ProductSummary",
-			SQL:        "./views/product_summary.sql",
 			API:        &config.ViewAPIConfig{Enabled: new(false)},
 		})
 		cfg.API.Enabled = false
@@ -223,7 +215,6 @@ func TestValidateViewAPIOptIn(t *testing.T) {
 	t.Run("enabled true with the global opt-in is fine", func(t *testing.T) {
 		cfg := viewAPIConfig(config.ViewConfig{
 			StructName: "ProductSummary",
-			SQL:        "./views/product_summary.sql",
 			API:        &config.ViewAPIConfig{Enabled: new(true)},
 		})
 		if _, err := config.ValidatePreParse(cfg); err != nil {

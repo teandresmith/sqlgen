@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/literal"
 )
 
 // Warning represents a non-fatal validation issue.
@@ -40,6 +42,10 @@ func ValidatePreParse(cfg *RootConfig) ([]Warning, error) {
 	validateCacheConfig(cfg, &errs, &warnings)
 	validateViewCacheConfig(cfg, &errs)
 	validateTenancyConfig(cfg, &errs)
+	validateTenancyOptIn(cfg, &errs)
+	validateTableOverridesUsePointers(cfg, &errs)
+	validateEmptyCursorKeys(cfg, &errs)
+	validateOutputFilePlacement(cfg, &errs)
 	validateAPIConfig(cfg, &errs)
 	validateAPIOperations(cfg, &errs)
 	// Registered independently of validateAPIOperations, which returns early
@@ -54,8 +60,39 @@ func ValidatePreParse(cfg *RootConfig) ([]Warning, error) {
 	validateEventsConfig(cfg, &errs)
 	validateColumnAccess(cfg, &errs)
 	validateColumnOverrides(cfg, &errs)
+	validateExtraNames(cfg, &errs)
 
 	return warnings, errors.Join(errs...)
+}
+
+// validateExtraNames enforces PRD §4.10's naming of an `extras` entry: its key
+// is the generated struct's Go name and each `fields` key a field's, both used
+// verbatim, so each must be an exported Go identifier. Anything else would be
+// emitted as a declaration that does not parse, or as an unexported name the
+// models package's consumers and encoding/json cannot reach.
+func validateExtraNames(cfg *RootConfig, errs *[]error) {
+	for _, name := range slices.Sorted(maps.Keys(cfg.Extras)) {
+		if !isExportedIdentifier(name) {
+			*errs = append(*errs, fmt.Errorf(
+				"extras.%s: %q is not an exported Go identifier — the key is the generated struct's name, used as written (PRD §4.10)",
+				name, name,
+			))
+		}
+		for _, field := range slices.Sorted(maps.Keys(cfg.Extras[name].Fields)) {
+			if !isExportedIdentifier(field) {
+				*errs = append(*errs, fmt.Errorf(
+					"extras.%s.fields.%s: %q is not an exported Go identifier — the key is the generated field's name, used as written (PRD §4.10)",
+					name, field, field,
+				))
+			}
+		}
+	}
+}
+
+// isExportedIdentifier reports whether name is a Go identifier, not a keyword,
+// that starts with an upper-case letter.
+func isExportedIdentifier(name string) bool {
+	return token.IsIdentifier(name) && token.IsExported(name)
 }
 
 // validateOutputDir warns when output.dir was omitted and defaulted to the
@@ -428,6 +465,8 @@ func validateRelationships(cfg *RootConfig, errs *[]error) {
 //     struct. The generator skips a nameless edge (`sqlgen validate` still
 //     builds its contexts after this rule fails), so this is the one place
 //     the missing key is reported.
+//   - `table:` is required: it names the related table, and an edge to no
+//     table has nothing to load.
 //   - `type:` is required and one of the six spellings the generator maps; it
 //     would otherwise be read as o2m.
 //   - `fk:` is required on an o2o or o2m edge, and `junction:` on an m2m one.
@@ -443,6 +482,17 @@ func validateRelationshipKeys(tableName string, i int, r TableRelationship, errs
 		*errs = append(*errs, fmt.Errorf(
 			"tables.%s.relationships[%d].name: required — it names the relationship's Go field on the entity struct (PRD §4.8)",
 			tableName, i,
+		))
+	}
+	if r.Table == "" {
+		// Named by its name too when it has one, as the link-key errors are.
+		entry := fmt.Sprintf("tables.%s.relationships[%d]", tableName, i)
+		if r.Name != "" {
+			entry += fmt.Sprintf(" (%q)", r.Name)
+		}
+		*errs = append(*errs, fmt.Errorf(
+			"%s.table: required — it names the related table the relationship links to (PRD §4.8)",
+			entry,
 		))
 	}
 	switch {
@@ -1092,7 +1142,6 @@ func validateEnumValues(cfg *RootConfig, errs *[]error) {
 	checks := []enumValidator{
 		{"input.dialect", string(cfg.Input.Dialect), cfg.Input.Dialect.IsValid(), "postgres, mysql, sqlite"},
 		{"input.source", string(cfg.Input.Source), cfg.Input.Source.IsValid(), "files, database, both"},
-		{"input.parse_mode", string(cfg.Input.ParseMode), cfg.Input.ParseMode.IsValid(), "strict, merge"},
 		{"output.driver", string(cfg.Output.Driver), cfg.Output.Driver.IsValid(), "pgx, stdlib"},
 		{"output.layout", string(cfg.Output.Layout), cfg.Output.Layout.IsValid(), "single_file, file_per_table"},
 		{"generation.uuid_version", string(cfg.Generation.UUIDVersion), cfg.Generation.UUIDVersion.IsValid(), "v4, v7"},
@@ -1353,15 +1402,132 @@ func validateTenancyConfig(cfg *RootConfig, errs *[]error) {
 	}
 }
 
-// validateTenancyTypeOverride enforces the "type with no import" rule for a
-// tenancy TypeOverride. The generator needs both fields to emit a valid Go
-// import and reference for the tenant resolver (PRD §29.2.4 + §4.7).
-func validateTenancyTypeOverride(t *TypeOverride, path string, errs *[]error) {
-	if t == nil {
+// validateTenancyOptIn rejects a per-table or per-view `tenancy.enabled: true`
+// while global tenancy.enabled is off (or there is no `tenancy:` block). The
+// flag forces an entity tenanted under the global switch (PRD §29.2.3 rule 5);
+// with the switch off no tenancy code is generated, so the knob would be
+// silently ignored (§29.2.2 / §4.13). It mirrors validateEventsConfig.
+func validateTenancyOptIn(cfg *RootConfig, errs *[]error) {
+	if cfg.Tenancy != nil && cfg.Tenancy.Enabled {
 		return
 	}
-	if t.Type != "" && t.Import == "" {
-		*errs = append(*errs, fmt.Errorf("%s: import is required when type is set (got type=%q)", path, t.Type))
+	for _, name := range sortedTableKeys(cfg.Tables) {
+		if t := cfg.Tables[name].Tenancy; t != nil && t.Enabled != nil && *t.Enabled {
+			*errs = append(*errs, fmt.Errorf("tables.%s.tenancy.enabled: cannot be true when global tenancy.enabled is false — no tenancy code is generated while the global switch is off (PRD §29.2.2 / §4.13)", name))
+		}
+	}
+	for _, name := range sortedViewKeys(cfg.Views) {
+		if t := cfg.Views[name].Tenancy; t != nil && t.Enabled != nil && *t.Enabled {
+			*errs = append(*errs, fmt.Errorf("views.%s.tenancy.enabled: cannot be true when global tenancy.enabled is false — no tenancy code is generated while the global switch is off (PRD §29.2.2 / §4.13)", name))
+		}
+	}
+}
+
+// validateTableOverridesUsePointers rejects `tables.<t>.overrides.use_pointers`.
+// The per-table overrides block takes `types` only: the pointer policy is
+// package-wide (PRD §4.7) and is read from the global key, so a per-table value
+// would be silently ignored (§4.13).
+func validateTableOverridesUsePointers(cfg *RootConfig, errs *[]error) {
+	for _, name := range sortedTableKeys(cfg.Tables) {
+		if ov := cfg.Tables[name].Overrides; ov != nil && ov.UsePointers != nil {
+			*errs = append(*errs, fmt.Errorf("tables.%s.overrides.use_pointers: not allowed per table — tables.%s.overrides takes types only, and a package has one pointer policy; set overrides.use_pointers globally instead", name, name))
+		}
+	}
+}
+
+// validateEmptyCursorKeys rejects an explicit empty `cursor_keys: []` at each
+// of its three scopes. A cursor needs a key, and the loader keeps an explicit
+// empty list empty rather than defaulting it (PRD §4.6), so an empty list here
+// was written that way; omitting the key is how to take the default or
+// inherit (PRD §4.13).
+func validateEmptyCursorKeys(cfg *RootConfig, errs *[]error) {
+	if cfg.Generation.CursorKeys != nil && len(cfg.Generation.CursorKeys) == 0 {
+		*errs = append(*errs, errors.New("generation.cursor_keys: must not be empty — a cursor needs a key; omit cursor_keys for the default [id]"))
+	}
+	for _, name := range sortedTableKeys(cfg.Tables) {
+		if keys := cfg.Tables[name].CursorKeys; keys != nil && len(keys) == 0 {
+			*errs = append(*errs, fmt.Errorf("tables.%s.cursor_keys: must not be empty — a cursor needs a key; omit cursor_keys to inherit generation.cursor_keys", name))
+		}
+	}
+	for _, name := range sortedViewKeys(cfg.Views) {
+		if keys := cfg.Views[name].CursorKeys; keys != nil && len(keys) == 0 {
+			*errs = append(*errs, fmt.Errorf("views.%s.cursor_keys: must not be empty — a cursor needs a key; omit cursor_keys to inherit generation.cursor_keys", name))
+		}
+	}
+}
+
+// validateOutputFilePlacement keeps output.enums and output.types inside the
+// models package. Generated models reference enum and composite types
+// unqualified and never import another package for them, so an enums or types
+// file outside output.dir, or one declaring a package other than
+// output.package, leaves models_gen.go with `undefined: <Type>`. The file is
+// resolved as generation resolves it — relative to output.dir unless absolute
+// — and its directory is compared to output.dir as absolute, cleaned paths.
+func validateOutputFilePlacement(cfg *RootConfig, errs *[]error) {
+	type outputFile struct{ key, file, pkg string }
+	var outputs []outputFile
+	if e := cfg.Output.Enums; e != nil {
+		outputs = append(outputs, outputFile{"enums", e.File, e.Package})
+	}
+	if t := cfg.Output.Types; t != nil {
+		outputs = append(outputs, outputFile{"types", t.File, t.Package})
+	}
+	outputDir := cfg.Output.Dir
+	for _, o := range outputs {
+		if o.file != "" && !fileDirectlyIn(o.file, outputDir) {
+			*errs = append(*errs, fmt.Errorf(
+				"output.%s.file: %q is outside output.dir %q — generated models do not import a separate %s package; keep the file in output.dir",
+				o.key, o.file, outputDir, o.key,
+			))
+		}
+		if o.pkg != "" && o.pkg != cfg.Output.Package {
+			*errs = append(*errs, fmt.Errorf(
+				"output.%s.package: %q differs from output.package %q — generated models do not import a separate %s package; omit output.%s.package or set it to %q",
+				o.key, o.pkg, cfg.Output.Package, o.key, o.key, cfg.Output.Package,
+			))
+		}
+	}
+}
+
+// fileDirectlyIn reports whether file, resolved relative to dir unless it is
+// absolute, sits directly in dir.
+func fileDirectlyIn(file, dir string) bool {
+	resolved := file
+	if !filepath.IsAbs(file) {
+		resolved = filepath.Join(dir, file)
+	}
+	fileDir, errFile := filepath.Abs(filepath.Dir(resolved))
+	outDir, errDir := filepath.Abs(dir)
+	if errFile != nil || errDir != nil {
+		return filepath.Dir(filepath.Clean(resolved)) == filepath.Clean(dir)
+	}
+	return fileDir == outDir
+}
+
+// validateTenancyTypeOverride applies the TypeOverride import rule (PRD §4.7)
+// to a tenancy TypeOverride, which is the same shape and resolves through the
+// same code path as an `overrides.types` entry (§29.2.4): an import is required
+// only when `type` names a package sqlgen does not already know. Builtins,
+// same-package types and the built-in literals (`time.Time`, `types.JSON`, …)
+// need none. The nullable variant inherits the parent's import, so it needs its
+// own only when neither half carries one — the rule gen's
+// typeOverrideImportErrors applies to `overrides.types`, over the same
+// literal registry.
+func validateTenancyTypeOverride(t *TypeOverride, path string, errs *[]error) {
+	if t == nil || t.Import != "" {
+		return
+	}
+	switch {
+	case literal.NeedsExplicitImport(t.Type):
+		*errs = append(*errs, fmt.Errorf(
+			"%s.type: %q names a package-qualified type — set %s.import to the package it comes from",
+			path, t.Type, path,
+		))
+	case t.Nullable.Import == "" && literal.NeedsExplicitImport(t.Nullable.Type):
+		*errs = append(*errs, fmt.Errorf(
+			"%s.nullable.type: %q names a package-qualified type — set %s.nullable.import to the package it comes from",
+			path, t.Nullable.Type, path,
+		))
 	}
 }
 
@@ -2068,8 +2234,9 @@ func validateExcludeColumnsExhaustion(cfg *RootConfig, tables []SchemaTable, war
 }
 
 // validateViewInvalidateOn verifies each cached view's invalidate_on entries
-// name a parsed, generation-included table. An unresolved name or a name whose
-// columns are fully excluded is a hard error (PRD §27.11 / CACHE.md §3.4) —
+// name a parsed, generation-included table. An unresolved name, a name an
+// exclude_tables pattern drops, or a name whose columns are fully excluded is a
+// hard error (PRD §27.11 / CACHE.md §3.4) —
 // no mutation hook would fire for it, so the view cache would silently never
 // invalidate from that source.
 func validateViewInvalidateOn(cfg *RootConfig, tables []SchemaTable, errs *[]error) {
@@ -2091,6 +2258,10 @@ func validateViewInvalidateOn(cfg *RootConfig, tables []SchemaTable, errs *[]err
 			tbl, ok := parsed[src]
 			if !ok {
 				*errs = append(*errs, fmt.Errorf("views.%s.invalidate_on: table %q not found in parsed schema", viewName, src))
+				continue
+			}
+			if pattern, excluded := MatchExcludeTablePattern(tbl.Name, tbl.Schema, cfg.ExcludeTables); excluded {
+				*errs = append(*errs, fmt.Errorf("views.%s.invalidate_on: table %q is excluded from generation by exclude_tables pattern %q; view cache would silently never invalidate from this source", viewName, src, pattern))
 				continue
 			}
 			if allColumnsExcluded(cfg, tbl) {

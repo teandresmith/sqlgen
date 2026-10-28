@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"slices"
@@ -2806,6 +2807,7 @@ func (c *articleClient) multiInsertAndResolveIDs(ctx context.Context, conn datab
 // Update partially updates a article by primary key and returns the updated entity.
 // Only fields where IsSet() is true are included in the SET clause. If no fields are
 // set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns nil and no error if the primary key does not exist (strict_updates is disabled).
 func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArticleInput, opts ...func(*CallOptions[ArticleFieldOptions])) (*Article, error) {
 	// Nil is a caller error, distinct from an empty-but-non-nil
 	// input — that one is the documented no-op returning the entity unchanged.
@@ -2845,11 +2847,19 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 				return nil, nil
 			}
 
-			return c.Get(ctx, id, func(o *CallOptions[ArticleFieldOptions]) {
+			current, err := c.Get(ctx, id, func(o *CallOptions[ArticleFieldOptions]) {
 				*o = options
 				o.SkipHooks = true
 				o.LockMode = sql.LockNone
 			})
+			// Without strict updates a key that matches no row is not an
+			// error: there is no current entity, so Update returns no entity
+			// and a nil error, exactly as it does after a write that matched
+			// nothing.
+			if errors.Is(err, ErrNotFound) {
+				return nil, nil
+			}
+			return current, err
 		}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
@@ -2869,6 +2879,11 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 		// key, so no cache entry is invalidated and no event is published.
 		if matched > 0 {
 			m.AffectedPKs = []any{id}
+		}
+		// Without strict updates that is not an error either: there is no
+		// row to read back, so Update returns no entity and a nil error.
+		if matched == 0 {
+			return nil, nil
 		}
 
 		// Empty FieldOptions — caller doesn't need the result
@@ -7471,6 +7486,7 @@ func (c *productClient) multiInsertAndResolveIDs(ctx context.Context, conn datab
 // Update partially updates a product by primary key and returns the updated entity.
 // Only fields where IsSet() is true are included in the SET clause. If no fields are
 // set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns nil and no error if the primary key does not exist (strict_updates is disabled).
 func (c *productClient) Update(ctx context.Context, id int64, input *UpdateProductInput, opts ...func(*CallOptions[ProductFieldOptions])) (*Product, error) {
 	// Nil is a caller error, distinct from an empty-but-non-nil
 	// input — that one is the documented no-op returning the entity unchanged.
@@ -7510,11 +7526,19 @@ func (c *productClient) Update(ctx context.Context, id int64, input *UpdateProdu
 				return nil, nil
 			}
 
-			return c.Get(ctx, id, func(o *CallOptions[ProductFieldOptions]) {
+			current, err := c.Get(ctx, id, func(o *CallOptions[ProductFieldOptions]) {
 				*o = options
 				o.SkipHooks = true
 				o.LockMode = sql.LockNone
 			})
+			// Without strict updates a key that matches no row is not an
+			// error: there is no current entity, so Update returns no entity
+			// and a nil error, exactly as it does after a write that matched
+			// nothing.
+			if errors.Is(err, ErrNotFound) {
+				return nil, nil
+			}
+			return current, err
 		}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
@@ -7534,6 +7558,11 @@ func (c *productClient) Update(ctx context.Context, id int64, input *UpdateProdu
 		// key, so no cache entry is invalidated and no event is published.
 		if matched > 0 {
 			m.AffectedPKs = []any{id}
+		}
+		// Without strict updates that is not an error either: there is no
+		// row to read back, so Update returns no entity and a nil error.
+		if matched == 0 {
+			return nil, nil
 		}
 
 		// Empty FieldOptions — caller doesn't need the result

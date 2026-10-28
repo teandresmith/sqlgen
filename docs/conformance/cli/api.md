@@ -1,6 +1,6 @@
 # CLI Requirements: API Generation
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- matrix: api-generation rows=element cols=single-pk,composite-pk,no-pk,soft-delete,tenanted,view -->
 
 API generation (§26) is emitted by `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. Its rows claim `gen`, `cli`, golden and example tests. It holds the `api-generation` matrix and §26.5–§26.12; the schema sections (§26–§26.4.1 and §16.4's GraphQL rows) are in [`api-schema.md`](api-schema.md).

@@ -1200,6 +1200,34 @@ func TestNestedTemplate_ParentWriteStripsEveryRelationship(t *testing.T) {
 	}
 }
 
+// TestNestedTemplate_UpdateWithRelatedNonStrictNilParent pins the §4.6
+// strict_updates: false branch of UpdateWithRelated: the parent Update returns
+// a nil entity for a key that matches no row, and the transaction returns
+// before any nested executor runs, so nothing nested is written and no entity
+// comes back. Strict updates error on the parent instead and emit no guard.
+func TestNestedTemplate_UpdateWithRelatedNonStrictNilParent(t *testing.T) {
+	const guard = "\t\tif parent == nil {\n\t\t\treturn nil\n\t\t}\n\t\tresult = parent\n"
+	tests := []struct {
+		name      string
+		strict    bool
+		wantGuard bool
+	}{
+		{name: "non-strict returns before the nested writes", strict: false, wantGuard: true},
+		{name: "strict emits no guard", strict: true, wantGuard: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			users := buildNestedContexts(t, func(cfg *config.RootConfig) {
+				cfg.Generation.StrictUpdates = new(tt.strict)
+			})["users"]
+			out := nestedExcerpt(renderNested(t, users), "UpdateWithRelated")
+			if got := strings.Contains(out, guard); got != tt.wantGuard {
+				t.Errorf("UpdateWithRelated with strict_updates: %v: nil-parent guard before the nested writes present = %v, want %v\n%s", tt.strict, got, tt.wantGuard, out)
+			}
+		})
+	}
+}
+
 // TestNestedTemplate_M2MLinkGoesThroughUpsertMany pins the §9.9.6 link step.
 // Re-adding an existing link is a set operation whose answer is "linked", and
 // CreateMany raises a primary-key violation on it (companion §2.4 probe A).

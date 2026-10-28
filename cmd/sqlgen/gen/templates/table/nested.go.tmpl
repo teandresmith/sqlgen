@@ -345,6 +345,14 @@ func (c *{{ $client }}) UpdateWithRelated(ctx context.Context, id {{ (index .PKC
 		if err != nil {
 			return err
 		}
+{{- if not .StrictUpdates }}
+		// Without strict updates a key that matches no row is not an error,
+		// and it leaves no parent to nest under: nothing below is written and
+		// no entity is returned.
+		if parent == nil {
+			return nil
+		}
+{{- end }}
 		result = parent
 {{- range .Nested.Edges }}
 

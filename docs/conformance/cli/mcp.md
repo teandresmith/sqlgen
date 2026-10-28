@@ -1,6 +1,6 @@
 # CLI Requirements: MCP Server
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: cmd/sqlgen/mcp cmd/sqlgen/mcp/integration -->
 <!-- matrix: mcp-surface rows=element cols=listed,output,deterministic,error -->
 

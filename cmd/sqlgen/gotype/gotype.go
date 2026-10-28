@@ -9,6 +9,7 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/decimal"
+	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/literal"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/uuidgofrs"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/uuidgoogle"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/uuidstd"
@@ -182,35 +183,6 @@ var dialectMappings = map[config.Dialect]map[string]typeInfo{
 	config.DialectPostgres: postgresMappings,
 	config.DialectMySQL:    mysqlMappings,
 	config.DialectSQLite:   sqliteMappings,
-}
-
-// knownGoTypes maps Go type names to import path and zero value,
-// used for resolving type_map literal Go type strings.
-var knownGoTypes = map[string]struct{ imp, zero string }{
-	"string":           {"", `""`},
-	"int":              {"", "0"},
-	"int8":             {"", "0"},
-	"int16":            {"", "0"},
-	"int32":            {"", "0"},
-	"int64":            {"", "0"},
-	"uint":             {"", "0"},
-	"uint8":            {"", "0"},
-	"uint16":           {"", "0"},
-	"uint32":           {"", "0"},
-	"uint64":           {"", "0"},
-	"float32":          {"", "0"},
-	"float64":          {"", "0"},
-	"bool":             {"", "false"},
-	"byte":             {"", "0"},
-	"rune":             {"", "0"},
-	"time.Time":        {"time", "time.Time{}"},
-	"time.Duration":    {"time", "0"},
-	"any":              {"", "nil"},
-	"net.IP":           {"net", "nil"},
-	"net.IPNet":        {"net", "net.IPNet{}"},
-	"net.HardwareAddr": {"net", "nil"},
-	"json.RawMessage":  {"encoding/json", "nil"},
-	"types.JSON":       {"github.com/teandresmith/sqlgen/types", "nil"},
 }
 
 // Resolver resolves SQL types to Go types using the configured override chain.
@@ -1080,8 +1052,8 @@ func FromOverride(override config.TypeOverride, nullable, usePointers bool) GoTy
 // declare one, and `column_map.<col>.type` needs its sibling `.import`
 // (PRD §8.5 "Column Overrides").
 func KnownLiteral(goType string) (string, bool) {
-	info, ok := knownGoTypes[goType]
-	return info.imp, ok
+	info, ok := literal.Lookup(goType)
+	return info.Import, ok
 }
 
 // FromLiteral resolves a literal Go type string to a GoType. Used for
@@ -1093,9 +1065,9 @@ func FromLiteral(goType string, nullable bool) GoType {
 		FKConvert: DeriveFKMethod(goType),
 	}
 
-	if info, ok := knownGoTypes[goType]; ok {
-		gt.Import = info.imp
-		gt.ZeroValue = info.zero
+	if info, ok := literal.Lookup(goType); ok {
+		gt.Import = info.Import
+		gt.ZeroValue = info.Zero
 	} else {
 		gt.ZeroValue = deriveZeroValue(goType)
 	}

@@ -174,14 +174,16 @@ func TestBuildTypeContext_domains(t *testing.T) {
 	}
 }
 
+// TestBuildTypeContext_extras pins that an extras entry's key and its fields
+// keys are the Go names as written (PRD §4.10).
 func TestBuildTypeContext_extras(t *testing.T) {
 	input := testInput(&parser.Schema{})
 	input.Config.Extras = map[string]config.ExtraType{
-		"metadata": {
+		"Metadata": {
 			Description: "Generic metadata object.",
 			Fields: map[string]config.ExtraTypeField{
-				"key":   {Type: "string", Tags: map[string]string{"json": "key"}},
-				"value": {Type: "string", Tags: map[string]string{"json": "value"}},
+				"Key":   {Type: "string", Tags: map[string]string{"json": "key"}},
+				"Value": {Type: "string", Tags: map[string]string{"json": "value"}},
 			},
 		},
 	}
@@ -201,7 +203,7 @@ func TestBuildTypeContext_extras(t *testing.T) {
 	if len(extra.Fields) != 2 {
 		t.Fatalf("Fields has %d entries, want 2", len(extra.Fields))
 	}
-	// Fields sorted by name: key, value.
+	// Fields sorted by name: Key, Value.
 	if extra.Fields[0].FieldName != "Key" {
 		t.Errorf("Fields[0].FieldName = %q, want %q", extra.Fields[0].FieldName, "Key")
 	}

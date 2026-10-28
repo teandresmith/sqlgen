@@ -24,12 +24,12 @@ func TestValidatePreParse_ReportsEachRuleWithTheOthers(t *testing.T) {
 	}{
 		{
 			name: "view api mutation operation",
-			yaml: "api:\n  enabled: true\n  graphql:\n    enabled: true\nviews:\n  product_summary:\n    sql: ./views/product_summary.sql\n    api:\n      operations:\n        create: true\n",
+			yaml: "api:\n  enabled: true\n  graphql:\n    enabled: true\nviews:\n  product_summary:\n    api:\n      operations:\n        create: true\n",
 			want: "views.product_summary.api.operations.create",
 		},
 		{
 			name: "view api opt-in under a global opt-out",
-			yaml: "api:\n  enabled: false\nviews:\n  product_summary:\n    sql: ./views/product_summary.sql\n    api:\n      enabled: true\n",
+			yaml: "api:\n  enabled: false\nviews:\n  product_summary:\n    api:\n      enabled: true\n",
 			want: "views.product_summary.api.enabled",
 		},
 		{
@@ -162,6 +162,71 @@ func TestValidatePreParse_ReportsEachRuleWithTheOthers(t *testing.T) {
 			yaml: "tables:\n  users:\n    column_map:\n      balance:\n        import: github.com/shopspring/decimal\n",
 			want: "is set without a type",
 		},
+		{
+			name: "type override keys that differ only in case",
+			yaml: "overrides:\n  types:\n    Text:\n      type: string\n    text:\n      type: string\n",
+			want: `overrides.types: keys "Text" and "text" name the same type`,
+		},
+		{
+			name: "relationship missing its table",
+			yaml: "tables:\n  owners:\n    relationships:\n      - name: Profiles\n        type: o2m\n        fk: owner_id\n",
+			want: `tables.owners.relationships[0] ("Profiles").table: required`,
+		},
+		{
+			name: "tenancy type naming an unknown package without an import",
+			yaml: "tenancy:\n  enabled: true\n  column: workspace_id\n  type:\n    type: ksuid.KSUID\n",
+			want: `tenancy.type.type: "ksuid.KSUID" names a package-qualified type`,
+		},
+		{
+			name: "pointer policy set on a table",
+			yaml: "tables:\n  users:\n    overrides:\n      use_pointers: false\n",
+			want: "tables.users.overrides.use_pointers: not allowed per table",
+		},
+		{
+			name: "table tenancy opt-in under a global opt-out",
+			yaml: "tables:\n  users:\n    tenancy:\n      enabled: true\n",
+			want: "tables.users.tenancy.enabled: cannot be true when global tenancy.enabled is false",
+		},
+		{
+			name: "view tenancy opt-in under a global opt-out",
+			yaml: "tenancy:\n  enabled: false\nviews:\n  product_summary:\n    tenancy:\n      enabled: true\n",
+			want: "views.product_summary.tenancy.enabled: cannot be true when global tenancy.enabled is false",
+		},
+		{
+			name: "empty global cursor keys",
+			yaml: "generation:\n  cursor_keys: []\n",
+			want: "generation.cursor_keys: must not be empty",
+		},
+		{
+			name: "empty table cursor keys",
+			yaml: "tables:\n  users:\n    cursor_keys: []\n",
+			want: "tables.users.cursor_keys: must not be empty",
+		},
+		{
+			name: "empty view cursor keys",
+			yaml: "views:\n  product_summary:\n    cursor_keys: []\n",
+			want: "views.product_summary.cursor_keys: must not be empty",
+		},
+		{
+			name: "enums file outside output.dir",
+			yaml: "  enums:\n    file: shared/enums_gen.go\n",
+			want: `output.enums.file: "shared/enums_gen.go" is outside output.dir "./models"`,
+		},
+		{
+			name: "types package differing from output.package",
+			yaml: "  package: models\n  types:\n    package: shared\n",
+			want: `output.types.package: "shared" differs from output.package "models"`,
+		},
+		{
+			name: "extras key that is not an exported identifier",
+			yaml: "extras:\n  metadata:\n    fields:\n      Key:\n        type: string\n",
+			want: `extras.metadata: "metadata" is not an exported Go identifier`,
+		},
+		{
+			name: "extras fields key that is not an exported identifier",
+			yaml: "extras:\n  Metadata:\n    fields:\n      key:\n        type: string\n",
+			want: `extras.Metadata.fields.key: "key" is not an exported Go identifier`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -180,6 +245,31 @@ func TestValidatePreParse_ReportsEachRuleWithTheOthers(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestValidatePreParse_ReportsPostgresRuleWithTheOthers covers the rule that
+// applies on PostgreSQL only, where pgx is a valid driver, so its partner is
+// a nested-mutation depth other than one.
+func TestValidatePreParse_ReportsPostgresRuleWithTheOthers(t *testing.T) {
+	const yaml = "input:\n  dialect: postgres\n  paths: [\"./migrations\"]\noutput:\n  dir: ./models\n" +
+		"generation:\n  nested_mutations:\n    max_depth: 2\n" +
+		"overrides:\n  types:\n    int4:\n      type: int32\n"
+	cfg, err := config.LoadConfig(writeTestConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v, want the config to decode", err)
+	}
+	_, err = config.ValidatePreParse(cfg)
+	if err == nil {
+		t.Fatal("ValidatePreParse() = nil, want the synonym key and the depth reported together")
+	}
+	for _, want := range []string{
+		`overrides.types.int4: PostgreSQL writes this type as "integer"`,
+		"generation.nested_mutations.max_depth",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ValidatePreParse() error = %v, want it to contain %q", err, want)
+		}
 	}
 }
 
@@ -217,7 +307,7 @@ func TestValidatePostParse_ReportsEachRuleWithTheOthers(t *testing.T) {
 		{
 			name: "explicit view cursor key missing from the view",
 			mutate: func(cfg *config.RootConfig) {
-				cfg.Views["product_summary"] = config.ViewConfig{SQL: "views/product_summary.sql", CursorKeys: []string{"missing_col"}}
+				cfg.Views["product_summary"] = config.ViewConfig{CursorKeys: []string{"missing_col"}}
 			},
 			views: []config.SchemaView{{
 				Name: "product_summary", Schema: "public",

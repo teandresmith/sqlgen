@@ -55,9 +55,6 @@ output:
 	if diff := cmp.Diff([]string{"./migrations"}, cfg.Input.Paths); diff != "" {
 		t.Errorf("Input.Paths mismatch (-want +got):\n%s", diff)
 	}
-	if cfg.Input.ParseMode != "strict" {
-		t.Errorf("Input.ParseMode = %q, want %q", cfg.Input.ParseMode, "strict")
-	}
 
 	// Output defaults.
 	if cfg.Output.Driver != "pgx" {
@@ -189,7 +186,6 @@ input:
   schema: "public"
   paths:
     - "./migrations"
-  parse_mode: strict
   connection:
     url: "postgres://localhost/mydb"
     host: localhost
@@ -309,7 +305,6 @@ tables:
 views:
   product_summary:
     struct_name: ProductSummary
-    sql: "./views/product_summary.sql"
 
 extras:
   MemeMetadata:
@@ -504,9 +499,6 @@ extras:
 	if view.StructName != "ProductSummary" {
 		t.Errorf("product_summary.StructName = %q, want %q", view.StructName, "ProductSummary")
 	}
-	if view.SQL != "./views/product_summary.sql" {
-		t.Errorf("product_summary.SQL = %q, want %q", view.SQL, "./views/product_summary.sql")
-	}
 
 	// Extras.
 	extra, ok := cfg.Extras["MemeMetadata"]
@@ -634,6 +626,7 @@ func TestLoadConfig_OutputPackageDerivedFromDir(t *testing.T) {
 	tests := []struct {
 		name    string
 		dir     string
+		cwd     string // working directory to run from, under a temp dir
 		wantPkg string
 	}{
 		{
@@ -652,14 +645,34 @@ func TestLoadConfig_OutputPackageDerivedFromDir(t *testing.T) {
 			wantPkg: "my_models",
 		},
 		{
-			name:    "current directory",
+			name:    "current directory takes the working directory's name",
 			dir:     ".",
-			wantPkg: ".",
+			cwd:     "Billing-Models",
+			wantPkg: "billing_models",
+		},
+		{
+			name:    "omitted directory takes the working directory's name",
+			dir:     "",
+			cwd:     "models",
+			wantPkg: "models",
+		},
+		{
+			name:    "parent directory takes that directory's name",
+			dir:     "..",
+			cwd:     "inventory/generated",
+			wantPkg: "inventory",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.cwd != "" {
+				wd := filepath.Join(t.TempDir(), tt.cwd)
+				if err := os.MkdirAll(wd, 0o750); err != nil {
+					t.Fatal(err)
+				}
+				t.Chdir(wd)
+			}
 			path := writeTestConfig(t, `
 input:
   dialect: postgres
@@ -1775,7 +1788,7 @@ func TestLoadConfig_CacheDefaultsForPerEntityOptIn(t *testing.T) {
 		{name: "no block and no opt-in", yaml: "", wantBlock: false},
 		{name: "no block and a table opt-out", yaml: "tables:\n  products:\n    cache:\n      enabled: false\n", wantBlock: false},
 		{name: "no block and a table opt-in", yaml: "tables:\n  products:\n    cache:\n      enabled: true\n", wantBlock: true},
-		{name: "no block and a view opt-in", yaml: "views:\n  product_summary:\n    sql: ./v.sql\n    invalidate_on: [products]\n    cache:\n      enabled: true\n", wantBlock: true},
+		{name: "no block and a view opt-in", yaml: "views:\n  product_summary:\n    invalidate_on: [products]\n    cache:\n      enabled: true\n", wantBlock: true},
 		{name: "block off and a table opt-in", yaml: "cache:\n  enabled: false\ntables:\n  products:\n    cache:\n      enabled: true\n", wantBlock: true},
 	}
 	for _, tt := range tests {

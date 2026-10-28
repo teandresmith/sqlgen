@@ -17,5 +17,5 @@ No requirements yet beyond the §5.5 config-key rows below. See [README.md](READ
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | parser.qualify.config-key-ambiguous | A bare `tables:` key naming a table that exists in more than one schema is a validation error naming the key | `unit: cmd/sqlgen/config: TestValidatePostParse_AmbiguousBareTableName` | postgres |  |
-| parser.qualify.config-key-bare-matches | A bare `tables:` key matches the table regardless of schema when only one schema has it | `unit: cmd/sqlgen/config: TestValidatePostParse_BareTableNameSingleSchema` | postgres |  |
-| parser.qualify.config-key-mysql-never-ambiguous | On MySQL and SQLite a bare config key never raises the ambiguity error | `unit: cmd/sqlgen/config: TestValidatePostParse_MySQLBareKeysNoAmbiguity` | mysql, sqlite |  |
+| parser.qualify.config-key-bare-matches | A bare `tables:` key matches the table regardless of schema when only one schema has it | `unit: cmd/sqlgen/gen: TestBuildEntityContexts_BareKeyMatchesSingleSchemaTable` | postgres |  |
+| parser.qualify.config-key-mysql-never-ambiguous | On MySQL and SQLite a bare config key never raises the ambiguity error | `unit: cmd/sqlgen/config: TestValidatePostParse_BareKeyNeverAmbiguousWithoutSchemas/mysql bare key over a repeated table name`; `unit: cmd/sqlgen/config: TestValidatePostParse_BareKeyNeverAmbiguousWithoutSchemas/sqlite bare key over a repeated table name` | mysql, sqlite |  |

@@ -119,12 +119,6 @@
           "description": "Paths to view annotation files or directories. Parsed only as views, never as DDL.",
           "items": { "type": "string" }
         },
-        "parse_mode": {
-          "type": "string",
-          "description": "How duplicate table definitions across files are handled.",
-          "enum": ["strict", "merge"],
-          "default": "strict"
-        },
         "connection": { "$ref": "#/$defs/connection" },
         "introspect": { "$ref": "#/$defs/introspect" }
       }
@@ -190,8 +184,8 @@
       "description": "Override the output location for a generated artifact.",
       "additionalProperties": false,
       "properties": {
-        "file": { "type": "string", "description": "Output filename. Always resolved relative to output.dir — an absolute path is re-rooted under it, not honored." },
-        "package": { "type": "string", "description": "Go package name. Defaults to output.package." }
+        "file": { "type": "string", "description": "Output filename. Relative to output.dir unless absolute; an absolute path is used as written and must still resolve directly into output.dir." },
+        "package": { "type": "string", "description": "Go package name. Defaults to output.package, and must equal it." }
       }
     },
     "generation": {
@@ -335,9 +329,22 @@
         }
       }
     },
+    "tableOverrides": {
+      "type": "object",
+      "description": "Table-specific type overrides: `types` only, with the same structure as the global `overrides.types`.",
+      "additionalProperties": false,
+      "properties": {
+        "use_pointers": { "not": {}, "description": "Rejected: the pointer policy is package-wide (PRD §4.7). Set the global `overrides.use_pointers` instead." },
+        "types": {
+          "type": "object",
+          "description": "Per-SQL-type override for this table, keyed by SQL type name (uuid, numeric, ...).",
+          "additionalProperties": { "$ref": "#/$defs/typeOverride" }
+        }
+      }
+    },
     "typeOverride": {
       "type": "object",
-      "description": "Map a SQL type to a Go type. The type must implement sql.Scanner and driver.Valuer, or be one the driver special-cases (uuid.UUID); wrap a type that does neither in one of your own that does. `import` is omitted for builtin Go types (string, int64, ...), same-package types, and built-in literals that resolve their own import (time.Time, json.RawMessage, types.JSON); it is REQUIRED whenever `type` names any other package, or the generated file would reference a package nothing imports. Under a `tenancy.type` block the rule is stricter still: setting `type` always requires `import`.",
+      "description": "Map a SQL type to a Go type. The type must implement sql.Scanner and driver.Valuer, or be one the driver special-cases (uuid.UUID); wrap a type that does neither in one of your own that does. `import` is omitted for builtin Go types (string, int64, ...), same-package types, and built-in literals that resolve their own import (time.Time, json.RawMessage, types.JSON); it is REQUIRED whenever `type` names any other package, or the generated file would reference a package nothing imports. A `tenancy.type` block follows the same rule.",
       "additionalProperties": false,
       "properties": {
         "type": { "type": "string", "description": "Go type name, e.g. uuid.UUID." },
@@ -371,7 +378,7 @@
       "properties": {
         "struct_name": { "type": "string", "description": "Override the generated Go struct name." },
         "description": { "type": "string", "description": "Go doc comment on the generated struct. Takes precedence over a SQL COMMENT ON TABLE." },
-        "overrides": { "$ref": "#/$defs/overrides" },
+        "overrides": { "$ref": "#/$defs/tableOverrides" },
         "primary_key": {
           "type": "object",
           "description": "Override primary-key detection and generation strategy.",
@@ -551,7 +558,6 @@
       "additionalProperties": false,
       "properties": {
         "struct_name": { "type": "string", "description": "Override the generated Go struct name." },
-        "sql": { "type": "string", "description": "Inline view SQL, as an alternative to an annotation file." },
         "cache": { "$ref": "#/$defs/entityCache" },
         "invalidate_on": { "type": "array", "description": "Tables whose mutations invalidate this view's cached reads.", "items": { "type": "string" } },
         "cursor_keys": {

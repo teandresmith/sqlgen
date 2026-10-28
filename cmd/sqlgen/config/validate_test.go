@@ -621,7 +621,6 @@ func TestValidatePostParse_CursorKeys_ViewExplicitMissing(t *testing.T) {
 	cfg := validConfig()
 	cfg.Views["product_summary"] = config.ViewConfig{
 		StructName: "ProductSummary",
-		SQL:        "views/product_summary.sql",
 		CursorKeys: []string{"nonexistent_col"},
 	}
 
@@ -655,7 +654,6 @@ func TestValidatePostParse_CursorKeys_ViewExplicitPresent(t *testing.T) {
 	cfg := validConfig()
 	cfg.Views["product_summary"] = config.ViewConfig{
 		StructName: "ProductSummary",
-		SQL:        "views/product_summary.sql",
 		CursorKeys: []string{"total"},
 	}
 
@@ -1628,12 +1626,6 @@ func TestValidatePreParse_EnumValues(t *testing.T) {
 			wantAllowed: "files, database, both",
 		},
 		{
-			name:        "invalid parse_mode",
-			mutate:      func(c *config.RootConfig) { c.Input.ParseMode = "lenient" },
-			wantErr:     true,
-			wantAllowed: "strict, merge",
-		},
-		{
 			name:        "invalid driver",
 			mutate:      func(c *config.RootConfig) { c.Output.Driver = "PGX" },
 			wantErr:     true,
@@ -1691,7 +1683,7 @@ func TestValidatePreParse_EnumValues(t *testing.T) {
 		},
 		{
 			name:    "empty values skipped (defaults apply)",
-			mutate:  func(c *config.RootConfig) { c.Input.ParseMode = ""; c.Generation.UUIDVersion = "" },
+			mutate:  func(c *config.RootConfig) { c.Generation.UUIDVersion = "" },
 			wantErr: false,
 		},
 	}

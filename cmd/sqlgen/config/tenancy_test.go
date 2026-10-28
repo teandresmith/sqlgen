@@ -348,7 +348,6 @@ func TestValidatePreParse_TenancyTypeRequiresImport(t *testing.T) {
 				cfg.Tenancy = &config.TenancyConfig{Enabled: true, Column: "workspace_id"}
 				cfg.Views["project_stats"] = config.ViewConfig{
 					StructName: "ProjectStat",
-					SQL:        "./views/project_stats.sql",
 					Tenancy: &config.TableTenancyConfig{
 						Type: &config.TypeOverride{Type: "ids.WorkspaceID"},
 					},
@@ -363,7 +362,6 @@ func TestValidatePreParse_TenancyTypeRequiresImport(t *testing.T) {
 				cfg.Tenancy = &config.TenancyConfig{Enabled: true, Column: "workspace_id"}
 				cfg.Views["project_stats"] = config.ViewConfig{
 					StructName: "ProjectStat",
-					SQL:        "./views/project_stats.sql",
 					Tenancy: &config.TableTenancyConfig{
 						Type: &config.TypeOverride{Type: "ids.WorkspaceID", Import: "myapp/pkg/ids"},
 					},
@@ -714,12 +712,10 @@ tenancy:
 views:
   project_stats:
     struct_name: ProjectStat
-    sql: "./views/project_stats.sql"
     tenancy:
       enabled: false
   legacy_rollup:
     struct_name: LegacyRollup
-    sql: "./views/legacy_rollup.sql"
     tenancy:
       column: org_id
       required: false
@@ -728,7 +724,6 @@ views:
         import: example.com/ids
   plain_view:
     struct_name: PlainView
-    sql: "./views/plain_view.sql"
 `)
 
 	cfg, err := config.LoadConfig(path)

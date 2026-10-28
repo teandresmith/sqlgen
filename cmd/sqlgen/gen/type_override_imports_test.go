@@ -75,13 +75,13 @@ func TestTypeOverrideRejectsUnimportableLiteral(t *testing.T) {
 		{
 			name: "an extras field without an import",
 			apply: func(cfg *config.RootConfig) {
-				cfg.Extras["payload"] = config.ExtraType{
+				cfg.Extras["Payload"] = config.ExtraType{
 					Fields: map[string]config.ExtraTypeField{
-						"trace_id": {Type: "uuid.UUID"},
+						"TraceID": {Type: "uuid.UUID"},
 					},
 				}
 			},
-			wantErr: "extras.payload.fields.trace_id.type",
+			wantErr: "extras.Payload.fields.TraceID.type",
 		},
 	}
 
@@ -169,7 +169,7 @@ func TestTypeOverrideAcceptsImportableLiteral(t *testing.T) {
 		{
 			name: "an extras field on a builtin",
 			apply: func(cfg *config.RootConfig) {
-				cfg.Extras["payload"] = config.ExtraType{
+				cfg.Extras["Payload"] = config.ExtraType{
 					Fields: map[string]config.ExtraTypeField{
 						"view_count": {Type: "int"},
 						"seen_at":    {Type: "time.Time"},
@@ -196,8 +196,8 @@ func TestTypeOverrideAcceptsImportableLiteral(t *testing.T) {
 func TestTypeOverrideImportsReportedTogether(t *testing.T) {
 	schema, cfg := typeOverrideImportConfig(t)
 	cfg.Overrides.Types["numeric"] = config.TypeOverride{Type: "decimal.Decimal"}
-	cfg.Extras["payload"] = config.ExtraType{
-		Fields: map[string]config.ExtraTypeField{"trace_id": {Type: "uuid.UUID"}},
+	cfg.Extras["Payload"] = config.ExtraType{
+		Fields: map[string]config.ExtraTypeField{"TraceID": {Type: "uuid.UUID"}},
 	}
 
 	_, err := gen.ValidateGeneration(schema, cfg)
@@ -206,7 +206,7 @@ func TestTypeOverrideImportsReportedTogether(t *testing.T) {
 	}
 	for _, want := range []string{
 		"overrides.types.numeric.type",
-		"extras.payload.fields.trace_id.type",
+		"extras.Payload.fields.TraceID.type",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("ValidateGeneration() error = %q, want it to mention %q", err, want)

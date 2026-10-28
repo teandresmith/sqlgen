@@ -39,15 +39,6 @@ const (
 	SourceBoth     Source = "both"
 )
 
-// ParseMode controls how duplicate table definitions across files are handled.
-type ParseMode string
-
-// Supported parse modes.
-const (
-	ParseModeStrict ParseMode = "strict"
-	ParseModeMerge  ParseMode = "merge"
-)
-
 // Driver identifies the Go database driver imported by generated code.
 type Driver string
 
@@ -134,15 +125,6 @@ func (d Dialect) IsValid() bool {
 func (s Source) IsValid() bool {
 	switch s {
 	case SourceFiles, SourceDatabase, SourceBoth:
-		return true
-	}
-	return false
-}
-
-// IsValid reports whether p is one of the defined ParseMode constants.
-func (p ParseMode) IsValid() bool {
-	switch p {
-	case ParseModeStrict, ParseModeMerge:
 		return true
 	}
 	return false
@@ -242,6 +224,11 @@ type RootConfig struct {
 	// envVars maps a dotted path to the environment variables its value
 	// referenced (PRD §4.1.1).
 	envVars map[string][]string
+
+	// cacheKeys records which cache sub-block keys the YAML writes, so a
+	// partial hydration or circuit_breaker block can default each key it
+	// leaves out without overwriting an explicit false or 0.
+	cacheKeys cacheKeyPresence
 }
 
 // InputConfig controls where the schema is read from.
@@ -251,7 +238,6 @@ type InputConfig struct {
 	Schema     string            `yaml:"schema"`
 	Paths      []string          `yaml:"paths"`
 	Views      []string          `yaml:"views"`
-	ParseMode  ParseMode         `yaml:"parse_mode"`
 	Connection *ConnectionConfig `yaml:"connection"`
 	Introspect *IntrospectConfig `yaml:"introspect"`
 
@@ -817,7 +803,6 @@ type TableEventConfig struct {
 // ViewConfig defines a read-only view.
 type ViewConfig struct {
 	StructName   string           `yaml:"struct_name"`
-	SQL          string           `yaml:"sql"`
 	Cache        *ViewCacheConfig `yaml:"cache"`
 	InvalidateOn []string         `yaml:"invalidate_on"`
 	// CursorKeys overrides generation.cursor_keys for this view. When set
@@ -885,6 +870,43 @@ type CircuitBreakerConfig struct {
 	FailureThreshold  int    `yaml:"failure_threshold"`
 	ProbeInterval     string `yaml:"probe_interval"`
 	HalfOpenMaxProbes int    `yaml:"half_open_max_probes"`
+}
+
+// cacheKeyPresence records the cache.hydration and cache.circuit_breaker keys
+// a config file writes. A bool or int left out of a written block decodes to
+// its zero value, the same as an explicit false or 0, so the defaults need
+// the key itself to tell the two apart.
+type cacheKeyPresence struct {
+	hydrationEnabled bool
+	breakerEnabled   bool
+	breakerThreshold bool
+	breakerProbes    bool
+}
+
+// cacheKeyNodes is the shape decodeConfig reads the cache sub-block keys
+// into to learn which ones the file writes.
+type cacheKeyNodes struct {
+	Hydration struct {
+		Enabled yaml.Node `yaml:"enabled"`
+	} `yaml:"hydration"`
+	CircuitBreaker struct {
+		Enabled           yaml.Node `yaml:"enabled"`
+		FailureThreshold  yaml.Node `yaml:"failure_threshold"`
+		HalfOpenMaxProbes yaml.Node `yaml:"half_open_max_probes"`
+	} `yaml:"circuit_breaker"`
+}
+
+// presence reports which keys n holds. A key whose value is null counts as
+// left out.
+func (n cacheKeyNodes) presence() cacheKeyPresence {
+	written := func(v yaml.Node) bool { return v.Kind != 0 && v.Tag != "!!null" }
+	hy, cb := n.Hydration, n.CircuitBreaker
+	return cacheKeyPresence{
+		hydrationEnabled: written(hy.Enabled),
+		breakerEnabled:   written(cb.Enabled),
+		breakerThreshold: written(cb.FailureThreshold),
+		breakerProbes:    written(cb.HalfOpenMaxProbes),
+	}
 }
 
 // TableAPIConfig overrides per-table API exposure. Enabled is a tri-state
@@ -1689,11 +1711,13 @@ func decodeConfig(data []byte) (*RootConfig, error) {
 		Input struct {
 			Paths yaml.Node `yaml:"paths"`
 		} `yaml:"input"`
+		Cache cacheKeyNodes `yaml:"cache"`
 	}
 	if err := yaml.Unmarshal(data, &present); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 	cfg.Input.pathsSet = present.Input.Paths.Kind != 0
+	cfg.cacheKeys = present.Cache.presence()
 	return &cfg, nil
 }
 
@@ -1879,9 +1903,6 @@ func applyInputDefaults(in *InputConfig) {
 	if len(in.Paths) == 0 {
 		in.Paths = []string{"."}
 	}
-	if in.ParseMode == "" {
-		in.ParseMode = ParseModeStrict
-	}
 }
 
 func applyOutputDefaults(out *OutputConfig) {
@@ -1896,7 +1917,7 @@ func applyOutputDefaults(out *OutputConfig) {
 		out.Layout = LayoutSingleFile
 	}
 	if out.Package == "" {
-		out.Package = derivePackageName(out.Dir)
+		out.Package = derivePackageName(absDir(out.Dir))
 	}
 	applyOutputSubDefaults(out)
 }
@@ -1941,7 +1962,11 @@ func applyGenerationDefaults(gen *GenerationConfig) {
 	if gen.PageSize == nil {
 		gen.PageSize = new(100)
 	}
-	if len(gen.CursorKeys) == 0 {
+	// Only a missing key takes a list default. An explicit `[]` decodes to an
+	// empty non-nil slice and is kept: for soft_delete_columns and
+	// update_columns it turns detection off, and an empty cursor_keys is left
+	// for validation to reject.
+	if gen.CursorKeys == nil {
 		gen.CursorKeys = []string{"id"}
 	}
 	if gen.UUIDVersion == "" {
@@ -1950,10 +1975,10 @@ func applyGenerationDefaults(gen *GenerationConfig) {
 	if gen.StrictUpdates == nil {
 		gen.StrictUpdates = new(true)
 	}
-	if len(gen.SoftDeleteColumns) == 0 {
+	if gen.SoftDeleteColumns == nil {
 		gen.SoftDeleteColumns = defaultSoftDeleteColumns()
 	}
-	if len(gen.UpdateColumns) == 0 {
+	if gen.UpdateColumns == nil {
 		gen.UpdateColumns = defaultUpdateColumns()
 	}
 }
@@ -1983,7 +2008,7 @@ func applyCacheDefaults(cfg *RootConfig) {
 		}
 		cfg.Cache = &CacheConfig{}
 	}
-	cfg.CacheKeyPrefixDefaulted = fillCacheDefaults(cfg.Cache)
+	cfg.CacheKeyPrefixDefaulted = fillCacheDefaults(cfg.Cache, cfg.cacheKeys)
 }
 
 // anyEntityOptsIntoCache reports whether some table or view sets
@@ -2003,8 +2028,10 @@ func anyEntityOptsIntoCache(cfg *RootConfig) bool {
 }
 
 // fillCacheDefaults fills the unset fields of c with the PRD §27.2 defaults
-// and reports whether key_prefix was defaulted.
-func fillCacheDefaults(c *CacheConfig) (prefixDefaulted bool) {
+// and reports whether key_prefix was defaulted. A hydration or
+// circuit_breaker block the config writes takes the default for each key it
+// leaves out; set says which bool and int keys it does write.
+func fillCacheDefaults(c *CacheConfig, set cacheKeyPresence) (prefixDefaulted bool) {
 	if c.TTL == "" {
 		c.TTL = "1h"
 	}
@@ -2016,17 +2043,29 @@ func fillCacheDefaults(c *CacheConfig) (prefixDefaulted bool) {
 		prefixDefaulted = true
 	}
 	if c.Hydration == nil {
-		c.Hydration = &HydrationConfig{Enabled: true, Timeout: "30s"}
-	} else if c.Hydration.Timeout == "" {
+		c.Hydration = &HydrationConfig{}
+	}
+	if !set.hydrationEnabled {
+		c.Hydration.Enabled = true
+	}
+	if c.Hydration.Timeout == "" {
 		c.Hydration.Timeout = "30s"
 	}
 	if c.CircuitBreaker == nil {
-		c.CircuitBreaker = &CircuitBreakerConfig{
-			Enabled:           true,
-			FailureThreshold:  5,
-			ProbeInterval:     "30s",
-			HalfOpenMaxProbes: 1,
-		}
+		c.CircuitBreaker = &CircuitBreakerConfig{}
+	}
+	cb := c.CircuitBreaker
+	if !set.breakerEnabled {
+		cb.Enabled = true
+	}
+	if !set.breakerThreshold {
+		cb.FailureThreshold = 5
+	}
+	if cb.ProbeInterval == "" {
+		cb.ProbeInterval = "30s"
+	}
+	if !set.breakerProbes {
+		cb.HalfOpenMaxProbes = 1
 	}
 	return prefixDefaulted
 }
@@ -2036,7 +2075,7 @@ func fillCacheDefaults(c *CacheConfig) (prefixDefaulted bool) {
 // to once a table or view opts into caching.
 func DefaultCacheConfig() *CacheConfig {
 	c := &CacheConfig{}
-	fillCacheDefaults(c)
+	fillCacheDefaults(c, cacheKeyPresence{})
 	return c
 }
 
@@ -2084,6 +2123,17 @@ func applyEnvOverrides(cfg *RootConfig) {
 			c.passwordEnvIgnoredBy = "input.connection.url"
 		}
 	}
+}
+
+// absDir returns dir made absolute against the working directory, so its base
+// name is a real directory name even for "." or "..". dir is returned as is
+// when the working directory cannot be read.
+func absDir(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return dir
+	}
+	return abs
 }
 
 // derivePackageName extracts a Go package name from a directory path.

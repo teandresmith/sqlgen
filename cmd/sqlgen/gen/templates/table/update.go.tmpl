@@ -10,6 +10,8 @@
 // set, no UPDATE is executed and the current entity is returned unchanged.
 {{- if .StrictUpdates }}
 // Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+{{- else }}
+// Returns nil and no error if the primary key does not exist (strict_updates is disabled).
 {{- end }}
 func (c *{{ $structCamel }}Client) Update(ctx context.Context, {{ if .CompositePK }}pk {{ .CompositePKStructName }}{{ else }}id {{ $pkCol.GoType }}{{ end }}, input *Update{{ .StructName }}Input, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error) {
 	// Nil is a caller error, distinct from an empty-but-non-nil
@@ -95,11 +97,29 @@ func (c *{{ $structCamel }}Client) Update(ctx context.Context, {{ if .CompositeP
 				return nil, nil
 			}
 
+{{- if .StrictUpdates }}
+
 			return c.Get(ctx, {{ if .CompositePK }}pk{{ else }}id{{ end }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
 				*o = options
 				o.SkipHooks = true
 				o.LockMode = sql.LockNone
 			})
+{{- else }}
+
+			current, err := c.Get(ctx, {{ if .CompositePK }}pk{{ else }}id{{ end }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			// Without strict updates a key that matches no row is not an
+			// error: there is no current entity, so Update returns no entity
+			// and a nil error, exactly as it does after a write that matched
+			// nothing.
+			if errors.Is(err, ErrNotFound) {
+				return nil, nil
+			}
+			return current, err
+{{- end }}
 		}
 {{- range .UpdateColumns }}
 
@@ -247,6 +267,11 @@ func (c *{{ $structCamel }}Client) Update(ctx context.Context, {{ if .CompositeP
 {{- if $captureTenant }}
 			m.AffectedTenants = []any{capturedTenant}
 {{- end }}
+		}
+		// Without strict updates that is not an error either: there is no
+		// row to read back, so Update returns no entity and a nil error.
+		if matched == 0 {
+			return nil, nil
 		}
 {{- end }}
 

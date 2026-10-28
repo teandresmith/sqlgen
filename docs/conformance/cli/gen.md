@@ -8,7 +8,7 @@
 <!-- matrix: access-control rows=role cols=go-client,api-in,api-out,filter,sort,event-payload,cache,manifest -->
 
 ## §8.1 Template Engine
-<!-- prd: 8.1 sha256: 5448a479b5e3e0e7 -->
+<!-- prd: 8.1 sha256: af5cdfda555c2e44 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -937,7 +937,7 @@ Rows of the `naming` matrix are the rows of the §8.5 tables: the acronym exampl
 | gen.events.metadata-at-hook-entry | Each per-entity hook calls `MetadataFunc` once at hook entry and merges its result into every event's `Metadata`, shallow-cloned per event, with the tenant stamp applied last (§28.3) | `unit: cmd/sqlgen/gen: TestEventHooks_metadataFunc_mergedAtHookEntry` | all | |
 
 ## §29.2 Configuration
-<!-- prd: 29.2 sha256: faff110ade35c4f5 -->
+<!-- prd: 29.2 sha256: 167ad62e47a49488 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -1090,9 +1090,9 @@ Rows of the `naming` matrix are the rows of the §8.5 tables: the acronym exampl
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| gen.access.config-example.loads | The §32.6 example loads with `LoadConfig` | | all | |
-| gen.access.config-example.pre-parse-valid | The §32.6 example passes pre-parse validation | | all | |
-| gen.access.config-example.schema-valid | The §32.6 example validates against `cmd/sqlgen/config/schema/v1.json` | | all | |
+| gen.access.config-example.loads | The §32.6 example loads with `LoadConfig` | `unit: cmd/sqlgen/config: TestPRDAccessExample_LoadsAndValidates/loads` | all |  |
+| gen.access.config-example.pre-parse-valid | The §32.6 example passes pre-parse validation | `unit: cmd/sqlgen/config: TestPRDAccessExample_LoadsAndValidates/passes pre-parse validation` | all |  |
+| gen.access.config-example.schema-valid | The §32.6 example validates against `cmd/sqlgen/config/schema/v1.json` | `unit: cmd/sqlgen/config: TestPRDAccessExample_LoadsAndValidates/matches the config schema` | all |  |
 
 ## Not applicable
 

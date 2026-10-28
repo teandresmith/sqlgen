@@ -218,6 +218,7 @@ func GenerateInto(schema *parser.Schema, cfg *config.RootConfig, version, writeR
 
 	opts := buildOptions(cfg, version, writeRoot)
 	writeDirs := map[string]string{opts.OutputDir: cfg.Output.Dir}
+	recordOutputFileDirs(writeDirs, cfg, opts.WriteRoot)
 
 	ctxs, err := buildAllContexts(input, collisions)
 	if err != nil {
@@ -347,14 +348,15 @@ func generateTypes(tmpl *template.Template, typeCtx TypeContext, cfg *config.Roo
 	if !hasTypes {
 		return nil, nil
 	}
-	typesPath := filepath.Join(opts.OutputDir, cfg.Output.Types.File)
+	typesPath := SandboxPath(opts.WriteRoot, outputFilePath(cfg.Output.Dir, typesFileName(cfg)))
 	typeFileCtx := TypeFileContext{
 		Package: cfg.Output.Types.Package,
-		// The Value/Scan pair the composite and extra templates emit is the
-		// only code in this file that imports anything; a file of nothing but
-		// domain aliases declares the three and has them pruned. Declaring
-		// them keeps goimports off its module-cache scan (// modelTemplateImports).
-		Imports:    []string{"database/sql/driver", "encoding/json", "fmt"},
+		// The Value/Scan pair the composite and extra templates emit needs
+		// three standard-library imports and each extras field its `import`;
+		// a file of nothing but domain aliases declares the three and has
+		// them pruned. Declaring them keeps goimports off its module-cache
+		// scan (// modelTemplateImports).
+		Imports:    typesFileImports(typeCtx.Extras),
 		Composites: typeCtx.Composites,
 		Domains:    typeCtx.Domains,
 		Extras:     typeCtx.Extras,
@@ -363,6 +365,20 @@ func generateTypes(tmpl *template.Template, typeCtx TypeContext, cfg *config.Roo
 		return nil, fmt.Errorf("generating types: %w", err)
 	}
 	return []string{typesPath}, nil
+}
+
+// typesFileImports returns the types file's declared imports: the three the
+// Value/Scan pair needs plus each extras field's `import` (PRD §4.10), so the
+// package a field's type names comes from the config, not from goimports'
+// module-cache guess.
+func typesFileImports(extras []ExtraTypeContext) []string {
+	imports := []string{"database/sql/driver", "encoding/json", "fmt"}
+	for _, et := range extras {
+		for _, f := range et.Fields {
+			imports = append(imports, f.Import)
+		}
+	}
+	return UniqueImports(imports)
 }
 
 // generateClient generates the unified client file.
@@ -446,7 +462,7 @@ func generateEnums(tmpl *template.Template, enumContexts []EnumContext, cfg *con
 	if len(enumContexts) == 0 {
 		return nil, nil
 	}
-	enumPath := filepath.Join(opts.OutputDir, cfg.Output.Enums.File)
+	enumPath := SandboxPath(opts.WriteRoot, outputFilePath(cfg.Output.Dir, enumsFileName(cfg)))
 	// `io` is required by MarshalGQL on every emitted enum so the type
 	// satisfies gqlgen's graphql.Marshaler interface via duck typing. The
 	// import is unconditional even when API generation is off — the methods
@@ -799,10 +815,46 @@ func generateViewsSingleFile(tmpl *template.Template, views []ViewContext, opts 
 	return []string{filePath}, nil
 }
 
+// outputFilePath resolves output.enums.file or output.types.file to the path
+// a normal run writes it to: relative to output.dir unless absolute (PRD
+// §4.5). An absolute file is used as written; validation keeps it in output.dir.
+func outputFilePath(outputDir, file string) string {
+	if filepath.IsAbs(file) {
+		return file
+	}
+	return filepath.Join(outputDir, file)
+}
+
+// recordOutputFileDirs adds the directories of output.enums.file and
+// output.types.file to writeDirs. An absolute file previews in a different
+// directory from output.dir, though it names the same real one, and
+// `sqlgen diff` pairs a preview file with its working-tree path only through
+// writeDirs.
+func recordOutputFileDirs(writeDirs map[string]string, cfg *config.RootConfig, writeRoot string) {
+	for _, file := range []string{enumsFileName(cfg), typesFileName(cfg)} {
+		configured := filepath.Dir(outputFilePath(cfg.Output.Dir, file))
+		writeDirs[SandboxPath(writeRoot, configured)] = configured
+	}
+}
+
+// sameDir reports whether two directory paths name the same directory,
+// comparing their absolute forms so "models" and "/repo/models" match when
+// the working directory is /repo.
+func sameDir(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	if errA != nil || errB != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return absA == absB
+}
+
 // StaleFiles returns the orphaned *_gen.go files in outputDir — those a
-// generation run producing writtenFiles would leave behind. Only *_gen.go is
-// considered, and matching is by base name, so a redirected run's writtenFiles
-// (which carry temp-dir prefixes) classify identically to a real one's.
+// generation run producing writtenFiles would leave behind. Only *_gen.go
+// directly in outputDir is considered, and only a written file in that same
+// directory protects one: a same-named file written to another directory (the
+// graph package) does not make outputDir's copy current. writtenFiles are therefore working-tree paths; a
+// redirected run maps its files back through GenerateResult.WriteDirs first.
 //
 // Split out from CleanStaleFiles so `sqlgen diff` can report the deletions a
 // run would perform without performing them, and cannot drift from what
@@ -818,7 +870,9 @@ func StaleFiles(outputDir string, writtenFiles []string) ([]string, error) {
 
 	written := make(map[string]bool, len(writtenFiles))
 	for _, f := range writtenFiles {
-		written[filepath.Base(f)] = true
+		if sameDir(filepath.Dir(f), outputDir) {
+			written[filepath.Base(f)] = true
+		}
 	}
 
 	var stale []string

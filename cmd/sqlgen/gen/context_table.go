@@ -10,6 +10,7 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
+	gotypeliteral "github.com/teandresmith/sqlgen/cmd/sqlgen/gotype/literal"
 	"github.com/teandresmith/sqlgen/parser"
 )
 
@@ -922,11 +923,7 @@ func typeOverrideSource(resolver *gotype.Resolver, qualifiedTable string, tableC
 // builtins carry no qualifier; `time.Time`, `json.RawMessage` and the rest of
 // the known registry carry one but resolve their own import.
 func needsExplicitImport(literal string) bool {
-	if !strings.Contains(literal, ".") {
-		return false
-	}
-	_, known := gotype.KnownLiteral(literal)
-	return !known
+	return gotypeliteral.NeedsExplicitImport(literal)
 }
 
 // buildUpdateColumnContexts pairs each auto-set update column with its
@@ -1591,7 +1588,11 @@ func mergeDeclaredRelationships(
 			errs = append(errs, errors.Join(targetErr, junctionErr))
 			continue
 		}
-		rel := configRelationshipToContext(schema, r, targets)
+		if err := checkDeclaredJunctionKeys(schema, r, qualifiedName, targets); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		rel := configRelationshipToContext(schema, r, qualifiedName, targets)
 		// The user declared this edge by name, so a link column removed by
 		// `exclude_columns` is an error, as an unresolvable target is.
 		if member := targets.excludedDeclaredMember(schema, rel, qualifiedName); member != "" {
@@ -1710,7 +1711,11 @@ func sortDirection(d string) string {
 	return "ASC"
 }
 
-func configRelationshipToContext(schema *parser.Schema, r config.TableRelationship, targets *relationshipTargets) RelationshipContext {
+// configRelationshipToContext builds the context of a declared relationship
+// on the source table (its qualified name). An m2m entry's junction keys are
+// the declared or inferred ones (declaredJunctionKeys); a key that cannot be
+// inferred is "", and mergeDeclaredRelationships reports it before building.
+func configRelationshipToContext(schema *parser.Schema, r config.TableRelationship, source string, targets *relationshipTargets) RelationshipContext {
 	relType := parseRelationshipType(r.Type)
 	// Callers run checkDeclaredTarget first, so the target resolves. The
 	// context carries the schema the target resolved in, not the one `table:`
@@ -1730,6 +1735,10 @@ func configRelationshipToContext(schema *parser.Schema, r config.TableRelationsh
 	// loader, the relationship filter, the FK metadata and the nested link
 	// step name one table. Callers run checkDeclaredJunction first.
 	cjSchema, cjName, _ := targets.resolveJunction(r.Junction)
+	var localFK, referenceFK string
+	if relType == parser.ManyToMany {
+		localFK, referenceFK, _ = declaredJunctionKeys(schema, r, source, targets)
+	}
 	return RelationshipContext{
 		Name:                r.Name,
 		Type:                relType,
@@ -1741,14 +1750,14 @@ func configRelationshipToContext(schema *parser.Schema, r config.TableRelationsh
 		FKOnTarget:          fkColumnOnTarget(schema, relType, target.Schema, tName, r.FK),
 		JunctionTable:       cjName,
 		JunctionSchema:      cjSchema,
-		JunctionLocalFK:     r.JunctionLocalFK,
-		JunctionReferenceFK: r.JunctionReferenceFK,
+		JunctionLocalFK:     localFK,
+		JunctionReferenceFK: referenceFK,
 		Filter:              r.Filter,
 		Discriminator:       discriminatorContext(r.Discriminator),
 		Sort:                sorts,
 		FieldName:           fieldName,
 		GoType:              goType,
-		Description:         relationshipDescription(relType, r.Table),
+		Description:         declaredRelationshipDescription(r, relType),
 		JSONTag:             toSnakeName(r.Name),
 	}
 }
@@ -1792,6 +1801,16 @@ func fkColumnOnTarget(schema *parser.Schema, relType parser.RelationshipType, ta
 	return slices.ContainsFunc(target.Columns, func(c parser.Column) bool {
 		return c.Name == fkColumn
 	})
+}
+
+// declaredRelationshipDescription returns the doc comment of a declared
+// relationship's field: its `description` verbatim when set, like a column's
+// (PRD §4.8), else the relationshipDescription boilerplate.
+func declaredRelationshipDescription(r config.TableRelationship, relType parser.RelationshipType) string {
+	if r.Description != "" {
+		return r.Description
+	}
+	return relationshipDescription(relType, r.Table)
 }
 
 // relationshipDescription returns a doc comment description for a relationship field.
@@ -2827,7 +2846,7 @@ func findO2ORelationships(schema *parser.Schema, table *parser.Table, tableCfg c
 			continue
 		}
 		results = append(results, chainedRelInfo{
-			rel: configRelationshipToContext(schema, r, targets),
+			rel: configRelationshipToContext(schema, r, qualifiedName, targets),
 		})
 	}
 	return results

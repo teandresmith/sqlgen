@@ -164,10 +164,21 @@ func workingTreePath(result *gen.GenerateResult, written string) (string, error)
 // does not emit it — the manifest stage does, after the sweep — so without
 // this it reads as orphaned and `diff` claims a deletion that `generate` never
 // performs.
+//
+// StaleFiles takes working-tree paths, so each preview file is mapped back to
+// where a real run writes it first: a preview file must be compared at its
+// real path, which may be an absolute spelling of output.dir.
 func findDeletedFiles(result *gen.GenerateResult, cfg *config.RootConfig) ([]fileChange, error) {
-	written := result.Files
+	written := make([]string, 0, len(result.Files)+1)
+	for _, f := range result.Files {
+		target, err := workingTreePath(result, f)
+		if err != nil {
+			return nil, err
+		}
+		written = append(written, target)
+	}
 	if gen.ManifestEmbedEnabled(cfg) {
-		written = append(append([]string(nil), written...), gen.ManifestEmbedFilename)
+		written = append(written, filepath.Join(cfg.Output.Dir, gen.ManifestEmbedFilename))
 	}
 
 	stale, err := gen.StaleFiles(cfg.Output.Dir, written)
