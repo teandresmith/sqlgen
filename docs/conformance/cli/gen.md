@@ -485,7 +485,7 @@ Rows of the `naming` matrix are the rows of the §8.5 tables: the acronym exampl
 | gen.pk-strategy.retrieval-mysql-caller | MySQL `caller` strategy uses the supplied PK and performs no retrieval | | mysql | |
 | gen.pk-strategy.retrieval-composite | A composite key is used as supplied on every dialect, with no retrieval | | all | |
 | gen.pk-strategy.resolution-order | PK handling resolves `primary_key.columns` first, then `primary_key.strategy`, then auto-detection from schema and dialect | `unit: cmd/sqlgen/gen: TestBuildTableContexts_PKOverride_FillsEmpty`; `unit: cmd/sqlgen/gen: TestCreateInputFieldClassification_callerPK` | all | |
-| gen.pk-strategy.columns-override-silent | `primary_key.columns` silently takes precedence over an auto-detected PK, with no warning | `unit: cmd/sqlgen/gen: TestBuildTableContexts_PKOverride_WinsOverAutoDetect`; `unit: cmd/sqlgen/cli: TestApplyPrimaryKeyOverrides` | all |  |
+| gen.pk-strategy.columns-override-silent | `primary_key.columns` silently takes precedence over an auto-detected PK, with no warning | `unit: cmd/sqlgen/gen: TestBuildTableContexts_PKOverride_WinsOverAutoDetect`; `unit: cmd/sqlgen/cli: TestApplyPrimaryKeyOverrides`; `unit: cmd/sqlgen/config: TestValidatePostParse_PrimaryKeyOverride_SilentWhenAutoPKExists` | all |  |
 | gen.pk-strategy.columns-override-order | `primary_key.columns` declaration order is the generated `<Table>PK` field order | `unit: cmd/sqlgen/gen: TestBuildTableContexts_PKOverride_CompositePreservesOrder` | all | |
 | gen.pk-strategy.columns-override-equivalent | Every downstream path (`Get` / `Update` / `Exists` signatures, `<Table>PK` emission, cache keys, event PKs) reads only the resolved PK set, so an override behaves exactly like a schema `PRIMARY KEY` | `unit: cmd/sqlgen/gen: TestBuildTableContexts_NoPK_WithOverride_NotSkipped` | all | |
 
@@ -1090,6 +1090,9 @@ Rows of the `naming` matrix are the rows of the §8.5 tables: the acronym exampl
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
+| gen.access.config-example.loads | The §32.6 example loads with `LoadConfig` | | all | |
+| gen.access.config-example.pre-parse-valid | The §32.6 example passes pre-parse validation | | all | |
+| gen.access.config-example.schema-valid | The §32.6 example validates against `cmd/sqlgen/config/schema/v1.json` | | all | |
 
 ## Not applicable
 

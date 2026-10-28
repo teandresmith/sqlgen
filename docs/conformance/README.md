@@ -10,7 +10,9 @@ in [`docs/design/CONFORMANCE.md`](../design/CONFORMANCE.md) §3 and §5. `make r
 |---|---|---|
 | [`runtime.md`](runtime.md) | Runtime: `sql`, `comparator`, `omittable`, `database` and drivers, `cache`, `tenancy`, `event`, `hook`, `types`, `manifest` | unit, integration |
 | [`parser.md`](parser.md) | Parser: `parser` and its dialect and `introspect` packages | unit, integration |
-| [`cli/config.md`](cli/config.md) | CLI: `cmd/sqlgen/config` | unit |
+| [`cli/config.md`](cli/config.md) | CLI: `cmd/sqlgen/config`; §4.3, §4.13 and §4.14, and the package's unclaimed tests | unit |
+| [`cli/config-fields.md`](cli/config-fields.md) | CLI: config fields (§4, §4.1, §4.2, §4.4–§4.12, and the `config-fields` and `config-resolution` matrices); no package of its own, its rows claim `cmd/sqlgen/config`, `gen`, `gotype`, `cli` and example tests | unit, golden, example |
+| [`cli/config-features.md`](cli/config-features.md) | CLI: cache, event and tenancy config (§27.2, §28.8, §29.2, §29.11, and the `feature-fields` and `feature-resolution` matrices); no package of its own | unit, golden, example |
 | [`cli/gen.md`](cli/gen.md) | CLI: `cmd/sqlgen/gen` | unit, golden |
 | [`cli/gotype.md`](cli/gotype.md) | CLI: `cmd/sqlgen/gotype` | unit |
 | [`cli/api.md`](cli/api.md) | CLI: API generation (§26.5–§26.12 except §26.8 and §26.11, and the `api-generation` matrix); no package of its own, its rows claim `cmd/sqlgen/gen`, `cli`, `wrapper` and example tests | unit, golden, example |
@@ -154,19 +156,19 @@ another file also cites is still owned once.
 | §1 Overview | informative |
 | §2 Glossary | informative |
 | §3 System Architecture | informative |
-| §4 Configuration System | cli/config.md |
-| §4.1 Root Config | cli/config.md |
-| §4.2 InputConfig | cli/config.md |
+| §4 Configuration System | cli/config-fields.md |
+| §4.1 Root Config | cli/config-fields.md |
+| §4.2 InputConfig | cli/config-fields.md |
 | §4.3 ConnectionConfig | cli/config.md |
-| §4.4 IntrospectConfig | cli/config.md |
-| §4.5 OutputConfig | cli/config.md |
-| §4.6 GenerationConfig | cli/config.md |
-| §4.7 OverrideConfig | cli/config.md |
-| §4.8 TableConfig (per-table) | cli/config.md |
-| §4.9 ViewConfig (per-view) | cli/config.md |
-| §4.10 ExtraType (custom structs) | cli/config.md |
-| §4.11 Enum Overrides | cli/config.md |
-| §4.12 Full Example | cli/config.md |
+| §4.4 IntrospectConfig | cli/config-fields.md |
+| §4.5 OutputConfig | cli/config-fields.md |
+| §4.6 GenerationConfig | cli/config-fields.md |
+| §4.7 OverrideConfig | cli/config-fields.md |
+| §4.8 TableConfig (per-table) | cli/config-fields.md |
+| §4.9 ViewConfig (per-view) | cli/config-fields.md |
+| §4.10 ExtraType (custom structs) | cli/config-fields.md |
+| §4.11 Enum Overrides | cli/config-fields.md |
+| §4.12 Full Example | cli/config-fields.md |
 | §4.13 Config Validation Rules | cli/config.md |
 | §4.14 Config JSON Schema (editor support) | cli/config.md |
 | §5 SQL Parsing | parser.md |
@@ -326,7 +328,7 @@ another file also cites is still owned once.
 | §26.13 gRPC API Generation | cli/api-http.md |
 | §27 Caching | runtime.md |
 | §27.1 Overview | informative |
-| §27.2 Configuration | cli/config.md |
+| §27.2 Configuration | cli/config-features.md |
 | §27.3 Cache Interface | runtime.md |
 | §27.4 Injection via Hooks | runtime.md |
 | §27.5 Cache Key Generation | runtime.md |
@@ -346,13 +348,13 @@ another file also cites is still owned once.
 | §28.5 Subscriber Interface | runtime.md |
 | §28.6 Event Input | runtime.md |
 | §28.7 Transport Implementations | runtime.md |
-| §28.8 Configuration | cli/config.md |
+| §28.8 Configuration | cli/config-features.md |
 | §28.9 Generated Event Hook Architecture | cli/gen.md |
 | §28.10 Use Cases | informative |
 | §28.11 Cache Invalidation via Events | runtime.md |
 | §29 Tenancy | client.md |
 | §29.1 Overview | informative |
-| §29.2 Configuration | cli/config.md |
+| §29.2 Configuration | cli/config-features.md |
 | §29.3 Runtime Integration | runtime.md |
 | §29.4 Generated Behavior | client.md |
 | §29.5 Cache Key Grammar Extension | runtime.md |
@@ -361,7 +363,7 @@ another file also cites is still owned once.
 | §29.8 Soft Delete Composition | client.md |
 | §29.9 Hooks Orthogonality | client.md |
 | §29.10 Relationship Propagation | client.md |
-| §29.11 Constraints | cli/config.md |
+| §29.11 Constraints | cli/config-features.md |
 | §29.12 YAML Examples | informative |
 | §30 Manifest | cli/manifest.md |
 | §30.1 Overview | informative |
