@@ -1187,6 +1187,109 @@ database versions it ran against.
      in a ruling question is a claim too, so give it the same fill test before it lands; agents
      writing tests in batches name them after the batch, so assign descriptive names in the
      brief; and a rename map applied by script must remap refs to deleted tests, not drop them.
+   **Seventh slice, config fields (§4) and the feature config blocks, recorded 2026-10-28:**
+   - **Scope.** §4, §4.1, §4.2, §4.4–§4.12, §27.2, §28.8, §29.2 and §29.11, gen.md's empty §32.6
+     anchor, the 85 `cmd/sqlgen/config` tests no row claimed, and `config.md`'s untested rows. The
+     four `fk` list-length rows are Phase 32.3 planned work and stay untested.
+   - **Split first.** About 600 new rows were estimated against `config.md`'s 473 lines, so
+     `cli/config-fields.md` took §4–§4.12 and `cli/config-features.md` took §27.2, §28.8, §29.2
+     and §29.11. Neither lists a package: `req-check` reads an unclaimed list per file, so the
+     `cmd/sqlgen/config` package line and its unclaimed list stay in `config.md`. §4.12 and §32.6
+     got rows by ruling (each example loads, validates and matches the schema).
+   - **Matrix shape.** Two shapes, declared with the user, each per file because a matrix is
+     declared once: `config-fields` / `feature-fields` (rows = every field with a PRD default,
+     generated from the tables' Default columns; cols = `default`, `explicit`, `schema`) and
+     `config-resolution` / `feature-resolution` (rows = every field set at several levels; cols =
+     `table-wins`, `table-inherits`, `view-wins`, `view-inherits`). 237 rows fill cells; 23 `n/a`,
+     each citing §4.9 (ViewConfig lacks the field), §27.2 (serializer is global) or §4.6.
+   - **Anchors.** 17: §4, §4.1, §4.2, §4.4–§4.12 in `config-fields.md`; §27.2, §28.8, §29.2,
+     §29.11 in `config-features.md`; §5.5 in `parser.md` (the config-key qualification tests),
+     which moves it to `in-progress`. The §4 anchor hashes the whole chapter, so any §4.x edit
+     trips its two rows.
+   - **Rows seeded: 499**, 326 in `config-fields.md`, 134 in `config-features.md`, 33 in
+     `config.md` (the `SQLGEN_DB_*` overrides, the schema drift row and five new §4.13 rule
+     families), 3 in `parser.md` and 3 in `gen.md`. Four mapping agents drafted 474 in about 15
+     minutes; they claimed every `config-resolution` cell twice (§4.6 and §4.8 state the same
+     order), merged onto the §4.6 rows.
+   - **Claim check before tests.** Two read-only checkers flagged 118 of 475 rows (1 in 4, up from
+     1 in 11): every `× schema` row rested on the drift test, which checks presence and never the
+     type; fixtures where table and global values were equal, or the global equalled the default;
+     a `max_depth` default nothing reads; a MySQL "never ambiguous" fixture with one table;
+     template substrings for runtime behavior; and expected values read from the code's own
+     constants. 111 edits applied, 4 rejected with reasons, 96 rows emptied for the writers.
+   - **Gaps.** 169 untested rows went to four writers with assigned prefixes (`tsc` schema types,
+     `tdf` §4.1–§4.5 and the examples, `tgf` §4.6–§4.11, `tft` features). The schema writer's 130
+     subtests reject a wrong type at each path and accept each closed-set value; 63 scripted
+     `v1.json` mutations each failed. 1 row stays untested besides the 4 planned: the resolver
+     invoked once across a nested mutation, which only a runtime count in a tenancy-plus-nested
+     example could show. Every `cmd/sqlgen/config` test backs a row or is unclaimed (7).
+   - **Defects: 17 ruled**, each with a fail-first test:
+     1. A partial `cache.hydration` block loaded `enabled: false`.
+     2. A partial `cache.circuit_breaker` block got no defaults, so `enabled: false` alone failed
+        validation and `failure_threshold: 3` alone disabled the breaker.
+     3. `tenancy.type` always required `import`, unlike the §4.7 rule it claims.
+     4. An absolute `output.enums.file` / `output.types.file` was joined under `output.dir`.
+     5. That file outside `output.dir`, or a different `package`, generated a package that does not
+        build; now a §4.13 error (ruled over cross-package wiring).
+     6. A cached view's `invalidate_on` naming an `exclude_tables` table passed.
+     7. A relationship without `table` failed late with exit 1.
+     8. `output.dir` left at `"."` derived the package name `"."`.
+     9. `input.parse_mode` was never read (§5.6 says duplicates always error); removed.
+     10. `tables.<t>.overrides.use_pointers` was accepted and ignored; now an error.
+     11. A per-entity `tenancy.enabled: true` under a global off was ignored; now an error.
+     12. `views.<v>.sql` was never read and `struct_name` never required; `sql` removed, `struct_name`
+         optional.
+     13. An explicit `soft_delete_columns: []` / `update_columns: []` became the default list; `[]`
+         now turns detection off and `cursor_keys: []` is an error.
+     14. Non-strict `Update` on a missing key returned `ErrNotFound` through its read-back, an
+         empty update included; `UpdateWithRelated` now writes nothing nested for a missing parent.
+     15. An M2M edge with only `junction` queried column `""`; keys are inferred per side.
+     16. A relationship's `description` was never read.
+     17. `extras` field imports were never emitted and `extras` / `fields` keys were re-cased
+         (`CIDRs` → `CidRs`); keys are verbatim and a non-identifier is a §4.13 error.
+   - **PRD amendments: 16**, all ruled: §4.2 drops `parse_mode`; §4.5 states the package
+     derivation and the file placement rule; §4.6 and §4.8 name the six per-table generation fields
+     and the empty-list meaning, and the non-strict nested update; §4.8 makes a table's
+     `overrides` `types`-only and `tenancy.enabled` opt-out only; §4.9 makes `struct_name` optional
+     and drops `sql`; §4.11 says the enum default is singular PascalCase; §29.2.2 says the same for
+     tenancy; and §4.13 gains six rules (relationship `table`, tenancy opt-in, per-table
+     `use_pointers`, empty `cursor_keys`, the enums/types file placement, extras names). **PRD
+     gaps: 23** new (20 `config-fields.md`, 3 `config-features.md`) plus one in `manifest.md`, all
+     open; three gaps the rulings settled were deleted. Four adjacent findings went to
+     `backlog.md`.
+   - **Tests written.** 25 new test files across `config`, `gen`, `gotype`, `cli`, `event`, three
+     example modules and the tenancy example, by four fix agents, four writers and two clean-up
+     passes; one runtime unit test generates a SQLite and a pgx package into a temp module and runs
+     it. Golden churn: 8 files, the Update bodies and the MySQL / events nested guard.
+   - **Review.** Two claim checkers and two sqlgen-reviewer passes. The first found stale comments
+     and an ambiguity guard the placement rule made dead (removed); the second found a test that
+     pinned a single-string junction key on a composite PK that §4.13 rejects, fixtures that could
+     not tell a materialized view, a derived package or a joined path apart, and seven duplicate
+     tests from parallel writers, all fixed or folded.
+   - **Completion sweep.** With each `cli/*` file set to `complete`, eight pass and are flipped:
+     `config.md`, `config-fields.md`, `config-features.md`, `api.md`, `api-http.md`,
+     `api-schema.md`, `manifest.md` and `mcp.md`. Three do not: `commands.md` (17 orphans: 16 cli tests
+     of schema sources, views, introspection and PK overrides, which back §5, §6, §8.6 and §16
+     rows, plus `TestE2EDatabaseTwin`), `gotype.md` (4 orphans that predate this slice) and
+     `gen.md` (503 orphans: the gen package's tests were never fully mapped).
+   - **Report.** `make conformance` at `f9e3a49e`: 4087 rows, 3956 pass, 0 fail, 0 skip, 0 not
+     run, 131 untested (51 in `cli/api-http.md`, 27 in `cli/gen.md`, 16 in `cli/manifest.md`,
+     11 in `cli/api.md`, 10 in `cli/mcp.md`, 7 in `cli/gotype.md`, 4 in `cli/config.md`, 2 in
+     `client.md`, 1 each in `cli/commands.md`, `cli/config-fields.md` and
+     `cli/config-features.md`). The first run failed one row: an `event` subtest that read
+     `log.Writer() == os.Stderr`, which `go test -json` breaks; it asserted the standard library,
+     not sqlgen, and was dropped.
+   - **Effort.** Not timed. Mapping with four agents took about 15 minutes; then the claim
+     check, seven rounds of rulings (21 questions), seven fix agents, four test-writing agents,
+     two review passes with their clean-ups, and the gates.
+   - **For the next slice (parser.md):** the claim-check hit rate rose to 1 in 4 here, mostly
+     schema rows resting on a presence-only test, so a mapping agent must name what a test checks
+     (presence, type, value) before citing it; generate matrix rows only where a column can fail
+     differently from its siblings; when two agents may claim one cell (a section that restates
+     another's rule), assign the cell in the brief; parallel writers duplicate tests, so give each
+     the others' file list; a mapping script must take only test references from an agent's cell,
+     never its notes; and a fixture's backup directory must be unique per agent.
+
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
