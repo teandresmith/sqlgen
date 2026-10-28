@@ -391,6 +391,9 @@ func rdwAssertShapeParity(t *testing.T, dialect string, parsed, introspected *pa
 // rdwEdgeStrings spells each edge as relationshipString does, and an M2M
 // edge's two constraints as well.
 func rdwEdgeStrings(rels []parser.Relationship) []string {
+	if len(rels) == 0 {
+		return nil
+	}
 	out := make([]string, 0, len(rels))
 	for _, r := range rels {
 		s := relationshipString(r)
