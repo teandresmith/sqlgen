@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"log"
-	"os"
 	"strings"
 	"testing"
 
@@ -14,14 +13,8 @@ import (
 
 // TestConfigOnErrorDefault pins the event.Config default for OnError: with
 // OnError unset, the resolved handler logs through the standard log package,
-// whose default destination is stderr.
+// whose destination is stderr unless the program redirects it.
 func TestConfigOnErrorDefault(t *testing.T) {
-	t.Run("standard logger writes to stderr by default", func(t *testing.T) {
-		if got := log.Writer(); got != os.Stderr {
-			t.Errorf("log.Writer() = %v, want os.Stderr", got)
-		}
-	})
-
 	t.Run("unset OnError logs the failure through the standard logger", func(t *testing.T) {
 		var buf bytes.Buffer
 		prevOut, prevFlags := log.Writer(), log.Flags()
