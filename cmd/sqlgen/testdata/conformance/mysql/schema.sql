@@ -43,3 +43,14 @@ CREATE TABLE labels (
     name       VARCHAR(64) COLLATE utf8mb4_0900_ai_ci PRIMARY KEY,
     deleted_at TIMESTAMP(6) NULL
 );
+
+-- Increment, the not-null and unique mappings on an insert, and a table with
+-- strict_updates off. updated_at has no DEFAULT, so an insert that leaves it out
+-- violates NOT NULL.
+CREATE TABLE counters (
+    id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name       VARCHAR(64) NOT NULL UNIQUE,
+    hits       BIGINT NOT NULL DEFAULT 0 CHECK (hits >= 0),
+    updated_at TIMESTAMP(6) NOT NULL,
+    deleted_at TIMESTAMP(6) NULL
+);

@@ -121,6 +121,7 @@ type Client struct {
 	querier      database.Querier
 	opts         clientOptions
 	mysqlVersion *mysqlVersionCache
+	counter      *counterClient
 	document     *documentClient
 	label        *labelClient
 	orderItem    *orderItemClient
@@ -143,6 +144,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		querier:      querier,
 		opts:         options,
 		mysqlVersion: mysqlVersion,
+		counter:      newCounterClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		document:     newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		label:        newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		orderItem:    newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
@@ -162,6 +164,11 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.product.orderItemClient = c.orderItem
 
 	return c
+}
+
+// Counters returns the CounterClient for Counter operations.
+func (c *Client) Counters() CounterClient {
+	return c.counter
 }
 
 // Documents returns the DocumentClient for Document operations.

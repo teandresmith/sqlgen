@@ -188,7 +188,7 @@ func hardDeleteMany(t *testing.T, h *Harness) {
 		abort := func(hook.MutationHandler) hook.MutationHandler {
 			return func(context.Context, *hook.MutationContext) (any, error) { return nil, errAbort }
 		}
-		client := models.New(h.Querier, models.WithMutationHook(abort))
+		client := models.New(h.Base, models.WithMutationHook(abort))
 		if err := client.Products().HardDeleteMany(ctx, []int64{a.ID}); !errors.Is(err, errAbort) {
 			t.Fatalf("HardDeleteMany under an aborting hook error = %v, want the hook's error", err)
 		}

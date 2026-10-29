@@ -114,7 +114,7 @@ func affectedPKsRecorder(h *Harness) (*models.Client, func() []any) {
 			return res, err
 		}
 	}
-	return models.New(h.Querier, models.WithMutationHook(record)), func() []any { return last }
+	return models.New(h.Base, models.WithMutationHook(record)), func() []any { return last }
 }
 
 func createRevision(t *testing.T, h *Harness, pk models.RevisionPK) {
@@ -152,7 +152,7 @@ func mutationRecorder(h *Harness) (*models.Client, func() []hook.MutationContext
 			return res, err
 		}
 	}
-	return models.New(h.Querier, models.WithMutationHook(record)), func() []hook.MutationContext { return seen }
+	return models.New(h.Base, models.WithMutationHook(record)), func() []hook.MutationContext { return seen }
 }
 
 func createLabel(t *testing.T, h *Harness, name string) {
@@ -188,7 +188,7 @@ func queryRecorder(h *Harness) (*models.Client, func() []hook.QueryContext) {
 			return next(ctx, q)
 		}
 	}
-	return models.New(h.Querier, models.WithQueryHook(record)), func() []hook.QueryContext {
+	return models.New(h.Base, models.WithQueryHook(record)), func() []hook.QueryContext {
 		mu.Lock()
 		defer mu.Unlock()
 		return append([]hook.QueryContext(nil), seen...)

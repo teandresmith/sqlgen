@@ -44,3 +44,14 @@ CREATE TABLE labels (
     name       CITEXT PRIMARY KEY,
     deleted_at TIMESTAMPTZ
 );
+
+-- Increment, the not-null and unique mappings on an insert, and a table with
+-- strict_updates off. updated_at has no DEFAULT, so an insert that leaves it out
+-- violates NOT NULL.
+CREATE TABLE counters (
+    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    hits       BIGINT NOT NULL DEFAULT 0 CHECK (hits >= 0),
+    updated_at TIMESTAMPTZ NOT NULL,
+    deleted_at TIMESTAMPTZ
+);

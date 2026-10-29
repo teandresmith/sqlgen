@@ -420,7 +420,7 @@ func stream(t *testing.T, h *Harness) {
 			h.Reset(t)
 			createProduct(t, h, "a")
 			createProduct(t, h, "b")
-			client := models.New(h.Querier, models.WithQueryHook(tc.hook))
+			client := models.New(h.Base, models.WithQueryHook(tc.hook))
 			rows, errs, panicked := strRangeGuarded(client.Products().Stream(ctx, nil), tc.breakEarly)
 			// When the consumer breaks out, strRangeGuarded stops ranging after the
 			// first yield, so it cannot see a later yield as an error. The hook's

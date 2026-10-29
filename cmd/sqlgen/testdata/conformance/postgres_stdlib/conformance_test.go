@@ -60,9 +60,10 @@ func TestConformance(t *testing.T) {
 		Database: "PostgreSQL " + version,
 		Client:   models.New(q),
 		Querier:  q,
+		Base:     q,
 		Caps:     suite.Capabilities{RowLocks: true},
 		Reset: func(t *testing.T) {
-			if _, err := db.ExecContext(ctx, "TRUNCATE order_items, products, documents, revisions, labels RESTART IDENTITY"); err != nil {
+			if _, err := db.ExecContext(ctx, "TRUNCATE order_items, products, documents, revisions, labels, counters RESTART IDENTITY"); err != nil {
 				t.Fatal(err)
 			}
 		},

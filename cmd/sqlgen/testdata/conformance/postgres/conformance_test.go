@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -52,17 +53,33 @@ func TestConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := &suite.CountingQuerier{Inner: dbpgx.New(pool)}
+	base := batchingQuerier{CountingQuerier: q, pool: pool}
 	suite.Run(t, &suite.Harness{
 		Dialect:  "postgres",
 		Driver:   "pgx",
 		Database: "PostgreSQL " + version,
-		Client:   models.New(q),
+		Client:   models.New(base),
 		Querier:  q,
+		Base:     base,
 		Caps:     suite.Capabilities{RowLocks: true},
 		Reset: func(t *testing.T) {
-			if _, err := pool.Exec(ctx, "TRUNCATE order_items, products, documents, revisions, labels RESTART IDENTITY"); err != nil {
+			if _, err := pool.Exec(ctx, "TRUNCATE order_items, products, documents, revisions, labels, counters RESTART IDENTITY"); err != nil {
 				t.Fatal(err)
 			}
 		},
 	})
+}
+
+// batchingQuerier is the counting querier with the pool's SendBatch, so the
+// generated client takes its pgx batch path. It records each queued statement.
+type batchingQuerier struct {
+	*suite.CountingQuerier
+	pool *pgxpool.Pool
+}
+
+func (b batchingQuerier) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResults {
+	for _, qq := range batch.QueuedQueries {
+		b.Record(qq.SQL)
+	}
+	return b.pool.SendBatch(ctx, batch)
 }

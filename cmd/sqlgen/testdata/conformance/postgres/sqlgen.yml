@@ -22,6 +22,9 @@ tables:
     # Smaller than the rows a zero-input Connection subtest seeds, so the
     # default page size is observable.
     page_size: 2
+  counters:
+    # Update and Increment on a missing key return nil rather than ErrNotFound.
+    strict_updates: false
 overrides:
   types:
     # citext has no built-in Go type.

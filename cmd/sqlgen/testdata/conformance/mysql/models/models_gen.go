@@ -19,6 +19,2849 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+type Counter struct {
+	ID        int64      `db:"id" json:"id"`
+	Name      string     `db:"name" json:"name"`
+	Hits      int64      `db:"hits" json:"hits"`
+	UpdatedAt time.Time  `db:"updated_at" json:"updated_at"`
+	DeletedAt *time.Time `db:"deleted_at" json:"deleted_at"`
+}
+
+// CounterClient provides type-safe operations for the counters table.
+type CounterClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single counter by primary key.
+	// Soft-deleted counters are excluded by default (exclude_deleted is enabled).
+	// Use GetMany with Filter.DeletedAt comparator to retrieve soft-deleted counters.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[CounterFieldOptions])) (*Counter, error)
+
+	// GetMany returns counters matching the given filter, field selection, and sort criteria.
+	// Soft-deleted counters are excluded by default. Set Filter.DeletedAt to override.
+	GetMany(ctx context.Context, input *GetCountersInput, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error)
+
+	// Exists returns true if a counter with the given primary key exists.
+	// Soft-deleted counters are excluded — a soft-deleted counter returns false.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[CounterFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any counter matches the given filter.
+	// Soft-deleted counters are excluded by default.
+	ExistsWhere(ctx context.Context, filter *CounterFilter, opts ...func(*CallOptions[CounterFieldOptions])) (bool, error)
+
+	// Count returns the number of counters matching the given filter.
+	// Soft-deleted counters are excluded by default. A nil filter counts all non-deleted counters.
+	Count(ctx context.Context, filter *CounterFilter, opts ...func(*CallOptions[CounterFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new counter and returns the created entity.
+	Create(ctx context.Context, input *CreateCounterInput, opts ...func(*CallOptions[CounterFieldOptions])) (*Counter, error)
+
+	// CreateMany inserts multiple counters in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateCounterInput, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error)
+
+	// Update partially updates a counter by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	Update(ctx context.Context, id int64, input *UpdateCounterInput, opts ...func(*CallOptions[CounterFieldOptions])) (*Counter, error)
+
+	// UpdateMany updates multiple counters and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateCounterItem, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error)
+
+	// UpdateWhere updates all counters matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *CounterFilter, input *UpdateCounterInput, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error)
+
+	// Upsert inserts a counter or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateCounterInput, target CounterConflictTarget, opts ...func(*CallOptions[CounterFieldOptions])) (*Counter, error)
+
+	// UpsertMany inserts or updates multiple counters in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateCounterInput, target CounterConflictTarget, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error)
+
+	// Increment atomically increments or decrements a numeric column on a counter.
+	Increment(ctx context.Context, id int64, input IncrementInput[CounterIncrementColumn], opts ...func(*CallOptions[CounterFieldOptions])) error
+
+	// --- Soft Delete Operations ---
+
+	// SoftDelete marks a counter as deleted by setting the deleted_at column and returns
+	// the updated entity. Idempotent — returns nil, nil if the primary key does not exist.
+	SoftDelete(ctx context.Context, id int64, opts ...func(*CallOptions[CounterFieldOptions])) (*Counter, error)
+
+	// SoftDeleteMany marks multiple counters as deleted and returns the updated entities.
+	SoftDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error)
+
+	// SoftDeleteWhere marks all counters matching the filter as deleted and returns them.
+	// Idempotent — returns empty slice when no rows match.
+	SoftDeleteWhere(ctx context.Context, filter *CounterFilter, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error)
+
+	// --- Restore Operations ---
+
+	// Restore clears the deleted_at column, restoring a soft-deleted counter, and returns it.
+	// Idempotent — returns nil, nil if the primary key does not exist.
+	Restore(ctx context.Context, id int64, opts ...func(*CallOptions[CounterFieldOptions])) (*Counter, error)
+
+	// RestoreMany restores multiple soft-deleted counters and returns them.
+	RestoreMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error)
+
+	// RestoreWhere restores all soft-deleted counters matching the filter and returns them.
+	// Idempotent — returns empty slice when no rows match.
+	RestoreWhere(ctx context.Context, filter *CounterFilter, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a counter from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[CounterFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple counters from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[CounterFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all counters matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *CounterFilter, opts ...func(*CallOptions[CounterFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of counters with total count for offset-based pagination.
+	// Soft-deleted counters are excluded by default.
+	Paginate(ctx context.Context, input PaginateInput[CounterFilter], opts ...func(*CallOptions[CounterFieldOptions])) (*PaginateResult[Counter], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of counters.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[CounterFilter], opts ...func(*CallOptions[CounterFieldOptions])) (*Connection[Counter], error)
+
+	// Stream returns an iterator over counters matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamCountersInput, opts ...func(*CallOptions[StreamCounterFieldOptions])) iter.Seq2[*Counter, error]
+}
+
+// counterClient implements the CounterClient interface.
+type counterClient struct {
+	querier        database.Querier
+	dialect        sql.Dialect
+	table          sql.Table
+	batchSize      int
+	queryLimit     int
+	pageSize       int
+	cursorKeys     []string
+	excludeDeleted bool
+	mutationHooks  []hook.MutationHook
+	queryHooks     []hook.QueryHook
+	panicHandler   hook.PanicHandler
+	mysqlVersion   *mysqlVersionCache
+}
+
+// newCounterClient creates a new counterClient.
+func newCounterClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler, mysqlVersion *mysqlVersionCache) *counterClient {
+	return &counterClient{
+		querier:        querier,
+		dialect:        sql.NewMySQLDialect(),
+		table:          sql.Table{Schema: "", Name: "counters"},
+		batchSize:      200,
+		queryLimit:     1000,
+		pageSize:       100,
+		cursorKeys:     []string{"id"},
+		excludeDeleted: true,
+		mutationHooks:  mutationHooks,
+		queryHooks:     queryHooks,
+		panicHandler:   panicHandler,
+		mysqlVersion:   mysqlVersion,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *counterClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *counterClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// rowMatches reports whether a row matching conds exists. MySQL counts the
+// rows an UPDATE changed, not the rows it matched, so a by-key write that
+// leaves its row as it was reports none; only then does the write ask, on
+// the same connection, to tell a missing row from an unchanged one.
+func (c *counterClient) rowMatches(ctx context.Context, conn database.Querier, conds []sql.Condition) (bool, error) {
+	query, args := sql.BuildExists(c.dialect, c.table, conds)
+	var exists bool
+	if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// counterAllColumns is the column list for full-entity reads, sorted for determinism.
+var counterAllColumns = []string{"deleted_at", "hits", "id", "name", "updated_at"}
+
+// scanCounters scans rows into Counter entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanCounters(rows database.Rows, columns []string) ([]*Counter, error) {
+	var result []*Counter
+	for rows.Next() {
+		c := &Counter{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &c.ID
+			case "name":
+				targets[idx] = &c.Name
+			case "hits":
+				targets[idx] = &c.Hits
+			case "updated_at":
+				targets[idx] = &c.UpdatedAt
+			case "deleted_at":
+				targets[idx] = &c.DeletedAt
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan counter: %w", err)
+		}
+
+		result = append(result, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate counter rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single counter by primary key with optional field selection.
+// Soft-deleted counters are excluded — a soft-deleted counter returns ErrNotFound.
+// Use GetMany with Filter.DeletedAt comparator to retrieve soft-deleted counters.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *counterClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[CounterFieldOptions])) (*Counter, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get counter: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get counter: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("get counter: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableCounters, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[CounterFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[CounterFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		counters, err := c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(counters) == 0 {
+			return nil, ErrNotFound
+		}
+		return counters[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Counter), nil
+}
+
+// GetMany returns counters matching the given filter, field selection, and sort criteria.
+// Soft-deleted counters are excluded by default. Set Filter.DeletedAt to override.
+func (c *counterClient) GetMany(ctx context.Context, input *GetCountersInput, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetCountersInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get counters: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get counters: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("get counters: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableCounters, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := counterAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Soft delete: inject default "is not deleted" if user didn't set the comparator
+		if c.excludeDeleted && (input.Filter == nil || input.Filter.DeletedAt == nil) {
+			conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var counters []*Counter
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("get counters: %w", err)
+		}
+		defer rows.Close()
+
+		counters, err = scanCounters(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return counters, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Counter), nil
+}
+
+// Create inserts a new counter and returns the created entity.
+func (c *counterClient) Create(ctx context.Context, input *CreateCounterInput, opts ...func(*CallOptions[CounterFieldOptions])) (*Counter, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateCounterInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableCounters, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"name"}
+		args := []any{input.Name}
+
+		if v, ok := input.Hits.Get(); ok {
+			columns = append(columns, "hits")
+			args = append(args, v)
+		}
+
+		if v, ok := input.UpdatedAt.Get(); ok {
+			columns = append(columns, "updated_at")
+			args = append(args, v)
+		}
+
+		if v, ok := input.DeletedAt.Get(); ok {
+			columns = append(columns, "deleted_at")
+			args = append(args, v)
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, fmt.Errorf("create counter: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Counter), nil
+}
+
+// CreateMany inserts multiple counters in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *counterClient) CreateMany(ctx context.Context, inputs []*CreateCounterInput, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableCounters, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Counter{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"name", "hits", "updated_at", "deleted_at"}
+			var valueRows [][]any
+			for _, input := range batch {
+				var hits any = sql.Default
+				if v, ok := input.Hits.Get(); ok {
+					hits = v
+				}
+				var updatedAt any = sql.Default
+				if v, ok := input.UpdatedAt.Get(); ok {
+					updatedAt = v
+				}
+				var deletedAt any = sql.Default
+				if v, ok := input.DeletedAt.Get(); ok {
+					deletedAt = v
+				}
+
+				valueRows = append(valueRows, []any{
+					input.Name,
+					hits,
+					updatedAt,
+					deletedAt,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, fmt.Errorf("create counters batch: %w", err)
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Counter), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *counterClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns: columns,
+		Values:  args,
+	})
+	execResult, err := conn.Exec(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	rawID, err := execResult.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return int64(rawID), nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *counterClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	// MySQL has no RETURNING, so the keys are derived rather than reported, and
+	// the derivation reads the session's auto_increment_increment — which only
+	// the session that ran the INSERT can answer. A transaction is
+	// one session already. The pool is pinned to one without opening a
+	// transaction, so the INSERT still commits on its own. A single row needs no
+	// increment, so it needs no pin either.
+	if _, inTx := conn.(*database.Tx); inTx || len(valueRows) == 1 {
+		return c.insertAndDeriveIDs(ctx, conn, columns, valueRows)
+	}
+	pinner, ok := conn.(database.SessionPinner)
+	if !ok {
+		return nil, errors.New("deriving the keys of a multi-row insert needs a transaction or a querier that implements database.SessionPinner")
+	}
+	var ids []int64
+	err := pinner.WithSession(ctx, func(session database.Querier) error {
+		var err error
+		ids, err = c.insertAndDeriveIDs(ctx, session, columns, valueRows)
+		return err
+	})
+	return ids, err
+}
+
+// insertAndDeriveIDs runs a multi-row INSERT on one session and derives the keys
+// it generated. LastInsertId names the first. A multi-row VALUES insert is a
+// "simple insert", which InnoDB assigns one block under every
+// innodb_autoinc_lock_mode, spaced by the session's auto_increment_increment —
+// 1 by default, the cluster size under Galera, a configured step under
+// multi-primary replication.
+func (c *counterClient) insertAndDeriveIDs(ctx context.Context, session database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:   columns,
+		ValueRows: valueRows,
+	})
+
+	execResult, err := session.Exec(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	firstID, err := execResult.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+
+	step := int64(1)
+	if len(valueRows) > 1 {
+		if err := session.QueryRow(ctx, "SELECT @@auto_increment_increment").Scan(&step); err != nil {
+			return nil, fmt.Errorf("read auto_increment_increment: %w", err)
+		}
+	}
+
+	ids := make([]int64, len(valueRows))
+	for i := range valueRows {
+		ids[i] = int64(firstID + int64(i)*step)
+	}
+	return ids, nil
+}
+
+// Update partially updates a counter by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns nil and no error if the primary key does not exist (strict_updates is disabled).
+func (c *counterClient) Update(ctx context.Context, id int64, input *UpdateCounterInput, opts ...func(*CallOptions[CounterFieldOptions])) (*Counter, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableCounters, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+		if v, ok := input.Hits.Get(); ok {
+			setClauses["hits"] = v
+		}
+		if v, ok := input.UpdatedAt.Get(); ok {
+			setClauses["updated_at"] = v
+		}
+		if v, ok := input.DeletedAt.Get(); ok {
+			setClauses["deleted_at"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			current, err := c.Get(ctx, id, func(o *CallOptions[CounterFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			// Without strict updates a key that matches no row is not an
+			// error: there is no current entity, so Update returns no entity
+			// and a nil error, exactly as it does after a write that matched
+			// nothing.
+			if errors.Is(err, ErrNotFound) {
+				return nil, nil
+			}
+			return current, err
+		}
+
+		// Auto-set updated_at to current time if not explicitly provided
+		if _, ok := input.UpdatedAt.Get(); !ok {
+			setClauses["updated_at"] = time.Now()
+		}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: updateConds,
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update counter: %w", err)
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("update counter rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, updateConds)
+			if err != nil {
+				return nil, fmt.Errorf("update counter: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		// Without strict updates that is not an error either: there is no
+		// row to read back, so Update returns no entity and a nil error.
+		if matched == 0 {
+			return nil, nil
+		}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Counter), nil
+}
+
+// UpdateCounterItem pairs a primary key with an update input for batch updates.
+type UpdateCounterItem struct {
+	ID    int64               `json:"id"`
+	Input *UpdateCounterInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple counters and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *counterClient) UpdateMany(ctx context.Context, items []UpdateCounterItem, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error) {
+	// UpdateCounterItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableCounters, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Counter{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateCounterItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_counter", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+					if v, ok := item.Input.Hits.Get(); ok {
+						setClauses["hits"] = v
+					}
+					if v, ok := item.Input.UpdatedAt.Get(); ok {
+						setClauses["updated_at"] = v
+					}
+					if v, ok := item.Input.DeletedAt.Get(); ok {
+						setClauses["deleted_at"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					// Auto-set updated_at to current time if not explicitly provided
+					if _, ok := item.Input.UpdatedAt.Get(); !ok {
+						setClauses["updated_at"] = time.Now()
+					}
+					itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: itemConds,
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("update counter %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update counter %v rows affected: %w", item.ID, err)
+					}
+					// MySQL counts the rows a statement changed, not the rows it
+					// matched, so an item that leaves its row as it was reports
+					// none. Only then is the row looked up, to tell a missing row
+					// from an unchanged one.
+					if matched == 0 {
+						found, err := c.rowMatches(ctx, conn, itemConds)
+						if err != nil {
+							return fmt.Errorf("update counter %v: match row: %w", item.ID, err)
+						}
+						if found {
+							matched = 1
+						}
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Counter), nil
+}
+
+// UpdateWhere updates all counters matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *counterClient) UpdateWhere(ctx context.Context, filter *CounterFilter, input *UpdateCounterInput, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableCounters, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+		if v, ok := input.Hits.Get(); ok {
+			setClauses["hits"] = v
+		}
+		if v, ok := input.UpdatedAt.Get(); ok {
+			setClauses["updated_at"] = v
+		}
+		if v, ok := input.DeletedAt.Get(); ok {
+			setClauses["deleted_at"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetCountersInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[CounterFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// Auto-set updated_at to current time if not explicitly provided
+		if _, ok := input.UpdatedAt.Get(); !ok {
+			setClauses["updated_at"] = time.Now()
+		}
+
+		// MySQL: must collect IDs before the UPDATE (no RETURNING)
+		ids, err := c.collectAffectedIDs(ctx, conn, conds)
+		if err != nil {
+			return nil, fmt.Errorf("update counters where: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: conds,
+		})
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update counters where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Counter), nil
+}
+
+// collectAffectedIDs returns the PKs of rows matching the conditions.
+// Used by Where variants to know which rows were affected.
+func (c *counterClient) collectAffectedIDs(ctx context.Context, conn database.Querier, conds []sql.Condition) ([]int64, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// SoftDelete marks a counter as deleted by setting the deleted_at column
+// and returns the updated entity.
+// Idempotent — returns nil, nil if the primary key does not exist.
+// To set deleted_at to a specific value, use Update instead.
+func (c *counterClient) SoftDelete(ctx context.Context, id int64, opts ...func(*CallOptions[CounterFieldOptions])) (*Counter, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpSoftDelete, Table: TableCounters, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+			Column:     "deleted_at",
+			Type:       sql.SoftDeleteTimestamp,
+			Conditions: delConds,
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("soft delete counter: %w", err)
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("soft delete counter rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, delConds)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete counter: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch the soft-deleted entity — set DeletedAt comparator to override
+		// the default "is not deleted" condition (the entity was just soft-deleted)
+		results, err := c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{Null: new(false)},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Counter), nil
+}
+
+// SoftDeleteMany marks multiple counters as deleted and returns the updated entities.
+func (c *counterClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpSoftDeleteMany, Table: TableCounters, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(ids) == 0 {
+			return []*Counter{}, nil
+		}
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, delConds)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete counters: read keys: %w", err)
+			}
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+
+			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+				Column:     "deleted_at",
+				Type:       sql.SoftDeleteTimestamp,
+				Conditions: delConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("soft delete counters: %w", err)
+			}
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{
+				ID:        &comparator.Number[int64]{In: ids},
+				DeletedAt: &comparator.NullableTime{Null: new(false)},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Counter), nil
+}
+
+// SoftDeleteWhere marks all counters matching the filter as deleted and returns them.
+// Always scoped to non-deleted rows — the DeletedAt comparator
+// on the filter is ignored. Returns empty slice when no rows match.
+func (c *counterClient) SoftDeleteWhere(ctx context.Context, filter *CounterFilter, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpSoftDeleteWhere, Table: TableCounters, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Always scope to non-deleted rows — SoftDelete only targets active entities
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+
+		skipFetch := options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns()
+
+		// MySQL: must collect IDs before the soft delete (no RETURNING)
+		ids, err := c.collectAffectedIDs(ctx, conn, conds)
+		if err != nil {
+			return nil, fmt.Errorf("soft delete counters where: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+			Column:     "deleted_at",
+			Type:       sql.SoftDeleteTimestamp,
+			Conditions: conds,
+		})
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("soft delete counters where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		if skipFetch {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{
+				ID:        &comparator.Number[int64]{In: ids},
+				DeletedAt: &comparator.NullableTime{Null: new(false)},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Counter), nil
+}
+
+// Restore clears the deleted_at column, restoring a soft-deleted counter,
+// and returns the restored entity.
+// Idempotent — returns nil, nil if the primary key does not exist.
+func (c *counterClient) Restore(ctx context.Context, id int64, opts ...func(*CallOptions[CounterFieldOptions])) (*Counter, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpRestore, Table: TableCounters, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: map[string]any{"deleted_at": nil},
+			Conditions: restoreConds,
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("restore counter: %w", err)
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("restore counter rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, restoreConds)
+			if err != nil {
+				return nil, fmt.Errorf("restore counter: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch the restored entity. A key that matched no row restores
+		// nothing, which is not an error: Restore is idempotent.
+		results, err := c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{ID: &comparator.Number[int64]{Eq: new(id)}},
+			Limit:  new(1),
+		}, func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Counter), nil
+}
+
+// RestoreMany restores multiple soft-deleted counters and returns the restored entities.
+func (c *counterClient) RestoreMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpRestoreMany, Table: TableCounters, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(ids) == 0 {
+			return []*Counter{}, nil
+		}
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, restoreConds)
+			if err != nil {
+				return nil, fmt.Errorf("restore counters: read keys: %w", err)
+			}
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+
+			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+				SetClauses: map[string]any{"deleted_at": nil},
+				Conditions: restoreConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("restore counters: %w", err)
+			}
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Counter), nil
+}
+
+// RestoreWhere restores all soft-deleted counters matching the filter and returns them.
+// Always scoped to deleted rows — the DeletedAt comparator
+// on the filter is ignored. Returns empty slice when no rows match.
+func (c *counterClient) RestoreWhere(ctx context.Context, filter *CounterFilter, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpRestoreWhere, Table: TableCounters, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Always scope to deleted rows — Restore only targets soft-deleted entities
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNotNull())
+
+		skipFetch := options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns()
+
+		// MySQL: must collect IDs before the restore (no RETURNING)
+		ids, err := c.collectAffectedIDs(ctx, conn, conds)
+		if err != nil {
+			return nil, fmt.Errorf("restore counters where: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: map[string]any{"deleted_at": nil},
+			Conditions: conds,
+		})
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("restore counters where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		if skipFetch {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Counter), nil
+}
+
+// HardDelete permanently removes a counter from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *counterClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[CounterFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableCounters, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete counter: %w", err)
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("hard delete counter rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteMany permanently removes multiple counters from the database.
+func (c *counterClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[CounterFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableCounters, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, hardConds)
+			if err != nil {
+				return nil, fmt.Errorf("hard delete counters: read keys: %w", err)
+			}
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions: hardConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("hard delete counters: %w", err)
+			}
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteWhere permanently removes all counters matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *counterClient) HardDeleteWhere(ctx context.Context, filter *CounterFilter, opts ...func(*CallOptions[CounterFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableCounters, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// MySQL: must collect IDs before the DELETE (no RETURNING)
+		ids, err := c.collectAffectedIDs(ctx, conn, conds)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete counters where: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: conds,
+		})
+
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete counters where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	return err
+}
+
+// matchingKeys returns the set of primary keys of the rows matching conds. On
+// MySQL, which has no RETURNING, a batch write reads it just before its
+// statement to learn which of the listed keys it writes.
+func (c *counterClient) matchingKeys(ctx context.Context, conn database.Querier, conds []sql.Condition) (map[int64]struct{}, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	keys := make(map[int64]struct{})
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		keys[id] = struct{}{}
+	}
+	return keys, rows.Err()
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *counterClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// CounterConflictTarget identifies a unique constraint for upsert conflict detection.
+type CounterConflictTarget int
+
+const (
+	CounterConflictName CounterConflictTarget = iota // UNIQUE (name)
+	CounterConflictPK                                // PRIMARY KEY (id)
+)
+
+// counterConflictColumns maps each conflict target to its column set.
+var counterConflictColumns = map[CounterConflictTarget][]string{
+	CounterConflictName: {"name"},
+	CounterConflictPK:   {"id"},
+}
+
+// Upsert inserts a counter or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *counterClient) Upsert(ctx context.Context, input *CreateCounterInput, target CounterConflictTarget, opts ...func(*CallOptions[CounterFieldOptions])) (*Counter, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateCounterInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableCounters, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"name"}
+		args := []any{input.Name}
+
+		if v, ok := input.Hits.Get(); ok {
+			columns = append(columns, "hits")
+			args = append(args, v)
+		}
+
+		if v, ok := input.UpdatedAt.Get(); ok {
+			columns = append(columns, "updated_at")
+			args = append(args, v)
+		}
+
+		if v, ok := input.DeletedAt.Get(); ok {
+			columns = append(columns, "deleted_at")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := counterConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, fmt.Errorf("upsert counter: %w", err)
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Counter), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *counterClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+	})
+	execResult, err := conn.Exec(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	// When the statement carries a conflict clause, UpsertResolvePKColumn made
+	// it republish the conflicting row's PK, so this is the affected row's id
+	// on either branch — including a conflict that changed nothing, which
+	// reports insert_id = 0 without it. A statement without one can
+	// only insert, and this is the new row's id.
+	rawID, err := execResult.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return int64(rawID), nil
+}
+
+// UpsertMany inserts or updates multiple counters in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// counters.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *counterClient) UpsertMany(ctx context.Context, inputs []*CreateCounterInput, target CounterConflictTarget, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableCounters, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Counter{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"name", "hits", "updated_at", "deleted_at"}
+		conflictColumns := counterConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("upsert counters: conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateCounterInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+			var hits any = sql.Default
+			if v, ok := input.Hits.Get(); ok {
+				hits = v
+			}
+			var updatedAt any = sql.Default
+			if v, ok := input.UpdatedAt.Get(); ok {
+				updatedAt = v
+			}
+			var deletedAt any = sql.Default
+			if v, ok := input.DeletedAt.Get(); ok {
+				deletedAt = v
+			}
+
+			valueRows = append(valueRows, []any{
+				input.Name,
+				hits,
+				updatedAt,
+				deletedAt,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateCounterInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("upsert counters: input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, fmt.Errorf("upsert counters batch: %w", err)
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, fmt.Errorf("upsert counters batch: %w", err)
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Counter), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// counters.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany then applies the read path's own filters,
+// exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *counterClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level counterConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanCounters
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanCounters(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = counterColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// counterColumnValue returns one column's value off a scanned
+// Counter, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanCounters.
+func counterColumnValue(c *Counter, column string) any {
+	switch column {
+	case "id":
+		return c.ID
+	case "name":
+		return c.Name
+	case "hits":
+		return c.Hits
+	case "updated_at":
+		return c.UpdatedAt
+	case "deleted_at":
+		return c.DeletedAt
+	}
+	return nil
+}
+
+// CounterIncrementColumn identifies a numeric column eligible for atomic increment/decrement.
+type CounterIncrementColumn string
+
+const (
+	CounterIncrementHits CounterIncrementColumn = "hits"
+)
+
+// Increment atomically increments or decrements a numeric column on a counter.
+// A negative amount performs a decrement.
+func (c *counterClient) Increment(ctx context.Context, id int64, input IncrementInput[CounterIncrementColumn], opts ...func(*CallOptions[CounterFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpIncrement, Table: TableCounters, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		incConds := []sql.Condition{
+			sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id),
+		}
+		query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, incConds)
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("increment counter %s: %w", input.Column, err)
+		}
+
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("increment counter rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so an increment that leaves its row as it was (an amount
+		// of zero) reports none. Only then is the row looked up, to tell a
+		// missing row from an unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, incConds)
+			if err != nil {
+				return nil, fmt.Errorf("increment counter: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	return err
+}
+
+// Exists returns true if a counter with the given primary key exists.
+// Soft-deleted counters are excluded — a soft-deleted counter returns false.
+// Use ExistsWhere with Filter.DeletedAt comparator for soft-deleted rows.
+func (c *counterClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[CounterFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableCounters, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		// Soft delete condition always applied — Exists checks for active rows only.
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists counter: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any counter matches the given filter.
+// Soft-deleted counters are excluded by default. Set Filter.DeletedAt to override.
+func (c *counterClient) ExistsWhere(ctx context.Context, filter *CounterFilter, opts ...func(*CallOptions[CounterFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableCounters, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Soft delete: inject default if user didn't set the comparator
+		if filter == nil || filter.DeletedAt == nil {
+			conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists counter where: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of counters matching the given filter.
+// Soft-deleted counters are excluded by default. Set Filter.DeletedAt to override.
+// A nil filter counts all non-deleted counters.
+func (c *counterClient) Count(ctx context.Context, filter *CounterFilter, opts ...func(*CallOptions[CounterFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableCounters, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Soft delete: inject default if user didn't set the comparator
+		if filter == nil || filter.DeletedAt == nil {
+			conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), fmt.Errorf("count counters: %w", err)
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of counters with total count for offset-based pagination.
+// Soft-deleted counters are excluded by default. Set Filter.DeletedAt to override.
+// A nil filter paginates all non-deleted counters.
+func (c *counterClient) Paginate(ctx context.Context, input PaginateInput[CounterFilter], opts ...func(*CallOptions[CounterFieldOptions])) (*PaginateResult[Counter], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate counters: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate counters: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("paginate counters: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableCounters, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate counters count: %w", err)
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		counters, err := c.GetMany(ctx, &GetCountersInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate counters: %w", err)
+		}
+
+		return &PaginateResult[Counter]{
+			Items:      counters,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*PaginateResult[Counter]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of counters.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+// Soft-deleted counters are excluded by default.
+func (c *counterClient) Connection(ctx context.Context, input ConnectionInput[CounterFilter], opts ...func(*CallOptions[CounterFieldOptions])) (*Connection[Counter], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection counters: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection counters: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("connection counters: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableCounters, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[CounterFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection counters count: %w", err)
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeCounterCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeCounterCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		counters, err := c.GetMany(ctx, &GetCountersInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection counters: %w", err)
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(counters) > limit
+		if hasMore {
+			counters = counters[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(counters)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Counter], len(counters))
+		for i, row := range counters {
+			cursor, err := encodeCounterCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Counter]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Counter]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*Connection[Counter]), nil
+}
+
+// encodeCounterCursor encodes cursor key values as a base64 JSON string.
+func encodeCounterCursor(keys []string, c *Counter) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = c.ID
+		case "name":
+			out["name"] = c.Name
+		case "hits":
+			out["hits"] = c.Hits
+		case "updated_at":
+			out["updated_at"] = c.UpdatedAt
+		case "deleted_at":
+			out["deleted_at"] = c.DeletedAt
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode counter cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeCounterCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeCounterCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Counter
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamCountersInput holds query parameters for streaming counters records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamCountersInput struct {
+	Filter *CounterFilter `json:"filter"`
+	Sorts  []sql.Sort     `json:"sorts"`
+}
+
+// StreamCounterFieldOptions controls scalar column selection for counters streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamCounterFieldOptions struct {
+	ID        bool `json:"id"`
+	Name      bool `json:"name"`
+	Hits      bool `json:"hits"`
+	UpdatedAt bool `json:"updated_at"`
+	DeletedAt bool `json:"deleted_at"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamCounterFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	if fo.Hits {
+		cols = append(cols, "hits")
+	}
+	if fo.UpdatedAt {
+		cols = append(cols, "updated_at")
+	}
+	if fo.DeletedAt {
+		cols = append(cols, "deleted_at")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamCounterFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	if fo.Hits {
+		return true
+	}
+	if fo.UpdatedAt {
+		return true
+	}
+	if fo.DeletedAt {
+		return true
+	}
+	return false
+}
+
+// scanCounterRow scans a single row into a Counter entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanCounterRow(rows database.Rows, columns []string) (*Counter, error) {
+	c := &Counter{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &c.ID
+		case "name":
+			targets[idx] = &c.Name
+		case "hits":
+			targets[idx] = &c.Hits
+		case "updated_at":
+			targets[idx] = &c.UpdatedAt
+		case "deleted_at":
+			targets[idx] = &c.DeletedAt
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan counter: %w", err)
+	}
+
+	return c, nil
+}
+
+// Stream returns an iterator over counters matching the given filter and sort criteria.
+// Soft-deleted counters are excluded by default. Set Filter.DeletedAt to override.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *counterClient) Stream(ctx context.Context, input *StreamCountersInput, opts ...func(*CallOptions[StreamCounterFieldOptions])) iter.Seq2[*Counter, error] {
+	return func(yield func(*Counter, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamCountersInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream counters: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false.
+		var stopped bool
+		emit := func(row *Counter, err error) bool {
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableCounters, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := counterAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			if c.excludeDeleted && (input.Filter == nil || input.Filter.DeletedAt == nil) {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, fmt.Errorf("stream counters: %w", err))
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				c, err := scanCounterRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(c, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate counter rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, err)
+		}
+	}
+}
+
+// CounterFilter provides type-safe filtering for the counters table.
+type CounterFilter struct {
+	DeletedAt *comparator.NullableTime  `json:"deleted_at"`
+	Hits      *comparator.Number[int64] `json:"hits"`
+	ID        *comparator.Number[int64] `json:"id"`
+	Name      *comparator.String        `json:"name"`
+	UpdatedAt *comparator.Time          `json:"updated_at"`
+	And       []*CounterFilter          `json:"and"`
+	Or        []*CounterFilter          `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *CounterFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.DeletedAt != nil {
+		conds = append(conds, f.DeletedAt.Parse(dialect.QuoteIdentifier("deleted_at"), dialect)...)
+	}
+
+	if f.Hits != nil {
+		conds = append(conds, f.Hits.Parse(dialect.QuoteIdentifier("hits"), dialect)...)
+	}
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Name != nil {
+		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	if f.UpdatedAt != nil {
+		conds = append(conds, f.UpdatedAt.Parse(dialect.QuoteIdentifier("updated_at"), dialect)...)
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// CounterFieldOptions controls column selection and relationship loading for counters queries.
+type CounterFieldOptions struct {
+	ID        bool `json:"id"`
+	Name      bool `json:"name"`
+	Hits      bool `json:"hits"`
+	UpdatedAt bool `json:"updated_at"`
+	DeletedAt bool `json:"deleted_at"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *CounterFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	if fo.Hits {
+		cols = append(cols, "hits")
+	}
+	if fo.UpdatedAt {
+		cols = append(cols, "updated_at")
+	}
+	if fo.DeletedAt {
+		cols = append(cols, "deleted_at")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *CounterFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":        "id",
+		"Name":      "name",
+		"Hits":      "hits",
+		"UpdatedAt": "updated_at",
+		"DeletedAt": "deleted_at",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *CounterFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	if fo.Hits {
+		return true
+	}
+	if fo.UpdatedAt {
+		return true
+	}
+	if fo.DeletedAt {
+		return true
+	}
+	return false
+}
+
+// CreateCounterInput holds the fields for creating a counters record.
+type CreateCounterInput struct {
+	Name      string                      `json:"name"`
+	Hits      omittable.Value[int64]      `json:"hits,omitzero"`
+	UpdatedAt omittable.Value[time.Time]  `json:"updated_at,omitzero"`
+	DeletedAt omittable.Value[*time.Time] `json:"deleted_at,omitzero"`
+}
+
+// UpdateCounterInput holds the fields for updating a counters record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateCounterInput struct {
+	Name      omittable.Value[string]     `json:"name,omitzero"`
+	Hits      omittable.Value[int64]      `json:"hits,omitzero"`
+	UpdatedAt omittable.Value[time.Time]  `json:"updated_at,omitzero"`
+	DeletedAt omittable.Value[*time.Time] `json:"deleted_at,omitzero"`
+}
+
+// GetCountersInput holds query parameters for retrieving counters records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetCountersInput struct {
+	Filter *CounterFilter `json:"filter"`
+	Limit  *int           `json:"limit"`
+	Offset *int           `json:"offset"`
+	Sorts  []sql.Sort     `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 type Document struct {
 	ID        int64      `db:"id" json:"id"`
 	Title     string     `db:"title" json:"title"`

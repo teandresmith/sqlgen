@@ -5,6 +5,38 @@ import (
 	"github.com/teandresmith/sqlgen/sql"
 )
 
+// CounterSorter provides type-safe sort helpers for the Counter entity.
+// Each method returns a sql.Sort for the corresponding column.
+type CounterSorter struct{}
+
+// NewCounterSorter returns a new CounterSorter.
+func NewCounterSorter() CounterSorter { return CounterSorter{} }
+
+// DeletedAt returns a sort for the deleted_at column in the given direction.
+func (s CounterSorter) DeletedAt(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "deleted_at", Direction: direction}
+}
+
+// Hits returns a sort for the hits column in the given direction.
+func (s CounterSorter) Hits(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "hits", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s CounterSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s CounterSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// UpdatedAt returns a sort for the updated_at column in the given direction.
+func (s CounterSorter) UpdatedAt(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "updated_at", Direction: direction}
+}
+
 // DocumentSorter provides type-safe sort helpers for the Document entity.
 // Each method returns a sql.Sort for the corresponding column.
 type DocumentSorter struct{}

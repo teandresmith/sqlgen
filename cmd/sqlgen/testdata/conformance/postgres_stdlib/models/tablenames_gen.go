@@ -6,6 +6,7 @@ import (
 )
 
 const (
+	TableCounters   hook.TableName = "public.counters"
 	TableDocuments  hook.TableName = "public.documents"
 	TableLabels     hook.TableName = "public.labels"
 	TableOrderItems hook.TableName = "public.order_items"

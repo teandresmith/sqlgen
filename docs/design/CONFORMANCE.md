@@ -212,7 +212,7 @@ of key or feature:
 | `labels` | Case-insensitive text PK (PostgreSQL `citext`, MySQL `_ci` collation, SQLite `NOCASE`): a batch the database matched more rows in |
 | `flags` | Soft delete (bool) |
 | `audit_rows` | No PK: no PK methods generated (§9.4b) |
-| `counters` | `Increment` |
+| `counters` | `Increment`; `strict_updates: false`; a UNIQUE `name`, a CHECK on `hits`, and a NOT NULL `updated_at` with no DEFAULT that an insert can leave out |
 | `authors` / `posts` / `post_tags` / `tags` | o2m, m2o, m2m, nested mutations |
 
 One `sqlgen.yml` per dialect, kept as close to identical as each dialect allows, so the generated
@@ -282,7 +282,8 @@ type Harness struct {
 	Driver  string           // pgx, stdlib, …
 	Client  *models.Client
 	Caps    Capabilities     // what this dialect supports (§4.4)
-	Querier *CountingQuerier // the querier Client was built on
+	Querier *CountingQuerier // records the statements Client sends
+	Base    database.Querier // the querier Client was built on: Querier, or a driver wrapper around it
 
 	// Reset returns every conformance table to its seed state.
 	Reset func(t *testing.T)
