@@ -1,6 +1,6 @@
 # CLI Requirements: Code Generation
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: cmd/sqlgen/gen -->
 <!-- matrix: generated-artifacts rows=artifact cols=single-pk,composite-pk,no-pk,soft-delete,tenanted,view,materialized-view -->
 <!-- matrix: relationships rows=type cols=struct-field,loader,filter,nested-mutation -->

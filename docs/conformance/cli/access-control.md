@@ -1,6 +1,6 @@
 # CLI Requirements: Column Access Control
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- matrix: access-control rows=role cols=go-client,api-in,api-out,filter,sort,event-payload,cache,manifest -->
 
 Column access control (§32.2–§32.6) is applied by `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. Its rows claim `gen`, `config` and `manifest` tests, golden and example tests.

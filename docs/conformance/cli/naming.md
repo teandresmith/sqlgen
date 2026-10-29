@@ -1,6 +1,6 @@
 # CLI Requirements: Naming
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- matrix: naming rows=rule cols=struct,field,type-name,file-stem -->
 
 Naming rules (§8.5) are applied by `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. It holds §8.5, the `naming` matrix and its `n/a` cells, and the §8.5 PRD gaps. Its rows claim `gen`, `config` and `cli` tests, golden and example tests.

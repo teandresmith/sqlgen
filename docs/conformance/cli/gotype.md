@@ -1,6 +1,6 @@
 # CLI Requirements: Type Resolution
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: cmd/sqlgen/gotype -->
 <!-- matrix: type-resolution rows=sql-type cols=not-null,nullable,integration,column-override,type-override -->
 
