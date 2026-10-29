@@ -188,7 +188,7 @@ Each driver adapter (`database/pgx/`, `database/stdlib/`) translates driver-spec
 | Unique | `23505` | `1062` | `2067` |
 | Foreign key | `23503` | `1451` / `1452` | `787` |
 | Check | `23514` | `3819` | `275` |
-| Not null | `23502` | `1048` | `1299` |
+| Not null | `23502` | `1048` / `1364` | `1299` |
 | Primary key | `23505` | `1062` | `1555` |
 
 **Non-constraint errors:**
@@ -250,6 +250,7 @@ MySQL does not expose constraint name, table, or column as structured fields. Th
 | `1062` | `"Duplicate entry 'VALUE' for key 'TABLE.CONSTRAINT'"` | Constraint name after `for key` |
 | `1451` / `1452` | `"... a foreign key constraint fails (SCHEMA.TABLE, CONSTRAINT ...)"` | Constraint in parentheses |
 | `1048` | `"Column 'COLUMN' cannot be null"` | Column name in single quotes |
+| `1364` | `"Field 'COLUMN' doesn't have a default value"` | Column name in single quotes |
 
 **modernc.org/sqlite** — `*sqlite.Error`:
 
@@ -545,7 +546,7 @@ Each driver adapter has unit tests that construct real driver error types and ve
 - Verify all `ConstraintError` fields are populated from structured pgx fields.
 
 **MySQL:**
-- `*mysql.MySQLError` with numbers `1062`, `1451`, `1452`, `1048`, `3819`, `1213`, `2002`, `2006`.
+- `*mysql.MySQLError` with numbers `1062`, `1451`, `1452`, `1048`, `1364`, `3819`, `1213`, `2002`, `2006`.
 - Verify message parsing extracts constraint and column names.
 - Test graceful fallback when message format is unrecognized (fields left empty).
 

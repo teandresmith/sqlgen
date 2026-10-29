@@ -42,6 +42,13 @@ No requirements yet. See [README.md](README.md) for the format.
 |---|---|---|---|---|
 | hook.panic-handler-option | The unified client exposes `WithPanicHandler(handler func(ctx context.Context, r any, table hook.TableName, op string) error) ClientOption` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_clientOption` | all |  |
 
+## §22.2 Constraint Errors
+<!-- prd: 22.2 sha256: 4495bff3390ca0b2 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| error-mapping.mysql-not-null | The MySQL adapter maps `1048` and `1364` to a `ConstraintError` of `Type` `ConstraintNotNull` that unwraps to `ErrConstraintViolation`, with the column parsed from the message | `unit: database/stdlib: TestMapMySQLErrorConstraintCodes/1048 not null violation`; `unit: database/stdlib: TestMapMySQLErrorConstraintCodes/1364 insert omits a NOT NULL column with no default`; `unit: database/stdlib: TestMapMySQLErrorNotNullColumn/1048 names the column`; `unit: database/stdlib: TestMapMySQLErrorNotNullColumn/1364 names the column` | mysql | error-mapping: not-null × mysql |
+
 ## §27 Caching
 <!-- prd: 27 sha256: dfe94499db41cc8f -->
 

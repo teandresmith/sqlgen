@@ -611,7 +611,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | hard-delete-many.hook-abort | A hook can abort: it returns an error without calling `next()`, and the delete does not run | `conformance: HardDeleteMany/a hook that aborts deletes nothing` | all | |
 
 ## §22.2 Constraint Errors
-<!-- prd: 22.2 sha256: 810f4c6c65c97c1e -->
+<!-- prd: 22.2 sha256: 4495bff3390ca0b2 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -624,6 +624,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | restore-where.error-mapping | A constraint violation from `RestoreWhere` is wrapped into a structured `ConstraintError` that unwraps to `ErrConstraintViolation`: restoring a row a CHECK forbids gives `Type` `ConstraintCheck` | `conformance: RestoreWhere/restoring a row a CHECK forbids returns a check ConstraintError and restores nothing` | all | client-methods: RestoreWhere × error-mapping |
 | hard-delete.error-mapping | A constraint violation from `HardDelete` is wrapped into a structured `ConstraintError` that unwraps to `ErrConstraintViolation`: deleting a row another row references gives `Type` `ConstraintForeignKey` | `conformance: HardDelete/deleting a referenced row returns a foreign key ConstraintError` | all | client-methods: HardDelete × error-mapping |
 | hard-delete-where.error-mapping | A constraint violation from `HardDeleteWhere` is wrapped into a structured `ConstraintError` that unwraps to `ErrConstraintViolation`: deleting a row another row references gives `Type` `ConstraintForeignKey` | `conformance: HardDeleteWhere/deleting a referenced row returns a foreign key ConstraintError` | all | client-methods: HardDeleteWhere × error-mapping |
+| create.not-null-no-default | An insert that leaves out a `NOT NULL` column with no `DEFAULT` returns a `ConstraintError` of `Type` `ConstraintNotNull` naming the column, on MySQL (`1364`) as on PostgreSQL and SQLite | `conformance: Create/leaving out a NOT NULL column with no default returns a not-null ConstraintError` | all | |
 
 ## §25.1 Query Count Guarantee
 <!-- prd: 25.1 sha256: 56257757d02b513e -->

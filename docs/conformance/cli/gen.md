@@ -6,7 +6,7 @@
 <!-- matrix: relationships rows=type cols=struct-field,loader,filter,nested-mutation -->
 
 ## §8.1 Template Engine
-<!-- prd: 8.1 sha256: af5cdfda555c2e44 -->
+<!-- prd: 8.1 sha256: f3b5ed4e4bc1ec5b -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -30,7 +30,7 @@
 | gen.template.go-generate | A `//go:generate sqlgen generate` directive makes `go generate ./...` run code generation, with no extra build-system integration | `unit: cmd/sqlgen: TestGoGenerate_DirectiveRunsCodeGeneration` | all |  |
 
 ## §8.1.7 Testing Strategy
-<!-- prd: 8.1.7 sha256: df4099972f02c744 -->
+<!-- prd: 8.1.7 sha256: 1588da48dfefa4a8 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -583,7 +583,7 @@
 | gen.error-wrap.format | Generated code wraps errors with `fmt.Errorf("<operation> <table>: %w", err)` and the stdlib `errors` package | `unit: cmd/sqlgen/gen: TestCreateTemplate_dbStrategy_postgres`; `unit: cmd/sqlgen/gen: TestExistsTemplate_existsWithPK`; `unit: cmd/sqlgen/gen: TestCountTemplate_withFilter`; `unit: cmd/sqlgen/gen: TestUpsertTemplate_postgres`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_softDelete_timestamp`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_restore_timestamp`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_hardDelete` | all | |
 
 ## §22.5 Check Constraint Validation
-<!-- prd: 22.5 sha256: fb7a861121b6e616 -->
+<!-- prd: 22.5 sha256: 6628a70ecb610c4e -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

@@ -169,6 +169,12 @@ func TestMapMySQLErrorConstraintCodes(t *testing.T) {
 			wantType: database.ConstraintNotNull,
 		},
 		{
+			name:     "1364 insert omits a NOT NULL column with no default",
+			number:   1364,
+			message:  "Field 'updated_at' doesn't have a default value",
+			wantType: database.ConstraintNotNull,
+		},
+		{
 			name:     "3819 check violation",
 			number:   3819,
 			message:  "Check constraint 'users_age_check' is violated.",
@@ -200,6 +206,29 @@ func TestMapMySQLErrorConstraintCodes(t *testing.T) {
 			}
 			if !errors.Is(got, database.ErrConstraintViolation) {
 				t.Error("errors.Is(mapped, ErrConstraintViolation) = false, want true")
+			}
+		})
+	}
+}
+
+func TestMapMySQLErrorNotNullColumn(t *testing.T) {
+	tests := []struct {
+		name    string
+		number  uint16
+		message string
+	}{
+		{name: "1048 names the column", number: 1048, message: "Column 'updated_at' cannot be null"},
+		{name: "1364 names the column", number: 1364, message: "Field 'updated_at' doesn't have a default value"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, got := mapMySQLError(&mysql.MySQLError{Number: tt.number, Message: tt.message})
+			ce, ok := errors.AsType[*database.ConstraintError](got)
+			if !ok {
+				t.Fatalf("mapMySQLError(%d) = %T, want *database.ConstraintError", tt.number, got)
+			}
+			if ce.Column != "updated_at" {
+				t.Errorf("ConstraintError.Column = %q, want %q", ce.Column, "updated_at")
 			}
 		})
 	}
@@ -311,6 +340,11 @@ func TestParseMySQLColumn(t *testing.T) {
 			name: "not null email column",
 			msg:  "Column 'email' cannot be null",
 			want: "email",
+		},
+		{
+			name: "no default field",
+			msg:  "Field 'updated_at' doesn't have a default value",
+			want: "updated_at",
 		},
 		{
 			name: "unrecognized format",

@@ -2373,7 +2373,7 @@ Additional cases:
 **Unit tests:** Each driver's error translation (Section 22.2) is tested with real driver error types:
 - PostgreSQL (pgx): `*pgconn.PgError` with codes `23505`, `23503`, `23502`, `23514`, `40P01`, `08*` class
 - PostgreSQL (lib/pq): `*pq.Error` with same codes
-- MySQL: `*mysql.MySQLError` with numbers `1062`, `1451`, `1452`, `1048`, `3819`, `1213`, `2002`, `2006`
+- MySQL: `*mysql.MySQLError` with numbers `1062`, `1451`, `1452`, `1048`, `1364`, `3819`, `1213`, `2002`, `2006`
 - SQLite (modernc): `*sqlite.Error` with extended codes `2067`, `787`, `1299`, `275`
 
 For MySQL and SQLite, message parsing tests cover known message formats and graceful fallback (empty `Constraint`/`Column` fields) when the format is unrecognized.
@@ -11453,7 +11453,7 @@ func (e *NestedMutationError) Unwrap() error // unwraps to Err
 | Unique violation | `23505` | `1062` | `SQLITE_CONSTRAINT_UNIQUE` (2067) |
 | FK violation | `23503` | `1451` / `1452` | `SQLITE_CONSTRAINT_FOREIGNKEY` (787) |
 | Check violation | `23514` | `3819` | `SQLITE_CONSTRAINT_CHECK` (275) |
-| Not null violation | `23502` | `1048` | `SQLITE_CONSTRAINT_NOTNULL` (1299) |
+| Not null violation | `23502` | `1048` / `1364` | `SQLITE_CONSTRAINT_NOTNULL` (1299) |
 | Deadlock | `40P01` | `1213` | N/A (SQLite uses file-level locking) |
 | Connection failed | `08*` class (connection exception) | `2002` (server gone), `2006` (connection lost), `1040` (too many connections) | `SQLITE_BUSY` (5), `SQLITE_CANTOPEN` (14) |
 
@@ -11664,10 +11664,11 @@ if errors.As(err, &mysqlErr) {
 }
 ```
 
-MySQL error numbers: `1062` (duplicate key), `1451`/`1452` (FK), `1048` (not null), `3819` (check). **MySQL does not expose constraint name, table, or column as structured fields** — only `Number`, `SQLState`, and `Message`. The constraint name must be parsed from the message string. Format varies by error:
+MySQL error numbers: `1062` (duplicate key), `1451`/`1452` (FK), `1048`/`1364` (not null), `3819` (check). **MySQL does not expose constraint name, table, or column as structured fields** — only `Number`, `SQLState`, and `Message`. The constraint name must be parsed from the message string. Format varies by error:
 - `1062`: `"Duplicate entry 'VALUE' for key 'TABLE.CONSTRAINT'"` — constraint name after `for key`
 - `1451`/`1452`: `"Cannot add or update a child row: a foreign key constraint fails (SCHEMA.TABLE, CONSTRAINT ...)"` — constraint in parentheses
 - `1048`: `"Column 'COLUMN' cannot be null"` — column name in quotes
+- `1364`: `"Field 'COLUMN' doesn't have a default value"` — column name in quotes. MySQL raises it in strict mode when an INSERT leaves out a `NOT NULL` column that has no `DEFAULT`, where PostgreSQL and SQLite report the same insert as a not-null violation
 
 **modernc.org/sqlite** (`*sqlite.Error`) — code only:
 

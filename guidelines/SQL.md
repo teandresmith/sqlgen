@@ -686,7 +686,7 @@ SQL errors from different databases must be mapped to a common error hierarchy. 
 | Unique violation | `23505` | `1062` | `2067` (`SQLITE_CONSTRAINT_UNIQUE`) |
 | FK violation | `23503` | `1451` / `1452` | `787` (`SQLITE_CONSTRAINT_FOREIGNKEY`) |
 | Check violation | `23514` | `3819` | `275` (`SQLITE_CONSTRAINT_CHECK`) |
-| Not null violation | `23502` | `1048` | `1299` (`SQLITE_CONSTRAINT_NOTNULL`) |
+| Not null violation | `23502` | `1048` / `1364` | `1299` (`SQLITE_CONSTRAINT_NOTNULL`) |
 | Deadlock | `40P01` | `1213` | N/A (file-level locking) |
 | Connection failed | `08*` class | `2002`, `2006`, `1040` | `5` (`SQLITE_BUSY`), `14` (`SQLITE_CANTOPEN`) |
 
