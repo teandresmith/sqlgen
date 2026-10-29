@@ -43,6 +43,39 @@ func softDeleteWhere(t *testing.T, h *Harness) {
 		}
 	})
 
+	t.Run("a deleted-at comparator on the filter is ignored", func(t *testing.T) {
+		h.Reset(t)
+		a, b := createDocument(t, h, "a"), createDocument(t, h, "b")
+		filter := sdwTitleIn("a")
+		// Matches only deleted rows; the write must still target the live ones.
+		filter.DeletedAt = &comparator.NullableTime{Null: new(false)}
+		got, err := h.Client.Documents().SoftDeleteWhere(ctx, filter)
+		if err != nil {
+			t.Fatalf("SoftDeleteWhere(title in [a], deleted) error = %v, want nil", err)
+		}
+		if diff := cmp.Diff([]int64{a.ID}, sdwDocumentIDs(got)); diff != "" {
+			t.Errorf("SoftDeleteWhere(title in [a], deleted) returned documents (-want +got):\n%s", diff)
+		}
+		if diff := cmp.Diff([]int64{b.ID}, sdwDocumentIDs(sdwLiveDocuments(t, h))); diff != "" {
+			t.Errorf("live documents after SoftDeleteWhere (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("a filter with only a deleted-at comparator returns ErrEmptyFilter", func(t *testing.T) {
+		h.Reset(t)
+		createDocument(t, h, "a")
+		sdwSeedDeleted(t, h, "gone")
+		filter := &models.DocumentFilter{DeletedAt: &comparator.NullableTime{Null: new(false)}}
+		got, err := h.Client.Documents().SoftDeleteWhere(ctx, filter)
+		if !errors.Is(err, models.ErrEmptyFilter) {
+			t.Fatalf("SoftDeleteWhere(deleted only) error = %v, want ErrEmptyFilter", err)
+		}
+		if got != nil {
+			t.Errorf("SoftDeleteWhere(deleted only) = %v, want nil", got)
+		}
+		assertLiveDocuments(t, h, 1)
+	})
+
 	t.Run("nil filter returns ErrEmptyFilter and deletes nothing", func(t *testing.T) {
 		h.Reset(t)
 		createDocument(t, h, "a")
@@ -311,6 +344,39 @@ func restoreWhere(t *testing.T, h *Harness) {
 		if diff := cmp.Diff([]int64{other}, sdwDocumentIDs(sdwDeletedDocuments(t, h))); diff != "" {
 			t.Errorf("deleted documents after RestoreWhere (-want +got):\n%s", diff)
 		}
+	})
+
+	t.Run("a deleted-at comparator on the filter is ignored", func(t *testing.T) {
+		h.Reset(t)
+		a := sdwSeedDeleted(t, h, "a")
+		sdwSeedDeleted(t, h, "b")
+		filter := sdwTitleIn("a")
+		// Matches only live rows; the restore must still target the deleted ones.
+		filter.DeletedAt = &comparator.NullableTime{Null: new(true)}
+		got, err := h.Client.Documents().RestoreWhere(ctx, filter)
+		if err != nil {
+			t.Fatalf("RestoreWhere(title in [a], live) error = %v, want nil", err)
+		}
+		if diff := cmp.Diff([]int64{a}, sdwDocumentIDs(got)); diff != "" {
+			t.Errorf("RestoreWhere(title in [a], live) returned documents (-want +got):\n%s", diff)
+		}
+		if diff := cmp.Diff([]int64{a}, sdwDocumentIDs(sdwLiveDocuments(t, h))); diff != "" {
+			t.Errorf("live documents after RestoreWhere (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("a filter with only a deleted-at comparator returns ErrEmptyFilter", func(t *testing.T) {
+		h.Reset(t)
+		sdwSeedDeleted(t, h, "a")
+		filter := &models.DocumentFilter{DeletedAt: &comparator.NullableTime{Null: new(false)}}
+		got, err := h.Client.Documents().RestoreWhere(ctx, filter)
+		if !errors.Is(err, models.ErrEmptyFilter) {
+			t.Fatalf("RestoreWhere(deleted only) error = %v, want ErrEmptyFilter", err)
+		}
+		if got != nil {
+			t.Errorf("RestoreWhere(deleted only) = %v, want nil", got)
+		}
+		assertLiveDocuments(t, h, 0)
 	})
 
 	t.Run("nil filter returns ErrEmptyFilter and restores nothing", func(t *testing.T) {

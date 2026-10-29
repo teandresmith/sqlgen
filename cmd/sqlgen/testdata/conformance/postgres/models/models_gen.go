@@ -1056,6 +1056,13 @@ func (c *documentClient) SoftDeleteWhere(ctx context.Context, filter *DocumentFi
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
@@ -1274,8 +1281,8 @@ func (c *documentClient) RestoreMany(ctx context.Context, ids []int64, opts ...f
 }
 
 // RestoreWhere restores all soft-deleted documents matching the filter and returns them.
-// Always scoped to deleted rows — only soft-deleted entities are restored.
-// Returns empty slice when no rows match.
+// Always scoped to deleted rows — the DeletedAt comparator
+// on the filter is ignored. Returns empty slice when no rows match.
 func (c *documentClient) RestoreWhere(ctx context.Context, filter *DocumentFilter, opts ...func(*CallOptions[DocumentFieldOptions])) ([]*Document, error) {
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1283,6 +1290,13 @@ func (c *documentClient) RestoreWhere(ctx context.Context, filter *DocumentFilte
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
@@ -3640,6 +3654,13 @@ func (c *labelClient) SoftDeleteWhere(ctx context.Context, filter *LabelFilter, 
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
@@ -3863,8 +3884,8 @@ func (c *labelClient) RestoreMany(ctx context.Context, ids []string, opts ...fun
 }
 
 // RestoreWhere restores all soft-deleted labels matching the filter and returns them.
-// Always scoped to deleted rows — only soft-deleted entities are restored.
-// Returns empty slice when no rows match.
+// Always scoped to deleted rows — the DeletedAt comparator
+// on the filter is ignored. Returns empty slice when no rows match.
 func (c *labelClient) RestoreWhere(ctx context.Context, filter *LabelFilter, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error) {
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -3872,6 +3893,13 @@ func (c *labelClient) RestoreWhere(ctx context.Context, filter *LabelFilter, opt
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
@@ -10230,6 +10258,13 @@ func (c *revisionClient) SoftDeleteWhere(ctx context.Context, filter *RevisionFi
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
@@ -10454,8 +10489,8 @@ func (c *revisionClient) RestoreMany(ctx context.Context, pks []RevisionPK, opts
 }
 
 // RestoreWhere restores all soft-deleted revisions matching the filter and returns them.
-// Always scoped to deleted rows — only soft-deleted entities are restored.
-// Returns empty slice when no rows match.
+// Always scoped to deleted rows — the DeletedAt comparator
+// on the filter is ignored. Returns empty slice when no rows match.
 func (c *revisionClient) RestoreWhere(ctx context.Context, filter *RevisionFilter, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error) {
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -10463,6 +10498,13 @@ func (c *revisionClient) RestoreWhere(ctx context.Context, filter *RevisionFilte
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {

@@ -183,6 +183,13 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
@@ -406,8 +413,8 @@ func (c *productClient) RestoreMany(ctx context.Context, ids []uuid.UUID, opts .
 }
 
 // RestoreWhere restores all soft-deleted products matching the filter and returns them.
-// Always scoped to deleted rows — only soft-deleted entities are restored.
-// Returns empty slice when no rows match.
+// Always scoped to deleted rows — the DeletedAt comparator
+// on the filter is ignored. Returns empty slice when no rows match.
 func (c *productClient) RestoreWhere(ctx context.Context, filter *ProductFilter, opts ...func(*CallOptions[ProductFieldOptions])) ([]*Product, error) {
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -415,6 +422,13 @@ func (c *productClient) RestoreWhere(ctx context.Context, filter *ProductFilter,
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the DeletedAt
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.DeletedAt != nil {
+			scoped := *filter
+			scoped.DeletedAt = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {

@@ -1025,6 +1025,13 @@ func (c *tagClient) SoftDeleteWhere(ctx context.Context, filter *TagFilter, opts
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the IsDeleted
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.IsDeleted != nil {
+			scoped := *filter
+			scoped.IsDeleted = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
@@ -1243,8 +1250,8 @@ func (c *tagClient) RestoreMany(ctx context.Context, ids []int64, opts ...func(*
 }
 
 // RestoreWhere restores all soft-deleted tags matching the filter and returns them.
-// Always scoped to deleted rows — only soft-deleted entities are restored.
-// Returns empty slice when no rows match.
+// Always scoped to deleted rows — the IsDeleted comparator
+// on the filter is ignored. Returns empty slice when no rows match.
 func (c *tagClient) RestoreWhere(ctx context.Context, filter *TagFilter, opts ...func(*CallOptions[TagFieldOptions])) ([]*Tag, error) {
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1252,6 +1259,13 @@ func (c *tagClient) RestoreWhere(ctx context.Context, filter *TagFilter, opts ..
 		Input: filter, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
+		// The method sets its own soft-delete scope, so the IsDeleted
+		// comparator on the filter is ignored. The caller's filter is not modified.
+		if filter != nil && filter.IsDeleted != nil {
+			scoped := *filter
+			scoped.IsDeleted = nil
+			filter = &scoped
+		}
 
 		conds := filter.ToConditions(c.dialect)
 		if len(conds) == 0 {
