@@ -77,6 +77,12 @@ type Dialect interface {
 	// the rejection of non-[LockNone] modes happens at the runtime guard in
 	// generated read methods (see PRD §9.6a) before this is reached.
 	LockClause(mode LockMode) string
+
+	// NoLimitClause returns the fragment that stands for "no limit" when a
+	// SELECT has an OFFSET but no LIMIT, without a leading space. PostgreSQL:
+	// empty (OFFSET stands alone). MySQL: "LIMIT 18446744073709551615".
+	// SQLite: "LIMIT -1". MySQL and SQLite reject an OFFSET with no LIMIT.
+	NoLimitClause() string
 }
 
 // UpsertClauseOptions configures [Dialect.UpsertClause].

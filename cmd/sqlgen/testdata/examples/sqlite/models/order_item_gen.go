@@ -1575,6 +1575,10 @@ func (c *orderItemClient) Count(ctx context.Context, filter *OrderItemFilter, op
 // A nil filter paginates all order_items.
 func (c *orderItemClient) Paginate(ctx context.Context, input PaginateInput[OrderItemFilter], opts ...func(*CallOptions[OrderItemFieldOptions])) (*PaginateResult[OrderItem], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate order_items: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableOrderItems, Schema: "",
 		Input: input, CallOptions: options,
@@ -1607,7 +1611,7 @@ func (c *orderItemClient) Paginate(ctx context.Context, input PaginateInput[Orde
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

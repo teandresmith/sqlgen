@@ -1237,6 +1237,10 @@ func (c *binaryKeyBadgeClient) Count(ctx context.Context, filter *BinaryKeyBadge
 // A nil filter paginates all binary_key_badges.
 func (c *binaryKeyBadgeClient) Paginate(ctx context.Context, input PaginateInput[BinaryKeyBadgeFilter], opts ...func(*CallOptions[BinaryKeyBadgeFieldOptions])) (*PaginateResult[BinaryKeyBadge], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate binary_key_badges: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableBinaryKeyBadges, Schema: "",
 		Input: input, CallOptions: options,
@@ -1269,7 +1273,7 @@ func (c *binaryKeyBadgeClient) Paginate(ctx context.Context, input PaginateInput
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

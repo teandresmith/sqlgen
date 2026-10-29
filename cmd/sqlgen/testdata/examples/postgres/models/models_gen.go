@@ -1669,6 +1669,13 @@ func (c *eventClient) Count(ctx context.Context, filter *EventFilter, opts ...fu
 // A nil filter paginates all events.
 func (c *eventClient) Paginate(ctx context.Context, input PaginateInput[EventFilter], opts ...func(*CallOptions[EventFieldOptions])) (*PaginateResult[Event], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate events: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableEvents, Schema: "audit",
 		Input: input, CallOptions: options,
@@ -1701,7 +1708,7 @@ func (c *eventClient) Paginate(ctx context.Context, input PaginateInput[EventFil
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -3753,6 +3760,13 @@ func (c *noteWatcherClient) Count(ctx context.Context, filter *NoteWatcherFilter
 // A nil filter paginates all note_watchers.
 func (c *noteWatcherClient) Paginate(ctx context.Context, input PaginateInput[NoteWatcherFilter], opts ...func(*CallOptions[NoteWatcherFieldOptions])) (*PaginateResult[NoteWatcher], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate note_watchers: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableNoteWatchers, Schema: "audit",
 		Input: input, CallOptions: options,
@@ -3785,7 +3799,7 @@ func (c *noteWatcherClient) Paginate(ctx context.Context, input PaginateInput[No
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -5853,6 +5867,13 @@ func (c *auditNoteClient) Count(ctx context.Context, filter *AuditNoteFilter, op
 // A nil filter paginates all notes.
 func (c *auditNoteClient) Paginate(ctx context.Context, input PaginateInput[AuditNoteFilter], opts ...func(*CallOptions[AuditNoteFieldOptions])) (*PaginateResult[AuditNote], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate notes: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableAuditNotes, Schema: "audit",
 		Input: input, CallOptions: options,
@@ -5885,7 +5906,7 @@ func (c *auditNoteClient) Paginate(ctx context.Context, input PaginateInput[Audi
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -8295,6 +8316,13 @@ func (c *auditUserClient) Count(ctx context.Context, filter *AuditUserFilter, op
 // A nil filter paginates all users.
 func (c *auditUserClient) Paginate(ctx context.Context, input PaginateInput[AuditUserFilter], opts ...func(*CallOptions[AuditUserFieldOptions])) (*PaginateResult[AuditUser], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate users: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableAuditUsers, Schema: "audit",
 		Input: input, CallOptions: options,
@@ -8327,7 +8355,7 @@ func (c *auditUserClient) Paginate(ctx context.Context, input PaginateInput[Audi
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -11069,6 +11097,13 @@ func (c *articleClient) Count(ctx context.Context, filter *ArticleFilter, opts .
 // A nil filter paginates all non-deleted articles.
 func (c *articleClient) Paginate(ctx context.Context, input PaginateInput[ArticleFilter], opts ...func(*CallOptions[ArticleFieldOptions])) (*PaginateResult[Article], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate articles: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableArticles, Schema: "public",
 		Input: input, CallOptions: options,
@@ -11101,7 +11136,7 @@ func (c *articleClient) Paginate(ctx context.Context, input PaginateInput[Articl
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -12934,6 +12969,13 @@ func (c *assetDocumentLinkClient) Count(ctx context.Context, filter *AssetDocume
 // A nil filter paginates all asset_document_links.
 func (c *assetDocumentLinkClient) Paginate(ctx context.Context, input PaginateInput[AssetDocumentLinkFilter], opts ...func(*CallOptions[AssetDocumentLinkFieldOptions])) (*PaginateResult[AssetDocumentLink], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate asset_document_links: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableAssetDocumentLinks, Schema: "public",
 		Input: input, CallOptions: options,
@@ -12966,7 +13008,7 @@ func (c *assetDocumentLinkClient) Paginate(ctx context.Context, input PaginateIn
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -15640,6 +15682,13 @@ func (c *assetClient) Count(ctx context.Context, filter *AssetFilter, opts ...fu
 // A nil filter paginates all assets.
 func (c *assetClient) Paginate(ctx context.Context, input PaginateInput[AssetFilter], opts ...func(*CallOptions[AssetFieldOptions])) (*PaginateResult[Asset], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate assets: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableAssets, Schema: "public",
 		Input: input, CallOptions: options,
@@ -15672,7 +15721,7 @@ func (c *assetClient) Paginate(ctx context.Context, input PaginateInput[AssetFil
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -18443,6 +18492,13 @@ func (c *categoryClient) Count(ctx context.Context, filter *CategoryFilter, opts
 // A nil filter paginates all categories.
 func (c *categoryClient) Paginate(ctx context.Context, input PaginateInput[CategoryFilter], opts ...func(*CallOptions[CategoryFieldOptions])) (*PaginateResult[Category], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate categories: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableCategories, Schema: "public",
 		Input: input, CallOptions: options,
@@ -18475,7 +18531,7 @@ func (c *categoryClient) Paginate(ctx context.Context, input PaginateInput[Categ
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -20820,6 +20876,13 @@ func (c *counterClient) Count(ctx context.Context, filter *CounterFilter, opts .
 // A nil filter paginates all counters.
 func (c *counterClient) Paginate(ctx context.Context, input PaginateInput[CounterFilter], opts ...func(*CallOptions[CounterFieldOptions])) (*PaginateResult[Counter], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate counters: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableCounters, Schema: "public",
 		Input: input, CallOptions: options,
@@ -20852,7 +20915,7 @@ func (c *counterClient) Paginate(ctx context.Context, input PaginateInput[Counte
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -23006,6 +23069,13 @@ func (c *defaultOnlyRowClient) Count(ctx context.Context, filter *DefaultOnlyRow
 // A nil filter paginates all default_only_rows.
 func (c *defaultOnlyRowClient) Paginate(ctx context.Context, input PaginateInput[DefaultOnlyRowFilter], opts ...func(*CallOptions[DefaultOnlyRowFieldOptions])) (*PaginateResult[DefaultOnlyRow], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate default_only_rows: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableDefaultOnlyRows, Schema: "public",
 		Input: input, CallOptions: options,
@@ -23038,7 +23108,7 @@ func (c *defaultOnlyRowClient) Paginate(ctx context.Context, input PaginateInput
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -25364,6 +25434,13 @@ func (c *documentClient) Count(ctx context.Context, filter *DocumentFilter, opts
 // A nil filter paginates all documents.
 func (c *documentClient) Paginate(ctx context.Context, input PaginateInput[DocumentFilter], opts ...func(*CallOptions[DocumentFieldOptions])) (*PaginateResult[Document], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate documents: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableDocuments, Schema: "public",
 		Input: input, CallOptions: options,
@@ -25396,7 +25473,7 @@ func (c *documentClient) Paginate(ctx context.Context, input PaginateInput[Docum
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -27567,6 +27644,13 @@ func (c *fingerprintClient) Count(ctx context.Context, filter *FingerprintFilter
 // A nil filter paginates all fingerprints.
 func (c *fingerprintClient) Paginate(ctx context.Context, input PaginateInput[FingerprintFilter], opts ...func(*CallOptions[FingerprintFieldOptions])) (*PaginateResult[Fingerprint], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate fingerprints: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableFingerprints, Schema: "public",
 		Input: input, CallOptions: options,
@@ -27599,7 +27683,7 @@ func (c *fingerprintClient) Paginate(ctx context.Context, input PaginateInput[Fi
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -29375,6 +29459,13 @@ func (c *hostFingerprintClient) Count(ctx context.Context, filter *HostFingerpri
 // A nil filter paginates all host_fingerprints.
 func (c *hostFingerprintClient) Paginate(ctx context.Context, input PaginateInput[HostFingerprintFilter], opts ...func(*CallOptions[HostFingerprintFieldOptions])) (*PaginateResult[HostFingerprint], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate host_fingerprints: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableHostFingerprints, Schema: "public",
 		Input: input, CallOptions: options,
@@ -29407,7 +29498,7 @@ func (c *hostFingerprintClient) Paginate(ctx context.Context, input PaginateInpu
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -31459,6 +31550,13 @@ func (c *hostClient) Count(ctx context.Context, filter *HostFilter, opts ...func
 // A nil filter paginates all hosts.
 func (c *hostClient) Paginate(ctx context.Context, input PaginateInput[HostFilter], opts ...func(*CallOptions[HostFieldOptions])) (*PaginateResult[Host], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate hosts: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableHosts, Schema: "public",
 		Input: input, CallOptions: options,
@@ -31491,7 +31589,7 @@ func (c *hostClient) Paginate(ctx context.Context, input PaginateInput[HostFilte
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -33499,6 +33597,13 @@ func (c *keyOnlyRowClient) Count(ctx context.Context, filter *KeyOnlyRowFilter, 
 // A nil filter paginates all key_only_rows.
 func (c *keyOnlyRowClient) Paginate(ctx context.Context, input PaginateInput[KeyOnlyRowFilter], opts ...func(*CallOptions[KeyOnlyRowFieldOptions])) (*PaginateResult[KeyOnlyRow], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate key_only_rows: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableKeyOnlyRows, Schema: "public",
 		Input: input, CallOptions: options,
@@ -33531,7 +33636,7 @@ func (c *keyOnlyRowClient) Paginate(ctx context.Context, input PaginateInput[Key
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -35557,6 +35662,13 @@ func (c *publicNoteClient) Count(ctx context.Context, filter *PublicNoteFilter, 
 // A nil filter paginates all notes.
 func (c *publicNoteClient) Paginate(ctx context.Context, input PaginateInput[PublicNoteFilter], opts ...func(*CallOptions[PublicNoteFieldOptions])) (*PaginateResult[PublicNote], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate notes: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TablePublicNotes, Schema: "public",
 		Input: input, CallOptions: options,
@@ -35589,7 +35701,7 @@ func (c *publicNoteClient) Paginate(ctx context.Context, input PaginateInput[Pub
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -37793,6 +37905,13 @@ func (c *orderItemClient) Count(ctx context.Context, filter *OrderItemFilter, op
 // A nil filter paginates all order_items.
 func (c *orderItemClient) Paginate(ctx context.Context, input PaginateInput[OrderItemFilter], opts ...func(*CallOptions[OrderItemFieldOptions])) (*PaginateResult[OrderItem], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate order_items: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableOrderItems, Schema: "public",
 		Input: input, CallOptions: options,
@@ -37825,7 +37944,7 @@ func (c *orderItemClient) Paginate(ctx context.Context, input PaginateInput[Orde
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -40317,6 +40436,13 @@ func (c *orderClient) Count(ctx context.Context, filter *OrderFilter, opts ...fu
 // A nil filter paginates all orders.
 func (c *orderClient) Paginate(ctx context.Context, input PaginateInput[OrderFilter], opts ...func(*CallOptions[OrderFieldOptions])) (*PaginateResult[Order], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate orders: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableOrders, Schema: "public",
 		Input: input, CallOptions: options,
@@ -40349,7 +40475,7 @@ func (c *orderClient) Paginate(ctx context.Context, input PaginateInput[OrderFil
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -42313,6 +42439,13 @@ func (c *productTagLabelClient) Count(ctx context.Context, filter *ProductTagLab
 // A nil filter paginates all product_tag_labels.
 func (c *productTagLabelClient) Paginate(ctx context.Context, input PaginateInput[ProductTagLabelFilter], opts ...func(*CallOptions[ProductTagLabelFieldOptions])) (*PaginateResult[ProductTagLabel], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate product_tag_labels: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableProductTagLabels, Schema: "public",
 		Input: input, CallOptions: options,
@@ -42345,7 +42478,7 @@ func (c *productTagLabelClient) Paginate(ctx context.Context, input PaginateInpu
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -44963,6 +45096,13 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
 // A nil filter paginates all products.
 func (c *productClient) Paginate(ctx context.Context, input PaginateInput[ProductFilter], opts ...func(*CallOptions[ProductFieldOptions])) (*PaginateResult[Product], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate products: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableProducts, Schema: "public",
 		Input: input, CallOptions: options,
@@ -44995,7 +45135,7 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -47564,6 +47704,13 @@ func (c *profileClient) Count(ctx context.Context, filter *ProfileFilter, opts .
 // A nil filter paginates all profiles.
 func (c *profileClient) Paginate(ctx context.Context, input PaginateInput[ProfileFilter], opts ...func(*CallOptions[ProfileFieldOptions])) (*PaginateResult[Profile], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate profiles: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableProfiles, Schema: "public",
 		Input: input, CallOptions: options,
@@ -47596,7 +47743,7 @@ func (c *profileClient) Paginate(ctx context.Context, input PaginateInput[Profil
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -49852,6 +49999,13 @@ func (c *rateLimitClient) Count(ctx context.Context, filter *RateLimitFilter, op
 // A nil filter paginates all rate_limits.
 func (c *rateLimitClient) Paginate(ctx context.Context, input PaginateInput[RateLimitFilter], opts ...func(*CallOptions[RateLimitFieldOptions])) (*PaginateResult[RateLimit], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate rate_limits: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableRateLimits, Schema: "public",
 		Input: input, CallOptions: options,
@@ -49884,7 +50038,7 @@ func (c *rateLimitClient) Paginate(ctx context.Context, input PaginateInput[Rate
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -52109,6 +52263,13 @@ func (c *sequenceRowClient) Count(ctx context.Context, filter *SequenceRowFilter
 // A nil filter paginates all sequence_rows.
 func (c *sequenceRowClient) Paginate(ctx context.Context, input PaginateInput[SequenceRowFilter], opts ...func(*CallOptions[SequenceRowFieldOptions])) (*PaginateResult[SequenceRow], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate sequence_rows: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableSequenceRows, Schema: "public",
 		Input: input, CallOptions: options,
@@ -52141,7 +52302,7 @@ func (c *sequenceRowClient) Paginate(ctx context.Context, input PaginateInput[Se
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -54264,6 +54425,13 @@ func (c *sluggedRowClient) Count(ctx context.Context, filter *SluggedRowFilter, 
 // A nil filter paginates all slugged_rows.
 func (c *sluggedRowClient) Paginate(ctx context.Context, input PaginateInput[SluggedRowFilter], opts ...func(*CallOptions[SluggedRowFieldOptions])) (*PaginateResult[SluggedRow], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate slugged_rows: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableSluggedRows, Schema: "public",
 		Input: input, CallOptions: options,
@@ -54296,7 +54464,7 @@ func (c *sluggedRowClient) Paginate(ctx context.Context, input PaginateInput[Slu
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -56901,6 +57069,13 @@ func (c *tagClient) Count(ctx context.Context, filter *TagFilter, opts ...func(*
 // A nil filter paginates all non-deleted tags.
 func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter], opts ...func(*CallOptions[TagFieldOptions])) (*PaginateResult[Tag], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate tags: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableTags, Schema: "public",
 		Input: input, CallOptions: options,
@@ -56933,7 +57108,7 @@ func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter]
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -58692,6 +58867,13 @@ func (c *userCategoryClient) Count(ctx context.Context, filter *UserCategoryFilt
 // A nil filter paginates all user_categories.
 func (c *userCategoryClient) Paginate(ctx context.Context, input PaginateInput[UserCategoryFilter], opts ...func(*CallOptions[UserCategoryFieldOptions])) (*PaginateResult[UserCategory], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate user_categories: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableUserCategories, Schema: "public",
 		Input: input, CallOptions: options,
@@ -58724,7 +58906,7 @@ func (c *userCategoryClient) Paginate(ctx context.Context, input PaginateInput[U
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -61560,6 +61742,13 @@ func (c *publicUserClient) Count(ctx context.Context, filter *PublicUserFilter, 
 // A nil filter paginates all users.
 func (c *publicUserClient) Paginate(ctx context.Context, input PaginateInput[PublicUserFilter], opts ...func(*CallOptions[PublicUserFieldOptions])) (*PaginateResult[PublicUser], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate users: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TablePublicUsers, Schema: "public",
 		Input: input, CallOptions: options,
@@ -61592,7 +61781,7 @@ func (c *publicUserClient) Paginate(ctx context.Context, input PaginateInput[Pub
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -64746,6 +64935,13 @@ func (c *warehouseClient) Count(ctx context.Context, filter *WarehouseFilter, op
 // A nil filter paginates all warehouses.
 func (c *warehouseClient) Paginate(ctx context.Context, input PaginateInput[WarehouseFilter], opts ...func(*CallOptions[WarehouseFieldOptions])) (*PaginateResult[Warehouse], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate warehouses: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableWarehouses, Schema: "public",
 		Input: input, CallOptions: options,
@@ -64778,7 +64974,7 @@ func (c *warehouseClient) Paginate(ctx context.Context, input PaginateInput[Ware
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

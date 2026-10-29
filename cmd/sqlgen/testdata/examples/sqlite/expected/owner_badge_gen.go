@@ -1237,6 +1237,10 @@ func (c *ownerBadgeClient) Count(ctx context.Context, filter *OwnerBadgeFilter, 
 // A nil filter paginates all owner_badges.
 func (c *ownerBadgeClient) Paginate(ctx context.Context, input PaginateInput[OwnerBadgeFilter], opts ...func(*CallOptions[OwnerBadgeFieldOptions])) (*PaginateResult[OwnerBadge], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate owner_badges: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableOwnerBadges, Schema: "",
 		Input: input, CallOptions: options,
@@ -1269,7 +1273,7 @@ func (c *ownerBadgeClient) Paginate(ctx context.Context, input PaginateInput[Own
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

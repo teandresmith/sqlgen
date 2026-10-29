@@ -19,5 +19,5 @@ type PaginateResult[T any] struct {
 	TotalCount int64 `json:"total_count"` // total matching rows across all pages
 	Offset     int   `json:"offset"`      // the offset used for this query
 	Limit      int   `json:"limit"`       // the limit used for this query
-	HasMore    bool  `json:"has_more"`    // true when Offset+Limit < TotalCount
+	HasMore    bool  `json:"has_more"`    // true when Limit > 0 and Offset+Limit < TotalCount
 }

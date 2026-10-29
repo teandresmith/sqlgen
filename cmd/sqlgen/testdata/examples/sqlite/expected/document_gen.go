@@ -1758,6 +1758,10 @@ func (c *documentClient) Count(ctx context.Context, filter *DocumentFilter, opts
 // A nil filter paginates all documents.
 func (c *documentClient) Paginate(ctx context.Context, input PaginateInput[DocumentFilter], opts ...func(*CallOptions[DocumentFieldOptions])) (*PaginateResult[Document], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate documents: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableDocuments, Schema: "",
 		Input: input, CallOptions: options,
@@ -1790,7 +1794,7 @@ func (c *documentClient) Paginate(ctx context.Context, input PaginateInput[Docum
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

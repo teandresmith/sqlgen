@@ -1648,6 +1648,10 @@ func (c *accountClient) Count(ctx context.Context, filter *AccountFilter, opts .
 // A nil filter paginates all accounts.
 func (c *accountClient) Paginate(ctx context.Context, input PaginateInput[AccountFilter], opts ...func(*CallOptions[AccountFieldOptions])) (*PaginateResult[Account], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate accounts: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableAccounts, Schema: "",
 		Input: input, CallOptions: options,
@@ -1680,7 +1684,7 @@ func (c *accountClient) Paginate(ctx context.Context, input PaginateInput[Accoun
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -4379,6 +4383,10 @@ func (c *articleClient) Count(ctx context.Context, filter *ArticleFilter, opts .
 // A nil filter paginates all non-deleted articles.
 func (c *articleClient) Paginate(ctx context.Context, input PaginateInput[ArticleFilter], opts ...func(*CallOptions[ArticleFieldOptions])) (*PaginateResult[Article], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate articles: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableArticles, Schema: "",
 		Input: input, CallOptions: options,
@@ -4411,7 +4419,7 @@ func (c *articleClient) Paginate(ctx context.Context, input PaginateInput[Articl
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -6489,6 +6497,10 @@ func (c *auditLogClient) Count(ctx context.Context, filter *AuditLogFilter, opts
 // A nil filter paginates all audit_logs.
 func (c *auditLogClient) Paginate(ctx context.Context, input PaginateInput[AuditLogFilter], opts ...func(*CallOptions[AuditLogFieldOptions])) (*PaginateResult[AuditLog], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate audit_logs: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableAuditLogs, Schema: "",
 		Input: input, CallOptions: options,
@@ -6521,7 +6533,7 @@ func (c *auditLogClient) Paginate(ctx context.Context, input PaginateInput[Audit
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -8640,6 +8652,10 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
 // A nil filter paginates all products.
 func (c *productClient) Paginate(ctx context.Context, input PaginateInput[ProductFilter], opts ...func(*CallOptions[ProductFieldOptions])) (*PaginateResult[Product], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate products: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableProducts, Schema: "",
 		Input: input, CallOptions: options,
@@ -8672,7 +8688,7 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

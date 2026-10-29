@@ -216,7 +216,7 @@ func TestPaginationTableTemplate_paginateWithLimitAndOffset(t *testing.T) {
 		"TotalCount: totalCount,",
 		"Offset:     input.Offset,",
 		"Limit:      input.Limit,",
-		"HasMore:    int64(input.Offset+input.Limit) < totalCount,",
+		"HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,",
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {

@@ -1469,6 +1469,10 @@ func (c *keyOnlyRowClient) Count(ctx context.Context, filter *KeyOnlyRowFilter, 
 // A nil filter paginates all key_only_rows.
 func (c *keyOnlyRowClient) Paginate(ctx context.Context, input PaginateInput[KeyOnlyRowFilter], opts ...func(*CallOptions[KeyOnlyRowFieldOptions])) (*PaginateResult[KeyOnlyRow], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate key_only_rows: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableKeyOnlyRows, Schema: "",
 		Input: input, CallOptions: options,
@@ -1501,7 +1505,7 @@ func (c *keyOnlyRowClient) Paginate(ctx context.Context, input PaginateInput[Key
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

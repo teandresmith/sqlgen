@@ -1537,6 +1537,10 @@ func (c *sluggedRowClient) Count(ctx context.Context, filter *SluggedRowFilter, 
 // A nil filter paginates all slugged_rows.
 func (c *sluggedRowClient) Paginate(ctx context.Context, input PaginateInput[SluggedRowFilter], opts ...func(*CallOptions[SluggedRowFieldOptions])) (*PaginateResult[SluggedRow], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate slugged_rows: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableSluggedRows, Schema: "",
 		Input: input, CallOptions: options,
@@ -1569,7 +1573,7 @@ func (c *sluggedRowClient) Paginate(ctx context.Context, input PaginateInput[Slu
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

@@ -128,7 +128,7 @@ func BuildSelect(d Dialect, t Table, opts SelectOptions) (string, []any) {
 	pos := 1
 	args := appendWhere(&b, d, opts.Conditions, pos, table)
 	writeOrderBy(&b, d, opts.OrderBy, "")
-	writeLimitOffset(&b, opts.Limit, opts.Offset)
+	writeLimitOffset(&b, d, opts.Limit, opts.Offset)
 	writeLockClause(&b, d, opts.LockMode)
 
 	return b.String(), bindArgs(d, args)
@@ -168,7 +168,7 @@ func BuildSelectJoin(d Dialect, t Table, joins []JoinClause, opts SelectOptions)
 	pos := 1
 	args := appendWhere(&b, d, opts.Conditions, pos, qualifier)
 	writeOrderBy(&b, d, opts.OrderBy, qualifier)
-	writeLimitOffset(&b, opts.Limit, opts.Offset)
+	writeLimitOffset(&b, d, opts.Limit, opts.Offset)
 	writeLockClause(&b, d, opts.LockMode)
 
 	return b.String(), bindArgs(d, args)
@@ -949,9 +949,16 @@ func writeOrderBy(b *strings.Builder, d Dialect, sorts []Sort, qualifier string)
 	}
 }
 
-func writeLimitOffset(b *strings.Builder, limit, offset *int) {
+// writeLimitOffset appends LIMIT and OFFSET. An OFFSET with no LIMIT takes the
+// dialect's no-limit form first, which MySQL and SQLite require.
+func writeLimitOffset(b *strings.Builder, d Dialect, limit, offset *int) {
 	if limit != nil {
 		fmt.Fprintf(b, " LIMIT %d", *limit)
+	} else if offset != nil {
+		if clause := d.NoLimitClause(); clause != "" {
+			b.WriteString(" ")
+			b.WriteString(clause)
+		}
 	}
 	if offset != nil {
 		fmt.Fprintf(b, " OFFSET %d", *offset)

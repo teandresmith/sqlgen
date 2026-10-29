@@ -1499,6 +1499,10 @@ func (c *binaryKeyEventClient) Count(ctx context.Context, filter *BinaryKeyEvent
 // A nil filter paginates all binary_key_events.
 func (c *binaryKeyEventClient) Paginate(ctx context.Context, input PaginateInput[BinaryKeyEventFilter], opts ...func(*CallOptions[BinaryKeyEventFieldOptions])) (*PaginateResult[BinaryKeyEvent], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate binary_key_events: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableBinaryKeyEvents, Schema: "",
 		Input: input, CallOptions: options,
@@ -1531,7 +1535,7 @@ func (c *binaryKeyEventClient) Paginate(ctx context.Context, input PaginateInput
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

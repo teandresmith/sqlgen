@@ -1555,6 +1555,10 @@ func (c *ownerProfileClient) Count(ctx context.Context, filter *OwnerProfileFilt
 // A nil filter paginates all owner_profiles.
 func (c *ownerProfileClient) Paginate(ctx context.Context, input PaginateInput[OwnerProfileFilter], opts ...func(*CallOptions[OwnerProfileFieldOptions])) (*PaginateResult[OwnerProfile], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate owner_profiles: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableOwnerProfiles, Schema: "",
 		Input: input, CallOptions: options,
@@ -1587,7 +1591,7 @@ func (c *ownerProfileClient) Paginate(ctx context.Context, input PaginateInput[O
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

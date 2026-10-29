@@ -74,7 +74,7 @@ func buildLockGuardTableContext(dialect string) gen.TableContext {
 		Operations: gen.ResolvedOperations{
 			Get: true, GetMany: true, Count: true,
 			Create: true, Update: true, Upsert: true,
-			Connection: true,
+			Paginate: true, Connection: true,
 		},
 		Dialect:    config.Dialect(dialect),
 		Driver:     "pgx",
@@ -236,6 +236,51 @@ func TestLockModeGuard_ConnectionMethod_allDialects(t *testing.T) {
 			dialect: "sqlite",
 			mustContain: []string{
 				`return nil, fmt.Errorf("connection products: LockMode is unsupported on sqlite dialect")`,
+			},
+			mustNotHave: []string{"database.InTransaction(ctx)"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.dialect, func(t *testing.T) {
+			ctx := buildLockGuardTableContext(tc.dialect)
+			out := renderTableTemplate(t, tmpl, "table/pagination", ctx)
+			mustContainAll(t, out, tc.mustContain...)
+			mustNotContain(t, out, tc.mustNotHave...)
+		})
+	}
+}
+
+// TestLockModeGuard_PaginateMethod_allDialects pins the same guard shape onto
+// Paginate. Paginate counts before its page read, so its own body must
+// short-circuit before the count runs.
+func TestLockModeGuard_PaginateMethod_allDialects(t *testing.T) {
+	tmpl := loadTableTemplates(t, "pagination.go.tmpl")
+	cases := []struct {
+		dialect     string
+		mustContain []string
+		mustNotHave []string
+	}{
+		{
+			dialect: "postgres",
+			mustContain: []string{
+				"if options.LockMode != sql.LockNone {",
+				`return nil, fmt.Errorf("paginate products: LockMode requires an active transaction")`,
+				"options.SkipCache = true",
+			},
+			mustNotHave: []string{"c.mysqlVersion.get(ctx)"},
+		},
+		{
+			dialect: "mysql",
+			mustContain: []string{
+				`return nil, fmt.Errorf("paginate products: LockMode requires an active transaction")`,
+				"version, err := c.mysqlVersion.get(ctx)",
+			},
+			mustNotHave: []string{"is unsupported on sqlite dialect"},
+		},
+		{
+			dialect: "sqlite",
+			mustContain: []string{
+				`return nil, fmt.Errorf("paginate products: LockMode is unsupported on sqlite dialect")`,
 			},
 			mustNotHave: []string{"database.InTransaction(ctx)"},
 		},

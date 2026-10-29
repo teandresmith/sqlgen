@@ -100,6 +100,10 @@ func (d SQLiteDialect) BackslashEscapes() bool { return false }
 // supplied.
 func (d SQLiteDialect) DefaultValuesClause() string { return "DEFAULT VALUES" }
 
+// NoLimitClause returns "LIMIT -1" — SQLite accepts OFFSET only after a
+// LIMIT, and a negative limit means no limit.
+func (d SQLiteDialect) NoLimitClause() string { return "LIMIT -1" }
+
 // LockClause returns the empty string for every mode. SQLite has no per-row
 // locking — it relies on database-level locks via BEGIN IMMEDIATE / BEGIN
 // EXCLUSIVE. Generated read methods reject any non-[LockNone] mode at the

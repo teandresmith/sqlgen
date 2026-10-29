@@ -107,6 +107,11 @@ func (d MySQLDialect) BackslashEscapes() bool { return true }
 // form, and accepts an empty column list with an empty value row instead.
 func (d MySQLDialect) DefaultValuesClause() string { return "() VALUES ()" }
 
+// NoLimitClause returns "LIMIT 18446744073709551615" — MySQL accepts OFFSET
+// only after a LIMIT, and documents the largest BIGINT UNSIGNED as the way to
+// ask for every remaining row.
+func (d MySQLDialect) NoLimitClause() string { return "LIMIT 18446744073709551615" }
+
 // LockClause returns the row-level lock SQL fragment for the given mode.
 // MySQL uses "LOCK IN SHARE MODE" for [LockForShare]. NoWait and SkipLocked
 // require MySQL 8.0+; the version guard lives in the codegen runtime layer.

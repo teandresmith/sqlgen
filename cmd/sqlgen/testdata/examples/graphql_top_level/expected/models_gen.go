@@ -1716,6 +1716,13 @@ func (c *categoryClient) Count(ctx context.Context, filter *CategoryFilter, opts
 // A nil filter paginates all categories.
 func (c *categoryClient) Paginate(ctx context.Context, input PaginateInput[CategoryFilter], opts ...func(*CallOptions[CategoryFieldOptions])) (*PaginateResult[Category], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate categories: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableCategories, Schema: "public",
 		Input: input, CallOptions: options,
@@ -1748,7 +1755,7 @@ func (c *categoryClient) Paginate(ctx context.Context, input PaginateInput[Categ
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -3961,6 +3968,13 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
 // A nil filter paginates all products.
 func (c *productClient) Paginate(ctx context.Context, input PaginateInput[ProductFilter], opts ...func(*CallOptions[ProductFieldOptions])) (*PaginateResult[Product], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate products: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableProducts, Schema: "public",
 		Input: input, CallOptions: options,
@@ -3993,7 +4007,7 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

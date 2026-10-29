@@ -1647,6 +1647,10 @@ func (c *digitLeadingColumnClient) Count(ctx context.Context, filter *DigitLeadi
 // A nil filter paginates all digit_leading_columns.
 func (c *digitLeadingColumnClient) Paginate(ctx context.Context, input PaginateInput[DigitLeadingColumnFilter], opts ...func(*CallOptions[DigitLeadingColumnFieldOptions])) (*PaginateResult[DigitLeadingColumn], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate digit_leading_columns: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableDigitLeadingColumns, Schema: "",
 		Input: input, CallOptions: options,
@@ -1679,7 +1683,7 @@ func (c *digitLeadingColumnClient) Paginate(ctx context.Context, input PaginateI
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

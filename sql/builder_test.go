@@ -89,6 +89,27 @@ func TestBuildSelect(t *testing.T) {
 			opts:    sql.SelectOptions{Columns: []string{"id"}},
 			wantSQL: `SELECT "id" FROM "billing"."invoices"`,
 		},
+		{
+			name:    "postgres offset with no limit stands alone",
+			dialect: pg,
+			table:   pgTbl,
+			opts:    sql.SelectOptions{Columns: []string{"id"}, Offset: new(3)},
+			wantSQL: `SELECT "id" FROM "public"."users" OFFSET 3`,
+		},
+		{
+			name:    "mysql offset with no limit takes the largest limit",
+			dialect: my,
+			table:   myTbl,
+			opts:    sql.SelectOptions{Columns: []string{"id"}, Offset: new(3)},
+			wantSQL: "SELECT `id` FROM `users` LIMIT 18446744073709551615 OFFSET 3",
+		},
+		{
+			name:    "sqlite offset with no limit takes a negative limit",
+			dialect: lite,
+			table:   ltTbl,
+			opts:    sql.SelectOptions{Columns: []string{"id"}, Offset: new(3)},
+			wantSQL: `SELECT "id" FROM "users" LIMIT -1 OFFSET 3`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -151,6 +172,25 @@ func TestBuildSelectJoin(t *testing.T) {
 				Columns: []string{"name", "id"},
 			},
 			wantSQL: "SELECT p.`id` AS `p.id`, p.`name` AS `p.name`, c.`id` AS `c.id`, c.`name` AS `c.name` FROM `products` p LEFT JOIN `companies` c ON c.`id` = p.`company_id`",
+		},
+		{
+			name:    "sqlite offset with no limit takes a negative limit",
+			dialect: lite,
+			table:   sql.Table{Name: "products"},
+			joins: []sql.JoinClause{
+				{
+					Table:   sql.Table{Name: "companies"},
+					Alias:   "c",
+					On:      `c."id" = p."company_id"`,
+					Columns: []string{"id"},
+				},
+			},
+			opts: sql.SelectOptions{
+				Alias:   "p",
+				Columns: []string{"id"},
+				Offset:  new(5),
+			},
+			wantSQL: `SELECT p."id" AS "p.id", c."id" AS "c.id" FROM "products" p LEFT JOIN "companies" c ON c."id" = p."company_id" LIMIT -1 OFFSET 5`,
 		},
 		{
 			name:    "chained O2O joins",

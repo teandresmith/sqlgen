@@ -3951,7 +3951,7 @@ The generated relationship loader receives the resolved `CallOptions` from the p
 
 ### 9.6a Lock Modes
 
-`LockMode` is a `CallOptions` field that adds a row-level locking clause to read methods (`Get`, `GetMany`, `Connection`). It enables read-modify-write workflows, job queue dispatchers, and other concurrency primitives that require holding a database lock on the selected rows for the duration of the enclosing transaction.
+`LockMode` is a `CallOptions` field that adds a row-level locking clause to read methods (`Get`, `GetMany`, `Paginate`, `Connection`). It enables read-modify-write workflows, job queue dispatchers, and other concurrency primitives that require holding a database lock on the selected rows for the duration of the enclosing transaction.
 
 LockMode applies to read methods only. Write methods (`Create`, `Update`, `Upsert`, `*Delete*`) acquire row locks implicitly via the `INSERT`/`UPDATE`/`DELETE` itself; LockMode is ignored on those methods.
 
@@ -4104,7 +4104,7 @@ Tenancy filters narrow which rows get locked (correct — only rows in the consu
 
 `Create`/`Update`/`Upsert`/`Restore`/`SoftDelete*` chain an internal `Get`/`GetMany` for the entity-return path (Section 9.7). When the caller sets `LockMode` on a write method, the chained read does **not** inherit it — the write itself already acquired an implicit row lock that survives until commit, so re-locking via the chained read adds nothing. The internal call already uses `SkipHooks: true`; the generator extends that to also force `LockMode: LockNone` on the chained call.
 
-**Read-method internals propagate LockMode.** `Get` chains an internal `GetMany` (Section 9.8.2) and `Connection` chains an internal `GetMany` (Section 9.8.7). When the caller sets `LockMode` on `Get` or `Connection`, the inner `GetMany` MUST carry the same `LockMode` so the actual SELECT emits the lock clause. The inner runtime guard re-runs but is idempotent (same ctx, same tx, same forced `SkipCache`). The "do not inherit" rule above is scoped to write-method chained reads only.
+**Read-method internals propagate LockMode.** `Get` chains an internal `GetMany` (Section 9.8.2), and `Paginate` and `Connection` each chain an internal `GetMany` (Sections 9.8.11 and 9.8.12). When the caller sets `LockMode` on `Get`, `Paginate` or `Connection`, the inner `GetMany` MUST carry the same `LockMode` so the actual SELECT emits the lock clause. The inner runtime guard re-runs but is idempotent (same ctx, same tx, same forced `SkipCache`). The "do not inherit" rule above is scoped to write-method chained reads only.
 
 **Relationship loads do not carry LockMode.** The child and junction reads a `GetMany` issues to load relationships (Section 9.6, "Relationship propagation") run without a lock clause: `LockMode` applies to the primary read only. Carrying it would make a `LockForUpdateSkipLocked` parent read drop child rows another transaction holds, with no sign of it, and let `LockForUpdateNoWait` fail on a child the caller never asked to lock.
 
@@ -4129,7 +4129,7 @@ Total surface change is small:
 | Runtime `sql/select.go` | Add `LockMode` field to `SelectOptions` |
 | Per-dialect `BuildSelect` | Append lock-clause suffix based on `LockMode` |
 | Generated `CallOptions[FO]` | Add `LockMode LockMode` field |
-| Generated read methods (`Get`, `GetMany`, `Connection`) | Add precondition guard + `SkipCache` force + thread `LockMode` into `SelectOptions` |
+| Generated read methods (`Get`, `GetMany`, `Paginate`, `Connection`) | Add precondition guard + `SkipCache` force + thread `LockMode` into `SelectOptions` |
 | Generated chained-Get sites in write methods | Force `LockMode = LockNone` on the internal call (alongside existing `SkipHooks = true`) |
 
 Tests required: per-dialect SQL emission tests for each LockMode constant, runtime-guard tests for outside-transaction and SQLite-dialect rejection paths, integration test for `LockForUpdateSkipLocked` job-queue pattern using two concurrent transactions in a testcontainer.
@@ -4263,7 +4263,7 @@ type PaginateResult[T any] struct {
     TotalCount int64 // total matching rows across all pages
     Offset     int   // the offset used for this query
     Limit      int   // the limit used for this query
-    HasMore    bool  // true when Offset+Limit < TotalCount
+    HasMore    bool  // true when Limit > 0 and Offset+Limit < TotalCount
 }
 
 // resolveCallOptions — shared helper, applies option functions and returns the resolved struct.
@@ -6897,7 +6897,7 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
             TotalCount: totalCount,
             Offset:     input.Offset,
             Limit:      input.Limit,
-            HasMore:    int64(input.Offset+input.Limit) < totalCount,
+            HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
         }, nil
     })
     if err != nil {
@@ -9117,11 +9117,11 @@ type PaginateResult[T any] struct {
     TotalCount int64 `json:"total_count"` // total matching rows across all pages
     Offset     int   `json:"offset"`      // the offset used for this query
     Limit      int   `json:"limit"`       // the limit used for this query
-    HasMore    bool  `json:"has_more"`    // true when Offset+Limit < TotalCount
+    HasMore    bool  `json:"has_more"`    // true when Limit > 0 and Offset+Limit < TotalCount
 }
 ```
 
-`HasMore` is the offset-pagination analogue to Relay's `hasNextPage` — it lets clients determine whether another page exists without recomputing `offset + limit < totalCount`. The result intentionally omits derived fields (`TotalPages`, `PageSize`, `CurrentPage`); consumers compose them from `TotalCount / Limit / Offset` when needed, and avoiding the derived shape keeps the GraphQL `<T>ListResult` envelope (§26.4) field-for-field aligned with `PaginateResult[T]` so gqlgen can bind them directly via the wrapper's `models:` merge — through a per-table alias `type <T>ListResult = PaginateResult[<T>]` (Go 1.24+) — see §26.5.6.
+`HasMore` is the offset-pagination analogue to Relay's `hasNextPage` — it lets clients determine whether another page exists without recomputing `offset + limit < totalCount`. A `Limit` of 0 means no limit: the page holds every matching row past `Offset`, so `HasMore` is false. The result intentionally omits derived fields (`TotalPages`, `PageSize`, `CurrentPage`); consumers compose them from `TotalCount / Limit / Offset` when needed, and avoiding the derived shape keeps the GraphQL `<T>ListResult` envelope (§26.4) field-for-field aligned with `PaginateResult[T]` so gqlgen can bind them directly via the wrapper's `models:` merge — through a per-table alias `type <T>ListResult = PaginateResult[<T>]` (Go 1.24+) — see §26.5.6.
 
 ### 14.2 Cursor-Based (Relay Pagination)
 
@@ -16227,6 +16227,9 @@ type Dialect interface {
 
     // Row-level lock fragment (9.6a); "" for LockNone and on SQLite
     LockClause(mode LockMode) string
+
+    // "No limit" before an OFFSET with no LIMIT; MySQL and SQLite reject a bare OFFSET
+    NoLimitClause() string                        // PostgreSQL: "", MySQL: LIMIT 18446744073709551615, SQLite: LIMIT -1
 }
 ```
 
@@ -16248,7 +16251,7 @@ The `ANY`/`ALL` approach is preferred for PostgreSQL+pgx because:
 
 | Function | SQL Statement | Dialect Variations |
 |----------|--------------|-------------------|
-| `BuildSelect` | `SELECT ... FROM {table} WHERE ... ORDER BY ... LIMIT ... OFFSET` | Placeholder style, identifier quoting, schema formatting |
+| `BuildSelect` | `SELECT ... FROM {table} WHERE ... ORDER BY ... LIMIT ... OFFSET` | Placeholder style, identifier quoting, schema formatting. An `OFFSET` with no `LIMIT` is preceded by `NoLimitClause()` |
 | `BuildSelectJoin` | `SELECT {alias}.{col} AS "{alias}.{col}", ... FROM {table} {alias} LEFT JOIN {related} {alias} ON ... WHERE ...` | O2O relationship loading via LEFT JOIN. Produces aliased columns with `"."` separator for prefix-based scanning. Supports chained O2O JOINs, soft delete conditions on joined tables, and polymorphic filters in JOIN conditions. |
 | `BuildInsert` | `INSERT INTO {table} ... VALUES ...` + optional `RETURNING` | MySQL: no RETURNING; upsert syntax varies. With no column supplied it emits `INSERT INTO {table} DEFAULT VALUES` (PostgreSQL/SQLite) or `INSERT INTO {table} () VALUES ()` (MySQL) via `DefaultValuesClause()`, and no conflict clause — SQLite accepts none after `DEFAULT VALUES` ([Upsert Conflict Keys](#upsert-conflict-keys)) |
 | `BuildMultiInsert` | `INSERT INTO {table} ... VALUES (...), (...), ...` | Same as BuildInsert |
@@ -16291,6 +16294,7 @@ The `ANY`/`ALL` approach is preferred for PostgreSQL+pgx because:
 | Comments | `COMMENT ON` statements | Inline `COMMENT 'text'` | Not supported |
 | Introspection | `pg_catalog` + `information_schema` | `information_schema` | `PRAGMA` statements |
 | LEFT JOIN + column alias | `AS "alias"` | `` AS `alias` `` | `AS "alias"` |
+| `OFFSET` with no `LIMIT` | `OFFSET n` | `LIMIT 18446744073709551615 OFFSET n` | `LIMIT -1 OFFSET n` |
 
 ## Appendix C: Project Linting Configuration
 

@@ -1599,6 +1599,13 @@ func (c *invoiceClient) Count(ctx context.Context, filter *InvoiceFilter, opts .
 // A nil filter paginates all invoices.
 func (c *invoiceClient) Paginate(ctx context.Context, input PaginateInput[InvoiceFilter], opts ...func(*CallOptions[InvoiceFieldOptions])) (*PaginateResult[Invoice], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate invoices: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableInvoices, Schema: "billing",
 		Input: input, CallOptions: options,
@@ -1631,7 +1638,7 @@ func (c *invoiceClient) Paginate(ctx context.Context, input PaginateInput[Invoic
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -4138,6 +4145,13 @@ func (c *accountClient) Count(ctx context.Context, filter *AccountFilter, opts .
 // A nil filter paginates all accounts.
 func (c *accountClient) Paginate(ctx context.Context, input PaginateInput[AccountFilter], opts ...func(*CallOptions[AccountFieldOptions])) (*PaginateResult[Account], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate accounts: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableAccounts, Schema: "public",
 		Input: input, CallOptions: options,
@@ -4170,7 +4184,7 @@ func (c *accountClient) Paginate(ctx context.Context, input PaginateInput[Accoun
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -6631,6 +6645,13 @@ func (c *projectClient) Count(ctx context.Context, filter *ProjectFilter, opts .
 // A nil filter paginates all projects.
 func (c *projectClient) Paginate(ctx context.Context, input PaginateInput[ProjectFilter], opts ...func(*CallOptions[ProjectFieldOptions])) (*PaginateResult[Project], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate projects: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableProjects, Schema: "public",
 		Input: input, CallOptions: options,
@@ -6663,7 +6684,7 @@ func (c *projectClient) Paginate(ctx context.Context, input PaginateInput[Projec
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -8767,6 +8788,13 @@ func (c *taskLabelClient) Count(ctx context.Context, filter *TaskLabelFilter, op
 // A nil filter paginates all task_labels.
 func (c *taskLabelClient) Paginate(ctx context.Context, input PaginateInput[TaskLabelFilter], opts ...func(*CallOptions[TaskLabelFieldOptions])) (*PaginateResult[TaskLabel], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate task_labels: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableTaskLabels, Schema: "public",
 		Input: input, CallOptions: options,
@@ -8799,7 +8827,7 @@ func (c *taskLabelClient) Paginate(ctx context.Context, input PaginateInput[Task
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -11038,6 +11066,13 @@ func (c *taskClient) Count(ctx context.Context, filter *TaskFilter, opts ...func
 // A nil filter paginates all tasks.
 func (c *taskClient) Paginate(ctx context.Context, input PaginateInput[TaskFilter], opts ...func(*CallOptions[TaskFieldOptions])) (*PaginateResult[Task], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate tasks: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableTasks, Schema: "public",
 		Input: input, CallOptions: options,
@@ -11070,7 +11105,7 @@ func (c *taskClient) Paginate(ctx context.Context, input PaginateInput[TaskFilte
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

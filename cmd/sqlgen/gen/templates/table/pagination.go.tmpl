@@ -11,6 +11,7 @@
 // A nil filter paginates all {{ if and .SoftDelete .ExcludeDeleted }}non-deleted {{ end }}{{ .TableName }}.
 func (c *{{ $structCamel }}Client) Paginate(ctx context.Context, input PaginateInput[{{ .StructName }}Filter], opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*PaginateResult[{{ .StructName }}], error) {
 	options := resolveCallOptions(opts)
+{{ template "shared/lock-mode-guard" (lockGuardCtx . (printf "paginate %s" .TableName)) }}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
 		Input: input, CallOptions: options,
@@ -43,7 +44,7 @@ func (c *{{ $structCamel }}Client) Paginate(ctx context.Context, input PaginateI
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

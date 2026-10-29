@@ -2051,6 +2051,10 @@ func (c *tagClient) Count(ctx context.Context, filter *TagFilter, opts ...func(*
 // A nil filter paginates all non-deleted tags.
 func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter], opts ...func(*CallOptions[TagFieldOptions])) (*PaginateResult[Tag], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate tags: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableTags, Schema: "",
 		Input: input, CallOptions: options,
@@ -2083,7 +2087,7 @@ func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter]
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

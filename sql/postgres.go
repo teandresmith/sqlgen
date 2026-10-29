@@ -135,6 +135,10 @@ func (d PostgresDialect) BackslashEscapes() bool { return false }
 // column list.
 func (d PostgresDialect) DefaultValuesClause() string { return "DEFAULT VALUES" }
 
+// NoLimitClause returns the empty string — PostgreSQL accepts an OFFSET with
+// no LIMIT.
+func (d PostgresDialect) NoLimitClause() string { return "" }
+
 // LockClause returns the row-level lock SQL fragment for the given mode.
 // Returns the empty string for [LockNone] or any unrecognised mode.
 func (d PostgresDialect) LockClause(mode LockMode) string {

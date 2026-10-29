@@ -2238,6 +2238,10 @@ func (c *assetClient) Count(ctx context.Context, filter *AssetFilter, opts ...fu
 // A nil filter paginates all assets.
 func (c *assetClient) Paginate(ctx context.Context, input PaginateInput[AssetFilter], opts ...func(*CallOptions[AssetFieldOptions])) (*PaginateResult[Asset], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate assets: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableAssets, Schema: "",
 		Input: input, CallOptions: options,
@@ -2270,7 +2274,7 @@ func (c *assetClient) Paginate(ctx context.Context, input PaginateInput[AssetFil
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

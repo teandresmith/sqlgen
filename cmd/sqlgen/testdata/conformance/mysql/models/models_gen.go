@@ -2099,6 +2099,22 @@ func (c *documentClient) Count(ctx context.Context, filter *DocumentFilter, opts
 // A nil filter paginates all non-deleted documents.
 func (c *documentClient) Paginate(ctx context.Context, input PaginateInput[DocumentFilter], opts ...func(*CallOptions[DocumentFieldOptions])) (*PaginateResult[Document], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate documents: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate documents: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("paginate documents: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableDocuments, Schema: "",
 		Input: input, CallOptions: options,
@@ -2131,7 +2147,7 @@ func (c *documentClient) Paginate(ctx context.Context, input PaginateInput[Docum
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -4512,6 +4528,22 @@ func (c *labelClient) Count(ctx context.Context, filter *LabelFilter, opts ...fu
 // A nil filter paginates all non-deleted labels.
 func (c *labelClient) Paginate(ctx context.Context, input PaginateInput[LabelFilter], opts ...func(*CallOptions[LabelFieldOptions])) (*PaginateResult[Label], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate labels: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate labels: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("paginate labels: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableLabels, Schema: "",
 		Input: input, CallOptions: options,
@@ -4544,7 +4576,7 @@ func (c *labelClient) Paginate(ctx context.Context, input PaginateInput[LabelFil
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -6431,6 +6463,22 @@ func (c *orderItemClient) Count(ctx context.Context, filter *OrderItemFilter, op
 // A nil filter paginates all order_items.
 func (c *orderItemClient) Paginate(ctx context.Context, input PaginateInput[OrderItemFilter], opts ...func(*CallOptions[OrderItemFieldOptions])) (*PaginateResult[OrderItem], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate order_items: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate order_items: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("paginate order_items: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableOrderItems, Schema: "",
 		Input: input, CallOptions: options,
@@ -6463,7 +6511,7 @@ func (c *orderItemClient) Paginate(ctx context.Context, input PaginateInput[Orde
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -8750,6 +8798,22 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
 // A nil filter paginates all products.
 func (c *productClient) Paginate(ctx context.Context, input PaginateInput[ProductFilter], opts ...func(*CallOptions[ProductFieldOptions])) (*PaginateResult[Product], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate products: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate products: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("paginate products: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableProducts, Schema: "",
 		Input: input, CallOptions: options,
@@ -8782,7 +8846,7 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -11277,6 +11341,22 @@ func (c *revisionClient) Count(ctx context.Context, filter *RevisionFilter, opts
 // A nil filter paginates all non-deleted revisions.
 func (c *revisionClient) Paginate(ctx context.Context, input PaginateInput[RevisionFilter], opts ...func(*CallOptions[RevisionFieldOptions])) (*PaginateResult[Revision], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate revisions: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("paginate revisions: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("paginate revisions: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableRevisions, Schema: "",
 		Input: input, CallOptions: options,
@@ -11309,7 +11389,7 @@ func (c *revisionClient) Paginate(ctx context.Context, input PaginateInput[Revis
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

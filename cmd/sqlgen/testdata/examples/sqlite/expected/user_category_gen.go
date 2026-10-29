@@ -1237,6 +1237,10 @@ func (c *userCategoryClient) Count(ctx context.Context, filter *UserCategoryFilt
 // A nil filter paginates all user_categories.
 func (c *userCategoryClient) Paginate(ctx context.Context, input PaginateInput[UserCategoryFilter], opts ...func(*CallOptions[UserCategoryFieldOptions])) (*PaginateResult[UserCategory], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate user_categories: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableUserCategories, Schema: "",
 		Input: input, CallOptions: options,
@@ -1269,7 +1273,7 @@ func (c *userCategoryClient) Paginate(ctx context.Context, input PaginateInput[U
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

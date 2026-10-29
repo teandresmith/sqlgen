@@ -1277,6 +1277,10 @@ func (c *productTagLabelClient) Count(ctx context.Context, filter *ProductTagLab
 // A nil filter paginates all product_tag_labels.
 func (c *productTagLabelClient) Paginate(ctx context.Context, input PaginateInput[ProductTagLabelFilter], opts ...func(*CallOptions[ProductTagLabelFieldOptions])) (*PaginateResult[ProductTagLabel], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate product_tag_labels: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableProductTagLabels, Schema: "",
 		Input: input, CallOptions: options,
@@ -1309,7 +1313,7 @@ func (c *productTagLabelClient) Paginate(ctx context.Context, input PaginateInpu
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

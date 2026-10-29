@@ -1632,6 +1632,10 @@ func (c *warehouseClient) Count(ctx context.Context, filter *WarehouseFilter, op
 // A nil filter paginates all warehouses.
 func (c *warehouseClient) Paginate(ctx context.Context, input PaginateInput[WarehouseFilter], opts ...func(*CallOptions[WarehouseFieldOptions])) (*PaginateResult[Warehouse], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate warehouses: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableWarehouses, Schema: "",
 		Input: input, CallOptions: options,
@@ -1664,7 +1668,7 @@ func (c *warehouseClient) Paginate(ctx context.Context, input PaginateInput[Ware
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

@@ -1850,6 +1850,10 @@ func (c *reservedWordColumnClient) Count(ctx context.Context, filter *ReservedWo
 // A nil filter paginates all reserved_word_columns.
 func (c *reservedWordColumnClient) Paginate(ctx context.Context, input PaginateInput[ReservedWordColumnFilter], opts ...func(*CallOptions[ReservedWordColumnFieldOptions])) (*PaginateResult[ReservedWordColumn], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate reserved_word_columns: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableReservedWordColumns, Schema: "",
 		Input: input, CallOptions: options,
@@ -1882,7 +1886,7 @@ func (c *reservedWordColumnClient) Paginate(ctx context.Context, input PaginateI
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

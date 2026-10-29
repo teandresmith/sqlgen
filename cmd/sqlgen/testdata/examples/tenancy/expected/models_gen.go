@@ -2945,6 +2945,10 @@ func (c *articleClient) Count(ctx context.Context, filter *ArticleFilter, opts .
 // A nil filter paginates all non-deleted articles.
 func (c *articleClient) Paginate(ctx context.Context, input PaginateInput[ArticleFilter], opts ...func(*CallOptions[ArticleFieldOptions])) (*PaginateResult[Article], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate articles: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableArticles, Schema: "",
 		Input: input, CallOptions: options,
@@ -2977,7 +2981,7 @@ func (c *articleClient) Paginate(ctx context.Context, input PaginateInput[Articl
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -5092,6 +5096,10 @@ func (c *auditLogClient) Count(ctx context.Context, filter *AuditLogFilter, opts
 // A nil filter paginates all audit_logs.
 func (c *auditLogClient) Paginate(ctx context.Context, input PaginateInput[AuditLogFilter], opts ...func(*CallOptions[AuditLogFieldOptions])) (*PaginateResult[AuditLog], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate audit_logs: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableAuditLogs, Schema: "",
 		Input: input, CallOptions: options,
@@ -5124,7 +5132,7 @@ func (c *auditLogClient) Paginate(ctx context.Context, input PaginateInput[Audit
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -7697,6 +7705,10 @@ func (c *legacyWidgetClient) Count(ctx context.Context, filter *LegacyWidgetFilt
 // A nil filter paginates all legacy_widgets.
 func (c *legacyWidgetClient) Paginate(ctx context.Context, input PaginateInput[LegacyWidgetFilter], opts ...func(*CallOptions[LegacyWidgetFieldOptions])) (*PaginateResult[LegacyWidget], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate legacy_widgets: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableLegacyWidgets, Schema: "",
 		Input: input, CallOptions: options,
@@ -7729,7 +7741,7 @@ func (c *legacyWidgetClient) Paginate(ctx context.Context, input PaginateInput[L
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -9985,6 +9997,10 @@ func (c *orderItemClient) Count(ctx context.Context, filter *OrderItemFilter, op
 // A nil filter paginates all order_items.
 func (c *orderItemClient) Paginate(ctx context.Context, input PaginateInput[OrderItemFilter], opts ...func(*CallOptions[OrderItemFieldOptions])) (*PaginateResult[OrderItem], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate order_items: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableOrderItems, Schema: "",
 		Input: input, CallOptions: options,
@@ -10017,7 +10033,7 @@ func (c *orderItemClient) Paginate(ctx context.Context, input PaginateInput[Orde
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -11813,6 +11829,10 @@ func (c *postTagClient) Count(ctx context.Context, filter *PostTagFilter, opts .
 // A nil filter paginates all post_tags.
 func (c *postTagClient) Paginate(ctx context.Context, input PaginateInput[PostTagFilter], opts ...func(*CallOptions[PostTagFieldOptions])) (*PaginateResult[PostTag], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate post_tags: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TablePostTags, Schema: "",
 		Input: input, CallOptions: options,
@@ -11845,7 +11865,7 @@ func (c *postTagClient) Paginate(ctx context.Context, input PaginateInput[PostTa
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -14709,6 +14729,10 @@ func (c *postClient) Count(ctx context.Context, filter *PostFilter, opts ...func
 // A nil filter paginates all posts.
 func (c *postClient) Paginate(ctx context.Context, input PaginateInput[PostFilter], opts ...func(*CallOptions[PostFieldOptions])) (*PaginateResult[Post], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate posts: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TablePosts, Schema: "",
 		Input: input, CallOptions: options,
@@ -14741,7 +14765,7 @@ func (c *postClient) Paginate(ctx context.Context, input PaginateInput[PostFilte
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -17591,6 +17615,10 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
 // A nil filter paginates all products.
 func (c *productClient) Paginate(ctx context.Context, input PaginateInput[ProductFilter], opts ...func(*CallOptions[ProductFieldOptions])) (*PaginateResult[Product], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate products: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableProducts, Schema: "",
 		Input: input, CallOptions: options,
@@ -17623,7 +17651,7 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -20132,6 +20160,10 @@ func (c *tagLinkClient) Count(ctx context.Context, filter *TagLinkFilter, opts .
 // A nil filter paginates all tag_links.
 func (c *tagLinkClient) Paginate(ctx context.Context, input PaginateInput[TagLinkFilter], opts ...func(*CallOptions[TagLinkFieldOptions])) (*PaginateResult[TagLink], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate tag_links: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableTagLinks, Schema: "",
 		Input: input, CallOptions: options,
@@ -20164,7 +20196,7 @@ func (c *tagLinkClient) Paginate(ctx context.Context, input PaginateInput[TagLin
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -23351,6 +23383,10 @@ func (c *tagClient) Count(ctx context.Context, filter *TagFilter, opts ...func(*
 // A nil filter paginates all tags.
 func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter], opts ...func(*CallOptions[TagFieldOptions])) (*PaginateResult[Tag], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate tags: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableTags, Schema: "",
 		Input: input, CallOptions: options,
@@ -23383,7 +23419,7 @@ func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter]
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -26288,6 +26324,10 @@ func (c *userProfileClient) Count(ctx context.Context, filter *UserProfileFilter
 // A nil filter paginates all user_profiles.
 func (c *userProfileClient) Paginate(ctx context.Context, input PaginateInput[UserProfileFilter], opts ...func(*CallOptions[UserProfileFieldOptions])) (*PaginateResult[UserProfile], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate user_profiles: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableUserProfiles, Schema: "",
 		Input: input, CallOptions: options,
@@ -26320,7 +26360,7 @@ func (c *userProfileClient) Paginate(ctx context.Context, input PaginateInput[Us
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -29501,6 +29541,10 @@ func (c *userClient) Count(ctx context.Context, filter *UserFilter, opts ...func
 // A nil filter paginates all users.
 func (c *userClient) Paginate(ctx context.Context, input PaginateInput[UserFilter], opts ...func(*CallOptions[UserFieldOptions])) (*PaginateResult[User], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate users: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableUsers, Schema: "",
 		Input: input, CallOptions: options,
@@ -29533,7 +29577,7 @@ func (c *userClient) Paginate(ctx context.Context, input PaginateInput[UserFilte
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
@@ -32072,6 +32116,10 @@ func (c *workspaceClient) Count(ctx context.Context, filter *WorkspaceFilter, op
 // A nil filter paginates all workspaces.
 func (c *workspaceClient) Paginate(ctx context.Context, input PaginateInput[WorkspaceFilter], opts ...func(*CallOptions[WorkspaceFieldOptions])) (*PaginateResult[Workspace], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate workspaces: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableWorkspaces, Schema: "",
 		Input: input, CallOptions: options,
@@ -32104,7 +32152,7 @@ func (c *workspaceClient) Paginate(ctx context.Context, input PaginateInput[Work
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {

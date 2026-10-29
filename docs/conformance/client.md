@@ -135,14 +135,14 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | restore-many.field-selection | A `FieldOptions` that selects some columns makes `RestoreMany` return partial entities; an empty `&FieldOptions{}` performs the write but skips the entity read and returns `nil` | `conformance: RestoreMany/returns only the selected columns`; `conformance: RestoreMany/an empty FieldOptions restores and returns nil` | all | client-methods: RestoreMany × field-selection |
 
 ## §9.6a Lock Modes
-<!-- prd: 9.6a sha256: 08fe83b1bf827a4c -->
+<!-- prd: 9.6a sha256: f62aa35034df37a2 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| lock.requires-transaction | `Get`, `GetMany` and `Connection` with a `LockMode` other than `LockNone` outside a transaction return an error before any SQL | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_postgres`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_mysql`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects` | postgres, mysql |  |
-| lock.forces-skip-cache | A `LockMode` other than `LockNone` on `Get`, `GetMany` or `Connection` forces `SkipCache = true` | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_postgres`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_mysql`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects` | postgres, mysql |  |
-| lock.sqlite-rejected | On SQLite, `Get`, `GetMany` and `Connection` with any `LockMode` other than `LockNone` return an error before any SQL | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_sqlite`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects` | sqlite |  |
-| lock.mysql-version-guard | On MySQL, `LockForUpdateNoWait` and `LockForUpdateSkipLocked` on `Get`, `GetMany` and `Connection` return an error when the server's major version is below 8 | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_mysql`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects` | mysql |  |
+| lock.requires-transaction | `Get`, `GetMany`, `Paginate` and `Connection` with a `LockMode` other than `LockNone` outside a transaction return an error before any SQL | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_postgres`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_mysql`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_PaginateMethod_allDialects` | postgres, mysql |  |
+| lock.forces-skip-cache | A `LockMode` other than `LockNone` on `Get`, `GetMany`, `Paginate` or `Connection` forces `SkipCache = true` | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_postgres`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_mysql`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_PaginateMethod_allDialects` | postgres, mysql |  |
+| lock.sqlite-rejected | On SQLite, `Get`, `GetMany`, `Paginate` and `Connection` with any `LockMode` other than `LockNone` return an error before any SQL | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_sqlite`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_PaginateMethod_allDialects` | sqlite |  |
+| lock.mysql-version-guard | On MySQL, `LockForUpdateNoWait` and `LockForUpdateSkipLocked` on `Get`, `GetMany`, `Paginate` and `Connection` return an error when the server's major version is below 8 | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_mysql`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_PaginateMethod_allDialects` | mysql |  |
 | lock.mysql-version-cache | The MySQL client probes `SELECT VERSION()` behind a `sync.Once` version cache; PostgreSQL and SQLite clients carry no version cache | `unit: cmd/sqlgen/gen: TestMySQLVersionCache_emittedOnlyForMySQL` | all |  |
 | lock.threaded-into-select | `GetMany` passes the caller's `LockMode` into the `SelectOptions` of its `SELECT` | `unit: cmd/sqlgen/gen: TestLockModeThreading_GetMany` | postgres |  |
 | lock.write-reads-lock-none | The chained `Get` / `GetMany` inside `Create`, `Update`, `Upsert`, `SoftDelete*` and `Restore*` forces `LockMode` to `LockNone` alongside `SkipHooks = true` | `unit: cmd/sqlgen/gen: TestChainedGet_LockNoneForced` | postgres |  |
@@ -163,7 +163,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | pk-return.upsert-fallback-binds-by-name | On a tenanted table, the `Upsert` conflict fallback `SELECT` binds its scan targets by column name, so a tenant column that sorts before the PK still lands in the tenant target | `unit: cmd/sqlgen/gen: TestUpsertTemplate_conflictRowFallbackBindsByName` | postgres |  |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: cb5cfb708e4473cb -->
+<!-- prd: 9.8 sha256: b5c54d392c2e7231 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -269,7 +269,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | exists.where-soft-delete-default | On a soft-delete table `ExistsWhere` adds the not-deleted condition unless the filter sets the soft-delete comparator | `unit: cmd/sqlgen/gen: TestExistsTemplate_existsWhereWithFilter`; `unit: cmd/sqlgen/gen: TestExistsTemplate_goldenFile` | all |  |
 
 ## §9.8.11 Paginate
-<!-- prd: 9.8.11 sha256: d0c935555dfc40a3 -->
+<!-- prd: 9.8.11 sha256: 0f2acb383d9dc21c -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -377,7 +377,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | load.fanout-no-tx-bound | The O2M/M2M loader fan-out sets no concurrency bound of its own, inside a transaction or out | `unit: cmd/sqlgen/gen: TestGetTemplate_relationshipFanOutIsUnbounded` | all |  |
 
 ## §14.1 Offset-Based
-<!-- prd: 14.1 sha256: 0a475e3a9306e63a -->
+<!-- prd: 14.1 sha256: 49980305eb959c7f -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

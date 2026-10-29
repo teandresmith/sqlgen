@@ -1237,6 +1237,10 @@ func (c *assetDocumentLinkClient) Count(ctx context.Context, filter *AssetDocume
 // A nil filter paginates all asset_document_links.
 func (c *assetDocumentLinkClient) Paginate(ctx context.Context, input PaginateInput[AssetDocumentLinkFilter], opts ...func(*CallOptions[AssetDocumentLinkFieldOptions])) (*PaginateResult[AssetDocumentLink], error) {
 	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate asset_document_links: LockMode is unsupported on sqlite dialect")
+	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpPaginate, Table: TableAssetDocumentLinks, Schema: "",
 		Input: input, CallOptions: options,
@@ -1269,7 +1273,7 @@ func (c *assetDocumentLinkClient) Paginate(ctx context.Context, input PaginateIn
 			TotalCount: totalCount,
 			Offset:     input.Offset,
 			Limit:      input.Limit,
-			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
 		}, nil
 	})
 	if err != nil {
