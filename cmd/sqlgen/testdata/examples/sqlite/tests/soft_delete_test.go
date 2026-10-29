@@ -9,72 +9,6 @@ import (
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models"
 )
 
-func TestArticleSoftDelete_Timestamp(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	article, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title:  "Soft Delete Article",
-		Author: "tester",
-	})
-	if err != nil {
-		t.Fatalf("Create article: %v", err)
-	}
-	if article.DeletedAt.Valid {
-		t.Fatal("newly created article should have invalid DeletedAt")
-	}
-
-	// SoftDelete sets deleted_at
-	deleted, err := client.Articles().SoftDelete(ctx, article.ID)
-	if err != nil {
-		t.Fatalf("SoftDelete: %v", err)
-	}
-	if !deleted.DeletedAt.Valid {
-		t.Fatal("SoftDelete should set DeletedAt")
-	}
-
-	// GetMany excludes soft-deleted rows by default
-	idEq := article.ID
-	results, err := client.Articles().GetMany(ctx, &models.GetArticlesInput{
-		Filter: &models.ArticleFilter{
-			ID: &comparator.Number[int64]{Eq: &idEq},
-		},
-	})
-	if err != nil {
-		t.Fatalf("GetMany after soft delete: %v", err)
-	}
-	if len(results) != 0 {
-		t.Errorf("GetMany should exclude soft-deleted article, got %d results", len(results))
-	}
-
-	// Restore clears deleted_at to NULL
-	restored, err := client.Articles().Restore(ctx, article.ID)
-	if err != nil {
-		t.Fatalf("Restore: %v", err)
-	}
-	if restored.DeletedAt.Valid {
-		t.Errorf("Restore should clear DeletedAt, got %v", restored.DeletedAt.Time)
-	}
-
-	// After restore, GetMany returns the article again
-	results, err = client.Articles().GetMany(ctx, &models.GetArticlesInput{
-		Filter: &models.ArticleFilter{
-			ID: &comparator.Number[int64]{Eq: &idEq},
-		},
-	})
-	if err != nil {
-		t.Fatalf("GetMany after restore: %v", err)
-	}
-	if len(results) != 1 {
-		t.Errorf("GetMany after restore = %d results, want 1", len(results))
-	}
-
-	// Cleanup
-	if err := client.Articles().HardDelete(ctx, article.ID); err != nil {
-		t.Fatalf("HardDelete cleanup: %v", err)
-	}
-}
-
 func TestArticleSoftDelete_FilterOverride(t *testing.T) {
 	ctx := context.Background()
 	client := newClient()
@@ -110,60 +44,6 @@ func TestArticleSoftDelete_FilterOverride(t *testing.T) {
 	// Cleanup
 	if err := client.Articles().HardDelete(ctx, article.ID); err != nil {
 		t.Fatalf("HardDelete cleanup: %v", err)
-	}
-}
-
-func TestArticleSoftDeleteWhere(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	a1, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title: "SDW Article 1", Author: "alice",
-	})
-	if err != nil {
-		t.Fatalf("Create a1: %v", err)
-	}
-	a2, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title: "SDW Article 2", Author: "alice",
-	})
-	if err != nil {
-		t.Fatalf("Create a2: %v", err)
-	}
-	a3, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title: "SDW Article 3", Author: "bob",
-	})
-	if err != nil {
-		t.Fatalf("Create a3: %v", err)
-	}
-
-	aliceAuthor := "alice"
-	deleted, err := client.Articles().SoftDeleteWhere(ctx, &models.ArticleFilter{
-		Author: &comparator.String{Eq: &aliceAuthor},
-	})
-	if err != nil {
-		t.Fatalf("SoftDeleteWhere: %v", err)
-	}
-	if len(deleted) != 2 {
-		t.Errorf("SoftDeleteWhere = %d results, want 2", len(deleted))
-	}
-
-	// Bob's article should still be visible
-	bobAuthor := "bob"
-	results, err := client.Articles().GetMany(ctx, &models.GetArticlesInput{
-		Filter: &models.ArticleFilter{
-			Author: &comparator.String{Eq: &bobAuthor},
-		},
-	})
-	if err != nil {
-		t.Fatalf("GetMany bob: %v", err)
-	}
-	if len(results) != 1 {
-		t.Errorf("GetMany bob = %d results, want 1", len(results))
-	}
-
-	// Cleanup
-	for _, id := range []int64{a1.ID, a2.ID, a3.ID} {
-		_ = client.Articles().HardDelete(ctx, id)
 	}
 }
 

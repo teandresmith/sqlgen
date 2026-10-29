@@ -41,6 +41,12 @@ func Run(t *testing.T, h *Harness) {
 	t.Run("HardDeleteMany", func(t *testing.T) { hardDeleteMany(t, h) })
 	t.Run("SoftDeleteMany", func(t *testing.T) { softDeleteMany(t, h) })
 	t.Run("RestoreMany", func(t *testing.T) { restoreMany(t, h) })
+	t.Run("SoftDelete", func(t *testing.T) { softDelete(t, h) })
+	t.Run("Restore", func(t *testing.T) { restore(t, h) })
+	t.Run("SoftDeleteWhere", func(t *testing.T) { softDeleteWhere(t, h) })
+	t.Run("RestoreWhere", func(t *testing.T) { restoreWhere(t, h) })
+	t.Run("HardDelete", func(t *testing.T) { hardDelete(t, h) })
+	t.Run("HardDeleteWhere", func(t *testing.T) { hardDeleteWhere(t, h) })
 }
 
 // CountingQuerier records every statement sent through it.

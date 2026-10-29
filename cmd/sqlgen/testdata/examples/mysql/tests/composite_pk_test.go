@@ -180,64 +180,6 @@ func TestUpdateByCompositePK(t *testing.T) {
 	}
 }
 
-// --- HardDelete by composite PK ---
-
-func TestHardDeleteByCompositePK(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	cat, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "CPKDeleteCat"})
-	if err != nil {
-		t.Fatalf("Create category: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, cat.ID) })
-
-	product, err := client.Products().Create(ctx, &models.CreateProductInput{
-		Title:      "CPKDeleteProduct",
-		Price:      30.00,
-		CategoryID: cat.ID,
-		SKU:        "cpk-delete-sku",
-		Attributes: types.JSON([]byte(`{}`)),
-	})
-	if err != nil {
-		t.Fatalf("Create product: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Products().HardDelete(ctx, product.ID) })
-
-	_, err = client.ProductTagLabels().Create(ctx, &models.CreateProductTagLabelInput{
-		ProductID: product.ID,
-		TagName:   "material",
-		Label:     "cotton",
-	})
-	if err != nil {
-		t.Fatalf("Create product_tag_label: %v", err)
-	}
-
-	pk := models.ProductTagLabelPK{
-		ProductID: product.ID, TagName: "material", Label: "cotton",
-	}
-
-	exists, err := client.ProductTagLabels().Exists(ctx, pk)
-	if err != nil {
-		t.Fatalf("Exists before delete: %v", err)
-	}
-	if !exists {
-		t.Fatal("product_tag_label should exist before HardDelete")
-	}
-
-	if err := client.ProductTagLabels().HardDelete(ctx, pk); err != nil {
-		t.Fatalf("HardDelete by composite PK: %v", err)
-	}
-
-	exists, err = client.ProductTagLabels().Exists(ctx, pk)
-	if err != nil {
-		t.Fatalf("Exists after delete: %v", err)
-	}
-	if exists {
-		t.Error("product_tag_label should not exist after HardDelete")
-	}
-}
-
 // --- Upsert with composite PK conflict target ---
 
 func TestUpsertCompositePK(t *testing.T) {

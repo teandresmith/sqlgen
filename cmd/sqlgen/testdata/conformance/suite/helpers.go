@@ -112,3 +112,48 @@ func affectedPKsRecorder(h *Harness) (*models.Client, func() []any) {
 	}
 	return models.New(h.Querier, models.WithMutationHook(record)), func() []any { return last }
 }
+
+func createRevision(t *testing.T, h *Harness, pk models.RevisionPK) {
+	t.Helper()
+	in := &models.CreateRevisionInput{DocumentID: pk.DocumentID, Number: pk.Number, Body: "body"}
+	if _, err := h.Client.Revisions().Create(context.Background(), in); err != nil {
+		t.Fatalf("Create revision %+v: %v", pk, err)
+	}
+}
+
+// seedArchivedDocument inserts a soft-deleted 'archived' document, which the
+// documents_archived_stays_deleted CHECK forbids restoring, and returns its key.
+func seedArchivedDocument(t *testing.T, h *Harness) int64 {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := h.Querier.Inner.Exec(ctx, "INSERT INTO documents (title, deleted_at) VALUES ('archived', CURRENT_TIMESTAMP)"); err != nil {
+		t.Fatalf("seed archived document: %v", err)
+	}
+	var id int64
+	if err := h.Querier.Inner.QueryRow(ctx, "SELECT id FROM documents WHERE title = 'archived'").Scan(&id); err != nil {
+		t.Fatalf("read archived document key: %v", err)
+	}
+	return id
+}
+
+// mutationRecorder returns a client on h's querier whose mutation hook
+// records each MutationContext after the mutation runs, and a func that
+// returns the recorded contexts.
+func mutationRecorder(h *Harness) (*models.Client, func() []hook.MutationContext) {
+	var seen []hook.MutationContext
+	record := func(next hook.MutationHandler) hook.MutationHandler {
+		return func(ctx context.Context, m *hook.MutationContext) (any, error) {
+			res, err := next(ctx, m)
+			seen = append(seen, *m)
+			return res, err
+		}
+	}
+	return models.New(h.Querier, models.WithMutationHook(record)), func() []hook.MutationContext { return seen }
+}
+
+func createLabel(t *testing.T, h *Harness, name string) {
+	t.Helper()
+	if _, err := h.Client.Labels().Create(context.Background(), &models.CreateLabelInput{Name: name}); err != nil {
+		t.Fatalf("Create label %q: %v", name, err)
+	}
+}

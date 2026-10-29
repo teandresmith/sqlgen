@@ -37,9 +37,9 @@ CREATE TABLE revisions (
     PRIMARY KEY (document_id, number)
 );
 
--- A case-insensitive key (the default utf8mb4 collation): the database matches
--- a listed key that differs from the stored one only in case.
+-- A case-insensitive key (the utf8mb4_0900_ai_ci collation): the database
+-- matches a listed key that differs from the stored one only in case.
 CREATE TABLE labels (
-    name       VARCHAR(64) PRIMARY KEY,
+    name       VARCHAR(64) COLLATE utf8mb4_0900_ai_ci PRIMARY KEY,
     deleted_at TIMESTAMP(6) NULL
 );

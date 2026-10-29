@@ -118,61 +118,6 @@ func TestArticleSoftDelete_FilterOverride(t *testing.T) {
 	}
 }
 
-func TestArticleSoftDeleteWhere(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	a1, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title: "SDW Article 1", Author: "alice",
-	})
-	if err != nil {
-		t.Fatalf("Create a1: %v", err)
-	}
-	a2, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title: "SDW Article 2", Author: "alice",
-	})
-	if err != nil {
-		t.Fatalf("Create a2: %v", err)
-	}
-	a3, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title: "SDW Article 3", Author: "bob",
-	})
-	if err != nil {
-		t.Fatalf("Create a3: %v", err)
-	}
-
-	// SoftDeleteWhere with filter — only alice's articles
-	aliceAuthor := "alice"
-	deleted, err := client.Articles().SoftDeleteWhere(ctx, &models.ArticleFilter{
-		Author: &comparator.String{Eq: &aliceAuthor},
-	})
-	if err != nil {
-		t.Fatalf("SoftDeleteWhere: %v", err)
-	}
-	if len(deleted) != 2 {
-		t.Errorf("SoftDeleteWhere = %d results, want 2", len(deleted))
-	}
-
-	// Bob's article should still be visible
-	bobAuthor := "bob"
-	results, err := client.Articles().GetMany(ctx, &models.GetArticlesInput{
-		Filter: &models.ArticleFilter{
-			Author: &comparator.String{Eq: &bobAuthor},
-		},
-	})
-	if err != nil {
-		t.Fatalf("GetMany bob: %v", err)
-	}
-	if len(results) != 1 {
-		t.Errorf("GetMany bob = %d results, want 1", len(results))
-	}
-
-	// Cleanup
-	for _, id := range []uuid.UUID{a1.ID, a2.ID, a3.ID} {
-		_ = client.Articles().HardDelete(ctx, id)
-	}
-}
-
 // --- Soft Delete: Tags (boolean) ---
 
 func TestTagSoftDelete_Boolean(t *testing.T) {

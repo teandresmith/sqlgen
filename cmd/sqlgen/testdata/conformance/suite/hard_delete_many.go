@@ -109,6 +109,14 @@ func hardDeleteMany(t *testing.T, h *Harness) {
 			if err := h.Client.Products().HardDeleteMany(txCtx, []int64{a.ID}); err != nil {
 				return err
 			}
+			// The delete is visible inside the transaction, so the rollback is what undoes it.
+			n, err := h.Client.Products().Count(txCtx, nil)
+			if err != nil {
+				return err
+			}
+			if n != 0 {
+				t.Errorf("Count inside the transaction = %d, want 0", n)
+			}
 			return errRollback
 		})
 		if !errors.Is(err, errRollback) {
@@ -120,22 +128,14 @@ func hardDeleteMany(t *testing.T, h *Harness) {
 	t.Run("fires one hard_delete_many mutation hook", func(t *testing.T) {
 		h.Reset(t)
 		a, b, c := createProduct(t, h, "a"), createProduct(t, h, "b"), createProduct(t, h, "c")
-		var seen []hook.MutationContext
-		record := func(next hook.MutationHandler) hook.MutationHandler {
-			return func(ctx context.Context, m *hook.MutationContext) (any, error) {
-				res, err := next(ctx, m)
-				seen = append(seen, *m)
-				return res, err
-			}
-		}
-		client := models.New(h.Querier, models.WithMutationHook(record))
+		client, seen := mutationRecorder(h)
 		if err := client.Products().HardDeleteMany(ctx, []int64{a.ID, c.ID}); err != nil {
 			t.Fatalf("HardDeleteMany([a, c]) error = %v, want nil", err)
 		}
-		if len(seen) != 1 {
-			t.Fatalf("mutation hook fired %d times, want 1", len(seen))
+		if len(seen()) != 1 {
+			t.Fatalf("mutation hook fired %d times, want 1", len(seen()))
 		}
-		m := seen[0]
+		m := seen()[0]
 		if m.Op != hook.OpHardDeleteMany || m.Table != models.TableProducts || m.PK != nil {
 			t.Errorf("MutationContext = {Op: %q, Table: %q, PK: %v}, want {Op: %q, Table: %q, PK: nil}",
 				m.Op, m.Table, m.PK, hook.OpHardDeleteMany, models.TableProducts)
@@ -215,22 +215,29 @@ func hardDeleteMany(t *testing.T, h *Harness) {
 
 	t.Run("composite keys delete only the listed tuples", func(t *testing.T) {
 		h.Reset(t)
-		p, q := createProduct(t, h, "p"), createProduct(t, h, "q")
-		listed := models.OrderItemPK{OrderID: 1, ProductID: p.ID}
-		// Each unlisted key shares one column value with the listed one.
-		unlisted := []models.OrderItemPK{{OrderID: 1, ProductID: q.ID}, {OrderID: 2, ProductID: p.ID}}
-		for _, pk := range append([]models.OrderItemPK{listed}, unlisted...) {
+		p, q, r := createProduct(t, h, "p"), createProduct(t, h, "q"), createProduct(t, h, "r")
+		listed := []models.OrderItemPK{{OrderID: 1, ProductID: p.ID}, {OrderID: 2, ProductID: q.ID}}
+		unlisted := []models.OrderItemPK{
+			// These cross the listed keys: each column value is listed, only the pairing is not.
+			{OrderID: 1, ProductID: q.ID},
+			{OrderID: 2, ProductID: p.ID},
+			// These share one column value with a listed key.
+			{OrderID: 1, ProductID: r.ID},
+			{OrderID: 3, ProductID: p.ID},
+		}
+		all := append(append([]models.OrderItemPK{}, listed...), unlisted...)
+		for _, pk := range all {
 			createOrderItem(t, h, pk)
 		}
-		if err := h.Client.OrderItems().HardDeleteMany(ctx, []models.OrderItemPK{listed}); err != nil {
+		if err := h.Client.OrderItems().HardDeleteMany(ctx, listed); err != nil {
 			t.Fatalf("HardDeleteMany(%+v) error = %v, want nil", listed, err)
 		}
-		for _, pk := range append([]models.OrderItemPK{listed}, unlisted...) {
+		for i, pk := range all {
 			got, err := h.Client.OrderItems().Exists(ctx, pk)
 			if err != nil {
 				t.Fatalf("OrderItems().Exists(%+v) error = %v", pk, err)
 			}
-			if want := pk != listed; got != want {
+			if want := i >= len(listed); got != want {
 				t.Errorf("OrderItems().Exists(%+v) = %v, want %v", pk, got, want)
 			}
 		}
@@ -266,5 +273,18 @@ func hardDeleteMany(t *testing.T, h *Harness) {
 		assertProductExists(t, h, a.ID, false)
 		assertProductExists(t, h, b.ID, false)
 		assertProductExists(t, h, c.ID, true)
+	})
+
+	t.Run("records a key the database matched case-insensitively as affected", func(t *testing.T) {
+		h.Reset(t)
+		createLabel(t, h, "red")
+		client, affected := affectedPKsRecorder(h)
+		if err := client.Labels().HardDeleteMany(ctx, []string{"RED"}); err != nil {
+			t.Fatalf("HardDeleteMany([RED]) error = %v, want nil", err)
+		}
+		if diff := cmp.Diff([]any{"RED"}, affected()); diff != "" {
+			t.Errorf("AffectedPKs of HardDeleteMany([RED]) over stored red (-want +got):\n%s", diff)
+		}
+		assertRowCount(t, h, "labels", 0)
 	})
 }

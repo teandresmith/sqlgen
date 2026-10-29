@@ -140,49 +140,6 @@ func TestUpdateWhere(t *testing.T) {
 	}
 }
 
-func TestHardDeleteWhere(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	c1, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "DelWhere-Target-A"})
-	if err != nil {
-		t.Fatalf("Create c1: %v", err)
-	}
-	c2, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "DelWhere-Target-B"})
-	if err != nil {
-		t.Fatalf("Create c2: %v", err)
-	}
-	c3, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "DelWhere-Keep"})
-	if err != nil {
-		t.Fatalf("Create c3: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, c3.ID) })
-
-	if err := client.Categories().HardDeleteWhere(ctx, &models.CategoryFilter{
-		ID: &comparator.Number[int64]{In: []int64{c1.ID, c2.ID}},
-	}); err != nil {
-		t.Fatalf("HardDeleteWhere: %v", err)
-	}
-
-	for _, id := range []int64{c1.ID, c2.ID} {
-		exists, err := client.Categories().Exists(ctx, id)
-		if err != nil {
-			t.Fatalf("Exists(%d): %v", id, err)
-		}
-		if exists {
-			t.Errorf("Category %d should not exist after HardDeleteWhere", id)
-		}
-	}
-
-	exists, err := client.Categories().Exists(ctx, c3.ID)
-	if err != nil {
-		t.Fatalf("Exists(%d): %v", c3.ID, err)
-	}
-	if !exists {
-		t.Error("c3 should still exist after HardDeleteWhere")
-	}
-}
-
 func TestExistsWhere(t *testing.T) {
 	ctx := context.Background()
 	client := newClient()
