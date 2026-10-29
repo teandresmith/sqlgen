@@ -141,7 +141,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | get-many.required-columns-union | A non-empty narrowed `FieldOptions` projection in `GetMany` is widened by the columns its internal caller declared | `unit: cmd/sqlgen/gen: TestRequiredColumns_getManyUnionsDeclaredColumns/table` | all |  |
-| get-many.nothing-selected-returns-early | `GetMany` with a non-nil `FieldOptions` that selects no column returns without querying |  | all |  |
+| get-many.nothing-selected-returns-early | `GetMany` with a non-nil `FieldOptions` that selects no column returns without querying | `unit: cmd/sqlgen/gen: TestGenerate_GetManyEmptySelectionReturnsEarly` | all |  |
 | get-many.parent-key-for-relationships | When a narrowed `GetMany` loads an O2M or M2M relationship, the parent key is unioned into the projection | `unit: cmd/sqlgen/gen: TestRequiredColumns_getManyUnionsParentKeyForRelationships` | all |  |
 | get-many.o2o-target-pk-selected | An O2O join selects the target's primary key even when the target's `FieldOptions` does not, at every level of a chain | `unit: cmd/sqlgen/gen: TestRequiredColumns_o2oJoinCarriesTargetPK`; `unit: cmd/sqlgen/gen: TestRequiredColumns_chainedO2OJoinCarriesTargetPK` | all |  |
 | get-many.goroutine-per-edge | `GetMany` loads each selected O2M and M2M relationship in its own `errgroup` goroutine | `unit: cmd/sqlgen/gen: TestGetTemplate_parallelLoading` | all |  |
@@ -171,9 +171,9 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| update-many.item-type | On a single-PK table `UpdateMany` takes `[]Update{Table}Item`, each item pairing the PK (field named and typed after the PK column) with an `*Update{Table}Input` |  | postgres |  |
+| update-many.item-type | On a single-PK table `UpdateMany` takes `[]Update{Table}Item`, each item pairing the PK (field named and typed after the PK column) with an `*Update{Table}Input` | `unit: cmd/sqlgen/gen: TestGenerate_UpdateManyItemNamesThePKAfterItsColumn/postgres text key product_code`; `unit: cmd/sqlgen/gen: TestGenerate_UpdateManyItemNamesThePKAfterItsColumn/postgres uuid key ticket_ref`; `unit: cmd/sqlgen/gen: TestGenerate_UpdateManyItemNamesThePKAfterItsColumn/mysql varchar key product_code`; `unit: cmd/sqlgen/gen: TestGenerate_UpdateManyItemNamesThePKAfterItsColumn/sqlite text key product_code` | all |  |
 | update-many.pgx-send-batch | On pgx, `UpdateMany` queues each item's UPDATE into a `pgx.Batch` and sends each sub-batch with `SendBatch` | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_pgx` | pgx |  |
-| update-many.stdlib-sequential | On stdlib, `UpdateMany` executes each item's UPDATE in turn with `Exec` and builds no pgx batch |  | stdlib |  |
+| update-many.stdlib-sequential | On stdlib, `UpdateMany` runs each sub-batch's UPDATEs in turn inside one transaction: when an item fails, its sub-batch rolls back and earlier sub-batches persist | `example: sqlite: TestUpdateMany_FailingItemRollsBackBatch`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_stdlib` | sqlite |  |
 
 ## §9.8.6b UpdateWhere
 <!-- prd: 9.8.6b sha256: dd8c98e6ecb54b73 -->
@@ -222,14 +222,14 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | exists.where-soft-delete-default | On a soft-delete table `ExistsWhere` adds the not-deleted condition unless the filter sets the soft-delete comparator | `unit: cmd/sqlgen/gen: TestExistsTemplate_existsWhereWithFilter`; `unit: cmd/sqlgen/gen: TestExistsTemplate_goldenFile` | all |  |
 
 ## §9.8.11 Paginate
-<!-- prd: 9.8.11 sha256: 184f5e46a1281c91 -->
+<!-- prd: 9.8.11 sha256: d0c935555dfc40a3 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | paginate.hook-chain | `Paginate` runs inside a query hook chain whose `QueryContext.Op` is `hook.OpPaginate` | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_goldenFile` | postgres |  |
 
 ## §9.8.12 Connection
-<!-- prd: 9.8.12 sha256: e6714f79dc8a1b8b -->
+<!-- prd: 9.8.12 sha256: 0d8fbdeb0a18fd07 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -238,7 +238,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | cursor.decode-typed-key-cases | `decode<T>Cursor` has a case only for each `cursor_keys` column, unmarshals each value into that column's Go type, and returns `ErrInvalidCursor` for a value that binds SQL NULL | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_decodeCursor`; `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_decodeCursorMultiKeys` | postgres |  |
 
 ## §9.8.13 Composite Primary Key Patterns
-<!-- prd: 9.8.13 sha256: 9cf8ff4c81ca2636 -->
+<!-- prd: 9.8.13 sha256: a48f8e9d5fb61a23 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -321,7 +321,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | load.fanout-no-tx-bound | The O2M/M2M loader fan-out sets no concurrency bound of its own, inside a transaction or out | `unit: cmd/sqlgen/gen: TestGetTemplate_relationshipFanOutIsUnbounded` | all |  |
 
 ## §14.1 Offset-Based
-<!-- prd: 14.1 sha256: 8d49b7cccf456e55 -->
+<!-- prd: 14.1 sha256: 0a475e3a9306e63a -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -329,7 +329,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | paginate.json-tags | `PaginateInput` and `PaginateResult` fields carry the §14.1 json tags (`filter`, `sort`, `limit`, `offset`; `items`, `total_count`, `offset`, `limit`, `has_more`) | `unit: cmd/sqlgen/gen: TestPaginationTemplate_paginateInputType`; `unit: cmd/sqlgen/gen: TestPaginationTemplate_goldenFile` | all |  |
 
 ## §14.2 Cursor-Based (Relay Pagination)
-<!-- prd: 14.2 sha256: 3065f7d272cf4b62 -->
+<!-- prd: 14.2 sha256: 567b1c177cc9491d -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -419,7 +419,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | client.raw-global-hooks | `Raw` runs through the client's registered query hooks and `RawExec` through its registered mutation hooks (the global chain), with panic recovery | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_goldenFile` | postgres, sqlite |  |
 | client.ping | `Ping(ctx)` calls the querier's own `Ping(ctx) error` when it has one, and otherwise runs `SELECT 1` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_pingWithNativeMethod`; `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_pingFallbackSelect1` | postgres, sqlite |  |
 | client.close-querier | `Close()` calls `Close()` on the querier when it implements `io.Closer`, skips it otherwise, and returns the collected errors joined with `errors.Join` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_closeWithIOCloser`; `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_closeJoinsMultipleErrors` | postgres, sqlite |  |
-| client.close-cache-publisher | `Close()` also calls `Close()` on the configured cache and event publisher when each is set and implements `io.Closer` |  | all |  |
+| client.close-cache-publisher | `Close()` also calls `Close()` on the configured cache and event publisher when each is set and implements `io.Closer` | `example: cache: TestClientClose_ClosesCacheAndEventPublisher`; `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_closeClosesConfiguredCacheAndPublisher` | sqlite |  |
 
 ## §21.2 Hook Types
 <!-- prd: 21.2 sha256: 9d8fd1b0bd0ec4e4 -->
@@ -517,3 +517,4 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 | gap.tenant-rel.shared-parent-resolve-gate | On an untenanted parent whose relationship filters reach a tenanted target, the client resolves a tenant for the filter only when the call's filter sets a relationship member (at the top level or inside `and` / `or`); a filter with no relationship member resolves nothing, so a shared table stays readable before a tenant is selected | `unit: cmd/sqlgen/gen: TestRelationshipFilters_SharedParentGatesTenantResolve` | §11.1, §29.10 |  |
 | gap.tenancy.view-predicate-order | A tenanted view's GetMany appends the tenant predicate after the filter conditions and before the keyset conditions (`filter < tenant < keyset`); §29.8 says the AND order is fixed at codegen but is not part of the contract, so the pin is on an order the PRD disclaims | `unit: cmd/sqlgen/gen: TestViewTenancy_predicateOrderIsStable` | §29.2.5, §29.8 |  |
 | gap.nested.explicit-tenant-propagates | In a package with a uniform tenant type, each nested inner call's `CallOptions` also copy the caller's explicit `Tenant`; §29.10 states only that nested children inherit the ctx-cached tenant | `unit: cmd/sqlgen/gen: TestNestedSharedHelpers_BodiesVaryWithTenancy/tenancy on with a uniform tenant type — the explicit tenant crosses too` | §29.4.2a, §29.10 | |
+| gap.batch.partial-failure-side-effects | When a later sub-batch of a stdlib `UpdateMany` (or any `*Many`) fails, the earlier sub-batches stay committed but the call returns only the error: their rows get no cache invalidation and no events. §19.4 says earlier batches persist; no text says what their side effects do |  | §19.4, §27.7, §28.9 | |

@@ -500,7 +500,11 @@ func (r *Resolver) RegisterSet(schema, sqlName, goTypeName string) {
 
 // IsSet reports whether the given SQL type name is a registered SET type.
 func (r *Resolver) IsSet(sqlType string) bool {
-	_, ok := r.sets[r.schemaTypeKey(normalizeSQL(sqlType))]
+	key, ok := r.schemaTypeKey(normalizeSQL(sqlType))
+	if !ok {
+		return false
+	}
+	_, ok = r.sets[key]
 	return ok
 }
 
@@ -522,19 +526,38 @@ func (r *Resolver) ForSchema(schema string) *Resolver {
 
 // schemaTypeKey returns the key the enum, SET and domain maps hold a bare
 // sqlType under for the owner schema: ownerSchema.sqlType when that is
-// registered, sqlType otherwise. A qualified sqlType is returned as given.
-func (r *Resolver) schemaTypeKey(sqlType string) string {
+// registered, sqlType otherwise. A qualified sqlType, or any sqlType for a
+// resolver with no owner schema, is returned as given. It reports false when
+// sqlType must not be looked up in those maps at all: a bare name the
+// dialect's built-in mapping knows never falls back to another schema's type
+// of that name, since the database resolves it to the built-in type
+// (PRD §7.1).
+func (r *Resolver) schemaTypeKey(sqlType string) (string, bool) {
 	if r.ownerSchema == "" || strings.Contains(sqlType, ".") {
-		return sqlType
+		return sqlType, true
 	}
 	qualified := r.ownerSchema + "." + sqlType
 	_, isEnum := r.enums[qualified]
 	_, isSet := r.sets[qualified]
 	_, isDomain := r.domains[qualified]
 	if isEnum || isSet || isDomain {
-		return qualified
+		return qualified, true
 	}
-	return sqlType
+	if owner, ok := r.bareOwners[sqlType]; ok && owner != r.ownerSchema && r.isBuiltin(sqlType) {
+		return "", false
+	}
+	return sqlType, true
+}
+
+// isBuiltin reports whether the dialect's built-in mapping knows sqlType.
+func (r *Resolver) isBuiltin(sqlType string) bool {
+	mappings := dialectMappings[r.dialect]
+	for _, key := range lookupKeys(sqlType) {
+		if _, ok := mappings[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // RegisterDomain registers the domain schema.sqlName so that columns using it
@@ -643,7 +666,10 @@ func (r *Resolver) BaseSQLType(sqlType string) string {
 // (e.g. positive_int → integer), so aggregate widening keys on the real base
 // rather than the domain name. Bounded to guard against pathological cycles.
 func (r *Resolver) resolveDomainBase(sqlType string) string {
-	t := r.schemaTypeKey(sqlType)
+	t, ok := r.schemaTypeKey(sqlType)
+	if !ok {
+		return sqlType
+	}
 	if _, ok := r.domainBaseType(t); !ok {
 		return sqlType
 	}
@@ -652,7 +678,13 @@ func (r *Resolver) resolveDomainBase(sqlType string) string {
 		if !ok {
 			return t
 		}
-		t = base
+		// The base is read in the domain's own schema, so a built-in base
+		// name never reaches another schema's type of that name.
+		key, ok := r.ForSchema(r.domains[t].schema).schemaTypeKey(base)
+		if !ok {
+			return base
+		}
+		t = key
 	}
 	return t
 }
@@ -824,43 +856,8 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 	}
 
 	// Step 4.5: Schema enums, sets, and domains, owner schema first
-	key := r.schemaTypeKey(sqlType)
-	if goTypeName, ok := r.enums[key]; ok {
-		gt := GoType{
-			Name:      goTypeName,
-			ZeroValue: `""`,
-			FKConvert: FKStringSprint,
-		}
-		if nullable {
-			gt.Name = "*" + goTypeName
-			gt.ZeroValue = "nil"
-		}
-		return gt, overrideSource{}
-	}
-	if goTypeName, ok := r.sets[key]; ok {
-		// SET types are named slices (reference types), so nullable uses the same type.
-		//
-		// IsSlice stays false: the model side treats a SET as an opaque named
-		// type (comparator.String, no pq.Array wrapping, its own Scan/Value).
-		// SliceElemType still carries the element, which is what lets the API
-		// layer project the column as a GraphQL enum list without re-deriving
-		// the name from the slice type's spelling. Every model-side
-		// reader of SliceElemType is gated on IsSlice, so this is inert there.
-		return GoType{
-			Name:          goTypeName,
-			ZeroValue:     "nil",
-			SliceElemType: goTypeName + "Value",
-			FKConvert:     FKStringSprint,
-		}, overrideSource{}
-	}
-	if d, ok := r.domains[key]; ok {
-		// A domain's base resolves as a column of the domain, in the
-		// domain's schema (PRD §7.1).
-		scope := r
-		if d.schema != "" && d.schema != r.ownerSchema {
-			scope = r.ForSchema(d.schema)
-		}
-		return scope.resolveByTypeSource(d.base, nullable, tableOverrides)
+	if gt, source, ok := r.resolveSchemaType(sqlType, nullable, tableOverrides); ok {
+		return gt, source
 	}
 
 	// Handle PostgreSQL array types: strip [] suffix and resolve base type.
@@ -871,7 +868,8 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 			// Enum arrays use a named slice type (e.g., UserRoleSlice) with
 			// Scan/Value methods so pgx can handle the custom OID without
 			// manual type registration.
-			if goTypeName, ok := r.enums[r.schemaTypeKey(baseType)]; ok {
+			baseKey, baseSchemaType := r.schemaTypeKey(baseType)
+			if goTypeName, ok := r.enums[baseKey]; baseSchemaType && ok {
 				return GoType{
 					Name:          goTypeName + "Slice",
 					ZeroValue:     "nil",
@@ -895,6 +893,54 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 
 	// Step 5: Built-in dialect mapping
 	return r.builtinResolve(sqlType, nullable), overrideSource{}
+}
+
+// resolveSchemaType resolves sqlType as a registered enum, SET or domain,
+// owner schema first. It reports false when sqlType names none.
+func (r *Resolver) resolveSchemaType(sqlType string, nullable bool, tableOverrides map[string]config.TypeOverride) (GoType, overrideSource, bool) {
+	key, ok := r.schemaTypeKey(sqlType)
+	if !ok {
+		return GoType{}, overrideSource{}, false
+	}
+	if goTypeName, ok := r.enums[key]; ok {
+		gt := GoType{
+			Name:      goTypeName,
+			ZeroValue: `""`,
+			FKConvert: FKStringSprint,
+		}
+		if nullable {
+			gt.Name = "*" + goTypeName
+			gt.ZeroValue = "nil"
+		}
+		return gt, overrideSource{}, true
+	}
+	if goTypeName, ok := r.sets[key]; ok {
+		// SET types are named slices (reference types), so nullable uses the same type.
+		//
+		// IsSlice stays false: the model side treats a SET as an opaque named
+		// type (comparator.String, no pq.Array wrapping, its own Scan/Value).
+		// SliceElemType still carries the element, which is what lets the API
+		// layer project the column as a GraphQL enum list without re-deriving
+		// the name from the slice type's spelling. Every model-side
+		// reader of SliceElemType is gated on IsSlice, so this is inert there.
+		return GoType{
+			Name:          goTypeName,
+			ZeroValue:     "nil",
+			SliceElemType: goTypeName + "Value",
+			FKConvert:     FKStringSprint,
+		}, overrideSource{}, true
+	}
+	if d, ok := r.domains[key]; ok {
+		// A domain's base resolves as a column of the domain, in the
+		// domain's schema (PRD §7.1).
+		scope := r
+		if d.schema != "" && d.schema != r.ownerSchema {
+			scope = r.ForSchema(d.schema)
+		}
+		gt, source := scope.resolveByTypeSource(d.base, nullable, tableOverrides)
+		return gt, source, true
+	}
+	return GoType{}, overrideSource{}, false
 }
 
 // builtinResolve looks up the built-in dialect mapping for a SQL type.

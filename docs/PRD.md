@@ -1775,7 +1775,7 @@ Only steps 3–6 carry a `nullable:` wrapper variant. A nullable column resolved
 
 **A SQL type no step resolves is a `string`.** A column whose SQL type has no override, integration, enum, SET or domain and no built-in mapping (PostgreSQL `money` or `xml`, say) resolves to `string` (`*string` / `sql.NullString` when nullable), and generation warns, naming the column, its SQL type and the `overrides.types.<sql_type>` key that would type it. The config still generates.
 
-**Enum, SET and domain names.** The parser and the introspector write a column's type the same way: bare when the type is in the column's own schema, schema-qualified when it is in another. A schema-qualified name (`billing.status`) resolves to that schema's type. A bare name (`status`) is looked up first in the schema of the table, view, composite type or domain the column belongs to, and then as a bare name, which answers only while no other schema has a type by that name. So two same-named enums in different schemas never collide: a column whose type is in its own schema resolves to that schema's enum, and a column in any other schema reaches it by its qualified name. A column of an `input.views` annotation-file view ([16.1](#161-annotation-files-file-sourced-views)) copies its source column's type, rewritten the same way for the view's schema, and its source table is found in the schema the `FROM` clause names (an unqualified one in `input.schema`).
+**Enum, SET and domain names.** The parser and the introspector write a column's type the same way: bare when the type is in the column's own schema, schema-qualified when it is in another. A schema-qualified name (`billing.status`) resolves to that schema's type. A bare name (`status`) is looked up first in the schema of the table, view, composite type or domain the column belongs to, and then as a bare name, which answers only while no other schema has a type by that name. A name the dialect's built-in mapping knows (`integer`, `text`) never takes that second lookup: a type of that name in another schema leaves the column's built-in type alone, as PostgreSQL resolves it. So two same-named enums in different schemas never collide: a column whose type is in its own schema resolves to that schema's enum, and a column in any other schema reaches it by its qualified name. A column of an `input.views` annotation-file view ([16.1](#161-annotation-files-file-sourced-views)) copies its source column's type, rewritten the same way for the view's schema, and its source table is found in the schema the `FROM` clause names (an unqualified one in `input.schema`).
 
 ### 7.2 Built-In Type Mappings
 
@@ -1909,7 +1909,7 @@ All three match the single SQL type `uuid`, and PostgreSQL is the only dialect t
 - **No null wrapper.** The package ships no `NullUUID`, so `uuid.UUID` is classified `nullPtrOnly` ([7.3](#73-nullable-handling)): a nullable `uuid` column is `*uuid.UUID` and `overrides.use_pointers: false` does not change it. Null is `v != nil`, the value is `*v`. There is nothing for `overrides.types.uuid.nullable` to name, and the integration sets no nullable variant.
 - **No `driver.Valuer` / `sql.Scanner`, and none needed — for a `uuid` column.** `database/sql` special-cases `uuid.UUID` in both directions — `driver/types.go` on write, `convert.go` on read, for both `string` and `[]byte` driver values — and pgx routes the type through the same path `github.com/google/uuid` has always taken, unwrapping the named type to its underlying `[16]byte` and wrapping that in `pgtype.byte16Wrapper`, which satisfies `UUIDValuer` and dispatches to `UUIDCodec`. Neither `overrides.types.uuid.convert` nor a custom codec is required on either `output.driver` value. Generated code scans into the resolved type directly and never into `pgtype.UUID`, which would cost a conversion step and lose the nil-pointer NULL representation.
 
-- **A column whose SQL type is *not* `uuid` cannot be retyped to the standard library's `uuid.UUID` under pgx.** The claim above is scoped to the column's SQL type, because that is what pgx's codec lookup keys on: `UUIDCodec` is registered for the `uuid` OID, so a `text` column retyped to `uuid.UUID` through `tables.<t>.column_map.<col>` or `type_map` fails at scan time with `cannot scan text (OID 25) in text format into *uuid.UUID`. The standard library's `uuid.UUID` carries `MarshalText` / `UnmarshalText` but neither `sql.Scanner` nor `driver.Valuer`, so there is nothing for the text path to dispatch to. Both wrapper-backed integrations *do* ship `Scan` / `Value` on the bare `uuid.UUID`, so the same retype works under either of them, and under `output.driver: stdlib` on any integration (`database/sql`'s `convert.go` special-case applies to the destination type, not the column). A project that stores UUIDs in a `text` column and wants them typed selects `github.com/google/uuid` or `github.com/gofrs/uuid/v5` for that generated package.
+- **A column whose SQL type is *not* `uuid` cannot be retyped to the standard library's `uuid.UUID` under pgx.** The claim above is scoped to the column's SQL type, because that is what pgx's codec lookup keys on: `UUIDCodec` is registered for the `uuid` OID, so a `text` column retyped to `uuid.UUID` through `tables.<t>.column_map.<col>` fails at scan time with `cannot scan text (OID 25) in text format into *uuid.UUID`. The standard library's `uuid.UUID` carries `MarshalText` / `UnmarshalText` but neither `sql.Scanner` nor `driver.Valuer`, so there is nothing for the text path to dispatch to. Both wrapper-backed integrations *do* ship `Scan` / `Value` on the bare `uuid.UUID`, so the same retype works under either of them, and under `output.driver: stdlib` on any integration (`database/sql`'s `convert.go` special-case applies to the destination type, not the column). A project that stores UUIDs in a `text` column and wants them typed selects `github.com/google/uuid` or `github.com/gofrs/uuid/v5` for that generated package.
 - **Comparable.** `uuid.UUID` is an array type, so it satisfies `comparable` and `uuid[]` columns filter through `comparator.Slice[uuid.UUID]` ([11.2](#112-comparator-types)).
 
 On the GraphQL surface ([26.4.1](#2641-scalar-marshaling)) a stdlib-bound package declares the `UUID` scalar only: a nullable `uuid` column is a nullable field of scalar `UUID`, no `NullUUID` scalar is declared, and no `MarshalNullUUID` / `UnmarshalNullUUID` pair is emitted. Filter inputs are unaffected — a nullable UUID column takes `NullableIDComparator` under every integration, because comparator selection reads through the wrapper ([7.3](#73-nullable-handling)).
@@ -2125,7 +2125,7 @@ type YearValue struct {
 }
 ```
 
-The column scans as `PropertyTaxRate []YearValue` directly, no per-read decode. `types.JSON` remains for the cases where a column's shape genuinely is dynamic (event payloads, audit-log details, third-party integration responses) or where typing has not been done yet.
+Under `output.driver: pgx` the column scans as `PropertyTaxRate []YearValue` directly, no per-read decode: pgx decodes JSON into the field's type. A `database/sql` driver (`stdlib` on any dialect) has no such codec, so there the override names a type that crosses the driver boundary on its own ([4.8](#48-tableconfig-per-table)): a named slice or struct whose `Scan` JSON-decodes the column's `[]byte` or `string` value and whose `Value` returns the JSON encoding. `types.JSON` remains for the cases where a column's shape genuinely is dynamic (event payloads, audit-log details, third-party integration responses) or where typing has not been done yet.
 
 **Why not split into `JSONObject` / `JSONArray`?** A jsonb column can hold any JSON value at any time — there is no SQL-level guarantee that the shape is uniform across rows. Splitting at the type level forces every consumer to pick a shape upfront, which is exactly the bug the polymorphic default avoids. Callers that genuinely need shape constraints define a Go struct (or `[]Struct`) and override; that's a stronger guarantee than two narrowly-typed default types.
 
@@ -3391,6 +3391,7 @@ All methods accept an optional trailing `...func(*CallOptions[{Table}FieldOption
 ```go
 type PaginateInput[F any] struct {
     Filter *F
+    Sort   []sql.Sort
     Limit  int
     Offset int
 }
@@ -3409,13 +3410,11 @@ type IncrementInput[C ~string] struct {
 }
 
 type PaginateResult[T any] struct {
-    Items           []*T
-    TotalCount      int64
-    TotalPages      int
-    PageSize        int
-    CurrentPage     int
-    HasNextPage     bool
-    HasPreviousPage bool
+    Items      []*T
+    TotalCount int64
+    Offset     int
+    Limit      int
+    HasMore    bool
 }
 ```
 
@@ -4237,6 +4236,7 @@ When `exclude_deleted` is disabled, no default condition is injected for any met
 // PaginateInput — shared across all tables via generics
 type PaginateInput[F any] struct {
     Filter *F
+    Sort   []sql.Sort
     Limit  int
     Offset int
 }
@@ -4258,13 +4258,11 @@ type IncrementInput[C ~string] struct {
 
 // PaginateResult — returned by Paginate()
 type PaginateResult[T any] struct {
-    Items           []*T  // entities for the current page
-    TotalCount      int64 // total matching rows across all pages
-    TotalPages      int   // ceil(TotalCount / PageSize)
-    PageSize        int   // the limit used for this query
-    CurrentPage     int   // 1-indexed page number derived from offset/limit
-    HasNextPage     bool  // true if there are pages after this one
-    HasPreviousPage bool  // true if there are pages before this one (CurrentPage > 1)
+    Items      []*T  // entities for the current page
+    TotalCount int64 // total matching rows across all pages
+    Offset     int   // the offset used for this query
+    Limit      int   // the limit used for this query
+    HasMore    bool  // true when Offset+Limit < TotalCount
 }
 
 // resolveCallOptions — shared helper, applies option functions and returns the resolved struct.
@@ -4548,7 +4546,7 @@ CREATE TABLE product_tags (
 
 **Generated types:**
 
-> **Tag convention:** All generated structs with database-mapped fields carry both `db` and `json` struct tags. The `json` tag value always matches the database column name (e.g., `json:"company_id"` for column `company_id`). A relationship field has no column: it is tagged `db:"-"`, and its `json` tag is the snake_case form of its relationship name (`draft_children` → `json:"draft_children"`). This applies to all generated structs with named fields: entity structs, PK structs, input structs (`Create*Input`, `Update*Input`, `UpdateItem`), and any other struct whose fields correspond to database columns. Input structs carry `json` tags so consumers can use them in external APIs (e.g., deserializing HTTP request bodies directly into `CreateProductInput`).
+> **Tag convention:** All generated structs scanned from database rows carry both `db` and `json` struct tags. The `json` tag value always matches the database column name (e.g., `json:"company_id"` for column `company_id`). A relationship field has no column: it is tagged `db:"-"`, and its `json` tag is the snake_case form of its relationship name (`draft_children` → `json:"draft_children"`). This applies to entity structs, PK structs, and any other struct scanned from database rows. Input structs (`Create*Input`, `Update*Input`, `UpdateItem`) are never scanned from a row, so they carry only the `json` tag, which lets consumers use them in external APIs (e.g., deserializing HTTP request bodies directly into `CreateProductInput`).
 
 ```go
 type Company struct {
@@ -6873,6 +6871,7 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
         // Page data via GetMany with SkipHooks (handles FieldOptions and relationships)
         products, err := c.GetMany(ctx, &GetProductsInput{
             Filter: input.Filter,
+            Sorts:  input.Sort,
             Limit:  new(input.Limit),
             Offset: new(input.Offset),
         }, internalOpts)
@@ -6880,17 +6879,12 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
             return nil, fmt.Errorf("paginate products: %w", err)
         }
 
-        currentPage := (input.Offset / input.Limit) + 1
-        totalPages := int((totalCount + int64(input.Limit) - 1) / int64(input.Limit))
-
         return &PaginateResult[Product]{
-            Items:           products,
-            TotalCount:      totalCount,
-            TotalPages:      totalPages,
-            PageSize:        input.Limit,
-            CurrentPage:     currentPage,
-            HasNextPage:     currentPage < totalPages,
-            HasPreviousPage: currentPage > 1,
+            Items:      products,
+            TotalCount: totalCount,
+            Offset:     input.Offset,
+            Limit:      input.Limit,
+            HasMore:    int64(input.Offset+input.Limit) < totalCount,
         }, nil
     })
     if err != nil {
@@ -7003,14 +6997,13 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
         pageInfo := PageInfo{
             HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
             HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
-            TotalCount:      totalCount,
         }
         if len(edges) > 0 {
             pageInfo.StartCursor = &edges[0].Cursor
             pageInfo.EndCursor = &edges[len(edges)-1].Cursor
         }
 
-        return &Connection[Product]{Edges: edges, PageInfo: pageInfo}, nil
+        return &Connection[Product]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
     })
     if err != nil {
         return nil, err
@@ -7118,7 +7111,7 @@ func cursorValueIsNull(v any) bool {
 
 **Generated SQL (forward, cursor_keys=["id"], after cursor provided):** `SELECT ... FROM "public"."products" WHERE "deleted_at" IS NULL AND "id" > $1 ORDER BY "id" ASC LIMIT 26`
 
-`Connection` delegates to `Count` and `GetMany` — the same pattern as `Paginate`. Keyset conditions (decoded cursors → `WHERE id > $cursor_value`) are passed via the unexported `conditions` field on `GetProductsInput`, which `GetMany` appends after filter and soft delete conditions. This ensures FieldOptions, O2O JOIN loading, O2M/M2M relationship loading, and soft delete filtering are handled consistently without duplication. `TotalCount` in `PageInfo` is always populated via the `Count` call.
+`Connection` delegates to `Count` and `GetMany` — the same pattern as `Paginate`. Keyset conditions (decoded cursors → `WHERE id > $cursor_value`) are passed via the unexported `conditions` field on `GetProductsInput`, which `GetMany` appends after filter and soft delete conditions. This ensures FieldOptions, O2O JOIN loading, O2M/M2M relationship loading, and soft delete filtering are handled consistently without duplication. `TotalCount` on the `Connection` is always populated via the `Count` call.
 
 #### 9.8.13 Composite Primary Key Patterns
 
@@ -7154,7 +7147,7 @@ CREATE TABLE order_items (
 
 **Generated types:**
 
-> **Tag convention:** All generated structs with database-mapped fields carry both `db` and `json` struct tags. The `json` tag value always matches the database column name (e.g., `json:"order_id"` for column `order_id`). This applies to all generated structs with named fields: entity structs, PK structs, input structs (`Create*Input`, `Update*Input`, `UpdateItem`), and any other struct whose fields correspond to database columns. Input structs carry `json` tags so consumers can use them in external APIs (e.g., deserializing HTTP request bodies directly into `CreateProductInput`).
+> **Tag convention:** All generated structs scanned from database rows carry both `db` and `json` struct tags. The `json` tag value always matches the database column name (e.g., `json:"order_id"` for column `order_id`). This applies to entity structs, PK structs, and any other struct scanned from database rows. Input structs (`Create*Input`, `Update*Input`, `UpdateItem`) are never scanned from a row, so they carry only the `json` tag, which lets consumers use them in external APIs (e.g., deserializing HTTP request bodies directly into `CreateProductInput`).
 
 ```go
 // OrderItemPK identifies a single order item by its composite primary key.
@@ -9092,7 +9085,7 @@ Wherever codegen parses the filter (§4.8: every o2m and m2m relationship, and e
 
 **Input:** Filter, Sort, Limit (int), Offset (int)
 
-**Generated method:** `Paginate(ctx, PaginateInput[F])`
+**Generated method:** `Paginate(ctx, PaginateInput[F], ...func(*CallOptions[FO]))`
 
 Uses `sql.BuildSelect` with LIMIT and OFFSET clauses, applying any provided sorts before the limit/offset.
 
@@ -9123,7 +9116,7 @@ The cursor-based pagination implementation follows the [Relay Connection Specifi
 
 **Input:** Filter, First/Last (*int), After/Before (*string cursor)
 
-**Generated method:** `Connection(ctx, *Filter, *ConnectionInput)`
+**Generated method:** `Connection(ctx, ConnectionInput[F], ...func(*CallOptions[FO]))`
 
 **`ConnectionInput` does not accept a `Sorts` field.** The sort order is always determined by `cursor_keys` — this is required for cursor stability. Cursors encode a position based on the cursor key columns; applying a different sort would invalidate the cursor's meaning. Consumers who need custom sort orders should use `Paginate()` (offset-based) instead.
 
@@ -13829,9 +13822,9 @@ Non-tenanted tables keep the grammar shown above (no `tenant:` segment). The ten
 
 **Schema fingerprint segment.** The `fingerprint:v{fingerprint}` segment scopes every cached entry to the exact struct-shape that produced it. Fingerprints are computed at codegen time from a sha256 over:
 
-- Sorted column names, Go types, and struct tags
+- Column names in declaration order, with each column's Go type and `db` struct tag. Reordering columns changes the fingerprint, because a positional encoding (msgpack's array-encoded structs) depends on field order
 - PK column order (DDL `PRIMARY KEY (...)`)
-- Serializer identity (`json` / `msgpack` / `custom:<type name>`)
+- Serializer identity (`json` / `msgpack` / `custom`). A custom serializer's type is not known at codegen time, so swapping one custom serializer for another keeps the fingerprint; bump `cache.version` when doing so
 - The optional `cache.version` kill switch
 
 Any migration that regenerates the Go struct produces a new fingerprint → new key namespace; old entries orphan and are cleaned up by backend LRU / TTL. No operator action is required during rolling deploys — old pods write old-fingerprint keys, new pods write new-fingerprint keys, both namespaces coexist without serving wrong-shape data.

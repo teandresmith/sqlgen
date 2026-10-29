@@ -370,7 +370,7 @@ the format.
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | parser.viewfile.views-not-ddl | A file in `input.views` is never processed by the DDL parser: a `CREATE TABLE` in it adds no table | `unit: cmd/sqlgen/cli: TestParseSchema_InputViewsFilesAreNotDDL/no table from the views file` | postgres |  |
-| parser.viewfile.views-not-ddl.mysql-sqlite | On MySQL and SQLite a file in `input.views` is never processed by the DDL parser |  | mysql, sqlite |  |
+| parser.viewfile.views-not-ddl.mysql-sqlite | On MySQL and SQLite a file in `input.views` is never processed by the DDL parser | `unit: cmd/sqlgen/cli: TestParseSchema_InputViewsFilesAreNotDDL_MySQLAndSQLite/mysql`; `unit: cmd/sqlgen/cli: TestParseSchema_InputViewsFilesAreNotDDL_MySQLAndSQLite/sqlite` | mysql, sqlite |  |
 | parser.viewfile.views-parsed-as-views | A file in `input.views` is parsed as a view | `unit: cmd/sqlgen/cli: TestParseSchema_InputViewsFilesAreNotDDL/the views file's view`; `unit: cmd/sqlgen/cli: TestAddViewFiles_MySQLQualifiedView/files` | postgres, mysql |  |
 | parser.viewfile.views-parsed-as-views.sqlite | On SQLite a file in `input.views` is parsed as a view | `unit: parser/sqlite: TestViewFileParsedAsView` | sqlite |  |
 | parser.viewfile.annotation-block-optional | The annotation block is optional: a file holding only a `CREATE VIEW` statement parses | `unit: cmd/sqlgen/cli: TestParseSchema_ViewDefaultSchema/unqualified view, default input.schema`; `unit: parser/mysql: TestParseViewSQL`; `unit: parser/sqlite: TestParseViewSQL` | all |  |

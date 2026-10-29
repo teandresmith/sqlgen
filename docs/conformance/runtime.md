@@ -43,7 +43,7 @@ No requirements yet. See [README.md](README.md) for the format.
 | hook.panic-handler-option | The unified client exposes `WithPanicHandler(handler func(ctx context.Context, r any, table hook.TableName, op string) error) ClientOption` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_clientOption` | all |  |
 
 ## §27 Caching
-<!-- prd: 27 sha256: 018292a95f346411 -->
+<!-- prd: 27 sha256: dfe94499db41cc8f -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -65,14 +65,15 @@ No requirements yet. See [README.md](README.md) for the format.
 | cache.facade.options | The generated package declares the runtime options `WithInvalidationSource`, `WithMetricsRecorder`, `WithSerializer`, `WithCircuitBreaker` and `WithOnError`, each returning `CacheOption` with the parameter type the PRD gives | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsOptionsAPI` | all |  |
 
 ## §27.5 Cache Key Generation
-<!-- prd: 27.5 sha256: 5d8c9b4fcafd94bc -->
+<!-- prd: 27.5 sha256: d7434d8dfdde6884 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | cache-key.helper-value-typed | Each cached table's `keyFor{Table}` helper takes its PK as a concrete value type: the scalar PK type for a single-column PK, the `XXXPK` struct value for a composite PK | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsSinglePKKeyHelper`; `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsCompositePKKeyHelper` | all |  |
 | cache-key.mysql-no-schema | A MySQL table's cache key carries no schema segment, even when the table context carries a schema | `unit: cmd/sqlgen/gen: TestBuildCacheContext_mysqlSchemaIsEmpty` | mysql |  |
-| fingerprint.codegen-constant | Each cached table's schema fingerprint is emitted as a codegen-time constant in the generated cache file |  | all |  |
+| fingerprint.codegen-constant | Each cached table's schema fingerprint is emitted as a codegen-time constant in the generated cache file | `unit: cmd/sqlgen/gen: TestCacheTemplate_fingerprintConstantCarriesTheTableFingerprint` | all |  |
 | fingerprint.column-names | Renaming a column or adding one changes the table's fingerprint | `unit: cmd/sqlgen/gen: TestFingerprint_columnRename`; `unit: cmd/sqlgen/gen: TestFingerprint_columnAdd` | all |  |
+| fingerprint.column-order | Columns enter the fingerprint in declaration order: swapping two columns changes the table's fingerprint | `unit: cmd/sqlgen/gen: TestFingerprint_columnDeclarationOrderChanges` | all |  |
 | fingerprint.go-types | Changing a column's Go type changes the table's fingerprint | `unit: cmd/sqlgen/gen: TestFingerprint_goTypeChange` | all |  |
 | fingerprint.pk-order | Reordering the primary-key columns changes the table's fingerprint | `unit: cmd/sqlgen/gen: TestFingerprint_pkOrderChange` | all |  |
 | fingerprint.serializer | Switching `cache.serializer` from `json` to `msgpack` changes the table's fingerprint | `unit: cmd/sqlgen/gen: TestFingerprint_serializerSwitch` | all |  |
@@ -157,6 +158,7 @@ No requirements yet. See [README.md](README.md) for the format.
 | cache-key.tenant-capture-update-returning | On PostgreSQL and SQLite, a tenanted table's (tenant outside the PK) `Update`, `UpdateMany` and `UpdateWhere` capture each affected row's tenant by widening the statement's `RETURNING` projection into `MutationContext.AffectedTenants`, with no pre-read | `unit: cmd/sqlgen/gen: TestTenantCapture_update_returningDialects` | postgres, sqlite |  |
 | cache-key.tenant-capture-delete-increment-upsert-returning | On PostgreSQL, a tenanted table's (tenant outside the PK) `HardDelete` family, `Increment` and `Upsert` capture the affected row's tenant by widening the statement's `RETURNING` projection (the tenant column, or the PK and the tenant) into `MutationContext.AffectedTenants` | `unit: cmd/sqlgen/gen: TestTenantCapture_delete_acrossDialects/postgres returning`; `unit: cmd/sqlgen/gen: TestTenantCapture_increment_acrossDialects/postgres returning`; `unit: cmd/sqlgen/gen: TestTenantCapture_upsert_capturesRowTenant/postgres returning` | postgres |  |
 | cache-key.tenant-capture-mysql-select | On MySQL, tenanted mutations (tenant outside the PK) use no `RETURNING`: `Update`, `Increment` and `HardDelete` read the affected rows' tenants with a `SELECT` over the statement's own conditions, `UpdateWhere` and `HardDeleteWhere` widen `collectAffectedIDs` to project the PK and the tenant column, and `Upsert` reads the written row's tenant by PK after the statement | `unit: cmd/sqlgen/gen: TestTenantCapture_update_mysqlPreRead`; `unit: cmd/sqlgen/gen: TestTenantCapture_delete_acrossDialects/mysql pre-read`; `unit: cmd/sqlgen/gen: TestTenantCapture_increment_acrossDialects/mysql pre-read`; `unit: cmd/sqlgen/gen: TestTenantCapture_upsert_capturesRowTenant/mysql post-read`; `unit: cmd/sqlgen/gen: TestTenantCapture_client_preReadHelperEmission/mysql tenanted emits helper` | mysql |  |
+| cache-key.tenant-capture-mysql-many-per-sub-batch | On MySQL, a tenanted `UpdateMany` captures the affected rows' tenants with one pre-read per sub-batch, inside the batch loop, and a key repeated in a later sub-batch keeps the tenant its first pre-read captured | `unit: cmd/sqlgen/gen: TestTenantCapture_updateMany_mysqlPreReadPerSubBatch`; `unit: cmd/sqlgen/gen: TestTenantCapture_update_mysqlPreRead`; `example: tenancy_mysql: TestMySQLCapture_UpdateManyRepeatedKeyKeepsPreMutationTenant` | mysql |  |
 | cache-key.tenant-capture-create | `Create` and `CreateMany` on a tenanted table (tenant outside the PK) record the tenant value they wrote (the resolved tenant, or the caller's value when tenancy is skipped) into `MutationContext.AffectedTenants`, one element per created row | `unit: cmd/sqlgen/gen: TestTenantCapture_create_capturesInsertedValue` | all |  |
 | cache-key.tenant-capture-composite-pk | On a composite-PK table whose tenant column is outside the PK, the capture projection carries every PK column and the tenant: PostgreSQL's `UpdateMany` widens `RETURNING` to the PK columns and the tenant, and MySQL's `UpdateWhere` widens `collectAffectedPKs` to return the tenants | `unit: cmd/sqlgen/gen: TestTenantCapture_compositeTenantOutsidePK` | postgres, mysql |  |
 | cache-key.tenant-in-pk-no-capture | On a table whose tenant column is part of the primary key, no mutation runs an extra tenant capture: `Create`, `Update`, the delete family and the client emit no `AffectedTenants`, `captureAffectedTenants` or `capturedTenant` | `unit: cmd/sqlgen/gen: TestTenantCapture_tenantInPK_noCarrier` | postgres |  |

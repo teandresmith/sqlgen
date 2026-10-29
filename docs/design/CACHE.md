@@ -1050,7 +1050,7 @@ sha256(
     schema || 0x00 ||
     json_bytes(columns) ||      // [{Name, GoType, StructTag} ...] in DDL column order
     json_bytes(pk_columns) ||   // PK names in DDL PRIMARY KEY order (order matters)
-    serializer_id ||            // "json" | "msgpack" | "custom:<sha of WithSerializer type name>"
+    serializer_id ||            // "json" | "msgpack" | "custom" (a custom type is not known at codegen; bump cache_version on a swap)
     cache_version               // optional user-controlled kill switch — see §10.2
 )[:8]
 ```
