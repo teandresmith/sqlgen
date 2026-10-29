@@ -43,6 +43,15 @@ func paginate(t *testing.T, h *Harness) {
 			t.Fatalf("Paginate(offset 3, limit 2) error = %v, want nil", err)
 		}
 		pagCheckPage(t, last, []string{"b", "a"}, 5, 3, 2, false)
+
+		// A short last page: Offset+Limit passes the total.
+		short, err := h.Client.Products().Paginate(ctx, models.PaginateInput[models.ProductFilter]{
+			Filter: pagPriceBelow(100), Sort: sort, Limit: 2, Offset: 4,
+		})
+		if err != nil {
+			t.Fatalf("Paginate(offset 4, limit 2) error = %v, want nil", err)
+		}
+		pagCheckPage(t, short, []string{"a"}, 5, 4, 2, false)
 	})
 
 	t.Run("an offset with no limit returns every row past the offset", func(t *testing.T) {

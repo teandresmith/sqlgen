@@ -4,10 +4,8 @@ package tests
 //
 // Mirrors postgres/tests/stream_test.go for the MySQL dialect, exercising
 // PRD §9.4a end-to-end against a real mysql:8.0 testcontainer:
-//   - happy-path baseline: every seeded row appears exactly once
 //   - filter / sort propagation captured in the recorded SQL
 //   - scalar-only column selection via StreamFieldOptions
-//   - soft-delete hook composition (default exclusion + explicit override)
 //   - early termination releases the connection cleanly
 //   - mid-stream cancellation surfaces (nil, err) and terminates the iterator
 //
@@ -121,42 +119,6 @@ func seedMysqlArticles(t *testing.T, ctx context.Context, client *models.Client,
 		}
 	})
 	return ids
-}
-
-// TestStream_YieldsAllRowsInSortOrder_MySQL — happy-path baseline.
-func TestStream_YieldsAllRowsInSortOrder_MySQL(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	author := t.Name()
-	const n = 50
-	ids := seedMysqlArticles(t, ctx, client, author, n)
-
-	authorEq := author
-	got := make([]int64, 0, n)
-	for a, err := range client.Articles().Stream(ctx, &models.StreamArticlesInput{
-		Filter: &models.ArticleFilter{Author: &comparator.String{Eq: &authorEq}},
-	}) {
-		if err != nil {
-			t.Fatalf("Stream yielded error: %v", err)
-		}
-		got = append(got, a.ID)
-	}
-	if len(got) != n {
-		t.Fatalf("Stream yielded %d rows, want %d", len(got), n)
-	}
-	seen := make(map[int64]int, n)
-	for _, id := range got {
-		seen[id]++
-	}
-	if len(seen) != n {
-		t.Errorf("Stream yielded duplicates: distinct=%d, total=%d", len(seen), len(got))
-	}
-	for _, id := range ids {
-		if seen[id] == 0 {
-			t.Errorf("Stream missed seeded id %d", id)
-		}
-	}
 }
 
 // TestStream_FilterAndSortPropagation_MySQL — verifies WHERE + ORDER BY land
@@ -302,69 +264,6 @@ func TestStream_ScalarOnlyColumnSelection_MySQL(t *testing.T) {
 		if strings.Contains(selectList, unselected) {
 			t.Errorf("Stream SQL contains unselected column %s: %q", unselected, gotSQL)
 		}
-	}
-}
-
-// TestStream_SoftDeleteExcludedByDefault_MySQL — verifies soft-delete hook
-// composition with Stream.
-func TestStream_SoftDeleteExcludedByDefault_MySQL(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	author := t.Name()
-
-	live, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title:  "live",
-		Author: author,
-	})
-	if err != nil {
-		t.Fatalf("Create live: %v", err)
-	}
-	deleted, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title:  "deleted",
-		Author: author,
-	})
-	if err != nil {
-		t.Fatalf("Create deleted: %v", err)
-	}
-	if _, err := client.Articles().SoftDelete(ctx, deleted.ID); err != nil {
-		t.Fatalf("SoftDelete: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = client.Articles().HardDelete(ctx, live.ID)
-		_ = client.Articles().HardDelete(ctx, deleted.ID)
-	})
-
-	authorEq := author
-
-	var defaultIDs []int64
-	for a, err := range client.Articles().Stream(ctx, &models.StreamArticlesInput{
-		Filter: &models.ArticleFilter{Author: &comparator.String{Eq: &authorEq}},
-	}) {
-		if err != nil {
-			t.Fatalf("Stream default: %v", err)
-		}
-		defaultIDs = append(defaultIDs, a.ID)
-	}
-	if len(defaultIDs) != 1 || defaultIDs[0] != live.ID {
-		t.Errorf("Stream default: got %v, want [%d]", defaultIDs, live.ID)
-	}
-
-	notNull := false
-	var overrideIDs []int64
-	for a, err := range client.Articles().Stream(ctx, &models.StreamArticlesInput{
-		Filter: &models.ArticleFilter{
-			Author:    &comparator.String{Eq: &authorEq},
-			DeletedAt: &comparator.NullableTime{Null: &notNull},
-		},
-	}) {
-		if err != nil {
-			t.Fatalf("Stream override: %v", err)
-		}
-		overrideIDs = append(overrideIDs, a.ID)
-	}
-	if len(overrideIDs) != 1 || overrideIDs[0] != deleted.ID {
-		t.Errorf("Stream override: got %v, want [%d]", overrideIDs, deleted.ID)
 	}
 }
 

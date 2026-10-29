@@ -81,43 +81,6 @@ func TestArticleSoftDelete_Timestamp(t *testing.T) {
 	}
 }
 
-func TestArticleSoftDelete_FilterOverride(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	article, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title:  "Filter Override Article",
-		Author: "tester",
-	})
-	if err != nil {
-		t.Fatalf("Create article: %v", err)
-	}
-
-	_, err = client.Articles().SoftDelete(ctx, article.ID)
-	if err != nil {
-		t.Fatalf("SoftDelete: %v", err)
-	}
-
-	// Setting DeletedAt comparator on the filter overrides default scoping
-	results, err := client.Articles().GetMany(ctx, &models.GetArticlesInput{
-		Filter: &models.ArticleFilter{
-			ID:        &comparator.ID{Eq: new(article.ID.String())},
-			DeletedAt: &comparator.NullableTime{Null: new(false)},
-		},
-	})
-	if err != nil {
-		t.Fatalf("GetMany with DeletedAt override: %v", err)
-	}
-	if len(results) != 1 {
-		t.Errorf("GetMany with filter override = %d results, want 1 (soft-deleted row)", len(results))
-	}
-
-	// Cleanup
-	if err := client.Articles().HardDelete(ctx, article.ID); err != nil {
-		t.Fatalf("HardDelete cleanup: %v", err)
-	}
-}
-
 // --- Soft Delete: Tags (boolean) ---
 
 func TestTagSoftDelete_Boolean(t *testing.T) {

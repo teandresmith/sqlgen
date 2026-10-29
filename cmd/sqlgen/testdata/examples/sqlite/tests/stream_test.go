@@ -4,13 +4,10 @@ package tests
 //
 // Mirrors postgres/tests/stream_test.go for the SQLite dialect, exercising
 // PRD §9.4a end-to-end against the in-memory SQLite test DB:
-//   - happy-path baseline: every seeded row appears exactly once
 //   - filter / sort propagation captured in the recorded SQL
 //   - scalar-only column selection via StreamFieldOptions
-//   - soft-delete hook composition (default exclusion + explicit override)
 //   - early termination releases the connection cleanly
 //   - mid-stream cancellation surfaces (nil, err) and terminates the iterator
-//   - a query hook's panic or abort error surfaces as a final (nil, err)
 //
 // Per-driver buffering caveat: modernc.org/sqlite is a translation of the C
 // sqlite3 library to Go, exposed through database/sql. Iteration is row-at-a-
@@ -40,7 +37,6 @@ import (
 	"github.com/teandresmith/sqlgen/comparator"
 	"github.com/teandresmith/sqlgen/database"
 	dbstdlib "github.com/teandresmith/sqlgen/database/stdlib"
-	"github.com/teandresmith/sqlgen/hook"
 	"github.com/teandresmith/sqlgen/omittable"
 	"github.com/teandresmith/sqlgen/sql"
 
@@ -114,42 +110,6 @@ func seedSqliteArticles(t *testing.T, ctx context.Context, client *models.Client
 		}
 	})
 	return ids
-}
-
-// TestStream_YieldsAllRowsInSortOrder_SQLite — happy-path baseline.
-func TestStream_YieldsAllRowsInSortOrder_SQLite(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	author := t.Name()
-	const n = 50
-	ids := seedSqliteArticles(t, ctx, client, author, n)
-
-	authorEq := author
-	got := make([]int64, 0, n)
-	for a, err := range client.Articles().Stream(ctx, &models.StreamArticlesInput{
-		Filter: &models.ArticleFilter{Author: &comparator.String{Eq: &authorEq}},
-	}) {
-		if err != nil {
-			t.Fatalf("Stream yielded error: %v", err)
-		}
-		got = append(got, a.ID)
-	}
-	if len(got) != n {
-		t.Fatalf("Stream yielded %d rows, want %d", len(got), n)
-	}
-	seen := make(map[int64]int, n)
-	for _, id := range got {
-		seen[id]++
-	}
-	if len(seen) != n {
-		t.Errorf("Stream yielded duplicates: distinct=%d, total=%d", len(seen), len(got))
-	}
-	for _, id := range ids {
-		if seen[id] == 0 {
-			t.Errorf("Stream missed seeded id %d", id)
-		}
-	}
 }
 
 // TestStream_FilterAndSortPropagation_SQLite — verifies WHERE + ORDER BY
@@ -299,69 +259,6 @@ func TestStream_ScalarOnlyColumnSelection_SQLite(t *testing.T) {
 	}
 }
 
-// TestStream_SoftDeleteExcludedByDefault_SQLite — verifies soft-delete hook
-// composition with Stream.
-func TestStream_SoftDeleteExcludedByDefault_SQLite(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	author := t.Name()
-
-	live, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title:  "live",
-		Author: author,
-	})
-	if err != nil {
-		t.Fatalf("Create live: %v", err)
-	}
-	deleted, err := client.Articles().Create(ctx, &models.CreateArticleInput{
-		Title:  "deleted",
-		Author: author,
-	})
-	if err != nil {
-		t.Fatalf("Create deleted: %v", err)
-	}
-	if _, err := client.Articles().SoftDelete(ctx, deleted.ID); err != nil {
-		t.Fatalf("SoftDelete: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = client.Articles().HardDelete(ctx, live.ID)
-		_ = client.Articles().HardDelete(ctx, deleted.ID)
-	})
-
-	authorEq := author
-
-	var defaultIDs []int64
-	for a, err := range client.Articles().Stream(ctx, &models.StreamArticlesInput{
-		Filter: &models.ArticleFilter{Author: &comparator.String{Eq: &authorEq}},
-	}) {
-		if err != nil {
-			t.Fatalf("Stream default: %v", err)
-		}
-		defaultIDs = append(defaultIDs, a.ID)
-	}
-	if len(defaultIDs) != 1 || defaultIDs[0] != live.ID {
-		t.Errorf("Stream default: got %v, want [%d]", defaultIDs, live.ID)
-	}
-
-	notNull := false
-	var overrideIDs []int64
-	for a, err := range client.Articles().Stream(ctx, &models.StreamArticlesInput{
-		Filter: &models.ArticleFilter{
-			Author:    &comparator.String{Eq: &authorEq},
-			DeletedAt: &comparator.NullableTime{Null: &notNull},
-		},
-	}) {
-		if err != nil {
-			t.Fatalf("Stream override: %v", err)
-		}
-		overrideIDs = append(overrideIDs, a.ID)
-	}
-	if len(overrideIDs) != 1 || overrideIDs[0] != deleted.ID {
-		t.Errorf("Stream override: got %v, want [%d]", overrideIDs, deleted.ID)
-	}
-}
-
 // TestStream_EarlyBreakReleasesConnection_SQLite — verifies that consumer
 // `break` triggers defer rows.Close(); the stdlib *sql.DB's open-connection
 // count returns to baseline after partial iterations.
@@ -446,115 +343,5 @@ func TestStream_MidStreamCancellation_SQLite(t *testing.T) {
 	}
 	if yielded == 0 {
 		t.Error("Stream after ctx cancel: yielded 0 rows before cancel, want > 0")
-	}
-}
-
-// TestStream_HookChainErrorSurfaces_SQLite pins PRD §21.6 and §21.5 on
-// Stream: a panic recovered from a query hook, and an error a hook aborts
-// with, reach the consumer as a final (nil, err), as they do on GetMany. A
-// hook that fails after the consumer has broken out of the loop must not make
-// Stream call yield again, which the Go runtime turns into a panic.
-func TestStream_HookChainErrorSurfaces_SQLite(t *testing.T) {
-	ctx := context.Background()
-	author := t.Name()
-	_ = seedSqliteArticles(t, ctx, newClient(), author, 3)
-	authorEq := author
-	input := &models.StreamArticlesInput{
-		Filter: &models.ArticleFilter{Author: &comparator.String{Eq: &authorEq}},
-	}
-
-	errDenied := errors.New("denied by hook")
-	errAfter := errors.New("failed after next")
-
-	tests := []struct {
-		name       string
-		hook       hook.QueryHook
-		breakEarly bool
-		wantRows   int
-		wantErr    string
-		wantIs     error
-	}{
-		{
-			name: "panic before next",
-			hook: func(hook.QueryHandler) hook.QueryHandler {
-				return func(context.Context, *hook.QueryContext) (any, error) {
-					panic("boom from hook")
-				}
-			},
-			wantErr: "sqlgen: panic in stream articles: boom from hook",
-		},
-		{
-			name: "abort before next",
-			hook: func(hook.QueryHandler) hook.QueryHandler {
-				return func(context.Context, *hook.QueryContext) (any, error) {
-					return nil, errDenied
-				}
-			},
-			wantIs: errDenied,
-		},
-		{
-			name: "error after next, rows drained",
-			hook: func(next hook.QueryHandler) hook.QueryHandler {
-				return func(ctx context.Context, q *hook.QueryContext) (any, error) {
-					if _, err := next(ctx, q); err != nil {
-						return nil, err
-					}
-					return nil, errAfter
-				}
-			},
-			wantRows: 3,
-			wantIs:   errAfter,
-		},
-		{
-			name: "error after next, consumer broke",
-			hook: func(next hook.QueryHandler) hook.QueryHandler {
-				return func(ctx context.Context, q *hook.QueryContext) (any, error) {
-					if _, err := next(ctx, q); err != nil {
-						return nil, err
-					}
-					return nil, errAfter
-				}
-			},
-			breakEarly: true,
-			wantRows:   1,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := models.New(dbstdlib.New(testDB), models.WithQueryHook(tt.hook))
-
-			rows := 0
-			var errs []error
-			for a, err := range client.Articles().Stream(ctx, input) {
-				if err != nil {
-					errs = append(errs, err)
-					continue
-				}
-				_ = a
-				rows++
-				if tt.breakEarly {
-					break
-				}
-			}
-
-			if rows != tt.wantRows {
-				t.Errorf("Stream yielded %d rows, want %d", rows, tt.wantRows)
-			}
-			if tt.wantErr == "" && tt.wantIs == nil {
-				if len(errs) != 0 {
-					t.Fatalf("Stream yielded errors %v, want none", errs)
-				}
-				return
-			}
-			if len(errs) != 1 {
-				t.Fatalf("Stream yielded %d errors %v, want exactly 1", len(errs), errs)
-			}
-			if tt.wantErr != "" && errs[0].Error() != tt.wantErr {
-				t.Errorf("Stream error = %q, want %q", errs[0], tt.wantErr)
-			}
-			if tt.wantIs != nil && !errors.Is(errs[0], tt.wantIs) {
-				t.Errorf("Stream error = %v, want errors.Is %v", errs[0], tt.wantIs)
-			}
-		})
 	}
 }

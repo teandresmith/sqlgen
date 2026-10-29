@@ -13,54 +13,6 @@ import (
 
 // --- Get by 2-column composite PK (user_categories) ---
 
-func TestGetBy2ColumnCompositePK(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	user, err := client.Users().Create(ctx, &models.CreateUserInput{
-		Name:    "CPK2Get",
-		Email:   "cpk2-get@example.com",
-		Balance: 0,
-	})
-	if err != nil {
-		t.Fatalf("Create user: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Users().HardDelete(ctx, user.ID) })
-
-	cat, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "CPK2GetCat"})
-	if err != nil {
-		t.Fatalf("Create category: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, cat.ID) })
-
-	created, err := client.UserCategories().Create(ctx, &models.CreateUserCategoryInput{
-		UserID:     user.ID,
-		CategoryID: cat.ID,
-	})
-	if err != nil {
-		t.Fatalf("Create user_category: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = client.UserCategories().HardDelete(ctx, models.UserCategoryPK{
-			UserID: user.ID, CategoryID: cat.ID,
-		})
-	})
-
-	got, err := client.UserCategories().Get(ctx, models.UserCategoryPK{
-		UserID:     created.UserID,
-		CategoryID: created.CategoryID,
-	})
-	if err != nil {
-		t.Fatalf("Get by 2-column composite PK: %v", err)
-	}
-	if got.UserID != user.ID {
-		t.Errorf("Get user_id = %d, want %d", got.UserID, user.ID)
-	}
-	if got.CategoryID != cat.ID {
-		t.Errorf("Get category_id = %d, want %d", got.CategoryID, cat.ID)
-	}
-}
-
 // --- Get by 3-column composite PK (product_tag_labels) ---
 
 func TestGetBy3ColumnCompositePK(t *testing.T) {

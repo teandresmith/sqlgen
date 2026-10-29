@@ -498,8 +498,6 @@ func strSortedNames(ps []*models.Product) []string {
 	return names
 }
 
-// createDeletedDocument creates a document, soft-deletes it, and returns it
-// as stored.
 // strFailingQuerier hands out result sets that fail after `after` rows, the
 // way a driver reports a connection lost mid-stream: Next returns false and
 // Err returns the failure.
