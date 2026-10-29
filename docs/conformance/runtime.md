@@ -14,6 +14,34 @@
 
 No requirements yet. See [README.md](README.md) for the format.
 
+## §10.4 JSON Serialization
+<!-- prd: 10.4 sha256: 104cc937927c7e3c -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| omittable.json-omitzero | A generated input field of type `omittable.Value[T]` carries the `omitzero` option in its `json` tag | `unit: cmd/sqlgen/gen: TestCreateInputTemplate_dbStrategyUUIDPK_omittable`; `unit: cmd/sqlgen/gen: TestInputTemplate_goldenFile_products`; `unit: cmd/sqlgen/gen: TestInputTemplate_goldenFile_orderItems` | all |  |
+
+## §18.6 Deferred Side Effects
+<!-- prd: 18.6 sha256: 8c6ba66b441da9ef -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| tx.callback-mode-option | The unified client exposes `WithCallbackMode(mode database.CallbackMode) ClientOption` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_clientOption` | all |  |
+
+## §21.3 Registration
+<!-- prd: 21.3 sha256: 194161143ad28aaf -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| hook.register-options | The unified client registers hooks through functional options `WithMutationHook(h hook.MutationHook) ClientOption` and `WithQueryHook(h hook.QueryHook) ClientOption` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_clientOption` | all |  |
+
+## §21.6 Panic Recovery
+<!-- prd: 21.6 sha256: 7412f9d457ff824c -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| hook.panic-handler-option | The unified client exposes `WithPanicHandler(handler func(ctx context.Context, r any, table hook.TableName, op string) error) ClientOption` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_clientOption` | all |  |
+
 ## §27 Caching
 <!-- prd: 27 sha256: 018292a95f346411 -->
 
@@ -43,7 +71,7 @@ No requirements yet. See [README.md](README.md) for the format.
 |---|---|---|---|---|
 | cache-key.helper-value-typed | Each cached table's `keyFor{Table}` helper takes its PK as a concrete value type: the scalar PK type for a single-column PK, the `XXXPK` struct value for a composite PK | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsSinglePKKeyHelper`; `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsCompositePKKeyHelper` | all |  |
 | cache-key.mysql-no-schema | A MySQL table's cache key carries no schema segment, even when the table context carries a schema | `unit: cmd/sqlgen/gen: TestBuildCacheContext_mysqlSchemaIsEmpty` | mysql |  |
-| fingerprint.codegen-constant | Each cached table's schema fingerprint is emitted as a codegen-time constant in the generated cache file | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsFingerprintConsts` | all |  |
+| fingerprint.codegen-constant | Each cached table's schema fingerprint is emitted as a codegen-time constant in the generated cache file |  | all |  |
 | fingerprint.column-names | Renaming a column or adding one changes the table's fingerprint | `unit: cmd/sqlgen/gen: TestFingerprint_columnRename`; `unit: cmd/sqlgen/gen: TestFingerprint_columnAdd` | all |  |
 | fingerprint.go-types | Changing a column's Go type changes the table's fingerprint | `unit: cmd/sqlgen/gen: TestFingerprint_goTypeChange` | all |  |
 | fingerprint.pk-order | Reordering the primary-key columns changes the table's fingerprint | `unit: cmd/sqlgen/gen: TestFingerprint_pkOrderChange` | all |  |
@@ -56,7 +84,7 @@ No requirements yet. See [README.md](README.md) for the format.
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| cache.relationship-bypass | A `Get` with any relationship flag set on `FieldOptions` bypasses the cache: the query hook checks for it before dispatching to read-through | `unit: cmd/sqlgen/gen: TestCacheTemplate_queryHookPreservesBypassGates` | all |  |
+| cache.relationship-bypass | A `Get` with any relationship flag set on `FieldOptions` bypasses the cache: the query hook checks for it before dispatching to read-through | `unit: cmd/sqlgen/gen: TestCacheTemplate_queryHookPreservesBypassGates`; `example: cache: TestSkip_RelationshipBypass` | all |  |
 | cache.create.field-options-not-cached | A `Create` or `CreateMany` call that carries `FieldOptions` writes nothing to the cache | `unit: cmd/sqlgen/gen: TestCacheTemplate_createCachingSkipsWhenFieldOptionsSet` | all |  |
 
 ## §27.7 Cache Behavior by Operation
@@ -69,8 +97,8 @@ No requirements yet. See [README.md](README.md) for the format.
 | cache.read-through.singleflight-recheck | Concurrent read-through misses on one key collapse through singleflight, and the flight callback re-checks the cache before querying the database | `unit: cmd/sqlgen/gen: TestCacheTemplate_readThroughInFlightRecheck`; `unit: cmd/sqlgen/gen: TestCacheTemplate_readThroughInFlightRecheckCompositePK`; `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsReadThroughHelper` | all |  |
 | cache.partial.hydration-off-bypass | With hydration off, a partial `Get` (column flags only) passes through to the database with no cache read or write | `unit: cmd/sqlgen/gen: TestCacheTemplate_queryHookBypassesPartialWhenHydrationOff` | all |  |
 | cache.partial.hydration-on | With hydration on, a partial `Get` that misses returns the partial database result and starts background hydration; the partial result never reaches the cache-set path | `unit: cmd/sqlgen/gen: TestCacheTemplate_readThroughPartialTriggersHydrate` | all |  |
-| cache.hydration.one-per-key | At most one hydration runs per `(table, pk)` at a time | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsHydrateHelper` | all |  |
-| cache.create.write-through | `Create` and `CreateMany` write each returned entity to the cache under its own key | `unit: cmd/sqlgen/gen: TestCacheTemplate_dispatchMutationSetsOnCreate`; `unit: cmd/sqlgen/gen: TestCacheTemplate_dispatchMutationSetsOnCreateMany`; `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsSetHelperSinglePK`; `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsSetHelperCompositePK`; `unit: cmd/sqlgen/gen: TestCacheTemplate_mutationHookForwardsResult` | all |  |
+| cache.hydration.one-per-key | At most one hydration runs per `(table, pk)` at a time | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsHydrateHelper`; `example: cache: TestHydration_Dedup` | all |  |
+| cache.create.write-through | `Create` and `CreateMany` write each returned entity to the cache under its own key | `unit: cmd/sqlgen/gen: TestCacheTemplate_dispatchMutationSetsOnCreate`; `unit: cmd/sqlgen/gen: TestCacheTemplate_dispatchMutationSetsOnCreateMany`; `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsSetHelperSinglePK`; `unit: cmd/sqlgen/gen: TestCacheTemplate_mutationHookForwardsResult` | all |  |
 | cache.invalidate.many-and-where-by-key | `UpsertMany`, `UpdateMany`, `SoftDeleteMany`, `HardDeleteMany`, `RestoreMany` and the four `*Where` mutations share one key-based invalidation arm | `unit: cmd/sqlgen/gen: TestCacheTemplate_whereOpsShareKeyBasedArm` | all |  |
 | cache.invalidate.uncached-table-guard | The mutation invalidation arm returns before any backend call for a table that is not cached | `unit: cmd/sqlgen/gen: TestCacheTemplate_whereOpsShareKeyBasedArm` | all |  |
 | cache.skip-cache.read | A `Get` with `CallOptions.SkipCache: true` does not read through the cache | `unit: cmd/sqlgen/gen: TestCacheTemplate_queryHookPreservesBypassGates` | all |  |
@@ -90,7 +118,7 @@ No requirements yet. See [README.md](README.md) for the format.
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | cache.invalidate.unknown-table-error | `InvalidateMany` builds keys with the named table's own key helper, and returns `cache: unknown or non-cached table %q` for a table that is not cached | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsInvalidateDispatch` | all |  |
-| cache.breaker.open-skips | While the circuit breaker is open, read-through skips the cache read and the cache write, returning the database result | `unit: cmd/sqlgen/gen: TestCacheTemplate_readThroughBreakerGating`; `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsSetHelperSinglePK` | all |  |
+| cache.breaker.open-skips | While the circuit breaker is open, read-through skips the cache read and the cache write, returning the database result | `unit: cmd/sqlgen/gen: TestCacheTemplate_readThroughBreakerGating`; `example: cache: TestBreaker_TripsAndRecovers` | all |  |
 | cache.error-policy.routed | A cache backend `get` or `set` error is routed through the error policy (metrics, `OnErrorFunc`, breaker) with its op label | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsReadThroughHelper`; `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsSetHelperSinglePK`; `unit: cmd/sqlgen/gen: TestCacheTemplate_hydrateSetsCacheOnSuccess` | all |  |
 
 ## §27.11 View Cache Invalidation
@@ -124,16 +152,22 @@ No requirements yet. See [README.md](README.md) for the format.
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | fingerprint.tenanted-marker | Making a table tenanted changes its fingerprint (the tenanted fact is a fingerprint input) | `unit: cmd/sqlgen/gen: TestFingerprint_tenancyStructuralMarker_changesFingerprint` | all |  |
-| cache-key.tenant-per-row-invalidation | A tenanted table's mutation invalidation, `*Where` included, evicts per row from the captured tenants rather than by pattern | `unit: cmd/sqlgen/gen: TestCacheTemplate_tenantedWhereOpsStayPerRow` | all |  |
-| cache-key.tenant-fallback-table-pattern | When a captured tenant is missing, invalidation falls back to the cross-tenant `BuildTablePattern` clear built from the table's schema and bare name | `unit: cmd/sqlgen/gen: TestCacheTemplate_tenantedWhereOpsStayPerRow` | all |  |
+| cache-key.tenant-per-row-invalidation | A tenanted table's mutation invalidation, `*Where` included, evicts per row from the captured tenants rather than by pattern | `unit: cmd/sqlgen/gen: TestCacheTemplate_tenantedWhereOpsStayPerRow`; `example: tenancy: TestNilTenant_WhereAndManyEvictPrecisely` | all |  |
+| cache-key.tenant-fallback-table-pattern | When a captured tenant is missing, invalidation falls back to the cross-tenant `BuildTablePattern` clear built from the table's schema and bare name | `unit: cmd/sqlgen/gen: TestCacheTemplate_tenantedWhereOpsStayPerRow`; `example: tenancy: TestNilTenant_ForcedCaptureGapFallsBackSafely` | all |  |
+| cache-key.tenant-capture-update-returning | On PostgreSQL and SQLite, a tenanted table's (tenant outside the PK) `Update`, `UpdateMany` and `UpdateWhere` capture each affected row's tenant by widening the statement's `RETURNING` projection into `MutationContext.AffectedTenants`, with no pre-read | `unit: cmd/sqlgen/gen: TestTenantCapture_update_returningDialects` | postgres, sqlite |  |
+| cache-key.tenant-capture-delete-increment-upsert-returning | On PostgreSQL, a tenanted table's (tenant outside the PK) `HardDelete` family, `Increment` and `Upsert` capture the affected row's tenant by widening the statement's `RETURNING` projection (the tenant column, or the PK and the tenant) into `MutationContext.AffectedTenants` | `unit: cmd/sqlgen/gen: TestTenantCapture_delete_acrossDialects/postgres returning`; `unit: cmd/sqlgen/gen: TestTenantCapture_increment_acrossDialects/postgres returning`; `unit: cmd/sqlgen/gen: TestTenantCapture_upsert_capturesRowTenant/postgres returning` | postgres |  |
+| cache-key.tenant-capture-mysql-select | On MySQL, tenanted mutations (tenant outside the PK) use no `RETURNING`: `Update`, `Increment` and `HardDelete` read the affected rows' tenants with a `SELECT` over the statement's own conditions, `UpdateWhere` and `HardDeleteWhere` widen `collectAffectedIDs` to project the PK and the tenant column, and `Upsert` reads the written row's tenant by PK after the statement | `unit: cmd/sqlgen/gen: TestTenantCapture_update_mysqlPreRead`; `unit: cmd/sqlgen/gen: TestTenantCapture_delete_acrossDialects/mysql pre-read`; `unit: cmd/sqlgen/gen: TestTenantCapture_increment_acrossDialects/mysql pre-read`; `unit: cmd/sqlgen/gen: TestTenantCapture_upsert_capturesRowTenant/mysql post-read`; `unit: cmd/sqlgen/gen: TestTenantCapture_client_preReadHelperEmission/mysql tenanted emits helper` | mysql |  |
+| cache-key.tenant-capture-create | `Create` and `CreateMany` on a tenanted table (tenant outside the PK) record the tenant value they wrote (the resolved tenant, or the caller's value when tenancy is skipped) into `MutationContext.AffectedTenants`, one element per created row | `unit: cmd/sqlgen/gen: TestTenantCapture_create_capturesInsertedValue` | all |  |
+| cache-key.tenant-capture-composite-pk | On a composite-PK table whose tenant column is outside the PK, the capture projection carries every PK column and the tenant: PostgreSQL's `UpdateMany` widens `RETURNING` to the PK columns and the tenant, and MySQL's `UpdateWhere` widens `collectAffectedPKs` to return the tenants | `unit: cmd/sqlgen/gen: TestTenantCapture_compositeTenantOutsidePK` | postgres, mysql |  |
+| cache-key.tenant-in-pk-no-capture | On a table whose tenant column is part of the primary key, no mutation runs an extra tenant capture: `Create`, `Update`, the delete family and the client emit no `AffectedTenants`, `captureAffectedTenants` or `capturedTenant` | `unit: cmd/sqlgen/gen: TestTenantCapture_tenantInPK_noCarrier` | postgres |  |
 
 ## §29.6 Event Metadata
 <!-- prd: 29.6 sha256: 451a081517626c58 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| tenant-event.stamp-row-derived | On a tenanted table whose tenant column is outside the PK, each fanned-out event's `Metadata["tenant"]` is read from its own row's element of `MutationContext.AffectedTenants`, not from the resolver | `unit: cmd/sqlgen/gen: TestEventHooks_tenantedTable_emitsTenantMetadata` | all |  |
-| tenant-event.stamp-from-pk | When the tenant column is part of the primary key, the event's tenant stamp is read from the affected PK value (the PK struct's tenant field, or the PK itself when the tenant is the sole PK), and `AffectedTenants` is not read | `unit: cmd/sqlgen/gen: TestEventHooks_tenantInPK_stampsFromPKStruct`; `unit: cmd/sqlgen/gen: TestEventHooks_tenantIsSolePK_stampsFromPK` | all |  |
+| tenant-event.stamp-row-derived | On a tenanted table whose tenant column is outside the PK, each fanned-out event's `Metadata["tenant"]` is read from its own row's element of `MutationContext.AffectedTenants`, not from the resolver | `unit: cmd/sqlgen/gen: TestEventHooks_tenantedTable_emitsTenantMetadata`; `example: tenancy: TestEventTenantStamp_SkipTenancyManyStampsPerRowTenants` | all |  |
+| tenant-event.stamp-from-pk | When the tenant column is part of the primary key, the event's tenant stamp is read from the affected PK value (the PK struct's tenant field, or the PK itself when the tenant is the sole PK), and `AffectedTenants` is not read | `unit: cmd/sqlgen/gen: TestEventHooks_tenantInPK_stampsFromPKStruct`; `unit: cmd/sqlgen/gen: TestEventHooks_tenantIsSolePK_stampsFromPK`; `example: tenancy: TestEventTenantStamp_TenantInPKStampsFromPKStruct` | all |  |
 | tenant-event.stamp-percent-v | The tenant stamp is formatted with `%v` | `unit: cmd/sqlgen/gen: TestEventHooks_tenantedTable_emitsTenantMetadata`; `unit: cmd/sqlgen/gen: TestEventHooks_tenantInPK_stampsFromPKStruct` | all |  |
 | tenant-event.uncaptured-key-absent | An event whose row tenant was not captured (no element, or a nil element) carries no `"tenant"` key | `unit: cmd/sqlgen/gen: TestEventHooks_tenantedTable_emitsTenantMetadata` | all |  |
 | tenant-event.stamp-before-on-commit | The tenant stamp is computed before the publish closure handed to `OnCommit` is built | `unit: cmd/sqlgen/gen: TestEventHooks_tenantedTable_emitsTenantMetadata` | all |  |

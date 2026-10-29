@@ -56,7 +56,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | hard-delete-many.nil-empty-input | Bulk write variants distinguish the two nils: a nil slice is simply no rows, since nil and empty already mean the same thing, so `HardDeleteMany` with no keys does nothing | `conformance: HardDeleteMany/nil key list deletes nothing`; `conformance: HardDeleteMany/empty key list deletes nothing` | all | client-methods: HardDeleteMany × nil-empty-input |
-| nil-input.batch-no-statement | `CreateMany`, `UpdateMany`, `UpsertMany`, `SoftDeleteMany`, `RestoreMany` and `HardDeleteMany` send no statement for a nil or empty slice and read nothing back | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected`; `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_goldenFile_dbStrategy` | all |  |
+| nil-input.batch-no-statement | `CreateMany`, `UpdateMany`, `UpsertMany`, `SoftDeleteMany`, `RestoreMany` and `HardDeleteMany` send no statement for a nil or empty slice and read nothing back | `example: postgres: TestEmptyBatch_HardDeleteManyUnaffected`; `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_goldenFile_dbStrategy`; `example: postgres: TestEmptyBatch_ReadsNothingAndReturnsNothing` | postgres |  |
 | nil-input.upsert | `Upsert(ctx, nil, target)` returns `ErrNilInput`, checked before the mutation executor so no hook fires | `unit: cmd/sqlgen/gen: TestUpsertTemplate_goldenFile_singlePK`; `unit: cmd/sqlgen/gen: TestUpsertTemplate_goldenFile_compositePK` | postgres |  |
 | nil-input.upsert-many-nil-element | `UpsertMany` returns `ErrNilInput` when any element is nil, and the guard runs before the mutation executor, so a nil element fires no hook | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_nilInputGuard`; `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_goldenFile_compositePK` | postgres |  |
 
@@ -82,6 +82,15 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | soft-delete.missing-key | `SoftDelete` on a key that does not exist returns `nil` (idempotent) | `example: sqlite: TestSoftDeleteAndRestore_MissingKey_ReturnNilNil_SQLite/SoftDelete` | all | |
 | restore.missing-key | `Restore` on a key that does not exist returns `nil` (idempotent): restoring a non-existent row is a no-op | `example: sqlite: TestSoftDeleteAndRestore_MissingKey_ReturnNilNil_SQLite/Restore` | all | |
 | update.empty-input-no-statement | `Update` with an input that sets no field executes no UPDATE statement and returns the current entity unchanged | `example: postgres: TestUpdate_ZeroFields_NoUpdateSQL_Postgres`; `example: mysql: TestUpdate_ZeroFields_NoUpdateSQL_MySQL`; `example: sqlite: TestUpdate_ZeroFields_NoUpdateSQL_SQLite`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_goldenFile_singlePK` | all |  |
+| edge.conflict.declared-pk-backs-target | A declared `PRIMARY KEY` constraint always backs `{Table}ConflictPK`, also when the key is restated in `tables.<name>.primary_key.columns` | `unit: cmd/sqlgen/cli: TestGeneratePipeline_InlinePKRestatedInConfigKeepsConflictTarget`; `unit: cmd/sqlgen/gen: TestBuildConflictTargets_OverrideNeedsAnIndex/table-level PK restated in config keeps its target` | all |  |
+| edge.conflict.one-per-constraint | Each PRIMARY KEY and UNIQUE constraint yields one `{Table}Conflict{Name}` constant mapped to that constraint's column set; a single-column name is the column's PascalCase (`sku` → `SKU`) | `unit: cmd/sqlgen/gen: TestConflictTargetGeneration` | postgres |  |
+| edge.conflict.columns-lookup | A generated `{table}ConflictColumns` map ties each `{Table}ConflictTarget` constant to its column list, a composite target to all of its columns | `unit: cmd/sqlgen/gen: TestUpsertTemplate_conflictColumnsMap` | postgres |  |
+| edge.upsert-many.no-keys-from-statement | `UpsertMany` builds each sub-batch as one multi-row INSERT carrying the conflict clause and never takes keys or rows from the statement: no `RETURNING`, no `LastInsertId`, no `firstID + i` derivation | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_conflictClauseFields` | all |  |
+| edge.upsert-many.update-set-excludes-sequence | `UpsertMany`'s update set excludes every non-PK auto-increment column, alongside the conflict-target and PK columns | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_excludesNonKeySequenceColumns` | all |  |
+| edge.upsert-many.dedupe-last-wins | `UpsertMany` dedupes its inputs by conflict target across the whole call, before splitting into sub-batches; a duplicate overwrites the earlier row's slot, so the last occurrence's values win in first-appearance order | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_dedupesLastWins` | all |  |
+| edge.upsert-many.covering-target-input-keys | On a caller-known key whose every declared conflict target covers the primary key, `UpsertMany` takes `AffectedPKs` from the inputs and emits no read-back and no runtime branch | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_pkFromInput/composite-pk-every-target-covers-key` | postgres |  |
+| edge.upsert-many.non-covering-target-reads-back | When a table declares a conflict target that does not cover every PK column, `UpsertMany` chooses per call from a generated coverage table: a covering target takes the input keys, a non-covering one reads the written keys back (composite keys as `[]{Table}PK`), whatever the PK strategy | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_pkFromInput/caller-strategy-with-a-non-covering-target`; `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_conflictCoversPKTable`; `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_compositePKReadBack` | postgres |  |
+| edge.upsert-many.db-key-reads-back | On a database-generated key, `UpsertMany` reads each sub-batch's keys back by the conflict target's columns before it records `AffectedPKs` | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_dbPKReadsBackByConflictTarget` | all |  |
 
 ## §9.6 Per-Call Options
 <!-- prd: 9.6 sha256: 5e44c24d55e5a9ed -->
@@ -92,8 +101,9 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | call-options.skip-tenancy-gated | `CallOptions.SkipTenancy` is generated only when `tenancy.enabled: true`; a package without tenancy has no `SkipTenancy` field | `unit: cmd/sqlgen/gen: TestBuildSharedTypesContext_skipTenancyAbsentWhenDisabled`; `unit: cmd/sqlgen/gen: TestBuildSharedTypesContext_callOptionsFields`; `unit: cmd/sqlgen/gen: TestSharedTypesTemplate_tenancyEnabled_emitsSkipTenancy` | all |  |
 | call-options.tenant-field-typed | With tenancy enabled and a tenanted entity, `CallOptions` carries `Tenant *<tenant type>`, concretely typed with the package's tenant Go type | `unit: cmd/sqlgen/gen: TestBuildSharedTypesContext_callOptionsFieldsTenancyEnabled` | all |  |
 | call-options.skip-hooks-not-skip-tenancy | `resolveCallOptions` never sets `SkipTenancy` from `SkipHooks`: `SkipHooks` does not imply `SkipTenancy` | `unit: cmd/sqlgen/gen: TestResolveCallOptions_skipHooksDoesNotFoldSkipTenancy` | all |  |
-| call-options.every-method-last-param | Every method of a table's client interface takes `opts ...func(*CallOptions[{Table}FieldOptions])` as its last parameter | `unit: cmd/sqlgen/gen: TestClientTemplate_callOptionsGeneric`; `unit: cmd/sqlgen/gen: TestClientTemplate_goldenFile_fullOps`; `unit: cmd/sqlgen/gen: TestClientTemplate_goldenFile_compositePK` | postgres |  |
+| call-options.every-method-last-param | Every method of a table's client interface takes `opts ...func(*CallOptions[{Table}FieldOptions])` as its last parameter | `unit: cmd/sqlgen/gen: TestClientTemplate_goldenFile_fullOps`; `unit: cmd/sqlgen/gen: TestClientTemplate_goldenFile_compositePK` | postgres |  |
 | call-options.relationship-propagation | `GetMany` passes its resolved `CallOptions` to the relationship loader, and every O2M and M2M child read sets `SkipCache`, `SkipEvents` and `SkipHooks` from the caller's toggles (the caller record), not from sqlgen's internal-hop options; `Get` restores the caller record onto hook-replaced options before its inner `GetMany` | `unit: cmd/sqlgen/gen: TestRelationshipCallOptions/each O2M and M2M child read inherits the parent's per-operation options`; `unit: cmd/sqlgen/gen: TestRelationshipCallOptions/GetMany hands its resolved options to the loader`; `unit: cmd/sqlgen/gen: TestRelationshipCallOptions/Get keeps the caller record when a hook replaces its options` | postgres |  |
+| call-options.tenant-gated-on-tenanted-entity | With tenancy enabled but no tenanted entity in the package, `CallOptions` has no `Tenant` field and `resolveCallOptions` does no `Tenant` normalization | `unit: cmd/sqlgen/gen: TestBuildSharedTypesContext_tenantFieldAbsentWithoutTenantedTables` | all |  |
 
 ## §9.6a Lock Modes
 <!-- prd: 9.6a sha256: 08fe83b1bf827a4c -->
@@ -106,7 +116,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | lock.mysql-version-guard | On MySQL, `LockForUpdateNoWait` and `LockForUpdateSkipLocked` on `Get`, `GetMany` and `Connection` return an error when the server's major version is below 8 | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_mysql`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects` | mysql |  |
 | lock.mysql-version-cache | The MySQL client probes `SELECT VERSION()` behind a `sync.Once` version cache; PostgreSQL and SQLite clients carry no version cache | `unit: cmd/sqlgen/gen: TestMySQLVersionCache_emittedOnlyForMySQL` | all |  |
 | lock.threaded-into-select | `GetMany` passes the caller's `LockMode` into the `SelectOptions` of its `SELECT` | `unit: cmd/sqlgen/gen: TestLockModeThreading_GetMany` | postgres |  |
-| lock.write-reads-lock-none | The chained `Get` / `GetMany` inside `Create`, `Update`, `Upsert`, `SoftDelete*` and `Restore*` forces `LockMode` to `LockNone` alongside `SkipHooks = true` | `unit: cmd/sqlgen/gen: TestChainedGet_LockNoneForced` | all |  |
+| lock.write-reads-lock-none | The chained `Get` / `GetMany` inside `Create`, `Update`, `Upsert`, `SoftDelete*` and `Restore*` forces `LockMode` to `LockNone` alongside `SkipHooks = true` | `unit: cmd/sqlgen/gen: TestChainedGet_LockNoneForced` | postgres |  |
 | lock.read-internals-propagate | `Connection`'s inner `GetMany` keeps the caller's `LockMode` rather than resetting it to `LockNone` | `unit: cmd/sqlgen/gen: TestChainedGet_PaginationDoesNotForceLockNone` | all |  |
 
 ## §9.7 PK Resolution and Entity Return Path
@@ -115,6 +125,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | pk-return.batch-getmany | `CreateMany` and `UpdateMany` collect the written keys and return their entities through one `GetMany` on those keys (single PK: `ID In` the keys; composite PK: `PKs`) with no limit | `unit: cmd/sqlgen/gen: TestCreateTemplate_createMany_multiRowInsert`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_pgx`; `unit: cmd/sqlgen/gen: TestCreateTemplate_createMany_compositePK`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_compositePK_updateMany` | postgres |  |
+| pk-return.upsert-fallback-binds-by-name | On a tenanted table, the `Upsert` conflict fallback `SELECT` binds its scan targets by column name, so a tenant column that sorts before the PK still lands in the tenant target | `unit: cmd/sqlgen/gen: TestUpsertTemplate_conflictRowFallbackBindsByName` | postgres |  |
 
 ## §9.8.2 Get
 <!-- prd: 9.8.2 sha256: ef0c08f3be70bdff -->
@@ -130,7 +141,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | get-many.required-columns-union | A non-empty narrowed `FieldOptions` projection in `GetMany` is widened by the columns its internal caller declared | `unit: cmd/sqlgen/gen: TestRequiredColumns_getManyUnionsDeclaredColumns/table` | all |  |
-| get-many.nothing-selected-returns-early | `GetMany` with a non-nil `FieldOptions` that selects no column returns without querying | `unit: cmd/sqlgen/gen: TestRequiredColumns_getManyUnionsDeclaredColumns/table` | all |  |
+| get-many.nothing-selected-returns-early | `GetMany` with a non-nil `FieldOptions` that selects no column returns without querying |  | all |  |
 | get-many.parent-key-for-relationships | When a narrowed `GetMany` loads an O2M or M2M relationship, the parent key is unioned into the projection | `unit: cmd/sqlgen/gen: TestRequiredColumns_getManyUnionsParentKeyForRelationships` | all |  |
 | get-many.o2o-target-pk-selected | An O2O join selects the target's primary key even when the target's `FieldOptions` does not, at every level of a chain | `unit: cmd/sqlgen/gen: TestRequiredColumns_o2oJoinCarriesTargetPK`; `unit: cmd/sqlgen/gen: TestRequiredColumns_chainedO2OJoinCarriesTargetPK` | all |  |
 | get-many.goroutine-per-edge | `GetMany` loads each selected O2M and M2M relationship in its own `errgroup` goroutine | `unit: cmd/sqlgen/gen: TestGetTemplate_parallelLoading` | all |  |
@@ -141,6 +152,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | create.refetch-skip-hooks | `Create` returns the created entity through a follow-up `Get` with `SkipHooks = true`, so the mutation hooks do not fire again for the fetch | `unit: cmd/sqlgen/gen: TestCreateTemplate_goldenFile_dbStrategyPostgres` | postgres |  |
+| create.has-selected-columns-method | Each `<T>FieldOptions` has a generated `HasSelectedColumns() bool` method | `unit: cmd/sqlgen/gen: TestFieldOptionsTemplate_hasSelectedColumnsMethod` | all |  |
 
 ## §9.8.5 CreateMany
 <!-- prd: 9.8.5 sha256: 8685191a13e9a096 -->
@@ -150,18 +162,18 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | create-many.batch-split | `CreateMany` splits its inputs into sub-batches of the table's batch size, one multi-row INSERT per sub-batch | `unit: cmd/sqlgen/gen: TestCreateTemplate_createMany_batchSplitting` | postgres |  |
 | create-many.returning-keys | On PostgreSQL, `CreateMany`'s `multiInsertAndResolveIDs` sends the multi-row INSERT with `RETURNING` the PK column and scans one key per returned row; it derives no key and pins no session | `unit: cmd/sqlgen/gen: TestCreateTemplate_multiInsertAndResolveIDs_postgres` | postgres |  |
 | create-many.mysql-step-derivation | On MySQL, a multi-row `CreateMany` on a database-generated key derives its keys as `LastInsertId() + i × @@auto_increment_increment`, reading the step on the INSERT's own session: a caller's transaction as it is, otherwise one session pinned through `database.SessionPinner` without opening a transaction | `unit: cmd/sqlgen/gen: TestCreateTemplate_multiInsertAndResolveIDs_mysql`; `example: mysql: TestCreateMany_KeysFollowTheSessionStep`; `example: mysql: TestCreateMany_KeysFromAMixedStepPool`; `example: mysql: TestCreateMany_StepReadOpensNoTransaction`; `example: mysql: TestCreateMany_StaysInTheCallerTransaction` | mysql |  |
-| create-many.mysql-no-pinner-refused | On MySQL, a multi-row `CreateMany` through a `Querier` that is neither a transaction nor a `database.SessionPinner` returns an error instead of deriving keys | `unit: cmd/sqlgen/gen: TestCreateTemplate_multiInsertAndResolveIDs_mysql` | mysql |  |
+| create-many.mysql-no-pinner-refused | On MySQL, a multi-row `CreateMany` through a `Querier` that is neither a transaction nor a `database.SessionPinner` returns an error instead of deriving keys | `unit: cmd/sqlgen/gen: TestCreateTemplate_multiInsertAndResolveIDs_mysql`; `example: mysql: TestCreateMany_QuerierThatCannotPin` | mysql |  |
 | create-many.no-writable-column-sqlite | On SQLite, `CreateMany` on a table with no writable column names the key in every row and sends `NULL` for it, which SQLite fills with the next rowid | `unit: cmd/sqlgen/gen: TestCreateTemplate_createMany_noWritableColumn/sqlite` | sqlite |  |
-| create-many.sqlite-default-expr | The SQLite `CreateMany` sentinel for an unset omittable column carries the column's DDL default expression, or `NULL` for a column without a default | `unit: cmd/sqlgen/gen: TestCreateInputFieldClassification_defaultExprFallsBackToNULL` | sqlite |  |
+| create-many.sqlite-default-expr | The SQLite `CreateMany` sentinel for an unset omittable column carries the column's DDL default expression, or `NULL` for a column without a default | `unit: cmd/sqlgen/gen: TestCreateInputFieldClassification_defaultExprFallsBackToNULL`; `golden: sqlite` | sqlite |  |
 
 ## §9.8.6a UpdateMany
 <!-- prd: 9.8.6a sha256: 0f9385aeae2917fb -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| update-many.item-type | On a single-PK table `UpdateMany` takes `[]Update{Table}Item`, each item pairing the PK (field named and typed after the PK column) with an `*Update{Table}Input` | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_pgx` | postgres |  |
+| update-many.item-type | On a single-PK table `UpdateMany` takes `[]Update{Table}Item`, each item pairing the PK (field named and typed after the PK column) with an `*Update{Table}Input` |  | postgres |  |
 | update-many.pgx-send-batch | On pgx, `UpdateMany` queues each item's UPDATE into a `pgx.Batch` and sends each sub-batch with `SendBatch` | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_pgx` | pgx |  |
-| update-many.stdlib-sequential | On stdlib, `UpdateMany` executes each item's UPDATE in turn with `Exec` and builds no pgx batch | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_stdlib` | stdlib |  |
+| update-many.stdlib-sequential | On stdlib, `UpdateMany` executes each item's UPDATE in turn with `Exec` and builds no pgx batch |  | stdlib |  |
 
 ## §9.8.6b UpdateWhere
 <!-- prd: 9.8.6b sha256: dd8c98e6ecb54b73 -->
@@ -187,9 +199,10 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | soft-delete.where-scopes-live-rows | `SoftDeleteWhere` always ANDs the not-deleted condition (`deleted_at IS NULL` for the timestamp strategy) onto the filter's conditions | `unit: cmd/sqlgen/gen: TestDeleteTemplate_softDeleteWhere_postgres`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_goldenFile_singlePK` | postgres |  |
-| restore.where-scopes-deleted | `RestoreWhere` always ANDs a deleted-rows condition onto the filter's conditions: `deleted_at IS NOT NULL` for the timestamp strategy, `is_deleted = TRUE` for bool | `unit: cmd/sqlgen/gen: TestDeleteTemplate_restoreWhere_scopesToDeleted`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_restoreWhere_bool_scopesToDeleted` | postgres |  |
+| restore.where-scopes-deleted | `RestoreWhere` always ANDs a deleted-rows condition onto the filter's conditions: `deleted_at IS NOT NULL` for the timestamp strategy, `is_deleted = TRUE` for bool | `unit: cmd/sqlgen/gen: TestDeleteTemplate_restoreWhere_scopesToDeleted`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_restoreWhere_bool_scopesToDeleted`; `unit: cmd/sqlgen/gen: TestFuncSoftDeleteRestoreCondition/timestamp`; `unit: cmd/sqlgen/gen: TestFuncSoftDeleteRestoreCondition/bool` | postgres |  |
 | soft-delete.where-returning-keys | On PostgreSQL, `SoftDeleteWhere` and `RestoreWhere` collect the affected IDs from `RETURNING "id"` on the mutation itself, scanning the returned rows | `unit: cmd/sqlgen/gen: TestDeleteTemplate_softDeleteWhere_postgres`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_restoreWhere_idempotent` | postgres |  |
 | soft-delete.where-mysql-preselect | On MySQL the delete family uses no `RETURNING`; the `Where` variants learn their affected IDs from a generated `collectAffectedIDs` that selects the PK column | `unit: cmd/sqlgen/gen: TestDeleteTemplate_softDeleteWhere_mysql` | mysql |  |
+| soft-delete.refetch-matches-deleted | `SoftDelete`, `SoftDeleteMany` and `SoftDeleteWhere` re-fetch the rows they soft-deleted with the soft-delete column's comparator set to match deleted rows, overriding the default not-deleted condition (timestamp: `&comparator.NullableTime{Null: new(false)}`) | `unit: cmd/sqlgen/gen: TestFuncSoftDeleteFilterOverride`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_softDelete_timestamp`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_softDeleteMany`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_softDeleteWhere_postgres` | postgres |  |
 
 ## §9.8.9a Increment
 <!-- prd: 9.8.9a sha256: b2496f9df294669f -->
@@ -203,9 +216,9 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| exists.by-pk | `Exists(ctx, pk)` runs `BuildExists` with a `WHERE` matching the primary key | `unit: cmd/sqlgen/gen: TestExistsTemplate_existsWithoutSoftDelete` | all |  |
+| exists.by-pk | `Exists(ctx, pk)` runs `BuildExists` with a `WHERE` matching the primary key | `unit: cmd/sqlgen/gen: TestExistsTemplate_goldenFile` | all |  |
 | exists.soft-delete-excluded | On a soft-delete table `Exists` always adds the not-deleted condition, so a soft-deleted row returns `false` | `unit: cmd/sqlgen/gen: TestExistsTemplate_goldenFile` | all |  |
-| exists.where-filter | `ExistsWhere(ctx, *{Table}Filter)` builds its conditions with `filter.ToConditions` and runs `BuildExists` | `unit: cmd/sqlgen/gen: TestExistsTemplate_existsWhereWithFilter`; `unit: cmd/sqlgen/gen: TestExistsTemplate_existsWhereWithoutSoftDelete` | all |  |
+| exists.where-filter | `ExistsWhere(ctx, *{Table}Filter)` builds its conditions with `filter.ToConditions` and runs `BuildExists` | `unit: cmd/sqlgen/gen: TestExistsTemplate_goldenFile` | all |  |
 | exists.where-soft-delete-default | On a soft-delete table `ExistsWhere` adds the not-deleted condition unless the filter sets the soft-delete comparator | `unit: cmd/sqlgen/gen: TestExistsTemplate_existsWhereWithFilter`; `unit: cmd/sqlgen/gen: TestExistsTemplate_goldenFile` | all |  |
 
 ## §9.8.11 Paginate
@@ -312,7 +325,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| paginate.result-shape | `PaginateResult[T]` carries `Items`, `TotalCount`, `Offset`, `Limit` and `HasMore`, and none of the derived fields `TotalPages`, `PageSize`, `CurrentPage` | `unit: cmd/sqlgen/gen: TestPaginationTemplate_resultFields`; `unit: cmd/sqlgen/gen: TestPaginationTemplate_goldenFile` | all |  |
+| paginate.result-shape | `PaginateResult[T]` carries `Items`, `TotalCount`, `Offset`, `Limit` and `HasMore`, and none of the derived fields `TotalPages`, `PageSize`, `CurrentPage` | `unit: cmd/sqlgen/gen: TestPaginationTemplate_resultFields`; `unit: cmd/sqlgen/gen: TestPaginationTemplate_goldenFile`; `unit: cmd/sqlgen/gen: TestPaginationTemplate_paginateResultType` | all |  |
 | paginate.json-tags | `PaginateInput` and `PaginateResult` fields carry the §14.1 json tags (`filter`, `sort`, `limit`, `offset`; `items`, `total_count`, `offset`, `limit`, `has_more`) | `unit: cmd/sqlgen/gen: TestPaginationTemplate_paginateInputType`; `unit: cmd/sqlgen/gen: TestPaginationTemplate_goldenFile` | all |  |
 
 ## §14.2 Cursor-Based (Relay Pagination)
@@ -324,7 +337,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | cursor.invalid-missing-or-null | A cursor missing an expected key, or holding JSON `null` for one, is rejected with `ErrInvalidCursor`; a decoded value that binds SQL NULL (a `driver.Valuer` returning nil or an error) is detected as null | `unit: cmd/sqlgen/gen: TestConnectionTemplate_cursorEncodeDecode`; `unit: cmd/sqlgen/gen: TestConnectionTemplate_goldenFile` | all |  |
 | cursor.sort-by-keys | `Connection` orders by the `cursor_keys` columns only, every key ascending for forward pagination and descending for backward | `unit: cmd/sqlgen/gen: TestConnectionTemplate_cursorSorts`; `unit: cmd/sqlgen/gen: TestConnectionTemplate_goldenFile` | all |  |
 | connection.first-last-error | `Connection` with both `First` and `Last` set returns `ErrInvalidCursor` | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_connectionFirstAndLastError` | postgres |  |
-| connection.page-info-flags | `HasNextPage` is true when forward pagination fetched more than `first` rows or backward pagination was given `before`; `HasPreviousPage` is true when backward pagination fetched more than `last` rows or forward pagination was given `after` | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_connectionHasNextHasPreviousFlags` | postgres |  |
+| connection.page-info-flags | `HasNextPage` is true when forward pagination fetched more than `first` rows or backward pagination was given `before`; `HasPreviousPage` is true when backward pagination fetched more than `last` rows or forward pagination was given `after` | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_connectionForward` | postgres |  |
 | connection.backward-reversed | Backward pagination reverses the fetched rows, so edges are returned in ascending cursor order | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_connectionResultReversal`; `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_goldenFile` | postgres |  |
 | connection.default-page-size | When neither `first` nor `last` is set, `Connection` fetches the client's configured page size | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_connectionFirstPage` | postgres |  |
 | connection.total-count-on-connection | `TotalCount int64` is a field of `Connection[T]`, not of `PageInfo` | `unit: cmd/sqlgen/gen: TestConnectionTemplate_totalCountAlwaysPopulated` | all |  |
@@ -347,6 +360,14 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | matview.file.pk-concurrently-refreshable | An annotation-file materialized view with `@pk` has those columns as its non-nullable primary key and is concurrently refreshable; without `@pk` it has no primary key and is not concurrently refreshable | `unit: parser: TestBuildView_Materialized` | postgres | |
 | matview.invariant.regular-never-concurrent | A regular (non-materialized) view is never concurrently refreshable, even with `@pk` | `unit: parser: TestBuildView_RegularViewNeverConcurrentlyRefreshable` | all | |
 | matview.overlay.pk-replaces-discovered | An overlay `@pk` on an introspected materialized view replaces its discovered primary key (the discovered columns stop being PK) and makes it concurrently refreshable | `unit: parser: TestMergeViewAnnotations_MatviewPKOverride` | postgres | |
+
+## §16.5.3 Refresh Methods
+<!-- prd: 16.5.3 sha256: 0d3f9f72fbbaf036 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| matview.refresh.concurrently-tx-guard | With an ambient transaction, `RefreshConcurrently` returns `database.ErrRefreshConcurrentlyInTx` before it enters the query-hook chain or issues any SQL | `unit: cmd/sqlgen/gen: TestViewRefreshTemplate_txGuardPrecedesExecution` | postgres |  |
+| matview.refresh.plain-no-tx-guard | Plain `Refresh` carries no transaction guard, so it may run inside a transaction | `unit: cmd/sqlgen/gen: TestViewRefreshTemplate_txGuardPrecedesExecution` | postgres |  |
 
 ## §17.3 Generated Behavior
 <!-- prd: 17.3 sha256: dce1144bfbcb5b6f -->
@@ -391,9 +412,9 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | client.new-shared-querier | `New(querier database.Querier, opts ...ClientOption) *Client` constructs every entity client, tables and views, internally from the one querier it was given | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_newConstructor` | postgres, sqlite |  |
-| client.accessor-per-table | The unified client has one accessor per table, named for the plural struct name (`Client.{Tables}()`), whose interface is `{Table}Client` | `unit: cmd/sqlgen/gen: TestBuildClientContext` | all |  |
+| client.accessor-per-table | The unified client has one accessor per table, named for the plural struct name (`Client.{Tables}()`), whose interface is `{Table}Client` | `unit: cmd/sqlgen/gen: TestBuildClientContext`; `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_accessorsReturnInterfaces` | all |  |
 | client.tx-delegation | `Begin`, `Commit`, `Rollback` and `WithTx` delegate to `database.NewTransaction`, `database.Commit`, `database.Rollback` and `database.WithTransaction`, passing the client's querier to `NewTransaction` and `WithTransaction` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_transactionMethods` | postgres, sqlite |  |
-| client.querier-escape | `Client.Querier(ctx)` returns `database.Conn(ctx, c.querier)`: the active transaction when ctx carries one, otherwise the original querier, with no hook chain | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_querierReturnsConnFromContext`; `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_querierReturnsOriginalWhenNoTx` | postgres, sqlite |  |
+| client.querier-escape | `Client.Querier(ctx)` returns `database.Conn(ctx, c.querier)`: the active transaction when ctx carries one, otherwise the original querier, with no hook chain | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_goldenFile` | postgres, sqlite |  |
 | client.raw-scan-callback | `Raw(ctx, sql string, args []any, fn func(database.Rows) error) error` scans inside its terminal through `database.QueryFunc` on `database.Conn(ctx, c.querier)` and hands no live result set back; `RawExec(ctx, sql string, args ...any) (database.Result, error)` executes on `database.Conn(ctx, c.querier)` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_rawQuery`; `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_rawExec` | postgres, sqlite |  |
 | client.raw-global-hooks | `Raw` runs through the client's registered query hooks and `RawExec` through its registered mutation hooks (the global chain), with panic recovery | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_goldenFile` | postgres, sqlite |  |
 | client.ping | `Ping(ctx)` calls the querier's own `Ping(ctx) error` when it has one, and otherwise runs `SELECT 1` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_pingWithNativeMethod`; `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_pingFallbackSelect1` | postgres, sqlite |  |
@@ -421,6 +442,13 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 |---|---|---|---|---|
 | hard-delete-many.error-mapping | A constraint violation is wrapped into a structured `ConstraintError` that unwraps to `ErrConstraintViolation`: deleting a row another row references gives `Type` `ConstraintForeignKey` | `conformance: HardDeleteMany/deleting a referenced row returns a foreign key ConstraintError` | all | client-methods: HardDeleteMany × error-mapping |
 
+## §25.1 Query Count Guarantee
+<!-- prd: 25.1 sha256: 56257757d02b513e -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| load.chunk-size | Each relationship loader step binds parent keys in chunks of `floor(L / 2 / N)` keys, `L` being 32766 on SQLite and 65535 on MySQL and PostgreSQL: 16383 and 32767 for a single-column key; on PostgreSQL with pgx a one-column O2M FK filter binds every parent key as one array parameter instead | `unit: cmd/sqlgen/gen: TestFuncLoadChunkSize`; `unit: cmd/sqlgen/gen: TestGetTemplate_o2mRelationshipLoading`; `unit: cmd/sqlgen/gen: TestGetTemplate_m2mRelationshipLoading` | all |  |
+
 ## §25.3 Batch Operations
 <!-- prd: 25.3 sha256: f6b1af10841cf723 -->
 
@@ -441,14 +469,14 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| tenancy.nested-skip-tenancy-propagates | The `CallOptions` each nested inner call receives copy the caller's `SkipTenancy`, and, in a package with a tenant type, its explicit `Tenant` | `unit: cmd/sqlgen/gen: TestNestedSharedHelpers_BodiesVaryWithTenancy` | all |  |
+| tenancy.nested-skip-tenancy-propagates | The `CallOptions` each nested inner call receives copy the caller's `SkipTenancy` | `unit: cmd/sqlgen/gen: TestNestedSharedHelpers_BodiesVaryWithTenancy` | all |  |
 
 ## §29.4.3 Raw operations
 <!-- prd: 29.4.3 sha256: f5ff7daf5d295d6b -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| tenancy.raw-bypass-comment | On a tenancy-enabled client, `Raw` and `RawExec` each carry the `// sqlgen: raw query bypasses tenancy` comment | `unit: cmd/sqlgen/gen: TestTenancyTemplate_clientRawHasBypassComment` | all |  |
+| tenancy.raw-bypass-comment | On a tenancy-enabled client, `Raw` and `RawExec` each carry the `// sqlgen: raw query bypasses tenancy` comment | `unit: cmd/sqlgen/gen: TestTenancyTemplate_clientRawHasBypassComment`; `golden: tenancy_mysql` | all |  |
 
 ## §29.4.4 CallOptions.SkipTenancy and CallOptions.Tenant
 <!-- prd: 29.4.4 sha256: 9fd1aa9d0dfd2d7c -->
@@ -481,10 +509,11 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 | gap.get-many.field-options-not-mutated | No generated read path writes to a `FieldOptions` the caller passed in. The O2M and M2M loaders forward the relationship's `FieldOptions` as given and declare the key they need through the inner input's `requiredColumns`, instead of setting `relFieldOptions.ID = true` / `relFieldOptions.<FK> = true`. Two edges can share one `*FieldOptions` and the loaders run concurrently, so an in-place write would be a data race as well as visible to the caller. §9.6 states what is unioned into the projection but not that the caller's struct is left untouched. | `unit: cmd/sqlgen/gen: TestRequiredColumns_noFieldOptionsMutation` | §9.6 |  |
 | gap.update.strict-doc-comment | The generated `Update` / `Increment` doc comment says `Returns ErrNotFound if the primary key does not exist.` only when `strict_updates` is true and omits the sentence otherwise; the PRD shows one unconditional wording, `(when strict_updates is true)` | `unit: cmd/sqlgen/gen: TestClientTemplate_strictUpdatesDocComments` | §8.2, §9.5 |  |
 | gap.update-many.pgx-sequential-fallback | On pgx, when the resolved querier does not implement `SendBatch`, `UpdateMany` falls back to executing the queued statements one by one with `Exec`; the PRD states only the `SendBatch` path | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_pgx` | §9.8.6a, §19.4 |  |
-| gap.restore.where-integer-eq-one | On an `integer` soft-delete column `RestoreWhere` scopes to `deleted = 1`, while SoftDelete's re-fetch (`Neq 0`) and the read path's not-deleted condition (`= 0`) treat any non-zero value as deleted, so a row with `deleted = 2` is hidden from reads but not restorable by `RestoreWhere` | `unit: cmd/sqlgen/gen: TestDeleteTemplate_restoreWhere_integer_scopesToDeleted` | §9.8.8, §17.3 |  |
+| gap.restore.where-integer-eq-one | On an `integer` soft-delete column `RestoreWhere` scopes to `deleted = 1`, while SoftDelete's re-fetch (`Neq 0`) and the read path's not-deleted condition (`= 0`) treat any non-zero value as deleted, so a row with `deleted = 2` is hidden from reads but not restorable by `RestoreWhere` | `unit: cmd/sqlgen/gen: TestDeleteTemplate_restoreWhere_integer_scopesToDeleted`; `unit: cmd/sqlgen/gen: TestFuncSoftDeleteRestoreCondition/integer` | §9.8.8, §17.3 |  |
 | gap.conflict.duplicate-unique-one-target | Two UNIQUE constraints over the same column set (MySQL `email`, `email_2`) yield one conflict-target constant (`UserConflictEmail`), not one per constraint | `unit: cmd/sqlgen/gen: TestConflictTargetDuplicateUnique` | §9.5 |  |
 | gap.call-options.json-tags-caller-field | `CallOptions` fields carry json tags (`skip_cache`, `skip_events`, `skip_hooks`, `skip_tenancy`, `tenant`, `field_options`, `lock_mode`, `allow_in_transaction`) and the struct ends with an unexported `caller callerOptions` field (the outermost call's hook toggles) that the §9.6 listing, stated as the struct's full shape, does not show | `unit: cmd/sqlgen/gen: TestBuildSharedTypesContext_callOptionsFields`; `unit: cmd/sqlgen/gen: TestBuildSharedTypesContext_callOptionsFieldsTenancyEnabled` | §9.6 |  |
 | gap.client.view-accessor-singular | A view's unified-client accessor uses the view's struct name unpluralized (`ProductSummary()`), while table accessors are plural; the PRD says only 'one per view as well' | `unit: cmd/sqlgen/gen: TestBuildClientContext` | §20.2 |  |
 | gap.client.tx-callback-mode-default | `Begin` and `WithTx` fill the client's `WithCallbackMode` value into the transaction options when the caller passes no `TxOptions` or one with an empty `CallbackMode` (`applyTxDefaults`); the §20.2 delegation table shows `opts...` passed through unchanged | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_transactionMethods` | §20.2, §18.6 |  |
 | gap.tenant-rel.shared-parent-resolve-gate | On an untenanted parent whose relationship filters reach a tenanted target, the client resolves a tenant for the filter only when the call's filter sets a relationship member (at the top level or inside `and` / `or`); a filter with no relationship member resolves nothing, so a shared table stays readable before a tenant is selected | `unit: cmd/sqlgen/gen: TestRelationshipFilters_SharedParentGatesTenantResolve` | §11.1, §29.10 |  |
 | gap.tenancy.view-predicate-order | A tenanted view's GetMany appends the tenant predicate after the filter conditions and before the keyset conditions (`filter < tenant < keyset`); §29.8 says the AND order is fixed at codegen but is not part of the contract, so the pin is on an order the PRD disclaims | `unit: cmd/sqlgen/gen: TestViewTenancy_predicateOrderIsStable` | §29.2.5, §29.8 |  |
+| gap.nested.explicit-tenant-propagates | In a package with a uniform tenant type, each nested inner call's `CallOptions` also copy the caller's explicit `Tenant`; §29.10 states only that nested children inherit the ctx-cached tenant | `unit: cmd/sqlgen/gen: TestNestedSharedHelpers_BodiesVaryWithTenancy/tenancy on with a uniform tenant type — the explicit tenant crosses too` | §29.4.2a, §29.10 | |
