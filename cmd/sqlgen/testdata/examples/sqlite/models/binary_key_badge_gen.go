@@ -556,7 +556,9 @@ type UpdateBinaryKeyBadgeItem struct {
 
 // UpdateMany partially updates multiple binary_key_badges and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *binaryKeyBadgeClient) UpdateMany(ctx context.Context, items []UpdateBinaryKeyBadgeItem, opts ...func(*CallOptions[BinaryKeyBadgeFieldOptions])) ([]*BinaryKeyBadge, error) {
 	// UpdateBinaryKeyBadgeItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -571,7 +573,6 @@ func (c *binaryKeyBadgeClient) UpdateMany(ctx context.Context, items []UpdateBin
 		Op: hook.OpUpdateMany, Table: TableBinaryKeyBadges, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -590,34 +591,45 @@ func (c *binaryKeyBadgeClient) UpdateMany(ctx context.Context, items []UpdateBin
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_binary_key_badge", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allPKs = append(allPKs, item.PK)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: sql.BuildCompositePKConditions(c.dialect,
+							[]string{"binary_key_id", "badge_code"},
+							[]any{item.PK.BinaryKeyID, item.PK.BadgeCode}),
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("update binary_key_badge %v: %w", item.PK, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update binary_key_badge %v rows affected: %w", item.PK, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
 					allPKs = append(allPKs, item.PK)
-					continue
 				}
-
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: sql.BuildCompositePKConditions(c.dialect,
-						[]string{"binary_key_id", "badge_code"},
-						[]any{item.PK.BinaryKeyID, item.PK.BadgeCode}),
-				})
-
-				execResult, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update binary_key_badge %v: %w", item.PK, err)
-				}
-				matched, err := execResult.RowsAffected()
-				if err != nil {
-					return nil, fmt.Errorf("update binary_key_badge %v rows affected: %w", item.PK, err)
-				}
-				if matched > 0 {
-					writtenItems = append(writtenItems, item)
-				}
-				allPKs = append(allPKs, item.PK)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 

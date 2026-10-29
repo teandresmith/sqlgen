@@ -964,7 +964,9 @@ type UpdateAccountItem struct {
 
 // UpdateMany partially updates multiple accounts and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *accountClient) UpdateMany(ctx context.Context, items []UpdateAccountItem, opts ...func(*CallOptions[AccountFieldOptions])) ([]*Account, error) {
 	// UpdateAccountItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -979,7 +981,6 @@ func (c *accountClient) UpdateMany(ctx context.Context, items []UpdateAccountIte
 		Op: hook.OpUpdateMany, Table: TableAccounts, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -998,64 +999,75 @@ func (c *accountClient) UpdateMany(ctx context.Context, items []UpdateAccountIte
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.Email.Get(); ok {
-					setClauses["email"] = v
-				}
-				if v, ok := item.Input.DisplayName.Get(); ok {
-					setClauses["display_name"] = v
-				}
-				if v, ok := item.Input.IsActive.Get(); ok {
-					setClauses["is_active"] = v
-				}
-				if v, ok := item.Input.CreatedAt.Get(); ok {
-					setClauses["created_at"] = v
-				}
-				if v, ok := item.Input.Nickname.Get(); ok {
-					setClauses["nickname"] = v
-				}
-				if v, ok := item.Input.Locale.Get(); ok {
-					setClauses["locale"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_account", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
-					allIDs = append(allIDs, item.ID)
-					continue
-				}
-				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Email.Get(); ok {
+						setClauses["email"] = v
+					}
+					if v, ok := item.Input.DisplayName.Get(); ok {
+						setClauses["display_name"] = v
+					}
+					if v, ok := item.Input.IsActive.Get(); ok {
+						setClauses["is_active"] = v
+					}
+					if v, ok := item.Input.CreatedAt.Get(); ok {
+						setClauses["created_at"] = v
+					}
+					if v, ok := item.Input.Nickname.Get(); ok {
+						setClauses["nickname"] = v
+					}
+					if v, ok := item.Input.Locale.Get(); ok {
+						setClauses["locale"] = v
+					}
 
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: itemConds,
-				})
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+					itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
 
-				execResult, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update account %v: %w", item.ID, err)
-				}
-				matched, err := execResult.RowsAffected()
-				if err != nil {
-					return nil, fmt.Errorf("update account %v rows affected: %w", item.ID, err)
-				}
-				// MySQL counts the rows a statement changed, not the rows it
-				// matched, so an item that leaves its row as it was reports
-				// none. Only then is the row looked up, to tell a missing row
-				// from an unchanged one.
-				if matched == 0 {
-					found, err := c.rowMatches(ctx, conn, itemConds)
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: itemConds,
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return nil, fmt.Errorf("update account %v: match row: %w", item.ID, err)
+						return fmt.Errorf("update account %v: %w", item.ID, err)
 					}
-					if found {
-						matched = 1
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update account %v rows affected: %w", item.ID, err)
 					}
+					// MySQL counts the rows a statement changed, not the rows it
+					// matched, so an item that leaves its row as it was reports
+					// none. Only then is the row looked up, to tell a missing row
+					// from an unchanged one.
+					if matched == 0 {
+						found, err := c.rowMatches(ctx, conn, itemConds)
+						if err != nil {
+							return fmt.Errorf("update account %v: match row: %w", item.ID, err)
+						}
+						if found {
+							matched = 1
+						}
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
 				}
-				if matched > 0 {
-					writtenItems = append(writtenItems, item)
-				}
-				allIDs = append(allIDs, item.ID)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
@@ -3479,7 +3491,9 @@ type UpdateProjectItem struct {
 
 // UpdateMany partially updates multiple projects and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *projectClient) UpdateMany(ctx context.Context, items []UpdateProjectItem, opts ...func(*CallOptions[ProjectFieldOptions])) ([]*Project, error) {
 	// UpdateProjectItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -3494,7 +3508,6 @@ func (c *projectClient) UpdateMany(ctx context.Context, items []UpdateProjectIte
 		Op: hook.OpUpdateMany, Table: TableProjects, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -3513,61 +3526,72 @@ func (c *projectClient) UpdateMany(ctx context.Context, items []UpdateProjectIte
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.AccountID.Get(); ok {
-					setClauses["account_id"] = v
-				}
-				if v, ok := item.Input.Name.Get(); ok {
-					setClauses["name"] = v
-				}
-				if v, ok := item.Input.Slug.Get(); ok {
-					setClauses["slug"] = v
-				}
-				if v, ok := item.Input.Summary.Get(); ok {
-					setClauses["summary"] = v
-				}
-				if v, ok := item.Input.Tags.Get(); ok {
-					setClauses["tags"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_project", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
-					allIDs = append(allIDs, item.ID)
-					continue
-				}
-				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.AccountID.Get(); ok {
+						setClauses["account_id"] = v
+					}
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+					if v, ok := item.Input.Slug.Get(); ok {
+						setClauses["slug"] = v
+					}
+					if v, ok := item.Input.Summary.Get(); ok {
+						setClauses["summary"] = v
+					}
+					if v, ok := item.Input.Tags.Get(); ok {
+						setClauses["tags"] = v
+					}
 
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: itemConds,
-				})
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+					itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
 
-				execResult, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update project %v: %w", item.ID, err)
-				}
-				matched, err := execResult.RowsAffected()
-				if err != nil {
-					return nil, fmt.Errorf("update project %v rows affected: %w", item.ID, err)
-				}
-				// MySQL counts the rows a statement changed, not the rows it
-				// matched, so an item that leaves its row as it was reports
-				// none. Only then is the row looked up, to tell a missing row
-				// from an unchanged one.
-				if matched == 0 {
-					found, err := c.rowMatches(ctx, conn, itemConds)
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: itemConds,
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return nil, fmt.Errorf("update project %v: match row: %w", item.ID, err)
+						return fmt.Errorf("update project %v: %w", item.ID, err)
 					}
-					if found {
-						matched = 1
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update project %v rows affected: %w", item.ID, err)
 					}
+					// MySQL counts the rows a statement changed, not the rows it
+					// matched, so an item that leaves its row as it was reports
+					// none. Only then is the row looked up, to tell a missing row
+					// from an unchanged one.
+					if matched == 0 {
+						found, err := c.rowMatches(ctx, conn, itemConds)
+						if err != nil {
+							return fmt.Errorf("update project %v: match row: %w", item.ID, err)
+						}
+						if found {
+							matched = 1
+						}
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
 				}
-				if matched > 0 {
-					writtenItems = append(writtenItems, item)
-				}
-				allIDs = append(allIDs, item.ID)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
@@ -5706,7 +5730,9 @@ type UpdateTaskLabelItem struct {
 
 // UpdateMany partially updates multiple task_labels and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *taskLabelClient) UpdateMany(ctx context.Context, items []UpdateTaskLabelItem, opts ...func(*CallOptions[TaskLabelFieldOptions])) ([]*TaskLabel, error) {
 	// UpdateTaskLabelItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -5721,7 +5747,6 @@ func (c *taskLabelClient) UpdateMany(ctx context.Context, items []UpdateTaskLabe
 		Op: hook.OpUpdateMany, Table: TableTaskLabels, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -5740,52 +5765,63 @@ func (c *taskLabelClient) UpdateMany(ctx context.Context, items []UpdateTaskLabe
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.TaskID.Get(); ok {
-					setClauses["task_id"] = v
-				}
-				if v, ok := item.Input.Label.Get(); ok {
-					setClauses["label"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_task_label", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
-					allIDs = append(allIDs, item.ID)
-					continue
-				}
-				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.TaskID.Get(); ok {
+						setClauses["task_id"] = v
+					}
+					if v, ok := item.Input.Label.Get(); ok {
+						setClauses["label"] = v
+					}
 
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: itemConds,
-				})
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+					itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
 
-				execResult, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update task_label %v: %w", item.ID, err)
-				}
-				matched, err := execResult.RowsAffected()
-				if err != nil {
-					return nil, fmt.Errorf("update task_label %v rows affected: %w", item.ID, err)
-				}
-				// MySQL counts the rows a statement changed, not the rows it
-				// matched, so an item that leaves its row as it was reports
-				// none. Only then is the row looked up, to tell a missing row
-				// from an unchanged one.
-				if matched == 0 {
-					found, err := c.rowMatches(ctx, conn, itemConds)
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: itemConds,
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return nil, fmt.Errorf("update task_label %v: match row: %w", item.ID, err)
+						return fmt.Errorf("update task_label %v: %w", item.ID, err)
 					}
-					if found {
-						matched = 1
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update task_label %v rows affected: %w", item.ID, err)
 					}
+					// MySQL counts the rows a statement changed, not the rows it
+					// matched, so an item that leaves its row as it was reports
+					// none. Only then is the row looked up, to tell a missing row
+					// from an unchanged one.
+					if matched == 0 {
+						found, err := c.rowMatches(ctx, conn, itemConds)
+						if err != nil {
+							return fmt.Errorf("update task_label %v: match row: %w", item.ID, err)
+						}
+						if found {
+							matched = 1
+						}
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
 				}
-				if matched > 0 {
-					writtenItems = append(writtenItems, item)
-				}
-				allIDs = append(allIDs, item.ID)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
@@ -7962,7 +7998,9 @@ type UpdateTaskItem struct {
 
 // UpdateMany partially updates multiple tasks and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *taskClient) UpdateMany(ctx context.Context, items []UpdateTaskItem, opts ...func(*CallOptions[TaskFieldOptions])) ([]*Task, error) {
 	// UpdateTaskItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -7977,7 +8015,6 @@ func (c *taskClient) UpdateMany(ctx context.Context, items []UpdateTaskItem, opt
 		Op: hook.OpUpdateMany, Table: TableTasks, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -7996,61 +8033,72 @@ func (c *taskClient) UpdateMany(ctx context.Context, items []UpdateTaskItem, opt
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.ProjectID.Get(); ok {
-					setClauses["project_id"] = v
-				}
-				if v, ok := item.Input.AssigneeID.Get(); ok {
-					setClauses["assignee_id"] = v
-				}
-				if v, ok := item.Input.Title.Get(); ok {
-					setClauses["title"] = v
-				}
-				if v, ok := item.Input.EstimateMinutes.Get(); ok {
-					setClauses["estimate_minutes"] = v
-				}
-				if v, ok := item.Input.Priority.Get(); ok {
-					setClauses["priority"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_task", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
-					allIDs = append(allIDs, item.ID)
-					continue
-				}
-				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.ProjectID.Get(); ok {
+						setClauses["project_id"] = v
+					}
+					if v, ok := item.Input.AssigneeID.Get(); ok {
+						setClauses["assignee_id"] = v
+					}
+					if v, ok := item.Input.Title.Get(); ok {
+						setClauses["title"] = v
+					}
+					if v, ok := item.Input.EstimateMinutes.Get(); ok {
+						setClauses["estimate_minutes"] = v
+					}
+					if v, ok := item.Input.Priority.Get(); ok {
+						setClauses["priority"] = v
+					}
 
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: itemConds,
-				})
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+					itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
 
-				execResult, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update task %v: %w", item.ID, err)
-				}
-				matched, err := execResult.RowsAffected()
-				if err != nil {
-					return nil, fmt.Errorf("update task %v rows affected: %w", item.ID, err)
-				}
-				// MySQL counts the rows a statement changed, not the rows it
-				// matched, so an item that leaves its row as it was reports
-				// none. Only then is the row looked up, to tell a missing row
-				// from an unchanged one.
-				if matched == 0 {
-					found, err := c.rowMatches(ctx, conn, itemConds)
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: itemConds,
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return nil, fmt.Errorf("update task %v: match row: %w", item.ID, err)
+						return fmt.Errorf("update task %v: %w", item.ID, err)
 					}
-					if found {
-						matched = 1
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update task %v rows affected: %w", item.ID, err)
 					}
+					// MySQL counts the rows a statement changed, not the rows it
+					// matched, so an item that leaves its row as it was reports
+					// none. Only then is the row looked up, to tell a missing row
+					// from an unchanged one.
+					if matched == 0 {
+						found, err := c.rowMatches(ctx, conn, itemConds)
+						if err != nil {
+							return fmt.Errorf("update task %v: match row: %w", item.ID, err)
+						}
+						if found {
+							matched = 1
+						}
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
 				}
-				if matched > 0 {
-					writtenItems = append(writtenItems, item)
-				}
-				allIDs = append(allIDs, item.ID)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 

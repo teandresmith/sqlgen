@@ -47,6 +47,7 @@ func executeUpdateTemplate(t *testing.T, ctx gen.TableContext, dialect sql.Diale
 func testUpdateContext_singlePK_postgres() gen.TableContext {
 	return gen.TableContext{
 		StructName:        "Product",
+		SnakeName:         "product",
 		TableName:         "products",
 		TableNameConstant: "TableProducts",
 		Schema:            "public",
@@ -333,6 +334,35 @@ func TestUpdateTemplate_updateMany_stdlib(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing stdlib UpdateMany pattern: %q\n\nfull output:\n%s", want, output)
 		}
+	}
+
+	// Each sub-batch's UPDATEs run on the connection of a transaction opened
+	// inside the batch loop, so a failing item rolls its sub-batch back.
+	start := strings.Index(output, ") UpdateMany(")
+	if start < 0 {
+		t.Fatalf("output has no UpdateMany\n\nfull output:\n%s", output)
+	}
+	body := output[start:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+	order := []string{
+		"for start := 0; start < len(items); start += c.batchSize {",
+		`database.WithTransaction(ctx, c.querier, "update_many_product", func(ctx context.Context) error {`,
+		"conn := database.Conn(ctx, c.querier)",
+		"for _, item := range batch {",
+		"conn.Exec(ctx, query, args...)",
+	}
+	at := 0
+	for _, want := range order {
+		i := strings.Index(body[at:], want)
+		if i < 0 {
+			t.Fatalf("UpdateMany missing %q after offset %d; want the batch's UPDATEs inside a per-batch transaction\n\nbody:\n%s", want, at, body)
+		}
+		at += i + len(want)
+	}
+	if got := strings.Count(body, "database.Conn(ctx, c.querier)"); got != 1 {
+		t.Errorf("UpdateMany resolves its connection %d times, want once, inside the per-batch transaction\n\nbody:\n%s", got, body)
 	}
 
 	// Should NOT have pgx batch

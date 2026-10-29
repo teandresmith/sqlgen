@@ -79,8 +79,8 @@ func TestTenantCapture_update_returningDialects(t *testing.T) {
 }
 
 // Update on MySQL pre-reads the row's tenant before the UPDATE (no
-// RETURNING); UpdateMany performs exactly one batched pre-read before the
-// per-item loop; UpdateWhere widens the existing
+// RETURNING); UpdateMany performs one batched pre-read per sub-batch, before
+// that sub-batch's per-item loop; UpdateWhere widens the existing
 // collectAffectedIDs pre-SELECT to project the tenant column.
 func TestTenantCapture_update_mysqlPreRead(t *testing.T) {
 	tc := captureProductContext("mysql", "stdlib")
@@ -91,10 +91,11 @@ func TestTenantCapture_update_mysqlPreRead(t *testing.T) {
 		"tenantByPK, err := c.captureAffectedTenants(ctx, conn, updateConds)",
 		"for _, tenant := range tenantByPK {",
 		"m.AffectedTenants = []any{capturedTenant}",
-		// UpdateMany: one batched pre-read, IN over every item PK, tenant
-		// filter appended only when tenancy applies.
-		`preConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(itemPKs)...)}`,
-		"tenantByPK, err = c.captureAffectedTenants(ctx, conn, preConds)",
+		// UpdateMany: one batched pre-read per sub-batch, IN over the
+		// sub-batch's item PKs, tenant filter appended only when tenancy
+		// applies.
+		`preConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(batchPKs)...)}`,
+		"batchTenants, err := c.captureAffectedTenants(ctx, conn, preConds)",
 		"m.AffectedTenants = affectedTenants",
 		// UpdateWhere: widened collect returns index-aligned tenants.
 		"ids, affectedTenants, err := c.collectAffectedIDs(ctx, conn, conds)",
@@ -109,9 +110,10 @@ func TestTenantCapture_update_mysqlPreRead(t *testing.T) {
 	if strings.Contains(out, "ReturningColumns") {
 		t.Errorf("mysql update must not emit RETURNING\nfull output:\n%s", out)
 	}
-	// Exactly one batched pre-read call in UpdateMany — not per-item.
+	// Exactly one batched pre-read call site in UpdateMany, inside the
+	// sub-batch loop — per sub-batch, not per item.
 	if got := strings.Count(out, "c.captureAffectedTenants(ctx, conn, preConds)"); got != 1 {
-		t.Errorf("mysql UpdateMany batched pre-read count = %d, want 1", got)
+		t.Errorf("mysql UpdateMany batched pre-read call sites = %d, want 1", got)
 	}
 }
 
@@ -566,5 +568,30 @@ func TestTenantCapture_compositeTenantOutsidePK(t *testing.T) {
 	myClient := renderTenantCapture(t, compositeTenantOutsidePKContext("mysql", "stdlib"), "table/client", sql.NewMySQLDialect())
 	if !strings.Contains(myClient, "map[LineItemPK]any") {
 		t.Errorf("mysql composite client helper missing PK-struct-keyed map")
+	}
+}
+
+// MySQL UpdateMany captures tenants with one pre-read per sub-batch, inside
+// the batch loop, so the pre-read's IN list is bounded by batch_size like the
+// delete family's.
+func TestTenantCapture_updateMany_mysqlPreReadPerSubBatch(t *testing.T) {
+	tc := captureProductContext("mysql", "stdlib")
+	out := renderTenantCapture(t, tc, "table/update", sql.NewMySQLDialect())
+
+	start := strings.Index(out, ") UpdateMany(")
+	if start < 0 {
+		t.Fatalf("mysql update output has no UpdateMany\nfull output:\n%s", out)
+	}
+	body := out[start:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+	loop := strings.Index(body, "for start := 0; start < len(items); start += c.batchSize {")
+	read := strings.Index(body, "c.captureAffectedTenants(ctx, conn, preConds)")
+	if loop < 0 || read < 0 {
+		t.Fatalf("UpdateMany batch loop at %d, pre-read at %d; want both\nbody:\n%s", loop, read, body)
+	}
+	if read < loop {
+		t.Errorf("UpdateMany pre-read runs before the sub-batch loop, over every item; want one pre-read per sub-batch\nbody:\n%s", body)
 	}
 }

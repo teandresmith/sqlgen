@@ -311,7 +311,9 @@ type Update{{ .StructName }}Item struct {
 // UpdateMany partially updates multiple {{ .TableName }} and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
 {{- if eq .Driver "stdlib" }}
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 {{- else }}
 // On pgx, uses SendBatch for pipelined execution within each batch.
 {{- end }}
@@ -329,7 +331,9 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 		Op: hook.OpUpdateMany, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+{{- if eq .Driver "pgx" }}
 		conn := database.Conn(ctx, c.querier)
+{{- end }}
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -400,34 +404,9 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 		// tenant-scoped keys from the rows themselves.
 		tenantByPK := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, len(items))
 {{- else if $captureTenant }}
-		// MySQL has no RETURNING — one batched pre-read captures every item's
-		// tenant before the per-item UPDATE loop.
+		// MySQL has no RETURNING — each sub-batch pre-reads its items' tenants
+		// before its UPDATEs.
 		tenantByPK := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, len(items))
-		if len(items) > 0 {
-			itemPKs := make([]{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}, 0, len(items))
-			for _, item := range items {
-				itemPKs = append(itemPKs, {{ if .CompositePK }}item.PK{{ else }}item.{{ $pkCol.FieldName }}{{ end }})
-			}
-{{- if .CompositePK }}
-			preValues := make([][]any, len(itemPKs))
-			for i, pk := range itemPKs {
-				preValues[i] = []any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }
-			}
-			preConds := []sql.Condition{
-				sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, preValues),
-			}
-{{- else }}
-			preConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(itemPKs)...)}
-{{- end }}
-			if applyTenancy {
-				preConds = append(preConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
-			}
-			var err error
-			tenantByPK, err = c.captureAffectedTenants(ctx, conn, preConds)
-			if err != nil {
-				return nil, fmt.Errorf("update {{ .TableName }}: capture tenants: %w", err)
-			}
-		}
 {{- end }}
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
@@ -626,144 +605,189 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 {{- end }}
 {{- else }}
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_{{ .SnakeName }}", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+{{- if and $captureTenant (not (supportsReturning)) }}
+
+				// MySQL has no RETURNING — one pre-read captures this sub-batch's
+				// tenants before its UPDATEs.
+				batchPKs := make([]{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}, 0, len(batch))
+				for _, item := range batch {
+					batchPKs = append(batchPKs, {{ if .CompositePK }}item.PK{{ else }}item.{{ $pkCol.FieldName }}{{ end }})
+				}
+{{- if .CompositePK }}
+				preValues := make([][]any, len(batchPKs))
+				for i, pk := range batchPKs {
+					preValues[i] = []any{ {{- range .PKColumns }}pk.{{ .FieldName }}, {{ end -}} }
+				}
+				preConds := []sql.Condition{
+					sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, preValues),
+				}
+{{- else }}
+				preConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(batchPKs)...)}
+{{- end }}
+				if applyTenancy {
+					preConds = append(preConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+				}
+				batchTenants, err := c.captureAffectedTenants(ctx, conn, preConds)
+				if err != nil {
+					return fmt.Errorf("update {{ .TableName }}: capture tenants: %w", err)
+				}
+				for pk, tenant := range batchTenants {
+					// Keep the first capture: a key repeated in a later
+					// sub-batch was read after an earlier one may have moved it.
+					if _, seen := tenantByPK[pk]; !seen {
+						tenantByPK[pk] = tenant
+					}
+				}
+{{- end }}
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
 {{- range .UpdateInputFields }}
 {{- if and $.Tenancy $.Tenancy.Tenanted (eq .ColumnName $.Tenancy.Column) }}
-				if !applyTenancy {
+					if !applyTenancy {
+						if v, ok := item.Input.{{ .FieldName }}.Get(); ok {
+							setClauses[{{ printf "%q" .ColumnName }}] = v
+						}
+					}
+{{- else }}
 					if v, ok := item.Input.{{ .FieldName }}.Get(); ok {
 						setClauses[{{ printf "%q" .ColumnName }}] = v
 					}
-				}
-{{- else }}
-				if v, ok := item.Input.{{ .FieldName }}.Get(); ok {
-					setClauses[{{ printf "%q" .ColumnName }}] = v
-				}
 {{- end }}
 {{- end }}
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+{{- if .CompositePK }}
+						allPKs = append(allPKs, item.PK)
+{{- else }}
+						allIDs = append(allIDs, item.{{ $pkCol.FieldName }})
+{{- end }}
+						continue
+					}
+{{- range .UpdateColumns }}
+
+					// Auto-set {{ .Name }} to current time if not explicitly provided
+					if _, ok := item.Input.{{ .FieldName }}.Get(); !ok {
+						setClauses[{{ printf "%q" .Name }}] = time.Now()
+					}
+{{- end }}
+
+{{- if and .Tenancy .Tenancy.Tenanted }}
+{{- if .CompositePK }}
+					itemConds := sql.BuildCompositePKConditions(c.dialect,
+						[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+						[]any{ {{- range .PKColumns }}item.PK.{{ .FieldName }}, {{ end -}} })
+{{- else }}
+					itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(item.{{ $pkCol.FieldName }})}
+{{- end }}
+					if applyTenancy {
+						itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
+					}
+{{- if and $captureTenant (supportsReturning) }}
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses:       setClauses,
+						Conditions:       itemConds,
+						ReturningColumns: []string{ {{- printf "%q" .Tenancy.Column -}} },
+					})
+{{- else }}
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: itemConds,
+					})
+{{- end }}
+{{- else if not (supportsReturning) }}
+{{- if .CompositePK }}
+					itemConds := sql.BuildCompositePKConditions(c.dialect,
+						[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+						[]any{ {{- range .PKColumns }}item.PK.{{ .FieldName }}, {{ end -}} })
+{{- else }}
+					itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(item.{{ $pkCol.FieldName }})}
+{{- end }}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: itemConds,
+					})
+{{- else }}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+{{- if .CompositePK }}
+						Conditions: sql.BuildCompositePKConditions(c.dialect,
+							[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
+							[]any{ {{- range .PKColumns }}item.PK.{{ .FieldName }}, {{ end -}} }),
+{{- else }}
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(item.{{ $pkCol.FieldName }})},
+{{- end }}
+					})
+{{- end }}
+
+{{- if and $captureTenant (supportsReturning) }}
+
+					rows, err := conn.Query(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("update {{ $singular }} %v: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
+					}
+					matched := 0
+					for rows.Next() {
+						var rowTenant {{ .Tenancy.GoType }}
+						if err := rows.Scan(&rowTenant); err != nil {
+							rows.Close()
+							return fmt.Errorf("scan updated {{ $singular }} tenant: %w", err)
+						}
+						tenantByPK[{{ if .CompositePK }}item.PK{{ else }}item.{{ $pkCol.FieldName }}{{ end }}] = rowTenant
+						matched++
+					}
+					if err := rows.Err(); err != nil {
+						rows.Close()
+						return fmt.Errorf("update {{ $singular }} %v: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
+					}
+					rows.Close()
+{{- else }}
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("update {{ $singular }} %v: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update {{ $singular }} %v rows affected: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
+					}
+{{- end }}
+{{- if not (supportsReturning) }}
+					// MySQL counts the rows a statement changed, not the rows it
+					// matched, so an item that leaves its row as it was reports
+					// none. Only then is the row looked up, to tell a missing row
+					// from an unchanged one.
+					if matched == 0 {
+						found, err := c.rowMatches(ctx, conn, itemConds)
+						if err != nil {
+							return fmt.Errorf("update {{ $singular }} %v: match row: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
+						}
+						if found {
+							matched = 1
+						}
+					}
+{{- end }}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
 {{- if .CompositePK }}
 					allPKs = append(allPKs, item.PK)
 {{- else }}
 					allIDs = append(allIDs, item.{{ $pkCol.FieldName }})
 {{- end }}
-					continue
 				}
-{{- range .UpdateColumns }}
-
-				// Auto-set {{ .Name }} to current time if not explicitly provided
-				if _, ok := item.Input.{{ .FieldName }}.Get(); !ok {
-					setClauses[{{ printf "%q" .Name }}] = time.Now()
-				}
-{{- end }}
-
-{{- if and .Tenancy .Tenancy.Tenanted }}
-{{- if .CompositePK }}
-				itemConds := sql.BuildCompositePKConditions(c.dialect,
-					[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
-					[]any{ {{- range .PKColumns }}item.PK.{{ .FieldName }}, {{ end -}} })
-{{- else }}
-				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(item.{{ $pkCol.FieldName }})}
-{{- end }}
-				if applyTenancy {
-					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
-				}
-{{- if and $captureTenant (supportsReturning) }}
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses:       setClauses,
-					Conditions:       itemConds,
-					ReturningColumns: []string{ {{- printf "%q" .Tenancy.Column -}} },
-				})
-{{- else }}
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: itemConds,
-				})
-{{- end }}
-{{- else if not (supportsReturning) }}
-{{- if .CompositePK }}
-				itemConds := sql.BuildCompositePKConditions(c.dialect,
-					[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
-					[]any{ {{- range .PKColumns }}item.PK.{{ .FieldName }}, {{ end -}} })
-{{- else }}
-				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(item.{{ $pkCol.FieldName }})}
-{{- end }}
-
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: itemConds,
-				})
-{{- else }}
-
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-{{- if .CompositePK }}
-					Conditions: sql.BuildCompositePKConditions(c.dialect,
-						[]string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} },
-						[]any{ {{- range .PKColumns }}item.PK.{{ .FieldName }}, {{ end -}} }),
-{{- else }}
-					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).Eq(item.{{ $pkCol.FieldName }})},
-{{- end }}
-				})
-{{- end }}
-
-{{- if and $captureTenant (supportsReturning) }}
-
-				rows, err := conn.Query(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update {{ $singular }} %v: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
-				}
-				matched := 0
-				for rows.Next() {
-					var rowTenant {{ .Tenancy.GoType }}
-					if err := rows.Scan(&rowTenant); err != nil {
-						rows.Close()
-						return nil, fmt.Errorf("scan updated {{ $singular }} tenant: %w", err)
-					}
-					tenantByPK[{{ if .CompositePK }}item.PK{{ else }}item.{{ $pkCol.FieldName }}{{ end }}] = rowTenant
-					matched++
-				}
-				if err := rows.Err(); err != nil {
-					rows.Close()
-					return nil, fmt.Errorf("update {{ $singular }} %v: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
-				}
-				rows.Close()
-{{- else }}
-
-				execResult, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update {{ $singular }} %v: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
-				}
-				matched, err := execResult.RowsAffected()
-				if err != nil {
-					return nil, fmt.Errorf("update {{ $singular }} %v rows affected: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
-				}
-{{- end }}
-{{- if not (supportsReturning) }}
-				// MySQL counts the rows a statement changed, not the rows it
-				// matched, so an item that leaves its row as it was reports
-				// none. Only then is the row looked up, to tell a missing row
-				// from an unchanged one.
-				if matched == 0 {
-					found, err := c.rowMatches(ctx, conn, itemConds)
-					if err != nil {
-						return nil, fmt.Errorf("update {{ $singular }} %v: match row: %w", item.{{ if .CompositePK }}PK{{ else }}{{ $pkCol.FieldName }}{{ end }}, err)
-					}
-					if found {
-						matched = 1
-					}
-				}
-{{- end }}
-				if matched > 0 {
-					writtenItems = append(writtenItems, item)
-				}
-{{- if .CompositePK }}
-				allPKs = append(allPKs, item.PK)
-{{- else }}
-				allIDs = append(allIDs, item.{{ $pkCol.FieldName }})
-{{- end }}
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 {{- end }}
 		}

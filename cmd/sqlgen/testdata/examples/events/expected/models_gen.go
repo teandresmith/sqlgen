@@ -643,7 +643,9 @@ type UpdateAccountItem struct {
 
 // UpdateMany partially updates multiple accounts and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *accountClient) UpdateMany(ctx context.Context, items []UpdateAccountItem, opts ...func(*CallOptions[AccountFieldOptions])) ([]*Account, error) {
 	// UpdateAccountItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -658,7 +660,6 @@ func (c *accountClient) UpdateMany(ctx context.Context, items []UpdateAccountIte
 		Op: hook.OpUpdateMany, Table: TableAccounts, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -677,47 +678,58 @@ func (c *accountClient) UpdateMany(ctx context.Context, items []UpdateAccountIte
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.Email.Get(); ok {
-					setClauses["email"] = v
-				}
-				if v, ok := item.Input.PasswordHash.Get(); ok {
-					setClauses["password_hash"] = v
-				}
-				if v, ok := item.Input.RecoveryCode.Get(); ok {
-					setClauses["recovery_code"] = v
-				}
-				if v, ok := item.Input.InternalScore.Get(); ok {
-					setClauses["internal_score"] = v
-				}
-				if v, ok := item.Input.Note.Get(); ok {
-					setClauses["note"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_account", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Email.Get(); ok {
+						setClauses["email"] = v
+					}
+					if v, ok := item.Input.PasswordHash.Get(); ok {
+						setClauses["password_hash"] = v
+					}
+					if v, ok := item.Input.RecoveryCode.Get(); ok {
+						setClauses["recovery_code"] = v
+					}
+					if v, ok := item.Input.InternalScore.Get(); ok {
+						setClauses["internal_score"] = v
+					}
+					if v, ok := item.Input.Note.Get(); ok {
+						setClauses["note"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("update account %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update account %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
 					allIDs = append(allIDs, item.ID)
-					continue
 				}
-
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
-				})
-
-				execResult, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update account %v: %w", item.ID, err)
-				}
-				matched, err := execResult.RowsAffected()
-				if err != nil {
-					return nil, fmt.Errorf("update account %v rows affected: %w", item.ID, err)
-				}
-				if matched > 0 {
-					writtenItems = append(writtenItems, item)
-				}
-				allIDs = append(allIDs, item.ID)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
@@ -2914,7 +2926,9 @@ type UpdateArticleItem struct {
 
 // UpdateMany partially updates multiple articles and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleItem, opts ...func(*CallOptions[ArticleFieldOptions])) ([]*Article, error) {
 	// UpdateArticleItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -2929,7 +2943,6 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 		Op: hook.OpUpdateMany, Table: TableArticles, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -2948,47 +2961,58 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.Title.Get(); ok {
-					setClauses["title"] = v
-				}
-				if v, ok := item.Input.Body.Get(); ok {
-					setClauses["body"] = v
-				}
-				if v, ok := item.Input.Author.Get(); ok {
-					setClauses["author"] = v
-				}
-				if v, ok := item.Input.CreatedAt.Get(); ok {
-					setClauses["created_at"] = v
-				}
-				if v, ok := item.Input.DeletedAt.Get(); ok {
-					setClauses["deleted_at"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_article", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Title.Get(); ok {
+						setClauses["title"] = v
+					}
+					if v, ok := item.Input.Body.Get(); ok {
+						setClauses["body"] = v
+					}
+					if v, ok := item.Input.Author.Get(); ok {
+						setClauses["author"] = v
+					}
+					if v, ok := item.Input.CreatedAt.Get(); ok {
+						setClauses["created_at"] = v
+					}
+					if v, ok := item.Input.DeletedAt.Get(); ok {
+						setClauses["deleted_at"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("update article %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update article %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
 					allIDs = append(allIDs, item.ID)
-					continue
 				}
-
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
-				})
-
-				execResult, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update article %v: %w", item.ID, err)
-				}
-				matched, err := execResult.RowsAffected()
-				if err != nil {
-					return nil, fmt.Errorf("update article %v rows affected: %w", item.ID, err)
-				}
-				if matched > 0 {
-					writtenItems = append(writtenItems, item)
-				}
-				allIDs = append(allIDs, item.ID)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
@@ -5532,7 +5556,9 @@ type UpdateAuditLogItem struct {
 
 // UpdateMany partially updates multiple audit_logs and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *auditLogClient) UpdateMany(ctx context.Context, items []UpdateAuditLogItem, opts ...func(*CallOptions[AuditLogFieldOptions])) ([]*AuditLog, error) {
 	// UpdateAuditLogItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -5547,7 +5573,6 @@ func (c *auditLogClient) UpdateMany(ctx context.Context, items []UpdateAuditLogI
 		Op: hook.OpUpdateMany, Table: TableAuditLogs, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -5566,38 +5591,49 @@ func (c *auditLogClient) UpdateMany(ctx context.Context, items []UpdateAuditLogI
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.Message.Get(); ok {
-					setClauses["message"] = v
-				}
-				if v, ok := item.Input.CreatedAt.Get(); ok {
-					setClauses["created_at"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_audit_log", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Message.Get(); ok {
+						setClauses["message"] = v
+					}
+					if v, ok := item.Input.CreatedAt.Get(); ok {
+						setClauses["created_at"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("update audit_log %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update audit_log %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
 					allIDs = append(allIDs, item.ID)
-					continue
 				}
-
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
-				})
-
-				execResult, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update audit_log %v: %w", item.ID, err)
-				}
-				matched, err := execResult.RowsAffected()
-				if err != nil {
-					return nil, fmt.Errorf("update audit_log %v rows affected: %w", item.ID, err)
-				}
-				if matched > 0 {
-					writtenItems = append(writtenItems, item)
-				}
-				allIDs = append(allIDs, item.ID)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
@@ -7593,7 +7629,9 @@ type UpdateProductItem struct {
 
 // UpdateMany partially updates multiple products and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductItem, opts ...func(*CallOptions[ProductFieldOptions])) ([]*Product, error) {
 	// UpdateProductItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -7608,7 +7646,6 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 		Op: hook.OpUpdateMany, Table: TableProducts, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -7627,47 +7664,58 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if v, ok := item.Input.Name.Get(); ok {
-					setClauses["name"] = v
-				}
-				if v, ok := item.Input.SKU.Get(); ok {
-					setClauses["sku"] = v
-				}
-				if v, ok := item.Input.Price.Get(); ok {
-					setClauses["price"] = v
-				}
-				if v, ok := item.Input.Stock.Get(); ok {
-					setClauses["stock"] = v
-				}
-				if v, ok := item.Input.CreatedAt.Get(); ok {
-					setClauses["created_at"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_product", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+					if v, ok := item.Input.SKU.Get(); ok {
+						setClauses["sku"] = v
+					}
+					if v, ok := item.Input.Price.Get(); ok {
+						setClauses["price"] = v
+					}
+					if v, ok := item.Input.Stock.Get(); ok {
+						setClauses["stock"] = v
+					}
+					if v, ok := item.Input.CreatedAt.Get(); ok {
+						setClauses["created_at"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("update product %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update product %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
 					allIDs = append(allIDs, item.ID)
-					continue
 				}
-
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
-				})
-
-				execResult, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update product %v: %w", item.ID, err)
-				}
-				matched, err := execResult.RowsAffected()
-				if err != nil {
-					return nil, fmt.Errorf("update product %v rows affected: %w", item.ID, err)
-				}
-				if matched > 0 {
-					writtenItems = append(writtenItems, item)
-				}
-				allIDs = append(allIDs, item.ID)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 

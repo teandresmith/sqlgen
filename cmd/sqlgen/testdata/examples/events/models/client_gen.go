@@ -244,12 +244,18 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 // Close closes all closeable dependencies held by the client.
+// Besides the querier, it closes the event publisher, when configured.
 // If a dependency does not implement io.Closer, it is silently skipped.
 // All close errors are collected and returned as a joined error.
 func (c *Client) Close() error {
 	var errs []error
 	if closer, ok := c.querier.(io.Closer); ok {
 		errs = append(errs, closer.Close())
+	}
+	if c.opts.eventPublisher != nil {
+		if closer, ok := c.opts.eventPublisher.(io.Closer); ok {
+			errs = append(errs, closer.Close())
+		}
 	}
 	return errors.Join(errs...)
 }

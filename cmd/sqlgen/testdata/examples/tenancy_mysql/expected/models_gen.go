@@ -1094,7 +1094,9 @@ type UpdateArticleItem struct {
 
 // UpdateMany partially updates multiple articles and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleItem, opts ...func(*CallOptions[ArticleFieldOptions])) ([]*Article, error) {
 	// UpdateArticleItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -1109,7 +1111,6 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 		Op: hook.OpUpdateMany, Table: TableArticles, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -1158,87 +1159,105 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 		// nothing, so no cache entry is invalidated and no event is published
 		// for it.
 		var writtenItems []UpdateArticleItem
-		// MySQL has no RETURNING — one batched pre-read captures every item's
-		// tenant before the per-item UPDATE loop.
+		// MySQL has no RETURNING — each sub-batch pre-reads its items' tenants
+		// before its UPDATEs.
 		tenantByPK := make(map[int64]any, len(items))
-		if len(items) > 0 {
-			itemPKs := make([]int64, 0, len(items))
-			for _, item := range items {
-				itemPKs = append(itemPKs, item.ID)
-			}
-			preConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(itemPKs)...)}
-			if applyTenancy {
-				preConds = append(preConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
-			}
-			var err error
-			tenantByPK, err = c.captureAffectedTenants(ctx, conn, preConds)
-			if err != nil {
-				return nil, fmt.Errorf("update articles: capture tenants: %w", err)
-			}
-		}
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if !applyTenancy {
-					if v, ok := item.Input.WorkspaceID.Get(); ok {
-						setClauses["workspace_id"] = v
-					}
-				}
-				if v, ok := item.Input.Slug.Get(); ok {
-					setClauses["slug"] = v
-				}
-				if v, ok := item.Input.Title.Get(); ok {
-					setClauses["title"] = v
-				}
-				if v, ok := item.Input.ViewCount.Get(); ok {
-					setClauses["view_count"] = v
-				}
-				if v, ok := item.Input.DeletedAt.Get(); ok {
-					setClauses["deleted_at"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_article", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
-					allIDs = append(allIDs, item.ID)
-					continue
+				// MySQL has no RETURNING — one pre-read captures this sub-batch's
+				// tenants before its UPDATEs.
+				batchPKs := make([]int64, 0, len(batch))
+				for _, item := range batch {
+					batchPKs = append(batchPKs, item.ID)
 				}
-				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+				preConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(batchPKs)...)}
 				if applyTenancy {
-					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+					preConds = append(preConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
 				}
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: itemConds,
-				})
+				batchTenants, err := c.captureAffectedTenants(ctx, conn, preConds)
+				if err != nil {
+					return fmt.Errorf("update articles: capture tenants: %w", err)
+				}
+				for pk, tenant := range batchTenants {
+					// Keep the first capture: a key repeated in a later
+					// sub-batch was read after an earlier one may have moved it.
+					if _, seen := tenantByPK[pk]; !seen {
+						tenantByPK[pk] = tenant
+					}
+				}
 
-				execResult, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update article %v: %w", item.ID, err)
-				}
-				matched, err := execResult.RowsAffected()
-				if err != nil {
-					return nil, fmt.Errorf("update article %v rows affected: %w", item.ID, err)
-				}
-				// MySQL counts the rows a statement changed, not the rows it
-				// matched, so an item that leaves its row as it was reports
-				// none. Only then is the row looked up, to tell a missing row
-				// from an unchanged one.
-				if matched == 0 {
-					found, err := c.rowMatches(ctx, conn, itemConds)
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if !applyTenancy {
+						if v, ok := item.Input.WorkspaceID.Get(); ok {
+							setClauses["workspace_id"] = v
+						}
+					}
+					if v, ok := item.Input.Slug.Get(); ok {
+						setClauses["slug"] = v
+					}
+					if v, ok := item.Input.Title.Get(); ok {
+						setClauses["title"] = v
+					}
+					if v, ok := item.Input.ViewCount.Get(); ok {
+						setClauses["view_count"] = v
+					}
+					if v, ok := item.Input.DeletedAt.Get(); ok {
+						setClauses["deleted_at"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+					itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+					if applyTenancy {
+						itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+					}
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: itemConds,
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return nil, fmt.Errorf("update article %v: match row: %w", item.ID, err)
+						return fmt.Errorf("update article %v: %w", item.ID, err)
 					}
-					if found {
-						matched = 1
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update article %v rows affected: %w", item.ID, err)
 					}
+					// MySQL counts the rows a statement changed, not the rows it
+					// matched, so an item that leaves its row as it was reports
+					// none. Only then is the row looked up, to tell a missing row
+					// from an unchanged one.
+					if matched == 0 {
+						found, err := c.rowMatches(ctx, conn, itemConds)
+						if err != nil {
+							return fmt.Errorf("update article %v: match row: %w", item.ID, err)
+						}
+						if found {
+							matched = 1
+						}
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
 				}
-				if matched > 0 {
-					writtenItems = append(writtenItems, item)
-				}
-				allIDs = append(allIDs, item.ID)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
@@ -4574,7 +4593,9 @@ type UpdateDocumentItem struct {
 
 // UpdateMany partially updates multiple documents and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentItem, opts ...func(*CallOptions[DocumentFieldOptions])) ([]*Document, error) {
 	// UpdateDocumentItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -4589,7 +4610,6 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 		Op: hook.OpUpdateMany, Table: TableDocuments, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -4638,78 +4658,96 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 		// nothing, so no cache entry is invalidated and no event is published
 		// for it.
 		var writtenItems []UpdateDocumentItem
-		// MySQL has no RETURNING — one batched pre-read captures every item's
-		// tenant before the per-item UPDATE loop.
+		// MySQL has no RETURNING — each sub-batch pre-reads its items' tenants
+		// before its UPDATEs.
 		tenantByPK := make(map[string]any, len(items))
-		if len(items) > 0 {
-			itemPKs := make([]string, 0, len(items))
-			for _, item := range items {
-				itemPKs = append(itemPKs, item.DocKey)
-			}
-			preConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("doc_key")).In(toAnySlice(itemPKs)...)}
-			if applyTenancy {
-				preConds = append(preConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
-			}
-			var err error
-			tenantByPK, err = c.captureAffectedTenants(ctx, conn, preConds)
-			if err != nil {
-				return nil, fmt.Errorf("update documents: capture tenants: %w", err)
-			}
-		}
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if !applyTenancy {
-					if v, ok := item.Input.WorkspaceID.Get(); ok {
-						setClauses["workspace_id"] = v
-					}
-				}
-				if v, ok := item.Input.Label.Get(); ok {
-					setClauses["label"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_document", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
-					allIDs = append(allIDs, item.DocKey)
-					continue
+				// MySQL has no RETURNING — one pre-read captures this sub-batch's
+				// tenants before its UPDATEs.
+				batchPKs := make([]string, 0, len(batch))
+				for _, item := range batch {
+					batchPKs = append(batchPKs, item.DocKey)
 				}
-				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("doc_key")).Eq(item.DocKey)}
+				preConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("doc_key")).In(toAnySlice(batchPKs)...)}
 				if applyTenancy {
-					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+					preConds = append(preConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
 				}
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: itemConds,
-				})
+				batchTenants, err := c.captureAffectedTenants(ctx, conn, preConds)
+				if err != nil {
+					return fmt.Errorf("update documents: capture tenants: %w", err)
+				}
+				for pk, tenant := range batchTenants {
+					// Keep the first capture: a key repeated in a later
+					// sub-batch was read after an earlier one may have moved it.
+					if _, seen := tenantByPK[pk]; !seen {
+						tenantByPK[pk] = tenant
+					}
+				}
 
-				execResult, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update document %v: %w", item.DocKey, err)
-				}
-				matched, err := execResult.RowsAffected()
-				if err != nil {
-					return nil, fmt.Errorf("update document %v rows affected: %w", item.DocKey, err)
-				}
-				// MySQL counts the rows a statement changed, not the rows it
-				// matched, so an item that leaves its row as it was reports
-				// none. Only then is the row looked up, to tell a missing row
-				// from an unchanged one.
-				if matched == 0 {
-					found, err := c.rowMatches(ctx, conn, itemConds)
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if !applyTenancy {
+						if v, ok := item.Input.WorkspaceID.Get(); ok {
+							setClauses["workspace_id"] = v
+						}
+					}
+					if v, ok := item.Input.Label.Get(); ok {
+						setClauses["label"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.DocKey)
+						continue
+					}
+					itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("doc_key")).Eq(item.DocKey)}
+					if applyTenancy {
+						itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+					}
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: itemConds,
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return nil, fmt.Errorf("update document %v: match row: %w", item.DocKey, err)
+						return fmt.Errorf("update document %v: %w", item.DocKey, err)
 					}
-					if found {
-						matched = 1
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update document %v rows affected: %w", item.DocKey, err)
 					}
+					// MySQL counts the rows a statement changed, not the rows it
+					// matched, so an item that leaves its row as it was reports
+					// none. Only then is the row looked up, to tell a missing row
+					// from an unchanged one.
+					if matched == 0 {
+						found, err := c.rowMatches(ctx, conn, itemConds)
+						if err != nil {
+							return fmt.Errorf("update document %v: match row: %w", item.DocKey, err)
+						}
+						if found {
+							matched = 1
+						}
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.DocKey)
 				}
-				if matched > 0 {
-					writtenItems = append(writtenItems, item)
-				}
-				allIDs = append(allIDs, item.DocKey)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 
@@ -7083,7 +7121,9 @@ type UpdateLineItemItem struct {
 
 // UpdateMany partially updates multiple line_items and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On stdlib, each UPDATE executes sequentially.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
 func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemItem, opts ...func(*CallOptions[LineItemFieldOptions])) ([]*LineItem, error) {
 	// UpdateLineItemItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -7098,7 +7138,6 @@ func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemI
 		Op: hook.OpUpdateMany, Table: TableLineItems, Schema: "",
 		Input: items, CallOptions: options,
 	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
-		conn := database.Conn(ctx, c.querier)
 		// An empty batch writes nothing and must read nothing. The trailing
 		// re-fetch below filters on the keys this call touched, and every
 		// generated key filter treats an empty set as *no condition* — so
@@ -7147,86 +7186,104 @@ func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemI
 		// nothing, so no cache entry is invalidated and no event is published
 		// for it.
 		var writtenItems []UpdateLineItemItem
-		// MySQL has no RETURNING — one batched pre-read captures every item's
-		// tenant before the per-item UPDATE loop.
+		// MySQL has no RETURNING — each sub-batch pre-reads its items' tenants
+		// before its UPDATEs.
 		tenantByPK := make(map[LineItemPK]any, len(items))
-		if len(items) > 0 {
-			itemPKs := make([]LineItemPK, 0, len(items))
-			for _, item := range items {
-				itemPKs = append(itemPKs, item.PK)
-			}
-			preValues := make([][]any, len(itemPKs))
-			for i, pk := range itemPKs {
-				preValues[i] = []any{pk.OrderID, pk.ProductID}
-			}
-			preConds := []sql.Condition{
-				sql.BuildCompositePKBatchCondition(c.dialect, []string{"order_id", "product_id"}, preValues),
-			}
-			if applyTenancy {
-				preConds = append(preConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
-			}
-			var err error
-			tenantByPK, err = c.captureAffectedTenants(ctx, conn, preConds)
-			if err != nil {
-				return nil, fmt.Errorf("update line_items: capture tenants: %w", err)
-			}
-		}
 		for start := 0; start < len(items); start += c.batchSize {
 			end := min(start+c.batchSize, len(items))
 			batch := items[start:end]
 
-			for _, item := range batch {
-				setClauses := make(map[string]any)
-				if !applyTenancy {
-					if v, ok := item.Input.WorkspaceID.Get(); ok {
-						setClauses["workspace_id"] = v
-					}
-				}
-				if v, ok := item.Input.Quantity.Get(); ok {
-					setClauses["quantity"] = v
-				}
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_line_item", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
 
-				// Skip no-op updates
-				if len(setClauses) == 0 {
-					allPKs = append(allPKs, item.PK)
-					continue
+				// MySQL has no RETURNING — one pre-read captures this sub-batch's
+				// tenants before its UPDATEs.
+				batchPKs := make([]LineItemPK, 0, len(batch))
+				for _, item := range batch {
+					batchPKs = append(batchPKs, item.PK)
 				}
-				itemConds := sql.BuildCompositePKConditions(c.dialect,
-					[]string{"order_id", "product_id"},
-					[]any{item.PK.OrderID, item.PK.ProductID})
+				preValues := make([][]any, len(batchPKs))
+				for i, pk := range batchPKs {
+					preValues[i] = []any{pk.OrderID, pk.ProductID}
+				}
+				preConds := []sql.Condition{
+					sql.BuildCompositePKBatchCondition(c.dialect, []string{"order_id", "product_id"}, preValues),
+				}
 				if applyTenancy {
-					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+					preConds = append(preConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
 				}
-				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
-					SetClauses: setClauses,
-					Conditions: itemConds,
-				})
+				batchTenants, err := c.captureAffectedTenants(ctx, conn, preConds)
+				if err != nil {
+					return fmt.Errorf("update line_items: capture tenants: %w", err)
+				}
+				for pk, tenant := range batchTenants {
+					// Keep the first capture: a key repeated in a later
+					// sub-batch was read after an earlier one may have moved it.
+					if _, seen := tenantByPK[pk]; !seen {
+						tenantByPK[pk] = tenant
+					}
+				}
 
-				execResult, err := conn.Exec(ctx, query, args...)
-				if err != nil {
-					return nil, fmt.Errorf("update line_item %v: %w", item.PK, err)
-				}
-				matched, err := execResult.RowsAffected()
-				if err != nil {
-					return nil, fmt.Errorf("update line_item %v rows affected: %w", item.PK, err)
-				}
-				// MySQL counts the rows a statement changed, not the rows it
-				// matched, so an item that leaves its row as it was reports
-				// none. Only then is the row looked up, to tell a missing row
-				// from an unchanged one.
-				if matched == 0 {
-					found, err := c.rowMatches(ctx, conn, itemConds)
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if !applyTenancy {
+						if v, ok := item.Input.WorkspaceID.Get(); ok {
+							setClauses["workspace_id"] = v
+						}
+					}
+					if v, ok := item.Input.Quantity.Get(); ok {
+						setClauses["quantity"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allPKs = append(allPKs, item.PK)
+						continue
+					}
+					itemConds := sql.BuildCompositePKConditions(c.dialect,
+						[]string{"order_id", "product_id"},
+						[]any{item.PK.OrderID, item.PK.ProductID})
+					if applyTenancy {
+						itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+					}
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: itemConds,
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return nil, fmt.Errorf("update line_item %v: match row: %w", item.PK, err)
+						return fmt.Errorf("update line_item %v: %w", item.PK, err)
 					}
-					if found {
-						matched = 1
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update line_item %v rows affected: %w", item.PK, err)
 					}
+					// MySQL counts the rows a statement changed, not the rows it
+					// matched, so an item that leaves its row as it was reports
+					// none. Only then is the row looked up, to tell a missing row
+					// from an unchanged one.
+					if matched == 0 {
+						found, err := c.rowMatches(ctx, conn, itemConds)
+						if err != nil {
+							return fmt.Errorf("update line_item %v: match row: %w", item.PK, err)
+						}
+						if found {
+							matched = 1
+						}
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allPKs = append(allPKs, item.PK)
 				}
-				if matched > 0 {
-					writtenItems = append(writtenItems, item)
-				}
-				allPKs = append(allPKs, item.PK)
+				return nil
+			}); err != nil {
+				return nil, err
 			}
 		}
 

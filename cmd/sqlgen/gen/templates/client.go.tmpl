@@ -378,6 +378,14 @@ func (c *{{ .ClientName }}) Ping(ctx context.Context) error {
 }
 
 // Close closes all closeable dependencies held by the client.
+{{- if and .CacheEnabled .EventsEnabled }}
+// Besides the querier, it closes the cache and the event publisher, when
+// configured.
+{{- else if .CacheEnabled }}
+// Besides the querier, it closes the cache, when configured.
+{{- else if .EventsEnabled }}
+// Besides the querier, it closes the event publisher, when configured.
+{{- end }}
 // If a dependency does not implement io.Closer, it is silently skipped.
 // All close errors are collected and returned as a joined error.
 func (c *{{ .ClientName }}) Close() error {
@@ -385,6 +393,18 @@ func (c *{{ .ClientName }}) Close() error {
 	if closer, ok := c.querier.(io.Closer); ok {
 		errs = append(errs, closer.Close())
 	}
+{{- if .CacheEnabled }}
+	if c.opts.cache != nil {
+		errs = append(errs, c.opts.cache.Close())
+	}
+{{- end }}
+{{- if .EventsEnabled }}
+	if c.opts.eventPublisher != nil {
+		if closer, ok := c.opts.eventPublisher.(io.Closer); ok {
+			errs = append(errs, closer.Close())
+		}
+	}
+{{- end }}
 	return errors.Join(errs...)
 }
 {{- end -}}
