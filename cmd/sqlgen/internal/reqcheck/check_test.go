@@ -401,6 +401,28 @@ func TestCheck(t *testing.T) {
 			wantNoErr: true,
 		},
 		{
+			name: "cell names a row a closed matrix does not declare",
+			mutate: func(f map[string]string) {
+				edit(f, "docs/conformance/cli.md", "config-validation rows=rule cols", "config-validation rows=rule:schema cols")
+			},
+			wantErr: `names row "driver", which config-validation does not declare`,
+		},
+		{
+			name: "declared row with no cells is a note while seeding",
+			mutate: func(f map[string]string) {
+				edit(f, "docs/conformance/cli.md", "config-validation rows=rule cols", "config-validation rows=rule:driver,schema cols")
+			},
+			wantNote: "matrix config-validation: cell schema × fires is empty",
+		},
+		{
+			name: "complete file fails on a declared row with no cells",
+			mutate: func(f map[string]string) {
+				edit(f, "docs/conformance/cli.md", "config-validation rows=rule cols", "config-validation rows=rule:driver,schema cols")
+				edit(f, "docs/conformance/cli.md", "seeding: in-progress", "seeding: complete")
+			},
+			wantErr: "matrix config-validation: cell schema × fires is empty",
+		},
+		{
 			name: "declared matrix with no rows is a note while seeding",
 			mutate: func(f map[string]string) {
 				edit(f, "docs/conformance/cli.md", "<!-- matrix: config-validation", "<!-- matrix: naming rows=rule cols=struct,field -->\n<!-- matrix: config-validation")

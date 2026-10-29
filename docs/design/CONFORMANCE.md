@@ -163,7 +163,7 @@ it rather than restating it.
 
 ### 3.5 Generated client (`client.md`)
 
-Rows: the 29 generated methods.
+Rows: the 28 generated methods, declared as the matrix's closed row list (§5.1).
 
 | Group | Methods |
 |---|---|
@@ -368,7 +368,10 @@ every claimed test maps to a PRD-anchored registry row is the guard against this
 7). Each file has five parts:
 
 1. **A header** with the file's seeding status (§5.4), the module's package directories (the
-   orphan check of §5.3 check 2 scans them), and its matrix declarations:
+   orphan check of §5.3 check 2 scans them), and its matrix declarations. A matrix's rows are an
+   open set (every row a cell names) unless the declaration lists them after its row unit
+   (`rows=method:Get,GetMany,…`). A listed matrix rejects a cell naming any other row and counts
+   every listed row's empty cells, including a row no cell names yet:
 
    ```markdown
    <!-- seeding: in-progress -->
@@ -468,7 +471,8 @@ The tool is `cmd/sqlgen/internal/reqcheck` (stdlib only: `go/parser` and `go/ast
 5. **Ownership is complete.** It fails when a PRD heading is missing from the §5.2 map, or is
    owned by more than one file.
 6. **Matrix cells are well formed.** It fails when a row's matrix cell names a matrix or column
-   its file doesn't declare (rows are an open set), or when a cell declared `n/a` is also
+   its file doesn't declare, or a row outside a matrix's declared row list (§5.1; without a list,
+   rows are an open set), or when a cell declared `n/a` is also
    claimed by a requirement. It also fails when an `n/a` reason cites no PRD section (`§…`) and
    has no `accepted` date in `YYYY-MM-DD` form, or cites a `§` that is not a PRD section.
 
@@ -1480,10 +1484,12 @@ database versions it ran against.
      for the writes group. `gap.batch.partial-failure-side-effects` is still open.
    - **Review.** Four sqlgen-reviewer passes (schema, suite, fix, PRD); each finding was fixed or
      logged before its commit.
-   - **Completion sweep.** With `client.md` set to `complete`, `req-check` fails only on the 10 owned
+   - **Completion sweep.** With `client.md` set to `complete`, `req-check` failed only on the 10 owned
      sections with no rows (§9.1, §9.4, §15.3, §20.3, §20.4, §20.5, §22.3, §25.4, §29.7, §29.9). It
-     reports no empty cells for the other 20 methods, because matrix rows are an open set: a method
-     with no row is not a row. Flipping the file would not enforce the remaining 200 cells.
+     reported no empty cells for the other 19 methods, because matrix rows were an open set: a method
+     with no row was not a row, and flipping the file would not have enforced their 190 cells. Ruled
+     after the sweep: a matrix declaration may list its rows (`rows=method:Get,GetMany,…`), and
+     `client-methods` now lists all 28, so their empty cells are notes until the file goes `complete`.
    - **Report.** `make conformance` at `e294dc4b`: 5397 rows, 5286 pass, 0 fail, 0 skip, 0 not run,
      111 untested; `client.md` 259 pass, 1 untested.
    - **For the next slice (reads: `Get`, `GetMany`, `Count`, `Exists`, `ExistsWhere`, `Stream`,
@@ -1492,8 +1498,8 @@ database versions it ran against.
      transaction, or a no-op passes it. A composite fixture must make the matched tuples cross, or a
      per-column `IN` passes. Writers mutating in their own pinned worktrees let four run in parallel
      with no cross-talk. On MySQL a re-soft-delete inside one second leaves `CURRENT_TIMESTAMP`
-     unchanged, so a changed-rows mutation is caught only by timing. And declare the 29 methods as
-     the matrix's rows before `client.md` goes `complete`, so a method with no cells fails the check.
+     unchanged, so a changed-rows mutation is caught only by timing. Lastly, the matrix's closed row
+     list makes the reads' 80 empty cells notes from the start, so the sweep can count what is left.
 
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read

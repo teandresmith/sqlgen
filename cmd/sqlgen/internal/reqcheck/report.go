@@ -468,6 +468,9 @@ func (rep *Report) writeMatrices(w writer) {
 		for _, m := range decls {
 			w("### %s: %s\n\n", f.Reg.Name, m.Name)
 			rows, cells := f.matrixCells(m.Name)
+			if m.Rows != nil {
+				rows = m.Rows
+			}
 			if len(rows) == 0 {
 				w("No rows yet.\n\n")
 				continue

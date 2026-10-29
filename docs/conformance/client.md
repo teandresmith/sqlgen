@@ -1,7 +1,7 @@
 # Generated Client Requirements
 
 <!-- seeding: in-progress -->
-<!-- matrix: client-methods rows=method cols=happy-path,nil-empty-input,not-found,soft-delete,transaction,hooks,error-mapping,field-selection,lock-mode,composite-pk -->
+<!-- matrix: client-methods rows=method:Get,GetMany,Count,Exists,ExistsWhere,Stream,Paginate,Connection,Create,CreateMany,Update,UpdateMany,UpdateWhere,Upsert,UpsertMany,Increment,CreateWithRelated,UpdateWithRelated,UpsertWithRelated,SoftDelete,SoftDeleteMany,SoftDeleteWhere,Restore,RestoreMany,RestoreWhere,HardDelete,HardDeleteMany,HardDeleteWhere cols=happy-path,nil-empty-input,not-found,soft-delete,transaction,hooks,error-mapping,field-selection,lock-mode,composite-pk -->
 
 Requirements of the generated client, proved by the cross-dialect conformance suite in
 `cmd/sqlgen/testdata/conformance` (see [README.md](README.md) for the format). Each method's

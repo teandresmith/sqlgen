@@ -370,7 +370,7 @@ func (c *checker) checkAppliesTo(r *Registry, row Row) {
 
 // checkCell validates `<matrix>: <row> × <column>` against the file's declared matrices.
 func (c *checker) checkCell(r *Registry, line int, cell string) bool {
-	m, _, col, ok := parseCell(cell)
+	m, row, col, ok := parseCell(cell)
 	if !ok {
 		c.fail(r.Path, line, "matrix cell %q is not `<matrix>: <row> × <column>`", cell)
 		return false
@@ -378,6 +378,10 @@ func (c *checker) checkCell(r *Registry, line int, cell string) bool {
 	decl, ok := r.Matrices[m]
 	if !ok {
 		c.fail(r.Path, line, "matrix cell %q names matrix %q, which this file does not declare", cell, m)
+		return false
+	}
+	if decl.Rows != nil && !slices.Contains(decl.Rows, row) {
+		c.fail(r.Path, line, "matrix cell %q names row %q, which %s does not declare", cell, row, m)
 		return false
 	}
 	if !slices.Contains(decl.Cols, col) {
@@ -516,8 +520,8 @@ func (c *checker) coverSections(r *Registry, report func(string, int, string, ..
 	}
 }
 
-// coverCells: every declared matrix has at least one row, and every row that a claim or an n/a
-// names fills every declared column.
+// coverCells: every declared matrix has at least one row, and each of its rows (the ones the
+// declaration lists, or else every row a claim or an n/a names) fills every declared column.
 func (c *checker) coverCells(r *Registry, claimed map[string]int, report func(string, int, string, ...any)) {
 	na := map[string]bool{}
 	rows := map[string][]string{}
@@ -535,6 +539,9 @@ func (c *checker) coverCells(r *Registry, claimed map[string]int, report func(st
 	}
 	for _, name := range sortedKeys(r.Matrices) {
 		decl := r.Matrices[name]
+		if decl.Rows != nil {
+			rows[name] = decl.Rows
+		}
 		if len(rows[name]) == 0 {
 			report(r.Path, decl.Line, "matrix %s has no rows; seed it, or remove the declaration if the module has no such matrix", name)
 			continue

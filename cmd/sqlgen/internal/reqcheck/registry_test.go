@@ -49,6 +49,9 @@ func TestParseRegistry_Tables(t *testing.T) {
 	if diff := cmp.Diff([]string{"fires", "message"}, r.Matrices["config-validation"].Cols); diff != "" {
 		t.Errorf("ParseRegistry() matrix cols mismatch (-want +got):\n%s", diff)
 	}
+	if rows := r.Matrices["config-validation"].Rows; rows != nil {
+		t.Errorf("ParseRegistry() open matrix rows = %q, want nil", rows)
+	}
 	wantRows := []reqcheck.Row{
 		{
 			ID:          "config.driver-mismatch",
@@ -123,7 +126,22 @@ func TestParseRegistry_FormatErrors(t *testing.T) {
 		{
 			name: "malformed matrix declaration",
 			text: "<!-- seeding: in-progress -->\n<!-- matrix: naming cols=a,b -->\n",
-			want: "is not `<name> rows=<unit> cols=<a,b,…>`",
+			want: "is not `<name> rows=<unit>[:<a,b,…>] cols=<a,b,…>`",
+		},
+		{
+			name: "matrix row list repeats a row",
+			text: "<!-- seeding: in-progress -->\n<!-- matrix: naming rows=rule:a,a cols=x -->\n",
+			want: `declares an empty or repeated row "a"`,
+		},
+		{
+			name: "matrix row list has an empty row",
+			text: "<!-- seeding: in-progress -->\n<!-- matrix: naming rows=rule:a,,b cols=x -->\n",
+			want: `declares an empty or repeated row ""`,
+		},
+		{
+			name: "matrix with no row unit",
+			text: "<!-- seeding: in-progress -->\n<!-- matrix: naming rows=:a,b cols=x -->\n",
+			want: `declares no row unit`,
 		},
 	}
 	for _, tt := range tests {
@@ -191,4 +209,19 @@ func anyContains(findings []reqcheck.Finding, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestParseRegistry_ClosedMatrixRows(t *testing.T) {
+	text := "<!-- seeding: in-progress -->\n<!-- matrix: client-methods rows=method:Get,GetMany cols=happy-path -->\n"
+	r, findings := reqcheck.ParseRegistry(text, "docs/conformance/client.md", "client.md")
+	if len(findings) != 0 {
+		t.Fatalf("ParseRegistry() findings = %v, want none", findings)
+	}
+	m := r.Matrices["client-methods"]
+	if m.RowUnit != "method" {
+		t.Errorf("ParseRegistry() matrix row unit = %q, want %q", m.RowUnit, "method")
+	}
+	if diff := cmp.Diff([]string{"Get", "GetMany"}, m.Rows); diff != "" {
+		t.Errorf("ParseRegistry() matrix rows mismatch (-want +got):\n%s", diff)
+	}
 }

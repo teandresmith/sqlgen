@@ -49,6 +49,10 @@ A registry file has a header and up to four kinds of table.
 <!-- matrix: config-validation rows=rule cols=fires,message,severity,together,schema -->
 ```
 
+A matrix lists its rows after the row unit (`rows=method:Get,GetMany,…`) when they are a fixed
+set; then a cell naming another row fails, and a listed row no cell names yet counts as empty.
+Without a list, the rows are whatever the cells name.
+
 Seeding is `not-started`, `in-progress` or `complete`. While a file is `in-progress`, coverage
 holes are reported as notes (`make req-check VERBOSE=1` lists them). Once it is `complete` they
 fail the check, so coverage cannot slip back.

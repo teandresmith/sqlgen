@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -31,10 +32,12 @@ type Registry struct {
 	Gaps      []Gap
 }
 
-// Matrix is a declared conformance matrix: an open set of rows and a fixed set of columns.
+// Matrix is a declared conformance matrix: a fixed set of columns, and rows that are either an
+// open set (any row a cell names) or, when the declaration lists them, exactly Rows.
 type Matrix struct {
 	Name    string
 	RowUnit string
+	Rows    []string
 	Cols    []string
 	Line    int
 }
@@ -178,15 +181,7 @@ func (p *registryParser) directive(lineNo int, kind, value string) {
 	case "packages":
 		r.Packages = append(r.Packages, strings.Fields(value)...)
 	case "matrix":
-		m := matrixRE.FindStringSubmatch(value)
-		if m == nil {
-			p.bad(lineNo, "matrix declaration %q is not `<name> rows=<unit> cols=<a,b,…>`", value)
-			return
-		}
-		if _, dup := r.Matrices[m[1]]; dup {
-			p.bad(lineNo, "matrix %q is declared twice", m[1])
-		}
-		r.Matrices[m[1]] = Matrix{Name: m[1], RowUnit: m[2], Cols: strings.Split(m[3], ","), Line: lineNo}
+		p.matrix(lineNo, value)
 	case "prd":
 		m := prdAnchorRE.FindStringSubmatch(value)
 		if m == nil {
@@ -196,6 +191,36 @@ func (p *registryParser) directive(lineNo int, kind, value string) {
 		p.anchor = m[1]
 		r.Anchors = append(r.Anchors, Anchor{Key: m[1], Hash: m[2], Line: lineNo})
 	}
+}
+
+// matrix parses a `<name> rows=<unit>[:<a,b,…>] cols=<a,b,…>` declaration into r.Matrices.
+func (p *registryParser) matrix(lineNo int, value string) {
+	r := p.r
+	m := matrixRE.FindStringSubmatch(value)
+	if m == nil {
+		p.bad(lineNo, "matrix declaration %q is not `<name> rows=<unit>[:<a,b,…>] cols=<a,b,…>`", value)
+		return
+	}
+	if _, dup := r.Matrices[m[1]]; dup {
+		p.bad(lineNo, "matrix %q is declared twice", m[1])
+	}
+	unit, names, closed := strings.Cut(m[2], ":")
+	if unit == "" {
+		p.bad(lineNo, "matrix %q declares no row unit", m[1])
+	}
+	var rows []string
+	if closed {
+		rows = strings.Split(names, ",")
+		for i, row := range rows {
+			if row == "" || slices.Contains(rows[:i], row) {
+				p.bad(lineNo, "matrix %q declares an empty or repeated row %q", m[1], row)
+				// Treat a malformed list as open rather than reporting its cells as empty.
+				rows = nil
+				break
+			}
+		}
+	}
+	r.Matrices[m[1]] = Matrix{Name: m[1], RowUnit: unit, Rows: rows, Cols: strings.Split(m[3], ","), Line: lineNo}
 }
 
 // table parses the table whose header is lines[i] and returns the index of its last row.

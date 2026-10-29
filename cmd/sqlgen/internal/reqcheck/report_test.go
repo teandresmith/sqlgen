@@ -111,7 +111,7 @@ func reportRepo(t *testing.T) string {
 		"docs/conformance/client.md": `# Client
 
 <!-- seeding: in-progress -->
-<!-- matrix: client-methods rows=method cols=happy-path,not-found,lock-mode -->
+<!-- matrix: client-methods rows=method:Get,HardDeleteMany cols=happy-path,not-found,lock-mode -->
 
 ## §9.3 Delete Operations
 <!-- prd: 9.3 sha256: ` + hash("9.3") + ` -->
@@ -501,6 +501,7 @@ No rows yet.
 
 | method | happy-path | not-found | lock-mode |
 |---|---|---|---|
+| Get | empty | empty | empty |
 | HardDeleteMany | not run | untested | n/a |
 
 ## PRD coverage
