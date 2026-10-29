@@ -1368,6 +1368,70 @@ database versions it ran against.
      and a handoff to another agent's section is a claim that it will be cited, so resolve
      handoffs before the completion sweep.
 
+   **Ninth slice, cli files (`gen.md`, `gotype.md`), recorded 2026-10-29:**
+   - **Scope.** The 494 `cmd/sqlgen/gen` tests no row claimed, the 4 `gotype` orphans, the 27
+     untested rows in `gen.md` and 7 in `gotype.md`, and the parser slice's 2 leftovers. By owning
+     section the orphans split 281 `client.md`, 116 `gen.md`, 59 `runtime.md`, 32 `api*.md`, 4
+     `gotype.md`, 1 each `config-features.md` and `commands.md`. Ruled before mapping: rows go to
+     the file that owns their section (option a), so `client.md` gains rows from the generator's
+     side and `runtime.md` moves to `in-progress`; matrix cells in those two files stay empty for
+     their own slices. Sections `gen.md` already held (§9.8, §9.9, §29.4) kept their rows.
+   - **Split first.** `gen.md` had 999 rows, twice ruling 7's ~500. §8.5 and the `naming` matrix
+     with its 117 `n/a` cells and 11 gaps moved to `cli/naming.md` (428), and §32 and the
+     `access-control` matrix to `cli/access-control.md` (90). The packages line and its orphan
+     check stay in `gen.md`.
+   - **Rows seeded: 212** (5098 → 5310), most in `client.md` (34 → 185 entries) and the first 62 in
+     `runtime.md`, plus about 100 refs on existing rows. Nine mapping agents, one per group of PRD
+     subsections (§9.8.x split by method), placed 457 tests; 37 handed between sections were placed
+     by a resolver. Golden tests backed a row only after a generator mutation failed them: 60 such
+     mutations, run one at a time after mapping so no agent tested a mutated tree, all failed. 177
+     tests are unclaimed with reasons (174 `gen`, 3 `gotype`).
+   - **Claim check before tests.** Six read-only checkers over the 275 rows this slice touched
+     dropped 40 refs, added 23 and narrowed Applies-to on 17 (the review that followed dropped 3 more): presence-only
+     template checks, substrings shared between methods (`Exists` / `ExistsWhere`, `Raw` /
+     `Querier`), expectations taken from the fixture (`PKAutoGenExpr` written by the test), TTLs
+     and orders equal to the defaults, a json-array row on a hand-built context, and one-dialect
+     renders on `all` rows. Two rows were restated and the dropped tests listed as unclaimed.
+   - **Gaps.** Two writers (`gnw`, `gtw`) filled 18 rows with new files only, each mutation-checked
+     in one shell command; a review then hardened four (the 0755 test re-execs under `umask 000`,
+     `UpdateMany`'s item type covers every dialect, tenanted `Count` runs generated code, the probe
+     module stops pinning versions). 15 rows stay untested: 11 composite foreign-key rows waiting
+     on Phase 32 (32.4–32.6) and the 4 REST rows of §32.3 (REST generation is deferred).
+   - **Defects: 5 ruled fixes**, each with a fail-first test: stdlib `UpdateMany` ran without a
+     transaction (§9.8.6a, §19.4); `Client.Close` closed only the querier (§20.2); MySQL's tenanted
+     `UpdateMany` pre-read every item before the batch loop (§29.5), and the review of that fix
+     found a repeated key losing its pre-mutation tenant; a bare built-in name reached another
+     schema's type of that name (§7.1), and its review found the domain-base hop did too. One
+     suspected defect (an inline PK restated in config losing its conflict target) did not
+     reproduce: the "known limitation" subtest built a shape no parser produces, now corrected.
+     Five composite-key findings are Phase 32 work, not defects.
+   - **PRD amendments: 7**, all ruled, each with its fill test: input structs carry only `json`
+     tags; §9.4, §9.8 and §9.8.11 take §14.1's Paginate shape; §9.8.12 and §14.2 put `TotalCount`
+     on `Connection[T]`; §27.5 hashes columns in declaration order (a positional msgpack encoding
+     depends on it) with a bare `custom` serializer; §7.1 keeps built-in names out of the
+     bare-name fallback; §7.4 drops `type_map` from the uuid retype; §7.6 says a typed JSON
+     override implements `Scan`/`Value` on `database/sql` drivers. **PRD gaps: 23** new, all open,
+     among them the side effects of earlier committed sub-batches when a later one fails. One
+     adjacent finding (the pagination template's unchecked nil result) went to `backlog.md`.
+   - **Review.** Seven sqlgen-reviewer passes (registry, amendments, the three fixes, the writers'
+     tests, the gotype fix); each finding was fixed before its commit.
+   - **Completion sweep.** With `gen.md`, `gotype.md`, `naming.md` and `access-control.md` set to
+     `complete`, the first run listed 22 `gen` orphans, the tests the claim check had dropped plus
+     one new test; once listed or cited, `req-check` passes and all four are flipped.
+   - **Report.** `make conformance` at `be42a359`: 5310 rows, 5198 pass, 0 fail, 0 skip, 0 not run,
+     112 untested, 15 of them in the four files this slice completed.
+   - **Effort.** Not timed. Mapping took about 10 minutes on nine agents; then the resolver, six
+     claim checkers, three rounds of rulings (12 questions), the fixer, two writers, a follow-up
+     writer, seven review passes and the gates.
+   - **For the next slice (`client.md`, method by method):** many rows in `client.md` now come from
+     the generator's side (template tests), so seed each method's `client-methods` cells from the
+     conformance suite and add its refs to those rows rather than writing new ones; a template
+     golden is the strongest generator-side proof, but only after a mutation; a worktree an agent
+     creates may start from an old commit, so pin it (`git checkout --detach <sha>`) before it
+     runs anything; two lint runs in parallel trip golangci-lint's lock, so gate one tree at a
+     time; and an executed probe (`gnwRunGeneratedProbe`) catches what a rendered-text check
+     misses, as the tenanted `Count` mutation showed.
+
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
