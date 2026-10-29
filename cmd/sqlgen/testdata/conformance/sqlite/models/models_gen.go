@@ -6940,7 +6940,7 @@ func newProductClient(querier database.Querier, mutationHooks []hook.MutationHoo
 		batchSize:     2,
 		queryLimit:    1000,
 		pageSize:      100,
-		cursorKeys:    []string{"id"},
+		cursorKeys:    []string{"price", "id"},
 		strictUpdates: true,
 		mutationHooks: mutationHooks,
 		queryHooks:    queryHooks,
@@ -8698,6 +8698,9 @@ func decodeProductCursor(encoded string, keys []string) (map[string]any, error) 
 	out := make(map[string]any, len(keys))
 	for _, key := range keys {
 		switch key {
+		case "price":
+			err = json.Unmarshal(raw[key], &row.Price)
+			out[key] = row.Price
 		case "id":
 			err = json.Unmarshal(raw[key], &row.ID)
 			out[key] = row.ID

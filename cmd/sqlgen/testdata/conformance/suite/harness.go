@@ -30,8 +30,49 @@ type Harness struct {
 	// Querier is the counting querier Client was built on. Statements inside a
 	// transaction run on the transaction's connection and are not recorded.
 	Querier *CountingQuerier
+	// Caps are the dialect's capabilities. A subtest whose expectation differs
+	// by dialect derives it from these, never from Dialect.
+	Caps Capabilities
 	// Reset empties every conformance table.
 	Reset func(t *testing.T)
+}
+
+// Capabilities are the dialect differences the PRD states, by name.
+type Capabilities struct {
+	// RowLocks: a LockMode other than LockNone adds a row-lock clause to a
+	// read inside a transaction. Without it, any such LockMode is an error.
+	RowLocks bool
+}
+
+// Capability names one Capabilities field.
+type Capability string
+
+// CapRowLocks is Capabilities.RowLocks.
+const CapRowLocks Capability = "RowLocks"
+
+// Require skips t, naming the capability, when the dialect lacks it.
+func (h *Harness) Require(t *testing.T, c Capability) {
+	t.Helper()
+	if !h.has(c) {
+		t.Skipf("requires capability %s, which %s lacks", c, h.Dialect)
+	}
+}
+
+// Lacks skips t, naming the capability, when the dialect has it: the subtest
+// covers the dialects without it.
+func (h *Harness) Lacks(t *testing.T, c Capability) {
+	t.Helper()
+	if h.has(c) {
+		t.Skipf("covers dialects without capability %s, which %s has", c, h.Dialect)
+	}
+}
+
+func (h *Harness) has(c Capability) bool {
+	switch c {
+	case CapRowLocks:
+		return h.Caps.RowLocks
+	}
+	panic("unknown capability " + string(c))
 }
 
 // Run runs every method contract against h, one method at a time.
@@ -47,6 +88,14 @@ func Run(t *testing.T, h *Harness) {
 	t.Run("RestoreWhere", func(t *testing.T) { restoreWhere(t, h) })
 	t.Run("HardDelete", func(t *testing.T) { hardDelete(t, h) })
 	t.Run("HardDeleteWhere", func(t *testing.T) { hardDeleteWhere(t, h) })
+	t.Run("Get", func(t *testing.T) { get(t, h) })
+	t.Run("GetMany", func(t *testing.T) { getMany(t, h) })
+	t.Run("Exists", func(t *testing.T) { exists(t, h) })
+	t.Run("Count", func(t *testing.T) { count(t, h) })
+	t.Run("ExistsWhere", func(t *testing.T) { existsWhere(t, h) })
+	t.Run("Paginate", func(t *testing.T) { paginate(t, h) })
+	t.Run("Connection", func(t *testing.T) { connection(t, h) })
+	t.Run("Stream", func(t *testing.T) { stream(t, h) })
 }
 
 // CountingQuerier records every statement sent through it.

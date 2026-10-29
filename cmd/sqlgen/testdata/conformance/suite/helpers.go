@@ -3,8 +3,10 @@ package suite
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/teandresmith/sqlgen/database"
 	"github.com/teandresmith/sqlgen/hook"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/models"
@@ -156,4 +158,51 @@ func createLabel(t *testing.T, h *Harness, name string) {
 	if _, err := h.Client.Labels().Create(context.Background(), &models.CreateLabelInput{Name: name}); err != nil {
 		t.Fatalf("Create label %q: %v", name, err)
 	}
+}
+
+func createPricedProduct(t *testing.T, h *Harness, name string, price int64) *models.Product {
+	t.Helper()
+	p, err := h.Client.Products().Create(context.Background(), &models.CreateProductInput{Name: name, Price: price})
+	if err != nil {
+		t.Fatalf("Create product %q: %v", name, err)
+	}
+	return p
+}
+
+// queryRecorder returns a client on h's querier whose query hook records each
+// QueryContext before the query runs, so a parent read is recorded before the
+// relationship reads it starts, and a func that returns the recorded contexts.
+// Relationship reads run in goroutines, so recording takes a lock.
+func queryRecorder(h *Harness) (*models.Client, func() []hook.QueryContext) {
+	var (
+		mu   sync.Mutex
+		seen []hook.QueryContext
+	)
+	record := func(next hook.QueryHandler) hook.QueryHandler {
+		return func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			mu.Lock()
+			seen = append(seen, *q)
+			mu.Unlock()
+			return next(ctx, q)
+		}
+	}
+	return models.New(h.Querier, models.WithQueryHook(record)), func() []hook.QueryContext {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]hook.QueryContext(nil), seen...)
+	}
+}
+
+// otherTx begins a transaction on a connection of its own, for a subtest that
+// needs a second transaction to contend with, and rolls it back at cleanup.
+// Row-lock contention needs CapRowLocks: on SQLite's shared-cache database a
+// conflicting statement fails with a table lock at once rather than waiting.
+func otherTx(t *testing.T, h *Harness) context.Context {
+	t.Helper()
+	txCtx, err := database.NewTransaction(context.Background(), h.Querier, "contender")
+	if err != nil {
+		t.Fatalf("begin the contending transaction: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Rollback(txCtx) })
+	return txCtx
 }

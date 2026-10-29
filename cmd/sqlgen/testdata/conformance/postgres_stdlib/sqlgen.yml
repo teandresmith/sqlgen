@@ -12,6 +12,9 @@ tables:
   products:
     # Small enough that a handful of keys spans several sub-batches.
     batch_size: 2
+    # A cursor order that differs from insertion order, so Connection's sort
+    # is observable; id breaks price ties.
+    cursor_keys: [price, id]
   documents:
     batch_size: 2
   revisions:

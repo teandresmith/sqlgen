@@ -68,6 +68,7 @@ func TestConformance(t *testing.T) {
 		Database: "MySQL " + version,
 		Client:   models.New(q),
 		Querier:  q,
+		Caps:     suite.Capabilities{RowLocks: true},
 		Reset: func(t *testing.T) {
 			// TRUNCATE refuses a table another table's foreign key references.
 			exec(t, "DELETE FROM order_items", "DELETE FROM products", "DELETE FROM documents",
