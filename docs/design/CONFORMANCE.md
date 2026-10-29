@@ -1434,6 +1434,67 @@ database versions it ran against.
      time; and an executed probe (`gnwRunGeneratedProbe`) catches what a rendered-text check
      misses, as the tenanted `Count` mutation showed.
 
+   **Tenth slice, `client.md` delete family, recorded 2026-10-29:**
+   - **Scope.** `SoftDelete`, `SoftDeleteMany`, `SoftDeleteWhere`, `Restore`, `RestoreMany`,
+     `RestoreWhere`, `HardDelete` and `HardDeleteWhere` brought to the `HardDeleteMany` standard, §29.8,
+     and the two untested batch-superset rows. Measured first: 137 example tests had one of these
+     methods as their subject (38 portable on every dialect, the rest cache, events, tenancy, MySQL
+     affected-key or bool-strategy tests); of the 80 cells, 7 were `n/a` with a PRD citation (by-key
+     nil input, hard-delete field selection and lock mode), none needing sign-off; no concern needed a
+     capability once subtests assert outcomes rather than the §9.8.8 statement counts.
+   - **Rulings before writing (8):** grow the schema (a composite-key soft-delete table `revisions`, two
+     CHECKs on `documents` a soft delete and a restore can trip, and a case-insensitive key table
+     `labels`: `CITEXT`, `utf8mb4_0900_ai_ci`, `NOCASE`); lock mode is a row where the method re-reads
+     and `n/a` on the hard deletes; no capability yet; one defect fixed in code; four PRD amendments.
+     Three more came from the writers: §9.8 item 4's scoping, RestoreMany in §9.5's batch-failure
+     list and the §9.3 no-match wording.
+   - **Suite.** Four writers, one per method pair, each with its own file, helper prefix and pinned
+     mutation worktree; every concern was mutation-checked, on MySQL too where its body differs. The
+     suite went from 17 to 126 subtests per dialect, all passing on the four targets. Two equivalent
+     mutants: a mutation-side empty-`FieldOptions` guard cannot be observed, because `GetMany` returns
+     `nil, nil` for an all-false selection (logged in `backlog.md`).
+   - **Claim check before porting.** Two read-only checkers found 6 defect groups, all fixed: 8 rollback
+     subtests passed for a no-op (now each checks the write inside the transaction), two
+     field-selection subtests a sibling method would pass, 5 composite fixtures whose matched tuples
+     formed a full per-column cross product (the pilot's `HardDeleteMany` one included), batch hooks
+     compared as sets where §9.5 says list order, a missing `Input` check, and a collation left to the
+     server default.
+   - **Rows.** `client.md` 173 → 260 rows (5310 → 5397 in all), with conformance refs added to 10
+     existing rows rather than new ones. All 90 delete-family cells are filled or `n/a`, and
+     `edge.batch-db-matched-superset-returning` now runs on every dialect.
+     `edge.batch-db-matched-superset-tenanted` stays untested until a tenancy suite exists (§8).
+   - **Ported:** 32 per-dialect example tests (the `*Where` empty-filter and zero-match tests,
+     `TestHardDeleteWhere`, `TestArticleSoftDeleteWhere`, `TestHardDeleteByCompositePK`, SQLite's
+     missing-key and timestamp tests). The PostgreSQL and MySQL timestamp tests stay because they
+     assert recency, and the bool-strategy, already-soft-deleted and `TestEmptyBatch` tests stay too.
+   - **Defect: 1, ruled and fixed** (`80aba8d5`). `SoftDeleteWhere` and `RestoreWhere` ANDed the
+     `DeletedAt` comparator their doc comments said they ignore, so a contradicting comparator matched
+     nothing and a comparator-only `RestoreWhere` restored rows instead of returning `ErrEmptyFilter`.
+     Four fail-first subtests landed with the fix. `/verify` did not run, because the fix has no FIX ID.
+   - **PRD amendments: 7**, each with its fill test or rows (`e294dc4b`): §9.6's empty-`FieldOptions`
+     sentence (keys are still learned), §9.8 item 4 (the default is a read-method rule; `UpdateWhere`
+     and `HardDeleteWhere` address every matched row), §9.5 (RestoreMany), §9.3 (no entities and no
+     error), the §9.8.8 samples (`Input: ids`, the comparator dropped) and §29.8 (no `IncludeDeleted`).
+     §29.8 is seeded from the tenancy example. The review of the §9.8 amendment found that
+     `UpdateWhere`'s trailing read drops the soft-deleted rows it wrote; that is logged in `backlog.md`
+     for the writes group. `gap.batch.partial-failure-side-effects` is still open.
+   - **Review.** Four sqlgen-reviewer passes (schema, suite, fix, PRD); each finding was fixed or
+     logged before its commit.
+   - **Completion sweep.** With `client.md` set to `complete`, `req-check` fails only on the 10 owned
+     sections with no rows (§9.1, §9.4, §15.3, §20.3, §20.4, §20.5, §22.3, §25.4, §29.7, §29.9). It
+     reports no empty cells for the other 20 methods, because matrix rows are an open set: a method
+     with no row is not a row. Flipping the file would not enforce the remaining 200 cells.
+   - **Report.** `make conformance` at `e294dc4b`: 5397 rows, 5286 pass, 0 fail, 0 skip, 0 not run,
+     111 untested; `client.md` 259 pass, 1 untested.
+   - **For the next slice (reads: `Get`, `GetMany`, `Count`, `Exists`, `ExistsWhere`, `Stream`,
+     `Paginate`, `Connection`):** it fills §9.1 and §9.4 and is the first group where lock mode and
+     the soft-delete default are real cells. A rollback subtest must show the write inside the
+     transaction, or a no-op passes it. A composite fixture must make the matched tuples cross, or a
+     per-column `IN` passes. Writers mutating in their own pinned worktrees let four run in parallel
+     with no cross-talk. On MySQL a re-soft-delete inside one second leaves `CURRENT_TIMESTAMP`
+     unchanged, so a changed-rows mutation is caught only by timing. And declare the 29 methods as
+     the matrix's rows before `client.md` goes `complete`, so a method with no cells fails the check.
+
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
