@@ -27,6 +27,23 @@ func (s DocumentSorter) Title(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "title", Direction: direction}
 }
 
+// LabelSorter provides type-safe sort helpers for the Label entity.
+// Each method returns a sql.Sort for the corresponding column.
+type LabelSorter struct{}
+
+// NewLabelSorter returns a new LabelSorter.
+func NewLabelSorter() LabelSorter { return LabelSorter{} }
+
+// DeletedAt returns a sort for the deleted_at column in the given direction.
+func (s LabelSorter) DeletedAt(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "deleted_at", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s LabelSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
 // OrderItemSorter provides type-safe sort helpers for the OrderItem entity.
 // Each method returns a sql.Sort for the corresponding column.
 type OrderItemSorter struct{}
@@ -74,4 +91,31 @@ func (s ProductSorter) Name(direction sql.SortDirection) sql.Sort {
 // Price returns a sort for the price column in the given direction.
 func (s ProductSorter) Price(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "price", Direction: direction}
+}
+
+// RevisionSorter provides type-safe sort helpers for the Revision entity.
+// Each method returns a sql.Sort for the corresponding column.
+type RevisionSorter struct{}
+
+// NewRevisionSorter returns a new RevisionSorter.
+func NewRevisionSorter() RevisionSorter { return RevisionSorter{} }
+
+// Body returns a sort for the body column in the given direction.
+func (s RevisionSorter) Body(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "body", Direction: direction}
+}
+
+// DeletedAt returns a sort for the deleted_at column in the given direction.
+func (s RevisionSorter) DeletedAt(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "deleted_at", Direction: direction}
+}
+
+// DocumentID returns a sort for the document_id column in the given direction.
+func (s RevisionSorter) DocumentID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "document_id", Direction: direction}
+}
+
+// Number returns a sort for the number column in the given direction.
+func (s RevisionSorter) Number(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "number", Direction: direction}
 }

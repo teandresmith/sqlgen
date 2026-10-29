@@ -2628,6 +2628,2380 @@ type GetDocumentsInput struct {
 	requiredColumns []string
 }
 
+type Label struct {
+	Name      string     `db:"name" json:"name"`
+	DeletedAt *time.Time `db:"deleted_at" json:"deleted_at"`
+}
+
+// LabelClient provides type-safe operations for the labels table.
+type LabelClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single label by primary key.
+	// Soft-deleted labels are excluded by default (exclude_deleted is enabled).
+	// Use GetMany with Filter.DeletedAt comparator to retrieve soft-deleted labels.
+	Get(ctx context.Context, id string, opts ...func(*CallOptions[LabelFieldOptions])) (*Label, error)
+
+	// GetMany returns labels matching the given filter, field selection, and sort criteria.
+	// Soft-deleted labels are excluded by default. Set Filter.DeletedAt to override.
+	GetMany(ctx context.Context, input *GetLabelsInput, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error)
+
+	// Exists returns true if a label with the given primary key exists.
+	// Soft-deleted labels are excluded — a soft-deleted label returns false.
+	Exists(ctx context.Context, id string, opts ...func(*CallOptions[LabelFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any label matches the given filter.
+	// Soft-deleted labels are excluded by default.
+	ExistsWhere(ctx context.Context, filter *LabelFilter, opts ...func(*CallOptions[LabelFieldOptions])) (bool, error)
+
+	// Count returns the number of labels matching the given filter.
+	// Soft-deleted labels are excluded by default. A nil filter counts all non-deleted labels.
+	Count(ctx context.Context, filter *LabelFilter, opts ...func(*CallOptions[LabelFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new label and returns the created entity.
+	Create(ctx context.Context, input *CreateLabelInput, opts ...func(*CallOptions[LabelFieldOptions])) (*Label, error)
+
+	// CreateMany inserts multiple labels in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateLabelInput, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error)
+
+	// Update partially updates a label by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id string, input *UpdateLabelInput, opts ...func(*CallOptions[LabelFieldOptions])) (*Label, error)
+
+	// UpdateMany updates multiple labels and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateLabelItem, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error)
+
+	// UpdateWhere updates all labels matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *LabelFilter, input *UpdateLabelInput, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error)
+
+	// Upsert inserts a label or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateLabelInput, target LabelConflictTarget, opts ...func(*CallOptions[LabelFieldOptions])) (*Label, error)
+
+	// UpsertMany inserts or updates multiple labels in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateLabelInput, target LabelConflictTarget, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error)
+
+	// --- Soft Delete Operations ---
+
+	// SoftDelete marks a label as deleted by setting the deleted_at column and returns
+	// the updated entity. Idempotent — returns nil, nil if the primary key does not exist.
+	SoftDelete(ctx context.Context, id string, opts ...func(*CallOptions[LabelFieldOptions])) (*Label, error)
+
+	// SoftDeleteMany marks multiple labels as deleted and returns the updated entities.
+	SoftDeleteMany(ctx context.Context, ids []string, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error)
+
+	// SoftDeleteWhere marks all labels matching the filter as deleted and returns them.
+	// Idempotent — returns empty slice when no rows match.
+	SoftDeleteWhere(ctx context.Context, filter *LabelFilter, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error)
+
+	// --- Restore Operations ---
+
+	// Restore clears the deleted_at column, restoring a soft-deleted label, and returns it.
+	// Idempotent — returns nil, nil if the primary key does not exist.
+	Restore(ctx context.Context, id string, opts ...func(*CallOptions[LabelFieldOptions])) (*Label, error)
+
+	// RestoreMany restores multiple soft-deleted labels and returns them.
+	RestoreMany(ctx context.Context, ids []string, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error)
+
+	// RestoreWhere restores all soft-deleted labels matching the filter and returns them.
+	// Idempotent — returns empty slice when no rows match.
+	RestoreWhere(ctx context.Context, filter *LabelFilter, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a label from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id string, opts ...func(*CallOptions[LabelFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple labels from the database.
+	HardDeleteMany(ctx context.Context, ids []string, opts ...func(*CallOptions[LabelFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all labels matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *LabelFilter, opts ...func(*CallOptions[LabelFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of labels with total count for offset-based pagination.
+	// Soft-deleted labels are excluded by default.
+	Paginate(ctx context.Context, input PaginateInput[LabelFilter], opts ...func(*CallOptions[LabelFieldOptions])) (*PaginateResult[Label], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of labels.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[LabelFilter], opts ...func(*CallOptions[LabelFieldOptions])) (*Connection[Label], error)
+
+	// Stream returns an iterator over labels matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamLabelsInput, opts ...func(*CallOptions[StreamLabelFieldOptions])) iter.Seq2[*Label, error]
+}
+
+// labelClient implements the LabelClient interface.
+type labelClient struct {
+	querier        database.Querier
+	dialect        sql.Dialect
+	table          sql.Table
+	batchSize      int
+	queryLimit     int
+	pageSize       int
+	cursorKeys     []string
+	strictUpdates  bool
+	excludeDeleted bool
+	mutationHooks  []hook.MutationHook
+	queryHooks     []hook.QueryHook
+	panicHandler   hook.PanicHandler
+	mysqlVersion   *mysqlVersionCache
+}
+
+// newLabelClient creates a new labelClient.
+func newLabelClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler, mysqlVersion *mysqlVersionCache) *labelClient {
+	return &labelClient{
+		querier:        querier,
+		dialect:        sql.NewMySQLDialect(),
+		table:          sql.Table{Schema: "", Name: "labels"},
+		batchSize:      200,
+		queryLimit:     1000,
+		pageSize:       100,
+		cursorKeys:     []string{"name"},
+		strictUpdates:  true,
+		excludeDeleted: true,
+		mutationHooks:  mutationHooks,
+		queryHooks:     queryHooks,
+		panicHandler:   panicHandler,
+		mysqlVersion:   mysqlVersion,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *labelClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *labelClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// rowMatches reports whether a row matching conds exists. MySQL counts the
+// rows an UPDATE changed, not the rows it matched, so a by-key write that
+// leaves its row as it was reports none; only then does the write ask, on
+// the same connection, to tell a missing row from an unchanged one.
+func (c *labelClient) rowMatches(ctx context.Context, conn database.Querier, conds []sql.Condition) (bool, error) {
+	query, args := sql.BuildExists(c.dialect, c.table, conds)
+	var exists bool
+	if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// labelAllColumns is the column list for full-entity reads, sorted for determinism.
+var labelAllColumns = []string{"deleted_at", "name"}
+
+// scanLabels scans rows into Label entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanLabels(rows database.Rows, columns []string) ([]*Label, error) {
+	var result []*Label
+	for rows.Next() {
+		l := &Label{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "name":
+				targets[idx] = &l.Name
+			case "deleted_at":
+				targets[idx] = &l.DeletedAt
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan label: %w", err)
+		}
+
+		result = append(result, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate label rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single label by primary key with optional field selection.
+// Soft-deleted labels are excluded — a soft-deleted label returns ErrNotFound.
+// Use GetMany with Filter.DeletedAt comparator to retrieve soft-deleted labels.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *labelClient) Get(ctx context.Context, id string, opts ...func(*CallOptions[LabelFieldOptions])) (*Label, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get label: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get label: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("get label: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableLabels, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[LabelFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[LabelFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		labels, err := c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{
+				Name: &comparator.ID{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(labels) == 0 {
+			return nil, ErrNotFound
+		}
+		return labels[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Label), nil
+}
+
+// GetMany returns labels matching the given filter, field selection, and sort criteria.
+// Soft-deleted labels are excluded by default. Set Filter.DeletedAt to override.
+func (c *labelClient) GetMany(ctx context.Context, input *GetLabelsInput, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetLabelsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get labels: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get labels: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("get labels: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableLabels, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := labelAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Soft delete: inject default "is not deleted" if user didn't set the comparator
+		if c.excludeDeleted && (input.Filter == nil || input.Filter.DeletedAt == nil) {
+			conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var labels []*Label
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("get labels: %w", err)
+		}
+		defer rows.Close()
+
+		labels, err = scanLabels(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return labels, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Label), nil
+}
+
+// Create inserts a new label and returns the created entity.
+func (c *labelClient) Create(ctx context.Context, input *CreateLabelInput, opts ...func(*CallOptions[LabelFieldOptions])) (*Label, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateLabelInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableLabels, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"name"}
+		args := []any{input.Name}
+
+		if v, ok := input.DeletedAt.Get(); ok {
+			columns = append(columns, "deleted_at")
+			args = append(args, v)
+		}
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns: columns,
+			Values:  args,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("create label: %w", err)
+		}
+
+		m.AffectedPKs = []any{input.Name}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, input.Name, func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Label), nil
+}
+
+// CreateMany inserts multiple labels in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *labelClient) CreateMany(ctx context.Context, inputs []*CreateLabelInput, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableLabels, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Label{}, nil
+		}
+		var allIDs []string
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"name", "deleted_at"}
+			var valueRows [][]any
+			for _, input := range batch {
+				var deletedAt any = sql.Default
+				if v, ok := input.DeletedAt.Get(); ok {
+					deletedAt = v
+				}
+
+				valueRows = append(valueRows, []any{
+					input.Name,
+					deletedAt,
+				})
+			}
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:   columns,
+				ValueRows: valueRows,
+			})
+			_, err := conn.Exec(ctx, query, queryArgs...)
+			if err != nil {
+				return nil, fmt.Errorf("create labels batch: %w", err)
+			}
+			for _, input := range batch {
+				allIDs = append(allIDs, input.Name)
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		// Convert IDs for filter
+		idStrings := make([]string, len(allIDs))
+		for i, id := range allIDs {
+			idStrings[i] = id
+		}
+		return c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{
+				Name: &comparator.ID{In: idStrings},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Label), nil
+}
+
+// Update partially updates a label by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *labelClient) Update(ctx context.Context, id string, input *UpdateLabelInput, opts ...func(*CallOptions[LabelFieldOptions])) (*Label, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableLabels, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.DeletedAt.Get(); ok {
+			setClauses["deleted_at"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[LabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("name")).Eq(id)}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: updateConds,
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update label: %w", err)
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("update label rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, updateConds)
+			if err != nil {
+				return nil, fmt.Errorf("update label: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Label), nil
+}
+
+// UpdateLabelItem pairs a primary key with an update input for batch updates.
+type UpdateLabelItem struct {
+	Name  string            `json:"name"`
+	Input *UpdateLabelInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple labels and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *labelClient) UpdateMany(ctx context.Context, items []UpdateLabelItem, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error) {
+	// UpdateLabelItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableLabels, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Label{}, nil
+		}
+		var allIDs []string
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateLabelItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_label", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.DeletedAt.Get(); ok {
+						setClauses["deleted_at"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.Name)
+						continue
+					}
+					itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("name")).Eq(item.Name)}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: itemConds,
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("update label %v: %w", item.Name, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update label %v rows affected: %w", item.Name, err)
+					}
+					// MySQL counts the rows a statement changed, not the rows it
+					// matched, so an item that leaves its row as it was reports
+					// none. Only then is the row looked up, to tell a missing row
+					// from an unchanged one.
+					if matched == 0 {
+						found, err := c.rowMatches(ctx, conn, itemConds)
+						if err != nil {
+							return fmt.Errorf("update label %v: match row: %w", item.Name, err)
+						}
+						if found {
+							matched = 1
+						}
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.Name)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.Name
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		// Convert IDs for filter
+		idStrings := make([]string, len(allIDs))
+		for i, id := range allIDs {
+			idStrings[i] = id
+		}
+		return c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{
+				Name: &comparator.ID{In: idStrings},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Label), nil
+}
+
+// UpdateWhere updates all labels matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *labelClient) UpdateWhere(ctx context.Context, filter *LabelFilter, input *UpdateLabelInput, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableLabels, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.DeletedAt.Get(); ok {
+			setClauses["deleted_at"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetLabelsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[LabelFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// MySQL: must collect IDs before the UPDATE (no RETURNING)
+		ids, err := c.collectAffectedIDs(ctx, conn, conds)
+		if err != nil {
+			return nil, fmt.Errorf("update labels where: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: conds,
+		})
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update labels where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{
+				Name: &comparator.ID{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Label), nil
+}
+
+// collectAffectedIDs returns the PKs of rows matching the conditions.
+// Used by Where variants to know which rows were affected.
+func (c *labelClient) collectAffectedIDs(ctx context.Context, conn database.Querier, conds []sql.Condition) ([]string, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"name"},
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// SoftDelete marks a label as deleted by setting the deleted_at column
+// and returns the updated entity.
+// Idempotent — returns nil, nil if the primary key does not exist.
+// To set deleted_at to a specific value, use Update instead.
+func (c *labelClient) SoftDelete(ctx context.Context, id string, opts ...func(*CallOptions[LabelFieldOptions])) (*Label, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpSoftDelete, Table: TableLabels, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("name")).Eq(id)}
+		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+			Column:     "deleted_at",
+			Type:       sql.SoftDeleteTimestamp,
+			Conditions: delConds,
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("soft delete label: %w", err)
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("soft delete label rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, delConds)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete label: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch the soft-deleted entity — set DeletedAt comparator to override
+		// the default "is not deleted" condition (the entity was just soft-deleted)
+		results, err := c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{
+				Name:      &comparator.ID{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{Null: new(false)},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Label), nil
+}
+
+// SoftDeleteMany marks multiple labels as deleted and returns the updated entities.
+func (c *labelClient) SoftDeleteMany(ctx context.Context, ids []string, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpSoftDeleteMany, Table: TableLabels, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(ids) == 0 {
+			return []*Label{}, nil
+		}
+
+		idStrings := make([]string, len(ids))
+		for i, id := range ids {
+			idStrings[i] = id
+		}
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[string]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("name")).In(toAnySlice(idStrings[start:end])...)}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, delConds)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete labels: read keys: %w", err)
+			}
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+
+			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+				Column:     "deleted_at",
+				Type:       sql.SoftDeleteTimestamp,
+				Conditions: delConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("soft delete labels: %w", err)
+			}
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{
+				Name:      &comparator.ID{In: idStrings},
+				DeletedAt: &comparator.NullableTime{Null: new(false)},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Label), nil
+}
+
+// SoftDeleteWhere marks all labels matching the filter as deleted and returns them.
+// Always scoped to non-deleted rows — the DeletedAt comparator
+// on the filter is ignored. Returns empty slice when no rows match.
+func (c *labelClient) SoftDeleteWhere(ctx context.Context, filter *LabelFilter, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpSoftDeleteWhere, Table: TableLabels, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Always scope to non-deleted rows — SoftDelete only targets active entities
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+
+		skipFetch := options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns()
+
+		// MySQL: must collect IDs before the soft delete (no RETURNING)
+		ids, err := c.collectAffectedIDs(ctx, conn, conds)
+		if err != nil {
+			return nil, fmt.Errorf("soft delete labels where: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+			Column:     "deleted_at",
+			Type:       sql.SoftDeleteTimestamp,
+			Conditions: conds,
+		})
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("soft delete labels where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		if skipFetch {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{
+				Name:      &comparator.ID{In: ids},
+				DeletedAt: &comparator.NullableTime{Null: new(false)},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Label), nil
+}
+
+// Restore clears the deleted_at column, restoring a soft-deleted label,
+// and returns the restored entity.
+// Idempotent — returns nil, nil if the primary key does not exist.
+func (c *labelClient) Restore(ctx context.Context, id string, opts ...func(*CallOptions[LabelFieldOptions])) (*Label, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpRestore, Table: TableLabels, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("name")).Eq(id)}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: map[string]any{"deleted_at": nil},
+			Conditions: restoreConds,
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("restore label: %w", err)
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("restore label rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, restoreConds)
+			if err != nil {
+				return nil, fmt.Errorf("restore label: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch the restored entity. A key that matched no row restores
+		// nothing, which is not an error: Restore is idempotent.
+		results, err := c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{Name: &comparator.ID{Eq: new(id)}},
+			Limit:  new(1),
+		}, func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Label), nil
+}
+
+// RestoreMany restores multiple soft-deleted labels and returns the restored entities.
+func (c *labelClient) RestoreMany(ctx context.Context, ids []string, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpRestoreMany, Table: TableLabels, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(ids) == 0 {
+			return []*Label{}, nil
+		}
+
+		idStrings := make([]string, len(ids))
+		for i, id := range ids {
+			idStrings[i] = id
+		}
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[string]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			restoreConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("name")).In(toAnySlice(idStrings[start:end])...)}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, restoreConds)
+			if err != nil {
+				return nil, fmt.Errorf("restore labels: read keys: %w", err)
+			}
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+
+			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+				SetClauses: map[string]any{"deleted_at": nil},
+				Conditions: restoreConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("restore labels: %w", err)
+			}
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{
+				Name: &comparator.ID{In: idStrings},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Label), nil
+}
+
+// RestoreWhere restores all soft-deleted labels matching the filter and returns them.
+// Always scoped to deleted rows — only soft-deleted entities are restored.
+// Returns empty slice when no rows match.
+func (c *labelClient) RestoreWhere(ctx context.Context, filter *LabelFilter, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpRestoreWhere, Table: TableLabels, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Always scope to deleted rows — Restore only targets soft-deleted entities
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNotNull())
+
+		skipFetch := options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns()
+
+		// MySQL: must collect IDs before the restore (no RETURNING)
+		ids, err := c.collectAffectedIDs(ctx, conn, conds)
+		if err != nil {
+			return nil, fmt.Errorf("restore labels where: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: map[string]any{"deleted_at": nil},
+			Conditions: conds,
+		})
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("restore labels where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		if skipFetch {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{
+				Name: &comparator.ID{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Label), nil
+}
+
+// HardDelete permanently removes a label from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *labelClient) HardDelete(ctx context.Context, id string, opts ...func(*CallOptions[LabelFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableLabels, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("name")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete label: %w", err)
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("hard delete label rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteMany permanently removes multiple labels from the database.
+func (c *labelClient) HardDeleteMany(ctx context.Context, ids []string, opts ...func(*CallOptions[LabelFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableLabels, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[string]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("name")).In(toAnySlice(ids[start:end])...)}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, hardConds)
+			if err != nil {
+				return nil, fmt.Errorf("hard delete labels: read keys: %w", err)
+			}
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions: hardConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("hard delete labels: %w", err)
+			}
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteWhere permanently removes all labels matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *labelClient) HardDeleteWhere(ctx context.Context, filter *LabelFilter, opts ...func(*CallOptions[LabelFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableLabels, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// MySQL: must collect IDs before the DELETE (no RETURNING)
+		ids, err := c.collectAffectedIDs(ctx, conn, conds)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete labels where: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: conds,
+		})
+
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete labels where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	return err
+}
+
+// matchingKeys returns the set of primary keys of the rows matching conds. On
+// MySQL, which has no RETURNING, a batch write reads it just before its
+// statement to learn which of the listed keys it writes.
+func (c *labelClient) matchingKeys(ctx context.Context, conn database.Querier, conds []sql.Condition) (map[string]struct{}, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"name"},
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	keys := make(map[string]struct{})
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		keys[id] = struct{}{}
+	}
+	return keys, rows.Err()
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *labelClient) recordWrittenKeys(written map[string]struct{}, listed []string, rowKeys map[string]struct{}) {
+	found := make(map[string]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// LabelConflictTarget identifies a unique constraint for upsert conflict detection.
+type LabelConflictTarget int
+
+const (
+	LabelConflictPK LabelConflictTarget = iota // PRIMARY KEY (name)
+)
+
+// labelConflictColumns maps each conflict target to its column set.
+var labelConflictColumns = map[LabelConflictTarget][]string{
+	LabelConflictPK: {"name"},
+}
+
+// Upsert inserts a label or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *labelClient) Upsert(ctx context.Context, input *CreateLabelInput, target LabelConflictTarget, opts ...func(*CallOptions[LabelFieldOptions])) (*Label, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateLabelInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableLabels, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"name"}
+		args := []any{input.Name}
+
+		if v, ok := input.DeletedAt.Get(); ok {
+			columns = append(columns, "deleted_at")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := labelConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "name"))
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns:             columns,
+			Values:              args,
+			UpsertConflictKeys:  conflictColumns,
+			UpsertUpdateColumns: updateColumns,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("upsert label: %w", err)
+		}
+
+		m.AffectedPKs = []any{input.Name}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, input.Name, func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Label), nil
+}
+
+// UpsertMany inserts or updates multiple labels in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+func (c *labelClient) UpsertMany(ctx context.Context, inputs []*CreateLabelInput, target LabelConflictTarget, opts ...func(*CallOptions[LabelFieldOptions])) ([]*Label, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableLabels, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Label{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"name", "deleted_at"}
+		conflictColumns := labelConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "name"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateLabelInput, 0, len(inputs))
+		rowIDs := make([]string, 0, len(inputs))
+		for _, input := range inputs {
+			var deletedAt any = sql.Default
+			if v, ok := input.DeletedAt.Get(); ok {
+				deletedAt = v
+			}
+
+			valueRows = append(valueRows, []any{
+				input.Name,
+				deletedAt,
+			})
+			rowInputs = append(rowInputs, input)
+			rowIDs = append(rowIDs, input.Name)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateLabelInput, 0, len(rowInputs))
+			dedupedIDs := make([]string, 0, len(rowIDs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedIDs[j] = rowIDs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedIDs = append(dedupedIDs, rowIDs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowIDs = dedupedIDs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, fmt.Errorf("upsert labels batch: %w", err)
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Convert IDs for filter
+		idStrings := make([]string, len(rowIDs))
+		for i, id := range rowIDs {
+			idStrings[i] = id
+		}
+		return c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{
+				Name: &comparator.ID{In: idStrings},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Label), nil
+}
+
+// Exists returns true if a label with the given primary key exists.
+// Soft-deleted labels are excluded — a soft-deleted label returns false.
+// Use ExistsWhere with Filter.DeletedAt comparator for soft-deleted rows.
+func (c *labelClient) Exists(ctx context.Context, id string, opts ...func(*CallOptions[LabelFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableLabels, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("name")).Eq(id)}
+
+		// Soft delete condition always applied — Exists checks for active rows only.
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists label: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any label matches the given filter.
+// Soft-deleted labels are excluded by default. Set Filter.DeletedAt to override.
+func (c *labelClient) ExistsWhere(ctx context.Context, filter *LabelFilter, opts ...func(*CallOptions[LabelFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableLabels, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Soft delete: inject default if user didn't set the comparator
+		if filter == nil || filter.DeletedAt == nil {
+			conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists label where: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of labels matching the given filter.
+// Soft-deleted labels are excluded by default. Set Filter.DeletedAt to override.
+// A nil filter counts all non-deleted labels.
+func (c *labelClient) Count(ctx context.Context, filter *LabelFilter, opts ...func(*CallOptions[LabelFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableLabels, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Soft delete: inject default if user didn't set the comparator
+		if filter == nil || filter.DeletedAt == nil {
+			conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), fmt.Errorf("count labels: %w", err)
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of labels with total count for offset-based pagination.
+// Soft-deleted labels are excluded by default. Set Filter.DeletedAt to override.
+// A nil filter paginates all non-deleted labels.
+func (c *labelClient) Paginate(ctx context.Context, input PaginateInput[LabelFilter], opts ...func(*CallOptions[LabelFieldOptions])) (*PaginateResult[Label], error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableLabels, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate labels count: %w", err)
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		labels, err := c.GetMany(ctx, &GetLabelsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate labels: %w", err)
+		}
+
+		return &PaginateResult[Label]{
+			Items:      labels,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*PaginateResult[Label]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of labels.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+// Soft-deleted labels are excluded by default.
+func (c *labelClient) Connection(ctx context.Context, input ConnectionInput[LabelFilter], opts ...func(*CallOptions[LabelFieldOptions])) (*Connection[Label], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection labels: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection labels: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("connection labels: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableLabels, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[LabelFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection labels count: %w", err)
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeLabelCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeLabelCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		labels, err := c.GetMany(ctx, &GetLabelsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection labels: %w", err)
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(labels) > limit
+		if hasMore {
+			labels = labels[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(labels)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Label], len(labels))
+		for i, row := range labels {
+			cursor, err := encodeLabelCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Label]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Label]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*Connection[Label]), nil
+}
+
+// encodeLabelCursor encodes cursor key values as a base64 JSON string.
+func encodeLabelCursor(keys []string, l *Label) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "name":
+			out["name"] = l.Name
+		case "deleted_at":
+			out["deleted_at"] = l.DeletedAt
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode label cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeLabelCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeLabelCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Label
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "name":
+			err = json.Unmarshal(raw[key], &row.Name)
+			out[key] = row.Name
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamLabelsInput holds query parameters for streaming labels records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamLabelsInput struct {
+	Filter *LabelFilter `json:"filter"`
+	Sorts  []sql.Sort   `json:"sorts"`
+}
+
+// StreamLabelFieldOptions controls scalar column selection for labels streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamLabelFieldOptions struct {
+	Name      bool `json:"name"`
+	DeletedAt bool `json:"deleted_at"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamLabelFieldOptions) Columns() []string {
+	var cols []string
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	if fo.DeletedAt {
+		cols = append(cols, "deleted_at")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamLabelFieldOptions) HasSelectedColumns() bool {
+	if fo.Name {
+		return true
+	}
+	if fo.DeletedAt {
+		return true
+	}
+	return false
+}
+
+// scanLabelRow scans a single row into a Label entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanLabelRow(rows database.Rows, columns []string) (*Label, error) {
+	l := &Label{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "name":
+			targets[idx] = &l.Name
+		case "deleted_at":
+			targets[idx] = &l.DeletedAt
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan label: %w", err)
+	}
+
+	return l, nil
+}
+
+// Stream returns an iterator over labels matching the given filter and sort criteria.
+// Soft-deleted labels are excluded by default. Set Filter.DeletedAt to override.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *labelClient) Stream(ctx context.Context, input *StreamLabelsInput, opts ...func(*CallOptions[StreamLabelFieldOptions])) iter.Seq2[*Label, error] {
+	return func(yield func(*Label, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamLabelsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream labels: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false.
+		var stopped bool
+		emit := func(row *Label, err error) bool {
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableLabels, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := labelAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			if c.excludeDeleted && (input.Filter == nil || input.Filter.DeletedAt == nil) {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, fmt.Errorf("stream labels: %w", err))
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				l, err := scanLabelRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(l, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate label rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, err)
+		}
+	}
+}
+
+// LabelFilter provides type-safe filtering for the labels table.
+type LabelFilter struct {
+	DeletedAt *comparator.NullableTime `json:"deleted_at"`
+	Name      *comparator.ID           `json:"name"`
+	And       []*LabelFilter           `json:"and"`
+	Or        []*LabelFilter           `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *LabelFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.DeletedAt != nil {
+		conds = append(conds, f.DeletedAt.Parse(dialect.QuoteIdentifier("deleted_at"), dialect)...)
+	}
+
+	if f.Name != nil {
+		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// LabelFieldOptions controls column selection and relationship loading for labels queries.
+type LabelFieldOptions struct {
+	Name      bool `json:"name"`
+	DeletedAt bool `json:"deleted_at"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *LabelFieldOptions) Columns() []string {
+	var cols []string
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	if fo.DeletedAt {
+		cols = append(cols, "deleted_at")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *LabelFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"Name":      "name",
+		"DeletedAt": "deleted_at",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *LabelFieldOptions) HasSelectedColumns() bool {
+	if fo.Name {
+		return true
+	}
+	if fo.DeletedAt {
+		return true
+	}
+	return false
+}
+
+// CreateLabelInput holds the fields for creating a labels record.
+type CreateLabelInput struct {
+	Name      string                      `json:"name"`
+	DeletedAt omittable.Value[*time.Time] `json:"deleted_at,omitzero"`
+}
+
+// UpdateLabelInput holds the fields for updating a labels record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateLabelInput struct {
+	DeletedAt omittable.Value[*time.Time] `json:"deleted_at,omitzero"`
+}
+
+// GetLabelsInput holds query parameters for retrieving labels records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetLabelsInput struct {
+	Filter *LabelFilter `json:"filter"`
+	Limit  *int         `json:"limit"`
+	Offset *int         `json:"offset"`
+	Sorts  []sql.Sort   `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 // OrderItemPK - composite primary key for the order_items table.
 type OrderItemPK struct {
 	OrderID   int64 `db:"order_id" json:"order_id"`
@@ -6954,6 +9328,2485 @@ type GetProductsInput struct {
 	Limit  *int           `json:"limit"`
 	Offset *int           `json:"offset"`
 	Sorts  []sql.Sort     `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+// RevisionPK - composite primary key for the revisions table.
+type RevisionPK struct {
+	DocumentID int64 `db:"document_id" json:"document_id"`
+	Number     int64 `db:"number" json:"number"`
+}
+type Revision struct {
+	DocumentID int64      `db:"document_id" json:"document_id"`
+	Number     int64      `db:"number" json:"number"`
+	Body       string     `db:"body" json:"body"`
+	DeletedAt  *time.Time `db:"deleted_at" json:"deleted_at"`
+}
+
+// RevisionClient provides type-safe operations for the revisions table.
+type RevisionClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single revision by primary key.
+	// Soft-deleted revisions are excluded by default (exclude_deleted is enabled).
+	// Use GetMany with Filter.DeletedAt comparator to retrieve soft-deleted revisions.
+	Get(ctx context.Context, pk RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) (*Revision, error)
+
+	// GetMany returns revisions matching the given filter, field selection, and sort criteria.
+	// Soft-deleted revisions are excluded by default. Set Filter.DeletedAt to override.
+	GetMany(ctx context.Context, input *GetRevisionsInput, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error)
+
+	// Exists returns true if a revision with the given primary key exists.
+	// Soft-deleted revisions are excluded — a soft-deleted revision returns false.
+	Exists(ctx context.Context, pk RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any revision matches the given filter.
+	// Soft-deleted revisions are excluded by default.
+	ExistsWhere(ctx context.Context, filter *RevisionFilter, opts ...func(*CallOptions[RevisionFieldOptions])) (bool, error)
+
+	// Count returns the number of revisions matching the given filter.
+	// Soft-deleted revisions are excluded by default. A nil filter counts all non-deleted revisions.
+	Count(ctx context.Context, filter *RevisionFilter, opts ...func(*CallOptions[RevisionFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new revision and returns the created entity.
+	Create(ctx context.Context, input *CreateRevisionInput, opts ...func(*CallOptions[RevisionFieldOptions])) (*Revision, error)
+
+	// CreateMany inserts multiple revisions in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateRevisionInput, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error)
+
+	// Update partially updates a revision by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, pk RevisionPK, input *UpdateRevisionInput, opts ...func(*CallOptions[RevisionFieldOptions])) (*Revision, error)
+
+	// UpdateMany updates multiple revisions and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateRevisionItem, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error)
+
+	// UpdateWhere updates all revisions matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *RevisionFilter, input *UpdateRevisionInput, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error)
+
+	// Upsert inserts a revision or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateRevisionInput, target RevisionConflictTarget, opts ...func(*CallOptions[RevisionFieldOptions])) (*Revision, error)
+
+	// UpsertMany inserts or updates multiple revisions in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateRevisionInput, target RevisionConflictTarget, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error)
+
+	// --- Soft Delete Operations ---
+
+	// SoftDelete marks a revision as deleted by setting the deleted_at column and returns
+	// the updated entity. Idempotent — returns nil, nil if the primary key does not exist.
+	SoftDelete(ctx context.Context, pk RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) (*Revision, error)
+
+	// SoftDeleteMany marks multiple revisions as deleted and returns the updated entities.
+	SoftDeleteMany(ctx context.Context, pks []RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error)
+
+	// SoftDeleteWhere marks all revisions matching the filter as deleted and returns them.
+	// Idempotent — returns empty slice when no rows match.
+	SoftDeleteWhere(ctx context.Context, filter *RevisionFilter, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error)
+
+	// --- Restore Operations ---
+
+	// Restore clears the deleted_at column, restoring a soft-deleted revision, and returns it.
+	// Idempotent — returns nil, nil if the primary key does not exist.
+	Restore(ctx context.Context, pk RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) (*Revision, error)
+
+	// RestoreMany restores multiple soft-deleted revisions and returns them.
+	RestoreMany(ctx context.Context, pks []RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error)
+
+	// RestoreWhere restores all soft-deleted revisions matching the filter and returns them.
+	// Idempotent — returns empty slice when no rows match.
+	RestoreWhere(ctx context.Context, filter *RevisionFilter, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a revision from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, pk RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple revisions from the database.
+	HardDeleteMany(ctx context.Context, pks []RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all revisions matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *RevisionFilter, opts ...func(*CallOptions[RevisionFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of revisions with total count for offset-based pagination.
+	// Soft-deleted revisions are excluded by default.
+	Paginate(ctx context.Context, input PaginateInput[RevisionFilter], opts ...func(*CallOptions[RevisionFieldOptions])) (*PaginateResult[Revision], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of revisions.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[RevisionFilter], opts ...func(*CallOptions[RevisionFieldOptions])) (*Connection[Revision], error)
+
+	// Stream returns an iterator over revisions matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamRevisionsInput, opts ...func(*CallOptions[StreamRevisionFieldOptions])) iter.Seq2[*Revision, error]
+}
+
+// revisionClient implements the RevisionClient interface.
+type revisionClient struct {
+	querier        database.Querier
+	dialect        sql.Dialect
+	table          sql.Table
+	batchSize      int
+	queryLimit     int
+	pageSize       int
+	cursorKeys     []string
+	strictUpdates  bool
+	excludeDeleted bool
+	mutationHooks  []hook.MutationHook
+	queryHooks     []hook.QueryHook
+	panicHandler   hook.PanicHandler
+	mysqlVersion   *mysqlVersionCache
+}
+
+// newRevisionClient creates a new revisionClient.
+func newRevisionClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler, mysqlVersion *mysqlVersionCache) *revisionClient {
+	return &revisionClient{
+		querier:        querier,
+		dialect:        sql.NewMySQLDialect(),
+		table:          sql.Table{Schema: "", Name: "revisions"},
+		batchSize:      2,
+		queryLimit:     1000,
+		pageSize:       100,
+		cursorKeys:     []string{"document_id", "number"},
+		strictUpdates:  true,
+		excludeDeleted: true,
+		mutationHooks:  mutationHooks,
+		queryHooks:     queryHooks,
+		panicHandler:   panicHandler,
+		mysqlVersion:   mysqlVersion,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *revisionClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *revisionClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// rowMatches reports whether a row matching conds exists. MySQL counts the
+// rows an UPDATE changed, not the rows it matched, so a by-key write that
+// leaves its row as it was reports none; only then does the write ask, on
+// the same connection, to tell a missing row from an unchanged one.
+func (c *revisionClient) rowMatches(ctx context.Context, conn database.Querier, conds []sql.Condition) (bool, error) {
+	query, args := sql.BuildExists(c.dialect, c.table, conds)
+	var exists bool
+	if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// revisionAllColumns is the column list for full-entity reads, sorted for determinism.
+var revisionAllColumns = []string{"body", "deleted_at", "document_id", "number"}
+
+// scanRevisions scans rows into Revision entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanRevisions(rows database.Rows, columns []string) ([]*Revision, error) {
+	var result []*Revision
+	for rows.Next() {
+		r := &Revision{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "document_id":
+				targets[idx] = &r.DocumentID
+			case "number":
+				targets[idx] = &r.Number
+			case "body":
+				targets[idx] = &r.Body
+			case "deleted_at":
+				targets[idx] = &r.DeletedAt
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan revision: %w", err)
+		}
+
+		result = append(result, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate revision rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single revision by primary key with optional field selection.
+// Soft-deleted revisions are excluded — a soft-deleted revision returns ErrNotFound.
+// Use GetMany with Filter.DeletedAt comparator to retrieve soft-deleted revisions.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *revisionClient) Get(ctx context.Context, pk RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) (*Revision, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get revision: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get revision: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("get revision: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableRevisions, Schema: "",
+		PK: pk, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[RevisionFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[RevisionFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		revisions, err := c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{
+				DocumentID: &comparator.Number[int64]{Eq: new(pk.DocumentID)},
+				Number:     &comparator.Number[int64]{Eq: new(pk.Number)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(revisions) == 0 {
+			return nil, ErrNotFound
+		}
+		return revisions[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Revision), nil
+}
+
+// GetMany returns revisions matching the given filter, field selection, and sort criteria.
+// Soft-deleted revisions are excluded by default. Set Filter.DeletedAt to override.
+func (c *revisionClient) GetMany(ctx context.Context, input *GetRevisionsInput, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetRevisionsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get revisions: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("get revisions: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("get revisions: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableRevisions, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := revisionAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Soft delete: inject default "is not deleted" if user didn't set the comparator
+		if c.excludeDeleted && (input.Filter == nil || input.Filter.DeletedAt == nil) {
+			conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var revisions []*Revision
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("get revisions: %w", err)
+		}
+		defer rows.Close()
+
+		revisions, err = scanRevisions(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return revisions, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Revision), nil
+}
+
+// Create inserts a new revision and returns the created entity.
+func (c *revisionClient) Create(ctx context.Context, input *CreateRevisionInput, opts ...func(*CallOptions[RevisionFieldOptions])) (*Revision, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateRevisionInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableRevisions, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"document_id", "number", "body"}
+		args := []any{input.DocumentID, input.Number, input.Body}
+
+		if v, ok := input.DeletedAt.Get(); ok {
+			columns = append(columns, "deleted_at")
+			args = append(args, v)
+		}
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns: columns,
+			Values:  args,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("create revision: %w", err)
+		}
+
+		m.AffectedPKs = []any{RevisionPK{DocumentID: input.DocumentID, Number: input.Number}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, RevisionPK{DocumentID: input.DocumentID, Number: input.Number}, func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Revision), nil
+}
+
+// CreateMany inserts multiple revisions in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *revisionClient) CreateMany(ctx context.Context, inputs []*CreateRevisionInput, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableRevisions, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Revision{}, nil
+		}
+		var allPKs []RevisionPK
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"document_id", "number", "body", "deleted_at"}
+			var valueRows [][]any
+			for _, input := range batch {
+				var deletedAt any = sql.Default
+				if v, ok := input.DeletedAt.Get(); ok {
+					deletedAt = v
+				}
+
+				valueRows = append(valueRows, []any{
+					input.DocumentID,
+					input.Number,
+					input.Body,
+					deletedAt,
+				})
+			}
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:   columns,
+				ValueRows: valueRows,
+			})
+			_, err := conn.Exec(ctx, query, queryArgs...)
+			if err != nil {
+				return nil, fmt.Errorf("create revisions batch: %w", err)
+			}
+			for _, input := range batch {
+				allPKs = append(allPKs, RevisionPK{DocumentID: input.DocumentID, Number: input.Number})
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		return c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Revision), nil
+}
+
+// Update partially updates a revision by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *revisionClient) Update(ctx context.Context, pk RevisionPK, input *UpdateRevisionInput, opts ...func(*CallOptions[RevisionFieldOptions])) (*Revision, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableRevisions, Schema: "",
+		PK: pk, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Body.Get(); ok {
+			setClauses["body"] = v
+		}
+		if v, ok := input.DeletedAt.Get(); ok {
+			setClauses["deleted_at"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, pk, func(o *CallOptions[RevisionFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+		updateConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"document_id", "number"},
+			[]any{pk.DocumentID, pk.Number})
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: updateConds,
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update revision: %w", err)
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("update revision rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, updateConds)
+			if err != nil {
+				return nil, fmt.Errorf("update revision: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{pk}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, pk, func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Revision), nil
+}
+
+// UpdateRevisionItem pairs a primary key with an update input for batch updates.
+type UpdateRevisionItem struct {
+	PK    RevisionPK           `json:"pk"`
+	Input *UpdateRevisionInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple revisions and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *revisionClient) UpdateMany(ctx context.Context, items []UpdateRevisionItem, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error) {
+	// UpdateRevisionItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableRevisions, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Revision{}, nil
+		}
+		var allPKs []RevisionPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateRevisionItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_revision", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Body.Get(); ok {
+						setClauses["body"] = v
+					}
+					if v, ok := item.Input.DeletedAt.Get(); ok {
+						setClauses["deleted_at"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allPKs = append(allPKs, item.PK)
+						continue
+					}
+					itemConds := sql.BuildCompositePKConditions(c.dialect,
+						[]string{"document_id", "number"},
+						[]any{item.PK.DocumentID, item.PK.Number})
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: itemConds,
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("update revision %v: %w", item.PK, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("update revision %v rows affected: %w", item.PK, err)
+					}
+					// MySQL counts the rows a statement changed, not the rows it
+					// matched, so an item that leaves its row as it was reports
+					// none. Only then is the row looked up, to tell a missing row
+					// from an unchanged one.
+					if matched == 0 {
+						found, err := c.rowMatches(ctx, conn, itemConds)
+						if err != nil {
+							return fmt.Errorf("update revision %v: match row: %w", item.PK, err)
+						}
+						if found {
+							matched = 1
+						}
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allPKs = append(allPKs, item.PK)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Revision), nil
+}
+
+// UpdateWhere updates all revisions matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *revisionClient) UpdateWhere(ctx context.Context, filter *RevisionFilter, input *UpdateRevisionInput, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableRevisions, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Body.Get(); ok {
+			setClauses["body"] = v
+		}
+		if v, ok := input.DeletedAt.Get(); ok {
+			setClauses["deleted_at"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetRevisionsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[RevisionFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// MySQL: must collect composite PKs before the UPDATE (no RETURNING)
+		pks, err := c.collectAffectedPKs(ctx, conn, conds)
+		if err != nil {
+			return nil, fmt.Errorf("update revisions where: %w", err)
+		}
+		if len(pks) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: conds,
+		})
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("update revisions where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(pks)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{PKs: pks},
+			Limit:  new(0),
+		}, func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Revision), nil
+}
+
+// collectAffectedPKs returns the composite PKs of rows matching the conditions.
+// Used by Where variants to know which rows were affected.
+func (c *revisionClient) collectAffectedPKs(ctx context.Context, conn database.Querier, conds []sql.Condition) ([]RevisionPK, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"document_id", "number"},
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var pks []RevisionPK
+	for rows.Next() {
+		var pk RevisionPK
+		if err := rows.Scan(&pk.DocumentID, &pk.Number); err != nil {
+			return nil, err
+		}
+		pks = append(pks, pk)
+	}
+	return pks, rows.Err()
+}
+
+// SoftDelete marks a revision as deleted by setting the deleted_at column
+// and returns the updated entity.
+// Idempotent — returns nil, nil if the primary key does not exist.
+// To set deleted_at to a specific value, use Update instead.
+func (c *revisionClient) SoftDelete(ctx context.Context, pk RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) (*Revision, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpSoftDelete, Table: TableRevisions, Schema: "",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		delConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"document_id", "number"},
+			[]any{pk.DocumentID, pk.Number})
+		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+			Column:     "deleted_at",
+			Type:       sql.SoftDeleteTimestamp,
+			Conditions: delConds,
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("soft delete revision: %w", err)
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("soft delete revision rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, delConds)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete revision: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+		}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch the soft-deleted entity — set DeletedAt comparator to override
+		// the default "is not deleted" condition (the entity was just soft-deleted)
+		results, err := c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{
+				PKs:       []RevisionPK{pk},
+				DeletedAt: &comparator.NullableTime{Null: new(false)},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Revision), nil
+}
+
+// SoftDeleteMany marks multiple revisions as deleted and returns the updated entities.
+func (c *revisionClient) SoftDeleteMany(ctx context.Context, pks []RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpSoftDeleteMany, Table: TableRevisions, Schema: "",
+		Input: pks, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(pks) == 0 {
+			return []*Revision{}, nil
+		}
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[RevisionPK]struct{}, len(pks))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.DocumentID, pk.Number}
+			}
+			delConds := []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{"document_id", "number"}, pkValues),
+			}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, delConds)
+			if err != nil {
+				return nil, fmt.Errorf("soft delete revisions: read keys: %w", err)
+			}
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
+
+			query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+				Column:     "deleted_at",
+				Type:       sql.SoftDeleteTimestamp,
+				Conditions: delConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("soft delete revisions: %w", err)
+			}
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{
+				PKs:       pks,
+				DeletedAt: &comparator.NullableTime{Null: new(false)},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Revision), nil
+}
+
+// SoftDeleteWhere marks all revisions matching the filter as deleted and returns them.
+// Always scoped to non-deleted rows — the DeletedAt comparator
+// on the filter is ignored. Returns empty slice when no rows match.
+func (c *revisionClient) SoftDeleteWhere(ctx context.Context, filter *RevisionFilter, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpSoftDeleteWhere, Table: TableRevisions, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Always scope to non-deleted rows — SoftDelete only targets active entities
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+
+		skipFetch := options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns()
+
+		// MySQL: must collect composite PKs before the soft delete (no RETURNING)
+		pks, err := c.collectAffectedPKs(ctx, conn, conds)
+		if err != nil {
+			return nil, fmt.Errorf("soft delete revisions where: %w", err)
+		}
+		if len(pks) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{
+			Column:     "deleted_at",
+			Type:       sql.SoftDeleteTimestamp,
+			Conditions: conds,
+		})
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("soft delete revisions where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(pks)
+
+		if skipFetch {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{
+				PKs:       pks,
+				DeletedAt: &comparator.NullableTime{Null: new(false)},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Revision), nil
+}
+
+// Restore clears the deleted_at column, restoring a soft-deleted revision,
+// and returns the restored entity.
+// Idempotent — returns nil, nil if the primary key does not exist.
+func (c *revisionClient) Restore(ctx context.Context, pk RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) (*Revision, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpRestore, Table: TableRevisions, Schema: "",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		restoreConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"document_id", "number"},
+			[]any{pk.DocumentID, pk.Number})
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: map[string]any{"deleted_at": nil},
+			Conditions: restoreConds,
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("restore revision: %w", err)
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("restore revision rows affected: %w", err)
+		}
+		// MySQL counts the rows a statement changed, not the rows it
+		// matched, so a row the write leaves as it was reports none. Only
+		// then is the row looked up, to tell a missing row from an
+		// unchanged one.
+		if matched == 0 {
+			found, err := c.rowMatches(ctx, conn, restoreConds)
+			if err != nil {
+				return nil, fmt.Errorf("restore revision: match row: %w", err)
+			}
+			if found {
+				matched = 1
+			}
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+		}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch the restored entity. A key that matched no row restores
+		// nothing, which is not an error: Restore is idempotent.
+		results, err := c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{PKs: []RevisionPK{pk}},
+			Limit:  new(1),
+		}, func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			return nil, nil
+		}
+		return results[0], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Revision), nil
+}
+
+// RestoreMany restores multiple soft-deleted revisions and returns the restored entities.
+func (c *revisionClient) RestoreMany(ctx context.Context, pks []RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpRestoreMany, Table: TableRevisions, Schema: "",
+		Input: pks, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(pks) == 0 {
+			return []*Revision{}, nil
+		}
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[RevisionPK]struct{}, len(pks))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.DocumentID, pk.Number}
+			}
+			restoreConds := []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{"document_id", "number"}, pkValues),
+			}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, restoreConds)
+			if err != nil {
+				return nil, fmt.Errorf("restore revisions: read keys: %w", err)
+			}
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
+
+			query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+				SetClauses: map[string]any{"deleted_at": nil},
+				Conditions: restoreConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("restore revisions: %w", err)
+			}
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{PKs: pks},
+			Limit:  new(0),
+		}, func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Revision), nil
+}
+
+// RestoreWhere restores all soft-deleted revisions matching the filter and returns them.
+// Always scoped to deleted rows — only soft-deleted entities are restored.
+// Returns empty slice when no rows match.
+func (c *revisionClient) RestoreWhere(ctx context.Context, filter *RevisionFilter, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpRestoreWhere, Table: TableRevisions, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Always scope to deleted rows — Restore only targets soft-deleted entities
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNotNull())
+
+		skipFetch := options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns()
+
+		// MySQL: must collect composite PKs before the restore (no RETURNING)
+		pks, err := c.collectAffectedPKs(ctx, conn, conds)
+		if err != nil {
+			return nil, fmt.Errorf("restore revisions where: %w", err)
+		}
+		if len(pks) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: map[string]any{"deleted_at": nil},
+			Conditions: conds,
+		})
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("restore revisions where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(pks)
+
+		if skipFetch {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{PKs: pks},
+			Limit:  new(0),
+		}, func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Revision), nil
+}
+
+// HardDelete permanently removes a revision from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *revisionClient) HardDelete(ctx context.Context, pk RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableRevisions, Schema: "",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: sql.BuildCompositePKConditions(c.dialect,
+				[]string{"document_id", "number"},
+				[]any{pk.DocumentID, pk.Number}),
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete revision: %w", err)
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("hard delete revision rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+		}
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteMany permanently removes multiple revisions from the database.
+func (c *revisionClient) HardDeleteMany(ctx context.Context, pks []RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableRevisions, Schema: "",
+		Input: pks, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[RevisionPK]struct{}, len(pks))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.DocumentID, pk.Number}
+			}
+			hardConds := []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{"document_id", "number"}, pkValues),
+			}
+
+			// MySQL has no RETURNING, so a pre-read finds the keys this
+			// sub-batch is about to write.
+			batchKeys, err := c.matchingKeys(ctx, conn, hardConds)
+			if err != nil {
+				return nil, fmt.Errorf("hard delete revisions: read keys: %w", err)
+			}
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
+
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions: hardConds,
+			})
+			if _, err := conn.Exec(ctx, query, args...); err != nil {
+				return nil, fmt.Errorf("hard delete revisions: %w", err)
+			}
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	return err
+}
+
+// HardDeleteWhere permanently removes all revisions matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *revisionClient) HardDeleteWhere(ctx context.Context, filter *RevisionFilter, opts ...func(*CallOptions[RevisionFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableRevisions, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// MySQL: must collect composite PKs before the DELETE (no RETURNING)
+		pks, err := c.collectAffectedPKs(ctx, conn, conds)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete revisions where: %w", err)
+		}
+		if len(pks) == 0 {
+			return nil, nil
+		}
+
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: conds,
+		})
+
+		_, err = conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("hard delete revisions where: %w", err)
+		}
+		m.AffectedPKs = toAnySlice(pks)
+		return nil, nil
+	})
+	return err
+}
+
+// matchingKeys returns the set of primary keys of the rows matching conds. On
+// MySQL, which has no RETURNING, a batch write reads it just before its
+// statement to learn which of the listed keys it writes.
+func (c *revisionClient) matchingKeys(ctx context.Context, conn database.Querier, conds []sql.Condition) (map[RevisionPK]struct{}, error) {
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"document_id", "number"},
+		Conditions: conds,
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// BuildSelect emits its column list sorted, which need not match the key's
+	// field order, so each column binds to its field by name.
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	keys := make(map[RevisionPK]struct{})
+	for rows.Next() {
+		var pk RevisionPK
+		targets := make([]any, len(cols))
+		for i, col := range cols {
+			switch col {
+			case "document_id":
+				targets[i] = &pk.DocumentID
+			case "number":
+				targets[i] = &pk.Number
+			}
+		}
+		if err := rows.Scan(targets...); err != nil {
+			return nil, err
+		}
+		keys[pk] = struct{}{}
+	}
+	return keys, rows.Err()
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *revisionClient) recordWrittenKeys(written map[RevisionPK]struct{}, listed []RevisionPK, rowKeys map[RevisionPK]struct{}) {
+	found := make(map[RevisionPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// RevisionConflictTarget identifies a unique constraint for upsert conflict detection.
+type RevisionConflictTarget int
+
+const (
+	RevisionConflictPK RevisionConflictTarget = iota // PRIMARY KEY (document_id, number)
+)
+
+// revisionConflictColumns maps each conflict target to its column set.
+var revisionConflictColumns = map[RevisionConflictTarget][]string{
+	RevisionConflictPK: {"document_id", "number"},
+}
+
+// Upsert inserts a revision or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *revisionClient) Upsert(ctx context.Context, input *CreateRevisionInput, target RevisionConflictTarget, opts ...func(*CallOptions[RevisionFieldOptions])) (*Revision, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateRevisionInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, ErrNilInput
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableRevisions, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"document_id", "number", "body"}
+		args := []any{input.DocumentID, input.Number, input.Body}
+
+		if v, ok := input.DeletedAt.Get(); ok {
+			columns = append(columns, "deleted_at")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := revisionConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "document_id", "number"))
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns:             columns,
+			Values:              args,
+			UpsertConflictKeys:  conflictColumns,
+			UpsertUpdateColumns: updateColumns,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("upsert revision: %w", err)
+		}
+
+		m.AffectedPKs = []any{RevisionPK{DocumentID: input.DocumentID, Number: input.Number}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, RevisionPK{DocumentID: input.DocumentID, Number: input.Number}, func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Revision), nil
+}
+
+// UpsertMany inserts or updates multiple revisions in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+func (c *revisionClient) UpsertMany(ctx context.Context, inputs []*CreateRevisionInput, target RevisionConflictTarget, opts ...func(*CallOptions[RevisionFieldOptions])) ([]*Revision, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, ErrNilInput
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableRevisions, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Revision{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"document_id", "number", "body", "deleted_at"}
+		conflictColumns := revisionConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "document_id", "number"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateRevisionInput, 0, len(inputs))
+		rowPKs := make([]RevisionPK, 0, len(inputs))
+		for _, input := range inputs {
+			var deletedAt any = sql.Default
+			if v, ok := input.DeletedAt.Get(); ok {
+				deletedAt = v
+			}
+
+			valueRows = append(valueRows, []any{
+				input.DocumentID,
+				input.Number,
+				input.Body,
+				deletedAt,
+			})
+			rowInputs = append(rowInputs, input)
+			rowPKs = append(rowPKs, RevisionPK{DocumentID: input.DocumentID, Number: input.Number})
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateRevisionInput, 0, len(rowInputs))
+			dedupedPKs := make([]RevisionPK, 0, len(rowPKs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedPKs[j] = rowPKs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedPKs = append(dedupedPKs, rowPKs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowPKs = dedupedPKs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, fmt.Errorf("upsert revisions batch: %w", err)
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(rowPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		return c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{PKs: rowPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Revision), nil
+}
+
+// Exists returns true if a revision with the given primary key exists.
+// Soft-deleted revisions are excluded — a soft-deleted revision returns false.
+// Use ExistsWhere with Filter.DeletedAt comparator for soft-deleted rows.
+func (c *revisionClient) Exists(ctx context.Context, pk RevisionPK, opts ...func(*CallOptions[RevisionFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableRevisions, Schema: "",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"document_id", "number"},
+			[]any{pk.DocumentID, pk.Number})
+
+		// Soft delete condition always applied — Exists checks for active rows only.
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists revision: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any revision matches the given filter.
+// Soft-deleted revisions are excluded by default. Set Filter.DeletedAt to override.
+func (c *revisionClient) ExistsWhere(ctx context.Context, filter *RevisionFilter, opts ...func(*CallOptions[RevisionFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableRevisions, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Soft delete: inject default if user didn't set the comparator
+		if filter == nil || filter.DeletedAt == nil {
+			conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, fmt.Errorf("exists revision where: %w", err)
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of revisions matching the given filter.
+// Soft-deleted revisions are excluded by default. Set Filter.DeletedAt to override.
+// A nil filter counts all non-deleted revisions.
+func (c *revisionClient) Count(ctx context.Context, filter *RevisionFilter, opts ...func(*CallOptions[RevisionFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableRevisions, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Soft delete: inject default if user didn't set the comparator
+		if filter == nil || filter.DeletedAt == nil {
+			conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), fmt.Errorf("count revisions: %w", err)
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of revisions with total count for offset-based pagination.
+// Soft-deleted revisions are excluded by default. Set Filter.DeletedAt to override.
+// A nil filter paginates all non-deleted revisions.
+func (c *revisionClient) Paginate(ctx context.Context, input PaginateInput[RevisionFilter], opts ...func(*CallOptions[RevisionFieldOptions])) (*PaginateResult[Revision], error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableRevisions, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate revisions count: %w", err)
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		revisions, err := c.GetMany(ctx, &GetRevisionsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("paginate revisions: %w", err)
+		}
+
+		return &PaginateResult[Revision]{
+			Items:      revisions,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*PaginateResult[Revision]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of revisions.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+// Soft-deleted revisions are excluded by default.
+func (c *revisionClient) Connection(ctx context.Context, input ConnectionInput[RevisionFilter], opts ...func(*CallOptions[RevisionFieldOptions])) (*Connection[Revision], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection revisions: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
+			version, err := c.mysqlVersion.get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("connection revisions: %w", err)
+			}
+			if version.Major < 8 {
+				return nil, fmt.Errorf("connection revisions: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+			}
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableRevisions, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[RevisionFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection revisions count: %w", err)
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeRevisionCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeRevisionCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		revisions, err := c.GetMany(ctx, &GetRevisionsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, fmt.Errorf("connection revisions: %w", err)
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(revisions) > limit
+		if hasMore {
+			revisions = revisions[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(revisions)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Revision], len(revisions))
+		for i, row := range revisions {
+			cursor, err := encodeRevisionCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Revision]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Revision]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*Connection[Revision]), nil
+}
+
+// encodeRevisionCursor encodes cursor key values as a base64 JSON string.
+func encodeRevisionCursor(keys []string, r *Revision) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "document_id":
+			out["document_id"] = r.DocumentID
+		case "number":
+			out["number"] = r.Number
+		case "body":
+			out["body"] = r.Body
+		case "deleted_at":
+			out["deleted_at"] = r.DeletedAt
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode revision cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeRevisionCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeRevisionCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Revision
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "document_id":
+			err = json.Unmarshal(raw[key], &row.DocumentID)
+			out[key] = row.DocumentID
+		case "number":
+			err = json.Unmarshal(raw[key], &row.Number)
+			out[key] = row.Number
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamRevisionsInput holds query parameters for streaming revisions records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamRevisionsInput struct {
+	Filter *RevisionFilter `json:"filter"`
+	Sorts  []sql.Sort      `json:"sorts"`
+}
+
+// StreamRevisionFieldOptions controls scalar column selection for revisions streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamRevisionFieldOptions struct {
+	DocumentID bool `json:"document_id"`
+	Number     bool `json:"number"`
+	Body       bool `json:"body"`
+	DeletedAt  bool `json:"deleted_at"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamRevisionFieldOptions) Columns() []string {
+	var cols []string
+	if fo.DocumentID {
+		cols = append(cols, "document_id")
+	}
+	if fo.Number {
+		cols = append(cols, "number")
+	}
+	if fo.Body {
+		cols = append(cols, "body")
+	}
+	if fo.DeletedAt {
+		cols = append(cols, "deleted_at")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamRevisionFieldOptions) HasSelectedColumns() bool {
+	if fo.DocumentID {
+		return true
+	}
+	if fo.Number {
+		return true
+	}
+	if fo.Body {
+		return true
+	}
+	if fo.DeletedAt {
+		return true
+	}
+	return false
+}
+
+// scanRevisionRow scans a single row into a Revision entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanRevisionRow(rows database.Rows, columns []string) (*Revision, error) {
+	r := &Revision{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "document_id":
+			targets[idx] = &r.DocumentID
+		case "number":
+			targets[idx] = &r.Number
+		case "body":
+			targets[idx] = &r.Body
+		case "deleted_at":
+			targets[idx] = &r.DeletedAt
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan revision: %w", err)
+	}
+
+	return r, nil
+}
+
+// Stream returns an iterator over revisions matching the given filter and sort criteria.
+// Soft-deleted revisions are excluded by default. Set Filter.DeletedAt to override.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *revisionClient) Stream(ctx context.Context, input *StreamRevisionsInput, opts ...func(*CallOptions[StreamRevisionFieldOptions])) iter.Seq2[*Revision, error] {
+	return func(yield func(*Revision, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamRevisionsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream revisions: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false.
+		var stopped bool
+		emit := func(row *Revision, err error) bool {
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableRevisions, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := revisionAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			if c.excludeDeleted && (input.Filter == nil || input.Filter.DeletedAt == nil) {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, fmt.Errorf("stream revisions: %w", err))
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				r, err := scanRevisionRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(r, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate revision rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, err)
+		}
+	}
+}
+
+// RevisionFilter provides type-safe filtering for the revisions table.
+type RevisionFilter struct {
+	Body       *comparator.String        `json:"body"`
+	DeletedAt  *comparator.NullableTime  `json:"deleted_at"`
+	DocumentID *comparator.Number[int64] `json:"document_id"`
+	Number     *comparator.Number[int64] `json:"number"`
+	PKs        []RevisionPK              `json:"pks"`
+	And        []*RevisionFilter         `json:"and"`
+	Or         []*RevisionFilter         `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *RevisionFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.Body != nil {
+		conds = append(conds, f.Body.Parse(dialect.QuoteIdentifier("body"), dialect)...)
+	}
+
+	if f.DeletedAt != nil {
+		conds = append(conds, f.DeletedAt.Parse(dialect.QuoteIdentifier("deleted_at"), dialect)...)
+	}
+
+	if f.DocumentID != nil {
+		conds = append(conds, f.DocumentID.Parse(dialect.QuoteIdentifier("document_id"), dialect)...)
+	}
+
+	if f.Number != nil {
+		conds = append(conds, f.Number.Parse(dialect.QuoteIdentifier("number"), dialect)...)
+	}
+
+	if len(f.PKs) > 0 {
+		var pkConds []sql.Condition
+		for _, pk := range f.PKs {
+			pkConds = append(pkConds, sql.And(
+				sql.Condition{Clause: dialect.QuoteIdentifier("document_id") + " = $", Value: pk.DocumentID},
+				sql.Condition{Clause: dialect.QuoteIdentifier("number") + " = $", Value: pk.Number},
+			))
+		}
+		conds = append(conds, sql.Or(pkConds...))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// RevisionFieldOptions controls column selection and relationship loading for revisions queries.
+type RevisionFieldOptions struct {
+	DocumentID bool `json:"document_id"`
+	Number     bool `json:"number"`
+	Body       bool `json:"body"`
+	DeletedAt  bool `json:"deleted_at"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *RevisionFieldOptions) Columns() []string {
+	var cols []string
+	if fo.DocumentID {
+		cols = append(cols, "document_id")
+	}
+	if fo.Number {
+		cols = append(cols, "number")
+	}
+	if fo.Body {
+		cols = append(cols, "body")
+	}
+	if fo.DeletedAt {
+		cols = append(cols, "deleted_at")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *RevisionFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"DocumentID": "document_id",
+		"Number":     "number",
+		"Body":       "body",
+		"DeletedAt":  "deleted_at",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *RevisionFieldOptions) HasSelectedColumns() bool {
+	if fo.DocumentID {
+		return true
+	}
+	if fo.Number {
+		return true
+	}
+	if fo.Body {
+		return true
+	}
+	if fo.DeletedAt {
+		return true
+	}
+	return false
+}
+
+// CreateRevisionInput holds the fields for creating a revisions record.
+type CreateRevisionInput struct {
+	DocumentID int64                       `json:"document_id"`
+	Number     int64                       `json:"number"`
+	Body       string                      `json:"body"`
+	DeletedAt  omittable.Value[*time.Time] `json:"deleted_at,omitzero"`
+}
+
+// UpdateRevisionInput holds the fields for updating a revisions record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateRevisionInput struct {
+	Body      omittable.Value[string]     `json:"body,omitzero"`
+	DeletedAt omittable.Value[*time.Time] `json:"deleted_at,omitzero"`
+}
+
+// GetRevisionsInput holds query parameters for retrieving revisions records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetRevisionsInput struct {
+	Filter *RevisionFilter `json:"filter"`
+	Limit  *int            `json:"limit"`
+	Offset *int            `json:"offset"`
+	Sorts  []sql.Sort      `json:"sorts"`
 	// conditions holds additional SQL conditions injected by internal callers
 	// (e.g., Connection keyset conditions). Not part of the public API.
 	conditions []sql.Condition

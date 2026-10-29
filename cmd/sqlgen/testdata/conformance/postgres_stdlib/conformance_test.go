@@ -61,7 +61,7 @@ func TestConformance(t *testing.T) {
 		Client:   models.New(q),
 		Querier:  q,
 		Reset: func(t *testing.T) {
-			if _, err := db.ExecContext(ctx, "TRUNCATE order_items, products, documents RESTART IDENTITY"); err != nil {
+			if _, err := db.ExecContext(ctx, "TRUNCATE order_items, products, documents, revisions, labels RESTART IDENTITY"); err != nil {
 				t.Fatal(err)
 			}
 		},

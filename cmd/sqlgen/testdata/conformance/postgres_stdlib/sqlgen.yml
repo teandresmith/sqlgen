@@ -14,3 +14,10 @@ tables:
     batch_size: 2
   documents:
     batch_size: 2
+  revisions:
+    batch_size: 2
+overrides:
+  types:
+    # citext has no built-in Go type.
+    citext:
+      type: string

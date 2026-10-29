@@ -20,5 +20,25 @@ CREATE TABLE order_items (
 CREATE TABLE documents (
     id         INTEGER PRIMARY KEY,
     title      TEXT NOT NULL,
+    deleted_at TIMESTAMP,
+    -- A soft delete of a pinned document and a restore of an archived one each
+    -- violate a CHECK, so the soft-delete family has a constraint to map.
+    CONSTRAINT documents_pinned_stays_live CHECK (deleted_at IS NULL OR title <> 'pinned'),
+    CONSTRAINT documents_archived_stays_deleted CHECK (deleted_at IS NOT NULL OR title <> 'archived')
+);
+
+-- Composite-PK soft delete.
+CREATE TABLE revisions (
+    document_id BIGINT NOT NULL,
+    number      BIGINT NOT NULL,
+    body        TEXT NOT NULL,
+    deleted_at  TIMESTAMP,
+    PRIMARY KEY (document_id, number)
+);
+
+-- A case-insensitive key: the database matches a listed key that differs from
+-- the stored one only in case.
+CREATE TABLE labels (
+    name       TEXT COLLATE NOCASE NOT NULL PRIMARY KEY,
     deleted_at TIMESTAMP
 );

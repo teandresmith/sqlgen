@@ -39,7 +39,7 @@ func TestConformance(t *testing.T) {
 		Client:   models.New(q),
 		Querier:  q,
 		Reset: func(t *testing.T) {
-			if _, err := db.Exec("DELETE FROM order_items; DELETE FROM products; DELETE FROM documents"); err != nil {
+			if _, err := db.Exec("DELETE FROM order_items; DELETE FROM products; DELETE FROM documents; DELETE FROM revisions; DELETE FROM labels"); err != nil {
 				t.Fatal(err)
 			}
 		},

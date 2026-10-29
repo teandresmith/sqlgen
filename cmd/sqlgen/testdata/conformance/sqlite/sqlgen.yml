@@ -13,3 +13,5 @@ tables:
     batch_size: 2
   documents:
     batch_size: 2
+  revisions:
+    batch_size: 2

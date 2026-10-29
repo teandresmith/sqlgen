@@ -61,8 +61,10 @@ type Client struct {
 	querier   database.Querier
 	opts      clientOptions
 	document  *documentClient
+	label     *labelClient
 	orderItem *orderItemClient
 	product   *productClient
+	revision  *revisionClient
 }
 
 // New creates a new Client with the given querier and options.
@@ -79,8 +81,10 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		querier:   querier,
 		opts:      options,
 		document:  newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		label:     newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		orderItem: newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		product:   newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		revision:  newRevisionClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 	}
 
 	// Push the configured CallbackMode down to every entity client that can
@@ -102,6 +106,11 @@ func (c *Client) Documents() DocumentClient {
 	return c.document
 }
 
+// Labels returns the LabelClient for Label operations.
+func (c *Client) Labels() LabelClient {
+	return c.label
+}
+
 // OrderItems returns the OrderItemClient for OrderItem operations.
 func (c *Client) OrderItems() OrderItemClient {
 	return c.orderItem
@@ -110,6 +119,11 @@ func (c *Client) OrderItems() OrderItemClient {
 // Products returns the ProductClient for Product operations.
 func (c *Client) Products() ProductClient {
 	return c.product
+}
+
+// Revisions returns the RevisionClient for Revision operations.
+func (c *Client) Revisions() RevisionClient {
+	return c.revision
 }
 
 // Begin starts a new transaction with the given name.

@@ -207,7 +207,9 @@ of key or feature:
 |---|---|
 | `products` | Single PK, every common column type, filters, sorting, pagination |
 | `order_items` | Composite PK (`<T>PK` struct, tuple `IN` batches) |
-| `documents` | Soft delete (timestamp) |
+| `documents` | Soft delete (timestamp); CHECK constraints a soft delete and a restore can violate |
+| `revisions` | Composite-PK soft delete (timestamp) |
+| `labels` | Case-insensitive text PK (PostgreSQL `citext`, MySQL `_ci` collation, SQLite `NOCASE`): a batch the database matched more rows in |
 | `flags` | Soft delete (bool) |
 | `audit_rows` | No PK: no PK methods generated (§9.4b) |
 | `counters` | `Increment` |
