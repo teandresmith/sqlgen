@@ -1501,6 +1501,79 @@ database versions it ran against.
      unchanged, so a changed-rows mutation is caught only by timing. Lastly, the matrix's closed row
      list makes the reads' 80 empty cells notes from the start, so the sweep can count what is left.
 
+   **Eleventh slice, `client.md` reads, recorded 2026-10-29:**
+   - **Scope.** `Get`, `GetMany`, `Exists`, `Count`, `ExistsWhere`, `Paginate`, `Connection` and `Stream`
+     brought to the delete-family standard, with §9.1, §9.4 and §15.3, which had no rows. Measured first:
+     211 example tests had one of these methods as their subject (95 portable, the rest views,
+     tenancy, cache, driver error codes, SQL text or pool statistics); lock mode needed the first
+     capability; the schema already had one relationship (`products` → `order_items`, one-to-many), so
+     it did not grow; no cell needed statement counts inside a transaction, though "a refused `Stream`
+     issues no SQL" cannot be shown there (§4.3), so that subtest shows that no hook fires.
+   - **Rulings before writing (10):** the first capability, `Caps.RowLocks` with `Require` and `Lacks`
+     (true on PostgreSQL and MySQL, false on SQLite), and a row-lock row in Appendix B; reuse
+     `products`/`order_items`, leaving one-to-one and many-to-many to the nested-writes slice;
+     `products` ordered by `cursor_keys: [price, id]`, so the cursor order is not the insertion order;
+     multi-method rows split per method; two defects and one conflict fixed in code; three PRD
+     amendments; and one `n/a` signed off (`Stream × composite-pk`). Six more came from the claim
+     check and the review: three Stream prose lines (§9.4a), §17.3's read-method default, `LockMode`
+     ignored on `Count`, `Exists`, `ExistsWhere` and `Stream` (§9.6a), and reads that match nothing
+     (§9.5).
+   - **Suite.** Four writers, one per method group, each with its own file, helper prefix and pinned
+     mutation worktree. The suite went from 126 to 225 subtests per dialect, all passing on the four
+     targets. The lock subtests prove a lock with a contending transaction (`otherTx`), and `NOWAIT`
+     with a positive control after release. `order_items` takes `page_size: 2`, so the default page
+     size is observable. Equivalent mutants: removing `Get`'s own lock guard (its inner `GetMany`
+     re-runs it), and dropping a tiebreaker on a composite or rowid table, where the database answers
+     ties in key order whatever the `ORDER BY`.
+   - **Claim check before porting.** Two read-only checkers found 18 defects, all fixed: fixtures where
+     the target was the first row a loosened key also returns, a soft-delete fixture with no live row,
+     lock subtests a `LockMode`-ignoring read would pass, a presence-only `NOWAIT` check, a transaction
+     precondition claimed on SQLite where the dialect guard fires first, tie orders that matched
+     insertion order, a page size below the default, a `t.Fatal` inside a transaction function, a dead
+     assertion, and a leaked result set that would have hung the rest of the Stream run.
+   - **Rows.** `client.md` 260 → 329 rows (5397 → 5466 in all): 69 new rows, conformance refs on 21
+     template-seeded rows, the `lock.requires-transaction` and `lock.sqlite-rejected` rows split per
+     method, and `gap.get-many.field-options-not-mutated` turned into a row. All 80 read cells are
+     filled (59) or `n/a` (21), and §9.1, §9.4 and §15.3 have rows.
+   - **Ported:** 73 per-dialect example tests (the `Count`, `Exists` and `ExistsWhere` tests, composite
+     `Get`, the offset and cursor walks, the lock guard, savepoint, read-modify-write and `SKIP LOCKED`
+     tests, the Stream baseline, soft-delete, row-failure, hook-error and refused-transaction tests,
+     graphql's nil-input read check). They went in the commit after the port (`03cb7a5b`), not the
+     same one as ruling 6 says, after a review of the deletions added the short last page the offset
+     walk covered. The `NOWAIT` driver-code tests, SQL-text, pool, cancellation and buffering tests,
+     views and the 3-column-key tests stay.
+   - **Defects: 2, and one PRD conflict, ruled and fixed** (`f5ddc894`). An `OFFSET` with no `LIMIT`
+     was emitted bare, which MySQL and SQLite reject, so `Paginate` with an offset and a zero limit
+     failed; the builders now write the dialect's new `NoLimitClause()` first. `Paginate`'s `COUNT` ran
+     before its page read's lock guard; it now takes the guard itself. And a zero `PaginateInput`
+     returned every row with `HasMore` true; `HasMore` now needs `Limit > 0`. `/verify` did not run,
+     because the fixes have no FIX ID.
+   - **PRD amendments: 14**, each with its fill test (`f5ddc894`, `5c66ef52`): §9.6a and §9.8.11
+     (`Paginate` takes a lock), §9.8, §14.1 (`HasMore`), Appendices A and B (`NoLimitClause`, row locks,
+     a bare `OFFSET`), §9.6 (`GetMany`'s empty selection returns no entities and no error; no read
+     writes to the caller's `FieldOptions`), §9.6a (`LockMode` ignored on four reads), §9.5 (reads that
+     match nothing), §9.4c and §17.3 (every read adds the soft-delete default), §9.4a (result-set
+     errors, early break, hook errors yielded last) and the §9.8.10 `Count` sample. Five findings went
+     to `backlog.md`, among them §21.2's missing `OpStream` (runtime.md's) and `Connection` with
+     `First: 0`.
+   - **Review.** Four sqlgen-reviewer passes (prep, fix, suite and registry, deletions); each finding
+     was fixed, logged or ruled before its commit.
+   - **Completion sweep.** The 8 reads have no empty cell, no untested row and no unsigned `n/a`. With
+     `client.md` set to `complete`, `req-check` fails only on the 110 empty cells of the 11 write and
+     nested-write methods and on 7 owned sections with no rows (§20.3, §20.4, §20.5, §22.3, §25.4, §29.7,
+     §29.9). Not flipped.
+   - **Report.** `make conformance` at `03cb7a5b`: 5466 rows, 5355 pass, 0 fail, 0 skip, 0 not run,
+     111 untested; `client.md` 328 pass, 1 untested (`edge.batch-db-matched-superset-tenanted`).
+   - **For the next slice (writes: `Create`, `CreateMany`, `Update`, `UpdateMany`, `UpdateWhere`,
+     `Upsert`, `UpsertMany`, `Increment`):** it fills 80 of the 110 remaining cells and is where
+     error mapping becomes a real cell for most methods (unique, FK, check, not-null). The backlog's
+     `UpdateWhere` return set (soft-deleted rows it writes but does not return) lands there. A
+     composite tiebreaker cannot be proven on a table the database stores in key order, so pick a
+     fixture that is not. Check the suite's own claims about oracles: a yield inside the hook chain is
+     recovered, so a range panic is not an oracle there. Finally, port in the same commit as the
+     suite when the deletions are known up front; reviewing them first moved this slice's deletions
+     to a commit of their own.
+
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
