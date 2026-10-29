@@ -5123,7 +5123,7 @@ func newOrderItemClient(querier database.Querier, mutationHooks []hook.MutationH
 		table:         sql.Table{Schema: "", Name: "order_items"},
 		batchSize:     200,
 		queryLimit:    1000,
-		pageSize:      100,
+		pageSize:      2,
 		cursorKeys:    []string{"order_id", "product_id"},
 		strictUpdates: true,
 		mutationHooks: mutationHooks,

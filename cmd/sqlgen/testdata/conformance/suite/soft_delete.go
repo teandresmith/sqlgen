@@ -289,7 +289,7 @@ func restore(t *testing.T, h *Harness) {
 
 	t.Run("restores only the given row and returns it", func(t *testing.T) {
 		h.Reset(t)
-		a, b := sdlDeletedDocument(t, h, "a"), sdlDeletedDocument(t, h, "b")
+		a, b := createDeletedDocument(t, h, "a"), createDeletedDocument(t, h, "b")
 		got, err := h.Client.Documents().Restore(ctx, a.ID)
 		if err != nil {
 			t.Fatalf("Restore(a) error = %v, want nil", err)
@@ -306,7 +306,7 @@ func restore(t *testing.T, h *Harness) {
 
 	t.Run("missing key returns nil and no error", func(t *testing.T) {
 		h.Reset(t)
-		a := sdlDeletedDocument(t, h, "a")
+		a := createDeletedDocument(t, h, "a")
 		missing := a.ID + 1000
 		got, err := h.Client.Documents().Restore(ctx, missing)
 		if err != nil || got != nil {
@@ -317,7 +317,7 @@ func restore(t *testing.T, h *Harness) {
 
 	t.Run("restored row returns to default reads", func(t *testing.T) {
 		h.Reset(t)
-		a := sdlDeletedDocument(t, h, "a")
+		a := createDeletedDocument(t, h, "a")
 		createDocument(t, h, "b")
 		assertLiveDocuments(t, h, 1)
 		got, err := h.Client.Documents().Restore(ctx, a.ID)
@@ -358,7 +358,7 @@ func restore(t *testing.T, h *Harness) {
 
 	t.Run("restores inside the caller's transaction", func(t *testing.T) {
 		h.Reset(t)
-		a, b := sdlDeletedDocument(t, h, "a"), sdlDeletedDocument(t, h, "b")
+		a, b := createDeletedDocument(t, h, "a"), createDeletedDocument(t, h, "b")
 		err := database.WithTransaction(ctx, h.Querier, "conformance", func(txCtx context.Context) error {
 			h.Querier.ResetCount()
 			if _, err := h.Client.Documents().Restore(txCtx, a.ID); err != nil {
@@ -386,7 +386,7 @@ func restore(t *testing.T, h *Harness) {
 
 	t.Run("rolled-back transaction leaves the row deleted", func(t *testing.T) {
 		h.Reset(t)
-		a := sdlDeletedDocument(t, h, "a")
+		a := createDeletedDocument(t, h, "a")
 		errRollback := errors.New("roll back")
 		err := database.WithTransaction(ctx, h.Querier, "conformance", func(txCtx context.Context) error {
 			if _, err := h.Client.Documents().Restore(txCtx, a.ID); err != nil {
@@ -410,7 +410,7 @@ func restore(t *testing.T, h *Harness) {
 
 	t.Run("fires one restore mutation hook", func(t *testing.T) {
 		h.Reset(t)
-		a := sdlDeletedDocument(t, h, "a")
+		a := createDeletedDocument(t, h, "a")
 		client, seen := mutationRecorder(h)
 		if _, err := client.Documents().Restore(ctx, a.ID); err != nil {
 			t.Fatalf("Restore(a) error = %v, want nil", err)
@@ -431,7 +431,7 @@ func restore(t *testing.T, h *Harness) {
 
 	t.Run("a key matching no row runs the hook and records no affected key", func(t *testing.T) {
 		h.Reset(t)
-		missing := sdlDeletedDocument(t, h, "a").ID + 1000
+		missing := createDeletedDocument(t, h, "a").ID + 1000
 		client, seen := mutationRecorder(h)
 		if _, err := client.Documents().Restore(ctx, missing); err != nil {
 			t.Fatalf("Restore(missing) error = %v, want nil", err)
@@ -467,7 +467,7 @@ func restore(t *testing.T, h *Harness) {
 
 	t.Run("returns only the selected columns", func(t *testing.T) {
 		h.Reset(t)
-		a := sdlDeletedDocument(t, h, "a")
+		a := createDeletedDocument(t, h, "a")
 		got, err := h.Client.Documents().Restore(ctx, a.ID, func(o *models.CallOptions[models.DocumentFieldOptions]) {
 			o.FieldOptions = &models.DocumentFieldOptions{Title: true}
 		})
@@ -485,7 +485,7 @@ func restore(t *testing.T, h *Harness) {
 
 	t.Run("empty field options restores and returns nil", func(t *testing.T) {
 		h.Reset(t)
-		a := sdlDeletedDocument(t, h, "a")
+		a := createDeletedDocument(t, h, "a")
 		h.Querier.ResetCount()
 		got, err := h.Client.Documents().Restore(ctx, a.ID, func(o *models.CallOptions[models.DocumentFieldOptions]) {
 			o.FieldOptions = &models.DocumentFieldOptions{}
@@ -501,7 +501,7 @@ func restore(t *testing.T, h *Harness) {
 
 	t.Run("ignores LockMode outside a transaction", func(t *testing.T) {
 		h.Reset(t)
-		a := sdlDeletedDocument(t, h, "a")
+		a := createDeletedDocument(t, h, "a")
 		got, err := h.Client.Documents().Restore(ctx, a.ID, func(o *models.CallOptions[models.DocumentFieldOptions]) {
 			o.LockMode = sql.LockForUpdate
 		})
@@ -607,14 +607,4 @@ func sdlAssertRevisionState(t *testing.T, h *Harness, pk models.RevisionPK, want
 	if got := sdlStateOf(t, count(true), count(false)); got != want {
 		t.Errorf("revision %+v is %s, want %s", pk, got, want)
 	}
-}
-
-// sdlDeletedDocument creates a document and soft-deletes it.
-func sdlDeletedDocument(t *testing.T, h *Harness, title string) *models.Document {
-	t.Helper()
-	d := createDocument(t, h, title)
-	if _, err := h.Client.Documents().SoftDelete(context.Background(), d.ID); err != nil {
-		t.Fatalf("SoftDelete document %q: %v", title, err)
-	}
-	return d
 }

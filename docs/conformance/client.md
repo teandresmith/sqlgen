@@ -19,6 +19,18 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | restore-many.composite-pk | Composite PKs use the `{Table}PK` struct and the WHERE clause matches all PK columns, so `RestoreMany` touches only the listed tuples | `conformance: RestoreMany/composite keys restore only the listed tuples` | all | client-methods: RestoreMany × composite-pk |
 | hard-delete.composite-pk | Composite PKs use the `{Table}PK` struct and the WHERE clause matches all PK columns, so `HardDelete` touches only the listed tuples | `conformance: HardDelete/a composite key deletes only that tuple` | all | client-methods: HardDelete × composite-pk |
 
+## §9.1 Read Operations
+<!-- prd: 9.1 sha256: f9c30c75bc3a3729 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| get.happy-path | `Get(ctx, pk)` fetches the row with that primary key, every column populated | `conformance: Get/returns the row for its key with every column` | all | client-methods: Get × happy-path |
+| get-many.happy-path | `GetMany` returns exactly the rows its `Filter` matches, and `Limit` and `Offset` page through them in `Sorts` order | `conformance: GetMany/returns exactly the rows the filter matches`; `conformance: GetMany/limit and offset page through the sorted rows` | all | client-methods: GetMany × happy-path |
+| exists.not-found | `Exists(ctx, pk)` reports `false`, with no error, for a key that has no row | `conformance: Exists/a missing key returns false` | all | client-methods: Exists × not-found |
+| exists-where.happy-path | `ExistsWhere` reports whether any one row matches every condition of its filter | `conformance: ExistsWhere/reports whether any row matches the filter` | all | client-methods: ExistsWhere × happy-path |
+| count.happy-path | `Count` returns the number of rows its filter matches | `conformance: Count/returns the number of rows the filter matches` | all | client-methods: Count × happy-path |
+| stream.happy-path | `Stream` yields each row its `Filter` matches once, in `Sorts` order, as the full entity with its relationship fields nil | `conformance: Stream/yields only the matching rows, each once, in the requested sort order` | all | client-methods: Stream × happy-path |
+
 ## §9.2 Write Operations
 <!-- prd: 9.2 sha256: 7a20f40676acbad6 -->
 
@@ -50,8 +62,15 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | soft-delete-where.empty-filter | `SoftDeleteWhere` returns `ErrEmptyFilter` when the filter produces zero conditions, a nil filter included, and soft-deletes nothing | `conformance: SoftDeleteWhere/nil filter returns ErrEmptyFilter and deletes nothing`; `conformance: SoftDeleteWhere/empty filter returns ErrEmptyFilter and deletes nothing` | all | client-methods: SoftDeleteWhere × nil-empty-input |
 | restore-where.empty-filter | `RestoreWhere` returns `ErrEmptyFilter` when the filter produces zero conditions, a nil filter included, and restores nothing | `conformance: RestoreWhere/nil filter returns ErrEmptyFilter and restores nothing`; `conformance: RestoreWhere/empty filter returns ErrEmptyFilter and restores nothing` | all | client-methods: RestoreWhere × nil-empty-input |
 
+## §9.4 Pagination Operations
+<!-- prd: 9.4 sha256: 18d937cec6a2526d -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| paginate.happy-path | `Paginate` returns the `Limit` rows after `Offset` in the caller's sort; `TotalCount` counts every matching row, `Offset` and `Limit` are echoed, and `HasMore` is true exactly when `Limit > 0` and `Offset+Limit < TotalCount` | `conformance: Paginate/returns the requested page in the caller's sort with the total count` | all | client-methods: Paginate × happy-path |
+
 ## §9.4a Streaming Operations
-<!-- prd: 9.4a sha256: cd5f0456155afb1d -->
+<!-- prd: 9.4a sha256: 61d0478f0b65d482 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -59,14 +78,20 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | stream.field-options-scalar-only | `Stream{Table}FieldOptions` has one `bool` per scalar column and no relationship field, even when the table has relationships | `unit: cmd/sqlgen/gen: TestStream_FieldOptionsScalarOnly`; `unit: cmd/sqlgen/gen: TestStream_TypesEmitted` | all |  |
 | stream.select-unbounded | `Stream`'s `SELECT` is built with no `Limit` and no `Offset` | `unit: cmd/sqlgen/gen: TestStream_NoLimitOffsetInSelect` | all |  |
 | stream.iterator-per-row | `Stream` returns `iter.Seq2[*{Table}, error]` and yields each row as it is scanned, through a single-row scan helper, without materializing the result set | `unit: cmd/sqlgen/gen: TestStream_MethodBodyEmission`; `unit: cmd/sqlgen/gen: TestStream_ScanRowHelperEmitted` | all |  |
-| stream.skip-cache-forced | `Stream` forces `CallOptions.SkipCache` to `true` whatever the caller set | `unit: cmd/sqlgen/gen: TestStream_MethodBodyEmission` | all |  |
-| stream.op-stream | `Stream` runs its query-hook chain with `Op: hook.OpStream` | `unit: cmd/sqlgen/gen: TestStream_OpStreamReferenced` | all |  |
-| stream.tx-refused | Inside a transaction, `Stream` without `CallOptions.AllowInTransaction` yields one error naming `Connection` in a loop and the `AllowInTransaction` opt-in, then returns | `unit: cmd/sqlgen/gen: TestStream_InTransactionGuardEmitted` | all |  |
-| stream.guard-before-hooks | `Stream`'s in-transaction refusal runs after `resolveCallOptions` and before the hook chain is built, so a refused `Stream` fires no hook | `unit: cmd/sqlgen/gen: TestStream_GuardPrecedesHookChain` | all |  |
+| stream.skip-cache-forced | `Stream` forces `CallOptions.SkipCache` to `true` whatever the caller set | `unit: cmd/sqlgen/gen: TestStream_MethodBodyEmission`; `conformance: Stream/a hook sees the cache skipped whatever the caller set` | all |  |
+| stream.op-stream | `Stream` runs its query-hook chain once, with `Op: hook.OpStream` and the caller's input as `Input` | `unit: cmd/sqlgen/gen: TestStream_OpStreamReferenced`; `conformance: Stream/fires one stream query hook with the caller's input` | all | client-methods: Stream × hooks |
+| stream.tx-refused | Inside a transaction, `Stream` without `CallOptions.AllowInTransaction` yields one error naming `Connection` in a loop and the `AllowInTransaction` opt-in, then returns, leaving the transaction usable | `unit: cmd/sqlgen/gen: TestStream_InTransactionGuardEmitted`; `conformance: Stream/inside a transaction without the opt-in yields one error, fires no hook and leaves the transaction usable` | all | client-methods: Stream × transaction |
+| stream.guard-before-hooks | `Stream`'s in-transaction refusal runs after `resolveCallOptions` and before the hook chain is built, so a refused `Stream` fires no hook | `unit: cmd/sqlgen/gen: TestStream_GuardPrecedesHookChain`; `conformance: Stream/inside a transaction without the opt-in yields one error, fires no hook and leaves the transaction usable` | all |  |
 | stream.conditions-like-getmany | `Stream`'s `WHERE` carries the soft-delete default and the tenant predicate, as `GetMany`'s does | `unit: cmd/sqlgen/gen: TestStream_TenancyAndSoftDeleteApplied` | all |  |
+| stream.allow-in-transaction | With `AllowInTransaction` set, `Stream` runs on the caller's transaction and yields a row written earlier in it | `conformance: Stream/with the opt-in streams inside the transaction and sees its writes` | all | client-methods: Stream × transaction |
+| stream.soft-delete | `Stream` leaves soft-deleted rows out as `GetMany` does, and yields them when the filter sets the soft-delete comparator | `conformance: Stream/soft-deleted rows are not yielded by default`; `conformance: Stream/a deleted-at comparator yields soft-deleted rows` | all | client-methods: Stream × soft-delete |
+| stream.field-selection | A narrowed `Stream{Table}FieldOptions` fills only the selected scalar fields and leaves the rest at their zero value | `conformance: Stream/a narrowed field selection fills only the selected fields` | all | client-methods: Stream × field-selection |
+| stream.row-error | An error reading the result set is yielded after the rows read before it, and no row follows it | `conformance: Stream/a row error from the driver is yielded after the rows before it` | all |  |
+| stream.early-break | Breaking out of the loop ends the iteration and closes the result set, so the next statement on the same transaction runs | `conformance: Stream/breaking out of the loop stops iteration and frees the connection for the next statement` | all |  |
+| stream.hook-error-last | A hook's abort error or a recovered panic is yielded once, as the stream's last value, unless the consumer has already broken out of the loop | `conformance: Stream/a panicking hook is yielded as the recovered error after no rows`; `conformance: Stream/a hook's abort error is yielded once after no rows`; `conformance: Stream/a hook's error after the rows is yielded last`; `conformance: Stream/a hook's error after the consumer broke out is not yielded` | all |  |
 
 ## §9.4c Nil input handling
-<!-- prd: 9.4c sha256: f8d2c84924befe60 -->
+<!-- prd: 9.4c sha256: fc7a02a98adeb6be -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -76,9 +101,14 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | nil-input.upsert-many-nil-element | `UpsertMany` returns `ErrNilInput` when any element is nil, and the guard runs before the mutation executor, so a nil element fires no hook | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_nilInputGuard`; `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_goldenFile_compositePK` | postgres |  |
 | soft-delete-many.nil-empty-input | `SoftDeleteMany` sends no statement for a nil or empty slice and reads nothing back | `conformance: SoftDeleteMany/nil key list sends no statement and returns nothing`; `conformance: SoftDeleteMany/empty key list sends no statement and returns nothing` | all | client-methods: SoftDeleteMany × nil-empty-input |
 | restore-many.nil-empty-input | `RestoreMany` sends no statement for a nil or empty slice and reads nothing back | `conformance: RestoreMany/nil key list sends no statement and returns nothing`; `conformance: RestoreMany/empty key list sends no statement and returns nothing` | all | client-methods: RestoreMany × nil-empty-input |
+| get-many.nil-empty-input | `GetMany(ctx, nil)` and `GetMany(ctx, &Get<T>Input{})` are the same call, and a hook sees the zero-value input rather than nil | `conformance: GetMany/nil input reads the same rows as the zero-value input` | all | client-methods: GetMany × nil-empty-input |
+| stream.nil-empty-input | `Stream(ctx, nil)` yields what `Stream(ctx, &Stream<T>Input{})` yields, and a hook sees a non-nil input | `conformance: Stream/nil input yields the same rows as the zero-value input`; `conformance: Stream/a hook sees a non-nil input when the caller passes nil` | all | client-methods: Stream × nil-empty-input |
+| count.nil-empty-input | `Count(nil)`, like an empty filter, counts every row (on a soft-delete table, every not-deleted row) | `conformance: Count/nil or empty filter counts every row` | all | client-methods: Count × nil-empty-input |
+| exists-where.nil-empty-input | `ExistsWhere(nil)`, like an empty filter, tests for any row (on a soft-delete table, any not-deleted row), with no `ErrEmptyFilter` | `conformance: ExistsWhere/nil or empty filter tests for any row` | all | client-methods: ExistsWhere × nil-empty-input |
+| paginate.zero-input | A zero `PaginateInput` pages everything: it returns every row, and `HasMore` is false | `conformance: Paginate/a zero input returns every row and reports no more pages` | all | client-methods: Paginate × nil-empty-input |
 
 ## §9.5 Edge Case Behaviors
-<!-- prd: 9.5 sha256: 235c4be55653ec92 -->
+<!-- prd: 9.5 sha256: fe61992772c53378 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -116,9 +146,14 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | hard-delete-where.not-found | `HardDeleteWhere` is idempotent: when no row matches the filter it returns `nil` | `conformance: HardDeleteWhere/a filter matching no row is not an error` | all | client-methods: HardDeleteWhere × not-found |
 | soft-delete-many.batch-partial | `SoftDeleteMany` splits its input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately, and previously executed sub-batches within the same call are not rolled back | `conformance: SoftDeleteMany/a failed sub-batch keeps the sub-batches before it` | all |  |
 | restore-many.batch-partial | `RestoreMany` splits its input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately, and previously executed sub-batches within the same call are not rolled back | `conformance: RestoreMany/a failed sub-batch keeps the sub-batches before it` | all |  |
+| get-many.not-found | A `GetMany` whose filter matches no row returns no entities and no error | `conformance: GetMany/a filter matching nothing returns no entities and no error` | all | client-methods: GetMany × not-found |
+| count.not-found | A `Count` whose filter matches no row returns 0 and no error | `conformance: Count/a filter matching no row returns zero and no error` | all | client-methods: Count × not-found |
+| exists-where.not-found | An `ExistsWhere` whose filter matches no row returns `false` and no error | `conformance: ExistsWhere/a filter matching no row returns false and no error` | all | client-methods: ExistsWhere × not-found |
+| stream.not-found | A `Stream` whose filter matches no row yields nothing and no error | `conformance: Stream/a filter matching no row yields nothing and no error` | all | client-methods: Stream × not-found |
+| paginate.not-found | A `Paginate` whose filter matches no row returns no items, a zero `TotalCount` and `HasMore` false | `conformance: Paginate/a filter matching no row returns an empty page with a zero total` | all | client-methods: Paginate × not-found |
 
 ## §9.6 Per-Call Options
-<!-- prd: 9.6 sha256: 28f7e6bf59d21c79 -->
+<!-- prd: 9.6 sha256: 5f50ae1dfc3342cc -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -133,26 +168,45 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | restore.field-selection | A `FieldOptions` that selects some columns makes `Restore` return partial entities; an empty `&FieldOptions{}` performs the write but skips the entity read and returns `nil` | `conformance: Restore/returns only the selected columns`; `conformance: Restore/empty field options restores and returns nil` | all | client-methods: Restore × field-selection |
 | soft-delete-many.field-selection | A `FieldOptions` that selects some columns makes `SoftDeleteMany` return partial entities; an empty `&FieldOptions{}` performs the write but skips the entity read and returns `nil` | `conformance: SoftDeleteMany/returns only the selected columns`; `conformance: SoftDeleteMany/an empty FieldOptions soft-deletes and returns nil` | all | client-methods: SoftDeleteMany × field-selection |
 | restore-many.field-selection | A `FieldOptions` that selects some columns makes `RestoreMany` return partial entities; an empty `&FieldOptions{}` performs the write but skips the entity read and returns `nil` | `conformance: RestoreMany/returns only the selected columns`; `conformance: RestoreMany/an empty FieldOptions restores and returns nil` | all | client-methods: RestoreMany × field-selection |
+| get.field-selection | A narrowed `FieldOptions` makes `Get` return only the selected columns, the rest at their zero value; an all-false one returns `ErrNotFound` | `conformance: Get/returns only the selected columns`; `conformance: Get/empty field options returns ErrNotFound` | all | client-methods: Get × field-selection |
+| get-many.field-selection | A narrowed `FieldOptions` makes `GetMany` return only the selected columns; an all-false one returns no entities and no error | `conformance: GetMany/returns only the selected columns`; `conformance: GetMany/empty field options returns no entities and no error` | all | client-methods: GetMany × field-selection |
+| get-many.caller-field-options-untouched | No read writes to a `FieldOptions` the caller passed in, at any depth: the loaders declare the keys they need instead of setting them on the caller's struct | `conformance: GetMany/a read leaves the caller's field options unchanged`; `unit: cmd/sqlgen/gen: TestRequiredColumns_noFieldOptionsMutation` | all |  |
+| get-many.child-fk-required | A narrowed child `FieldOptions` on an O2M relationship still maps each child to its parent: the edge's FK columns are declared on the child fetch | `conformance: GetMany/a narrowed child selection still maps each child to its row` | all |  |
+| get-many.empty-child-skips-fetch | An all-false `FieldOptions` on an O2M relationship skips that child fetch and leaves the parent's relationship slice nil | `conformance: GetMany/an empty child selection skips the child fetch and leaves the relationship nil` | all |  |
+| connection.field-selection-cursor-keys | A narrowed `FieldOptions` on `Connection` fills only the selected columns, and the cursor keys are unioned in, so cursors still advance page to page | `conformance: Connection/a narrowed field selection still advances the cursor and leaves unselected columns zero` | all | client-methods: Connection × field-selection |
 
 ## §9.6a Lock Modes
-<!-- prd: 9.6a sha256: f62aa35034df37a2 -->
+<!-- prd: 9.6a sha256: 58976f97ac302ed2 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| lock.requires-transaction | `Get`, `GetMany`, `Paginate` and `Connection` with a `LockMode` other than `LockNone` outside a transaction return an error before any SQL | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_postgres`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_mysql`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_PaginateMethod_allDialects` | postgres, mysql |  |
+| get.lock-requires-transaction | `Get` with a `LockMode` other than `LockNone` outside a transaction returns an error before any SQL | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_postgres`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_mysql`; `conformance: Get/a lock mode outside a transaction returns an error before any SQL` | postgres, mysql | client-methods: Get × lock-mode |
+| get-many.lock-requires-transaction | `GetMany` with a `LockMode` other than `LockNone` outside a transaction returns an error before any SQL | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `conformance: GetMany/a lock mode outside a transaction returns an error before any SQL` | postgres, mysql | client-methods: GetMany × lock-mode |
+| paginate.lock-requires-transaction | `Paginate` with a `LockMode` other than `LockNone` outside a transaction returns an error before any SQL, so its count does not run either | `unit: cmd/sqlgen/gen: TestLockModeGuard_PaginateMethod_allDialects`; `conformance: Paginate/a lock mode outside a transaction returns an error before any SQL` | postgres, mysql | client-methods: Paginate × lock-mode |
+| connection.lock-requires-transaction | `Connection` with a `LockMode` other than `LockNone` outside a transaction returns an error before any SQL | `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects`; `conformance: Connection/a lock mode outside a transaction returns an error before any SQL` | postgres, mysql | client-methods: Connection × lock-mode |
 | lock.forces-skip-cache | A `LockMode` other than `LockNone` on `Get`, `GetMany`, `Paginate` or `Connection` forces `SkipCache = true` | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_postgres`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_mysql`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_PaginateMethod_allDialects` | postgres, mysql |  |
-| lock.sqlite-rejected | On SQLite, `Get`, `GetMany`, `Paginate` and `Connection` with any `LockMode` other than `LockNone` return an error before any SQL | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_sqlite`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_PaginateMethod_allDialects` | sqlite |  |
+| get.lock-sqlite-rejected | On SQLite, `Get` with any `LockMode` other than `LockNone` returns an error: outside a transaction before any SQL, inside one before any query hook runs | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_sqlite`; `conformance: Get/an unsupported lock mode outside a transaction returns an error before any SQL`; `conformance: Get/an unsupported lock mode inside a transaction returns an error before any query hook runs` | sqlite | client-methods: Get × lock-mode |
+| get-many.lock-sqlite-rejected | On SQLite, `GetMany` with any `LockMode` other than `LockNone` returns an error: outside a transaction before any SQL, inside one before any query hook runs | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `conformance: GetMany/an unsupported lock mode outside a transaction returns an error before any SQL`; `conformance: GetMany/an unsupported lock mode inside a transaction returns an error before any query hook runs` | sqlite | client-methods: GetMany × lock-mode |
+| paginate.lock-sqlite-rejected | On SQLite, `Paginate` with any `LockMode` other than `LockNone` returns an error before any SQL | `unit: cmd/sqlgen/gen: TestLockModeGuard_PaginateMethod_allDialects`; `conformance: Paginate/a lock mode on a dialect without row locks returns an error before any SQL` | sqlite | client-methods: Paginate × lock-mode |
+| connection.lock-sqlite-rejected | On SQLite, `Connection` with any `LockMode` other than `LockNone` returns an error before any SQL | `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects`; `conformance: Connection/a lock mode on a dialect without row locks returns an error before any SQL` | sqlite | client-methods: Connection × lock-mode |
 | lock.mysql-version-guard | On MySQL, `LockForUpdateNoWait` and `LockForUpdateSkipLocked` on `Get`, `GetMany`, `Paginate` and `Connection` return an error when the server's major version is below 8 | `unit: cmd/sqlgen/gen: TestLockModeGuard_GetMethod_mysql`; `unit: cmd/sqlgen/gen: TestLockModeGuard_GetManyMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_ConnectionMethod_allDialects`; `unit: cmd/sqlgen/gen: TestLockModeGuard_PaginateMethod_allDialects` | mysql |  |
 | lock.mysql-version-cache | The MySQL client probes `SELECT VERSION()` behind a `sync.Once` version cache; PostgreSQL and SQLite clients carry no version cache | `unit: cmd/sqlgen/gen: TestMySQLVersionCache_emittedOnlyForMySQL` | all |  |
-| lock.threaded-into-select | `GetMany` passes the caller's `LockMode` into the `SelectOptions` of its `SELECT` | `unit: cmd/sqlgen/gen: TestLockModeThreading_GetMany` | postgres |  |
+| lock.threaded-into-select | `GetMany` passes the caller's `LockMode` into the `SelectOptions` of its `SELECT`, so inside a transaction the matched rows are locked against another transaction | `unit: cmd/sqlgen/gen: TestLockModeThreading_GetMany`; `conformance: GetMany/a lock mode inside a transaction locks the matched rows` | postgres, mysql | client-methods: GetMany × lock-mode |
 | lock.write-reads-lock-none | The chained `Get` / `GetMany` inside `Create`, `Update`, `Upsert`, `SoftDelete*` and `Restore*` forces `LockMode` to `LockNone` alongside `SkipHooks = true` | `unit: cmd/sqlgen/gen: TestChainedGet_LockNoneForced` | postgres |  |
-| lock.read-internals-propagate | `Connection`'s inner `GetMany` keeps the caller's `LockMode` rather than resetting it to `LockNone` | `unit: cmd/sqlgen/gen: TestChainedGet_PaginationDoesNotForceLockNone` | all |  |
+| lock.read-internals-propagate | `Connection`'s inner `GetMany` keeps the caller's `LockMode` rather than resetting it to `LockNone`, so inside a transaction the page rows are locked against another transaction | `unit: cmd/sqlgen/gen: TestChainedGet_PaginationDoesNotForceLockNone`; `conformance: Connection/a lock mode inside a transaction locks the page rows` | postgres, mysql | client-methods: Connection × lock-mode |
 | soft-delete.lock-mode-ignored | `LockMode` applies to read methods only and is ignored on write methods, so `SoftDelete` with `LockForUpdate` outside a transaction succeeds | `conformance: SoftDelete/ignores LockMode outside a transaction` | all | client-methods: SoftDelete × lock-mode |
 | restore.lock-mode-ignored | `LockMode` applies to read methods only and is ignored on write methods, so `Restore` with `LockForUpdate` outside a transaction succeeds | `conformance: Restore/ignores LockMode outside a transaction` | all | client-methods: Restore × lock-mode |
 | soft-delete-many.lock-mode-ignored | `LockMode` applies to read methods only and is ignored on write methods, so `SoftDeleteMany` with `LockForUpdate` outside a transaction succeeds | `conformance: SoftDeleteMany/ignores LockMode outside a transaction` | all | client-methods: SoftDeleteMany × lock-mode |
 | restore-many.lock-mode-ignored | `LockMode` applies to read methods only and is ignored on write methods, so `RestoreMany` with `LockForUpdate` outside a transaction succeeds | `conformance: RestoreMany/ignores LockMode outside a transaction` | all | client-methods: RestoreMany × lock-mode |
 | soft-delete-where.lock-mode-ignored | `LockMode` applies to read methods only and is ignored on write methods, so `SoftDeleteWhere` with `LockForUpdate` outside a transaction succeeds | `conformance: SoftDeleteWhere/a lock mode is ignored outside a transaction` | all | client-methods: SoftDeleteWhere × lock-mode |
 | restore-where.lock-mode-ignored | `LockMode` applies to read methods only and is ignored on write methods, so `RestoreWhere` with `LockForUpdate` outside a transaction succeeds | `conformance: RestoreWhere/a lock mode is ignored outside a transaction` | all | client-methods: RestoreWhere × lock-mode |
+| get.lock-held | Inside a transaction, `Get` with a `LockMode` locks the row it reads against another transaction, and only that row | `conformance: Get/a lock mode inside a transaction locks the row` | postgres, mysql | client-methods: Get × lock-mode |
+| lock.released-on-commit | A row `Get` locked with `LockForUpdate` makes another transaction's locking read wait, and commit releases it | `conformance: Get/a locked row makes another transaction's locking read wait until commit` | postgres, mysql | client-methods: Get × lock-mode |
+| lock.savepoint-keeps-lock | Rolling back a savepoint does not release a row lock taken before it; only the outermost commit or rollback does | `conformance: Get/a rolled-back savepoint keeps the lock` | postgres, mysql | client-methods: Get × lock-mode |
+| lock.nowait-immediate | `LockForUpdateNoWait` returns an error at once on a row another transaction holds, and reads it once the lock is released | `conformance: GetMany/LockForUpdateNoWait fails at once on a row another transaction holds` | postgres, mysql | client-methods: GetMany × lock-mode |
+| lock.skip-locked | `LockForUpdateSkipLocked` skips rows another transaction holds, so two transactions claim disjoint rows | `conformance: GetMany/LockForUpdateSkipLocked skips rows another transaction holds` | postgres, mysql | client-methods: GetMany × lock-mode |
+| lock.relationship-loads-unlocked | A locked `GetMany` locks its own rows but not the children its relationship loads read: a `LockForUpdateNoWait` or `LockForUpdateSkipLocked` parent read still loads a child another transaction holds | `conformance: GetMany/a locked read loads relationships without locking them` | postgres, mysql | client-methods: GetMany × lock-mode |
+| paginate.lock-held | Inside a transaction, `Paginate` with a `LockMode` locks its page rows against another transaction and leaves a row after the page unlocked | `conformance: Paginate/a lock mode inside a transaction locks the page rows` | postgres, mysql | client-methods: Paginate × lock-mode |
 
 ## §9.7 PK Resolution and Entity Return Path
 <!-- prd: 9.7 sha256: 10169126860ffdb4 -->
@@ -163,7 +217,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | pk-return.upsert-fallback-binds-by-name | On a tenanted table, the `Upsert` conflict fallback `SELECT` binds its scan targets by column name, so a tenant column that sorts before the PK still lands in the tenant target | `unit: cmd/sqlgen/gen: TestUpsertTemplate_conflictRowFallbackBindsByName` | postgres |  |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: b5c54d392c2e7231 -->
+<!-- prd: 9.8 sha256: 12537dd133607e49 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -174,8 +228,9 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| get.delegates-to-getmany | `Get` reads through `GetMany` filtered on the primary key with `Limit` 1, and returns `ErrNotFound` when no row comes back | `unit: cmd/sqlgen/gen: TestGetTemplate_goldenFile_singlePK`; `unit: cmd/sqlgen/gen: TestGetTemplate_goldenFile_compositePK` | all |  |
-| get.inner-skip-hooks | `Get`'s internal `GetMany` runs with `SkipHooks = true`, so the hook chain fires once, as `OpGet` | `unit: cmd/sqlgen/gen: TestGetTemplate_goldenFile_singlePK`; `unit: cmd/sqlgen/gen: TestGetTemplate_goldenFile_compositePK` | all |  |
+| get.delegates-to-getmany | `Get` reads through `GetMany` filtered on the primary key with `Limit` 1, and returns `ErrNotFound` when no row comes back | `unit: cmd/sqlgen/gen: TestGetTemplate_goldenFile_singlePK`; `unit: cmd/sqlgen/gen: TestGetTemplate_goldenFile_compositePK`; `conformance: Get/a missing key returns ErrNotFound` | all | client-methods: Get × not-found |
+| get.inner-skip-hooks | `Get`'s internal `GetMany` runs with `SkipHooks = true`, so the hook chain fires once, as `OpGet` with the key as `PK` | `unit: cmd/sqlgen/gen: TestGetTemplate_goldenFile_singlePK`; `unit: cmd/sqlgen/gen: TestGetTemplate_goldenFile_compositePK`; `conformance: Get/fires one get query hook with the key` | all | client-methods: Get × hooks |
+| get.soft-delete | A soft-deleted row is not returned by `Get`: its key gives `ErrNotFound`, while a live row's key returns it | `conformance: Get/a soft-deleted row returns ErrNotFound` | all | client-methods: Get × soft-delete |
 
 ## §9.8.3 GetMany
 <!-- prd: 9.8.3 sha256: 85f94c1e4a858d9c -->
@@ -184,9 +239,11 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 |---|---|---|---|---|
 | get-many.required-columns-union | A non-empty narrowed `FieldOptions` projection in `GetMany` is widened by the columns its internal caller declared | `unit: cmd/sqlgen/gen: TestRequiredColumns_getManyUnionsDeclaredColumns/table` | all |  |
 | get-many.nothing-selected-returns-early | `GetMany` with a non-nil `FieldOptions` that selects no column returns without querying | `unit: cmd/sqlgen/gen: TestGenerate_GetManyEmptySelectionReturnsEarly` | all |  |
-| get-many.parent-key-for-relationships | When a narrowed `GetMany` loads an O2M or M2M relationship, the parent key is unioned into the projection | `unit: cmd/sqlgen/gen: TestRequiredColumns_getManyUnionsParentKeyForRelationships` | all |  |
+| get-many.parent-key-for-relationships | When a narrowed `GetMany` loads an O2M or M2M relationship, the parent key is unioned into the projection | `unit: cmd/sqlgen/gen: TestRequiredColumns_getManyUnionsParentKeyForRelationships`; `conformance: GetMany/a narrowed selection without the key still loads the relationship` | all |  |
 | get-many.o2o-target-pk-selected | An O2O join selects the target's primary key even when the target's `FieldOptions` does not, at every level of a chain | `unit: cmd/sqlgen/gen: TestRequiredColumns_o2oJoinCarriesTargetPK`; `unit: cmd/sqlgen/gen: TestRequiredColumns_chainedO2OJoinCarriesTargetPK` | all |  |
 | get-many.goroutine-per-edge | `GetMany` loads each selected O2M and M2M relationship in its own `errgroup` goroutine | `unit: cmd/sqlgen/gen: TestGetTemplate_parallelLoading` | all |  |
+| get-many.hooks | `GetMany` runs one query hook chain, as `OpGetMany`, with the caller's input as `Input` | `conformance: GetMany/fires one get_many query hook with the caller's input` | all | client-methods: GetMany × hooks |
+| get-many.o2m-loads-own-children | `GetMany` loads an O2M relationship only when its `FieldOptions` selects it, and then gives each row its own children, every parent column selected | `conformance: GetMany/default field options load no relationship`; `conformance: GetMany/selecting a relationship loads each row's own children` | all |  |
 
 ## §9.8.4 Create
 <!-- prd: 9.8.4 sha256: 5d901667c4f1e471 -->
@@ -259,30 +316,37 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | increment.single-pk | On a single-PK table `Increment(ctx, id, IncrementInput[{Table}IncrementColumn], ...)` returns only `error` and issues one `BuildIncrement` UPDATE of `input.Column` by `input.Amount` where the PK equals `id` | `unit: cmd/sqlgen/gen: TestIncrementTemplate_positiveAmount`; `unit: cmd/sqlgen/gen: TestIncrementTemplate_goldenFile` | postgres |  |
 
 ## §9.8.10 Exists / Count
-<!-- prd: 9.8.10 sha256: f15163bbc65c7889 -->
+<!-- prd: 9.8.10 sha256: ca1ca2a2b6a71af8 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| exists.by-pk | `Exists(ctx, pk)` runs `BuildExists` with a `WHERE` matching the primary key | `unit: cmd/sqlgen/gen: TestExistsTemplate_goldenFile` | all |  |
-| exists.soft-delete-excluded | On a soft-delete table `Exists` always adds the not-deleted condition, so a soft-deleted row returns `false` | `unit: cmd/sqlgen/gen: TestExistsTemplate_goldenFile` | all |  |
+| exists.by-pk | `Exists(ctx, pk)` runs `BuildExists` with a `WHERE` matching the primary key | `unit: cmd/sqlgen/gen: TestExistsTemplate_goldenFile`; `conformance: Exists/a present key returns true` | all | client-methods: Exists × happy-path |
+| exists.soft-delete-excluded | On a soft-delete table `Exists` always adds the not-deleted condition, so a soft-deleted row returns `false` | `unit: cmd/sqlgen/gen: TestExistsTemplate_goldenFile`; `conformance: Exists/a soft-deleted row returns false` | all | client-methods: Exists × soft-delete |
 | exists.where-filter | `ExistsWhere(ctx, *{Table}Filter)` builds its conditions with `filter.ToConditions` and runs `BuildExists` | `unit: cmd/sqlgen/gen: TestExistsTemplate_goldenFile` | all |  |
-| exists.where-soft-delete-default | On a soft-delete table `ExistsWhere` adds the not-deleted condition unless the filter sets the soft-delete comparator | `unit: cmd/sqlgen/gen: TestExistsTemplate_existsWhereWithFilter`; `unit: cmd/sqlgen/gen: TestExistsTemplate_goldenFile` | all |  |
+| exists.where-soft-delete-default | On a soft-delete table `ExistsWhere` adds the not-deleted condition unless the filter sets the soft-delete comparator | `unit: cmd/sqlgen/gen: TestExistsTemplate_existsWhereWithFilter`; `unit: cmd/sqlgen/gen: TestExistsTemplate_goldenFile`; `conformance: ExistsWhere/soft-deleted rows match only when the filter sets the deleted-at comparator` | all | client-methods: ExistsWhere × soft-delete |
+| exists.hooks | `Exists` runs one query hook chain, as `OpExists`, with the key as `PK` and no `Input` | `conformance: Exists/fires one exists query hook with the key and no input` | all | client-methods: Exists × hooks |
+| exists-where.hooks | `ExistsWhere` runs one query hook chain, as `OpExists`, with the filter as `Input` and no `PK` | `conformance: ExistsWhere/fires one exists query hook carrying the filter and no key` | all | client-methods: ExistsWhere × hooks |
+| count.soft-delete | `Count` leaves soft-deleted rows out unless the filter sets the soft-delete comparator | `conformance: Count/soft-deleted rows are not counted unless the filter sets the deleted-at comparator` | all | client-methods: Count × soft-delete |
+| count.hooks | `Count` runs one query hook chain, as `OpCount`, with the filter as `Input` and no `PK` | `conformance: Count/fires one count query hook carrying the filter` | all | client-methods: Count × hooks |
 
 ## §9.8.11 Paginate
 <!-- prd: 9.8.11 sha256: 0f2acb383d9dc21c -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| paginate.hook-chain | `Paginate` runs inside a query hook chain whose `QueryContext.Op` is `hook.OpPaginate` | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_goldenFile` | postgres |  |
+| paginate.hook-chain | `Paginate` runs one query hook chain whose `QueryContext.Op` is `hook.OpPaginate`, with the caller's input as `Input`; its inner `Count` and `GetMany` fire no hook | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_goldenFile`; `conformance: Paginate/fires one paginate query hook carrying the caller's input` | all | client-methods: Paginate × hooks |
+| paginate.soft-delete | `Paginate` leaves soft-deleted rows out of the page and the total, through `Count` and `GetMany`, unless the filter sets the soft-delete comparator | `conformance: Paginate/soft-deleted rows are left out of the page and the total unless the filter sets the deleted-at comparator` | all | client-methods: Paginate × soft-delete |
+| paginate.field-selection | A narrowed `FieldOptions` on `Paginate` fills only the selected columns of each item | `conformance: Paginate/a narrowed field selection fills only the selected columns` | all | client-methods: Paginate × field-selection |
 
 ## §9.8.12 Connection
 <!-- prd: 9.8.12 sha256: 0d8fbdeb0a18fd07 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| connection.hook-chain | `Connection` runs inside a query hook chain whose `QueryContext.Op` is `hook.OpConnection` | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_goldenFile` | postgres |  |
+| connection.hook-chain | `Connection` runs one query hook chain whose `QueryContext.Op` is `hook.OpConnection`, with the caller's input as `Input`; its inner `Count` and `GetMany` fire no hook | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_goldenFile`; `conformance: Connection/fires one connection query hook carrying the caller's input` | all | client-methods: Connection × hooks |
 | cursor.keyset-quoted | The keyset condition quotes every cursor key through the dialect (`QuoteIdentifier`), and the quoted token is the condition's column | `unit: cmd/sqlgen/gen: TestConnectionTemplate_cursorKeyset` | all |  |
 | cursor.decode-typed-key-cases | `decode<T>Cursor` has a case only for each `cursor_keys` column, unmarshals each value into that column's Go type, and returns `ErrInvalidCursor` for a value that binds SQL NULL | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_decodeCursor`; `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_decodeCursorMultiKeys` | postgres |  |
+| connection.soft-delete | `Connection` leaves soft-deleted rows out of the edges and the total unless the filter sets the soft-delete comparator | `conformance: Connection/soft-deleted rows are left out of the edges and the total unless the filter sets the deleted-at comparator` | all | client-methods: Connection × soft-delete |
 
 ## §9.8.13 Composite Primary Key Patterns
 <!-- prd: 9.8.13 sha256: a48f8e9d5fb61a23 -->
@@ -329,6 +393,11 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 |---|---|---|---|---|
 | upsert.composite-pk-from-input | On a composite-PK table `Upsert` does no ID resolution: it executes the insert and returns the entity through `Get` with the `{Table}PK` built from the input | `unit: cmd/sqlgen/gen: TestUpsertTemplate_compositePK` | postgres |  |
 | upsert.composite-conflict-target-pk | On a table whose PRIMARY KEY constraint is composite, the PK conflict target covers every PK column (`OrderItemConflictPK` over `(order_id, product_id)`) | `unit: cmd/sqlgen/gen: TestBuildConflictTargets_OverrideNeedsAnIndex/table-level PK restated in config keeps its target` | all |  |
+| get.composite-pk | A composite-PK `Get` filters on every PK column, so it returns only the tuple its `{Table}PK` names | `conformance: Get/a composite key returns only its own tuple` | all | client-methods: Get × composite-pk |
+| exists.composite-pk | A composite-PK `Exists` matches every PK column, so only the named tuple counts | `conformance: Exists/a composite key matches only its own tuple` | all | client-methods: Exists × composite-pk |
+| get-many.composite-pk | A composite-PK `GetMany` filter's `PKs` returns only the listed tuples | `conformance: GetMany/composite keys return only the listed tuples` | all | client-methods: GetMany × composite-pk |
+| get-many.composite-partial-filter | A composite-PK `GetMany` filter on one key column returns every tuple with that value | `conformance: GetMany/a filter on one column of a composite key returns every tuple with that value` | all |  |
+| connection.composite-pk | A composite-PK `Connection` encodes every PK column in its cursor, so forward and backward pages visit each tuple once, in key order | `conformance: Connection/composite keys page every tuple once in key order in both directions` | all | client-methods: Connection × composite-pk |
 
 ## §9.9 Nested Mutations
 <!-- prd: 9.9 sha256: 70b7ab3b64fb2cb5 -->
@@ -383,21 +452,31 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 |---|---|---|---|---|
 | paginate.result-shape | `PaginateResult[T]` carries `Items`, `TotalCount`, `Offset`, `Limit` and `HasMore`, and none of the derived fields `TotalPages`, `PageSize`, `CurrentPage` | `unit: cmd/sqlgen/gen: TestPaginationTemplate_resultFields`; `unit: cmd/sqlgen/gen: TestPaginationTemplate_goldenFile`; `unit: cmd/sqlgen/gen: TestPaginationTemplate_paginateResultType` | all |  |
 | paginate.json-tags | `PaginateInput` and `PaginateResult` fields carry the §14.1 json tags (`filter`, `sort`, `limit`, `offset`; `items`, `total_count`, `offset`, `limit`, `has_more`) | `unit: cmd/sqlgen/gen: TestPaginationTemplate_paginateInputType`; `unit: cmd/sqlgen/gen: TestPaginationTemplate_goldenFile` | all |  |
+| paginate.offset-without-limit | A `Paginate` with an `Offset` and a zero `Limit` returns every matching row past the offset, on every dialect | `conformance: Paginate/an offset with no limit returns every row past the offset` | all | client-methods: Paginate × happy-path |
 
 ## §14.2 Cursor-Based (Relay Pagination)
 <!-- prd: 14.2 sha256: 567b1c177cc9491d -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| cursor.encode-base64-json | `encode<T>Cursor` builds a JSON object keyed by each cursor key's column name holding the row's field value, and returns it Base64 (StdEncoding) encoded | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_encodeCursor`; `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_encodeCursorMultiKeys`; `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_encodeCursor_doesNotShadowEntity_MStartingStruct` | postgres |  |
-| cursor.invalid-missing-or-null | A cursor missing an expected key, or holding JSON `null` for one, is rejected with `ErrInvalidCursor`; a decoded value that binds SQL NULL (a `driver.Valuer` returning nil or an error) is detected as null | `unit: cmd/sqlgen/gen: TestConnectionTemplate_cursorEncodeDecode`; `unit: cmd/sqlgen/gen: TestConnectionTemplate_goldenFile` | all |  |
-| cursor.sort-by-keys | `Connection` orders by the `cursor_keys` columns only, every key ascending for forward pagination and descending for backward | `unit: cmd/sqlgen/gen: TestConnectionTemplate_cursorSorts`; `unit: cmd/sqlgen/gen: TestConnectionTemplate_goldenFile` | all |  |
-| connection.first-last-error | `Connection` with both `First` and `Last` set returns `ErrInvalidCursor` | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_connectionFirstAndLastError` | postgres |  |
-| connection.page-info-flags | `HasNextPage` is true when forward pagination fetched more than `first` rows or backward pagination was given `before`; `HasPreviousPage` is true when backward pagination fetched more than `last` rows or forward pagination was given `after` | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_connectionForward` | postgres |  |
-| connection.backward-reversed | Backward pagination reverses the fetched rows, so edges are returned in ascending cursor order | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_connectionResultReversal`; `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_goldenFile` | postgres |  |
-| connection.default-page-size | When neither `first` nor `last` is set, `Connection` fetches the client's configured page size | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_connectionFirstPage` | postgres |  |
+| cursor.encode-base64-json | `encode<T>Cursor` builds a JSON object keyed by each cursor key's column name holding the row's field value, and returns it Base64 (StdEncoding) encoded | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_encodeCursor`; `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_encodeCursorMultiKeys`; `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_encodeCursor_doesNotShadowEntity_MStartingStruct`; `conformance: Connection/a cursor is base64 JSON holding each cursor key's value` | all |  |
+| cursor.invalid-missing-or-null | A cursor missing an expected key, or holding JSON `null` for one, is rejected with `ErrInvalidCursor`; a decoded value that binds SQL NULL (a `driver.Valuer` returning nil or an error) is detected as null | `unit: cmd/sqlgen/gen: TestConnectionTemplate_cursorEncodeDecode`; `unit: cmd/sqlgen/gen: TestConnectionTemplate_goldenFile`; `conformance: Connection/a malformed cursor or both first and last returns ErrInvalidCursor` | all |  |
+| cursor.sort-by-keys | `Connection` orders by the `cursor_keys` columns only, every key ascending for forward pagination and descending for backward | `unit: cmd/sqlgen/gen: TestConnectionTemplate_cursorSorts`; `unit: cmd/sqlgen/gen: TestConnectionTemplate_goldenFile`; `conformance: Connection/forward pages visit every row once in cursor-key order`; `conformance: Connection/backward pages return edges in ascending cursor-key order` | all | client-methods: Connection × happy-path |
+| connection.first-last-error | `Connection` with both `First` and `Last` set returns `ErrInvalidCursor` | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_connectionFirstAndLastError`; `conformance: Connection/a malformed cursor or both first and last returns ErrInvalidCursor` | all |  |
+| connection.page-info-flags | `HasNextPage` is true when forward pagination fetched more than `first` rows or backward pagination was given `before`; `HasPreviousPage` is true when backward pagination fetched more than `last` rows or forward pagination was given `after` | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_connectionForward`; `conformance: Connection/forward pages visit every row once in cursor-key order`; `conformance: Connection/backward pages return edges in ascending cursor-key order` | all |  |
+| connection.backward-reversed | Backward pagination reverses the fetched rows, so edges are returned in ascending cursor order | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_connectionResultReversal`; `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_goldenFile`; `conformance: Connection/backward pages return edges in ascending cursor-key order` | all |  |
+| connection.default-page-size | When neither `first` nor `last` is set, `Connection` fetches the client's configured page size | `unit: cmd/sqlgen/gen: TestPaginationTableTemplate_connectionFirstPage`; `conformance: Connection/a zero input returns the default-size first page from the start` | all | client-methods: Connection × nil-empty-input |
 | connection.total-count-on-connection | `TotalCount int64` is a field of `Connection[T]`, not of `PageInfo` | `unit: cmd/sqlgen/gen: TestConnectionTemplate_totalCountAlwaysPopulated` | all |  |
 | connection.page-info-cursor-pointers | `PageInfo.StartCursor` and `PageInfo.EndCursor` are `*string` | `unit: cmd/sqlgen/gen: TestConnectionTemplate_pageInfoPointerTypes` | all |  |
+| cursor.invalid-undecodable | A cursor that is not Base64, not JSON, or holds a value that does not decode into its key column's Go type is rejected with `ErrInvalidCursor` | `conformance: Connection/a malformed cursor or both first and last returns ErrInvalidCursor` | all |  |
+| connection.empty-result | A `Connection` whose filter matches no row returns no edges, nil `StartCursor` and `EndCursor`, and a zero `TotalCount` | `conformance: Connection/a filter matching no row returns no edges, no cursors and a zero total` | all | client-methods: Connection × not-found |
+
+## §15.3 Usage in GetMany
+<!-- prd: 15.3 sha256: 2180c91eb9cc973b -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| sort.multiple-in-order | `GetMany` applies several sorts in order: the primary sort first, the secondary breaking its ties | `conformance: GetMany/multiple sorts apply in order, primary then secondary` | all |  |
 
 ## §16.5.1 Dialect Scope
 <!-- prd: 16.5.1 sha256: 4231f90c985c79ec -->
@@ -426,11 +505,11 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | matview.refresh.plain-no-tx-guard | Plain `Refresh` carries no transaction guard, so it may run inside a transaction | `unit: cmd/sqlgen/gen: TestViewRefreshTemplate_txGuardPrecedesExecution` | postgres |  |
 
 ## §17.3 Generated Behavior
-<!-- prd: 17.3 sha256: dce1144bfbcb5b6f -->
+<!-- prd: 17.3 sha256: 3b4006f3e4748cf2 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| hard-delete-many.soft-delete | §17.3 adds the default "is not deleted" condition only to `GetMany`, and a hard delete is a physical DELETE (§9.3), so `HardDeleteMany` removes the listed rows whether or not they are soft-deleted | `conformance: HardDeleteMany/deletes listed rows whether or not they are soft-deleted` | all | client-methods: HardDeleteMany × soft-delete |
+| hard-delete-many.soft-delete | §17.3 adds the default "is not deleted" condition to read methods only, and a hard delete is a physical DELETE (§9.3), so `HardDeleteMany` removes the listed rows whether or not they are soft-deleted | `conformance: HardDeleteMany/deletes listed rows whether or not they are soft-deleted` | all | client-methods: HardDeleteMany × soft-delete |
 | soft-delete-read.no-column-no-filter | A table with no soft-delete column gets no automatic not-deleted condition on `GetMany`, `Exists` or `ExistsWhere` | `unit: cmd/sqlgen/gen: TestExcludeDeleted_falseWhenNoSoftDelete`; `unit: cmd/sqlgen/gen: TestGetTemplate_noSoftDelete`; `unit: cmd/sqlgen/gen: TestExistsTemplate_existsWithoutSoftDelete`; `unit: cmd/sqlgen/gen: TestExistsTemplate_existsWhereWithoutSoftDelete` | all |  |
 | soft-delete.soft-delete | After `SoftDelete`, `GetMany` leaves the row out by default and returns it when the caller sets the soft-delete comparator | `conformance: SoftDelete/soft-deleted row leaves default reads and is found by a deleted-at filter` | all | client-methods: SoftDelete × soft-delete |
 | restore.soft-delete | `Restore` returns the row to the "not deleted" state, so default reads see it again | `conformance: Restore/restored row returns to default reads` | all | client-methods: Restore × soft-delete |
@@ -438,8 +517,9 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | restore-many.soft-delete | `RestoreMany` returns the rows to the "not deleted" state, so default reads see them again | `conformance: RestoreMany/restored rows return to default reads` | all | client-methods: RestoreMany × soft-delete |
 | soft-delete-where.soft-delete | After `SoftDeleteWhere`, `GetMany` leaves the rows out by default and returns them when the caller sets the soft-delete comparator | `conformance: SoftDeleteWhere/soft-deleted rows leave default reads and stay readable with a deleted-at comparator` | all | client-methods: SoftDeleteWhere × soft-delete |
 | restore-where.soft-delete | `RestoreWhere` scopes to soft-deleted rows and returns them to the "not deleted" state, so default reads see them again | `conformance: RestoreWhere/restored rows return to default reads` | all | client-methods: RestoreWhere × soft-delete |
-| hard-delete.soft-delete | §17.3 adds the default "is not deleted" condition only to `GetMany`, and a hard delete is a physical DELETE (§9.3), so `HardDelete` removes a soft-deleted row | `conformance: HardDelete/deletes a soft-deleted row` | all | client-methods: HardDelete × soft-delete |
-| hard-delete-where.soft-delete | §17.3 adds the default "is not deleted" condition only to `GetMany`, so `HardDeleteWhere` deletes every row the filter matches, soft-deleted rows included | `conformance: HardDeleteWhere/a filter on the soft-delete column deletes soft-deleted rows` | all | client-methods: HardDeleteWhere × soft-delete |
+| hard-delete.soft-delete | §17.3 adds the default "is not deleted" condition to read methods only, and a hard delete is a physical DELETE (§9.3), so `HardDelete` removes a soft-deleted row | `conformance: HardDelete/deletes a soft-deleted row` | all | client-methods: HardDelete × soft-delete |
+| hard-delete-where.soft-delete | §17.3 adds the default "is not deleted" condition to read methods only, and §9.8 item 4 injects none into `HardDeleteWhere`, so `HardDeleteWhere` deletes every row the filter matches, soft-deleted rows included | `conformance: HardDeleteWhere/a filter on the soft-delete column deletes soft-deleted rows` | all | client-methods: HardDeleteWhere × soft-delete |
+| get-many.soft-delete | `GetMany` adds the default not-deleted condition unless the caller sets the soft-delete comparator, so soft-deleted rows are left out by default and returned with the comparator | `conformance: GetMany/soft-deleted rows are left out unless the filter sets the deleted-at comparator` | all | client-methods: GetMany × soft-delete |
 
 ## §17.5 Update Tracking
 <!-- prd: 17.5 sha256: 690aa4e3e675ffc8 -->
@@ -463,6 +543,13 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | restore-where.transaction | Every generated client method calls `database.Conn(ctx, querier)`, so `RestoreWhere` with a transaction in its context runs on that transaction | `conformance: RestoreWhere/restores inside the caller's transaction` | all | client-methods: RestoreWhere × transaction |
 | hard-delete.transaction | Every generated client method calls `database.Conn(ctx, querier)`, so `HardDelete` with a transaction in its context runs on that transaction | `conformance: HardDelete/deletes inside the caller's transaction` | all | client-methods: HardDelete × transaction |
 | hard-delete-where.transaction | Every generated client method calls `database.Conn(ctx, querier)`, so `HardDeleteWhere` with a transaction in its context runs on that transaction | `conformance: HardDeleteWhere/deletes inside the caller's transaction` | all | client-methods: HardDeleteWhere × transaction |
+| get.transaction | Every generated client method calls `database.Conn(ctx, querier)`, so `Get` with a transaction in its context reads that transaction's uncommitted writes | `conformance: Get/reads a row written earlier in the same transaction` | all | client-methods: Get × transaction |
+| get-many.transaction | Every generated client method calls `database.Conn(ctx, querier)`, so `GetMany` with a transaction in its context reads that transaction's uncommitted writes | `conformance: GetMany/reads a row written earlier in the same transaction` | all | client-methods: GetMany × transaction |
+| exists.transaction | Every generated client method calls `database.Conn(ctx, querier)`, so `Exists` with a transaction in its context reads that transaction's uncommitted writes | `conformance: Exists/sees a row written earlier in the same transaction` | all | client-methods: Exists × transaction |
+| exists-where.transaction | Every generated client method calls `database.Conn(ctx, querier)`, so `ExistsWhere` with a transaction in its context reads that transaction's uncommitted writes | `conformance: ExistsWhere/finds a row written earlier in the same transaction` | all | client-methods: ExistsWhere × transaction |
+| count.transaction | Every generated client method calls `database.Conn(ctx, querier)`, so `Count` with a transaction in its context reads that transaction's uncommitted writes | `conformance: Count/counts a row written earlier in the same transaction` | all | client-methods: Count × transaction |
+| paginate.transaction | Every generated client method calls `database.Conn(ctx, querier)`, so `Paginate` with a transaction in its context reads that transaction's uncommitted writes, in its items and its total | `conformance: Paginate/reads inside the caller's transaction` | all | client-methods: Paginate × transaction |
+| connection.transaction | Every generated client method calls `database.Conn(ctx, querier)`, so `Connection` with a transaction in its context reads that transaction's uncommitted writes | `conformance: Connection/reads inside the caller's transaction` | all | client-methods: Connection × transaction |
 
 ## §18.3 API
 <!-- prd: 18.3 sha256: d74d13c5256f0eb9 -->
@@ -610,6 +697,27 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | client-methods: HardDeleteWhere × field-selection | §12 field selection chooses the columns of a returned entity; `HardDeleteWhere` returns only an error (§9.3) | |
 | client-methods: HardDelete × lock-mode | §9.6a `LockMode` applies to read methods only and is ignored on `*Delete*` methods; `HardDelete` returns no entity, so it has no read for a lock mode to reach | |
 | client-methods: HardDeleteWhere × lock-mode | §9.6a `LockMode` applies to read methods only and is ignored on `*Delete*` methods; `HardDeleteWhere` returns no entity, so it has no read for a lock mode to reach | |
+| client-methods: Get × nil-empty-input | §9.4c covers pointer inputs and slices; `Get` takes a key value |  |
+| client-methods: Exists × nil-empty-input | §9.4c covers pointer inputs and slices; `Exists` takes a key value |  |
+| client-methods: Get × error-mapping | §22.2 maps constraint violations, which writes raise; `Get` writes nothing |  |
+| client-methods: GetMany × error-mapping | §22.2 maps constraint violations, which writes raise; `GetMany` writes nothing |  |
+| client-methods: Count × error-mapping | §22.2 maps constraint violations, which writes raise; `Count` writes nothing |  |
+| client-methods: Exists × error-mapping | §22.2 maps constraint violations, which writes raise; `Exists` writes nothing |  |
+| client-methods: ExistsWhere × error-mapping | §22.2 maps constraint violations, which writes raise; `ExistsWhere` writes nothing |  |
+| client-methods: Stream × error-mapping | §22.2 maps constraint violations, which writes raise; `Stream` writes nothing |  |
+| client-methods: Paginate × error-mapping | §22.2 maps constraint violations, which writes raise; `Paginate` writes nothing |  |
+| client-methods: Connection × error-mapping | §22.2 maps constraint violations, which writes raise; `Connection` writes nothing |  |
+| client-methods: Count × field-selection | §12.1 field selection chooses the columns of a returned entity; `Count` returns a scalar |  |
+| client-methods: Exists × field-selection | §12.1 field selection chooses the columns of a returned entity; `Exists` returns a scalar |  |
+| client-methods: ExistsWhere × field-selection | §12.1 field selection chooses the columns of a returned entity; `ExistsWhere` returns a scalar |  |
+| client-methods: Count × lock-mode | §9.6a `LockMode` is ignored on `Count`, which adds no lock clause |  |
+| client-methods: Exists × lock-mode | §9.6a `LockMode` is ignored on `Exists`, which adds no lock clause |  |
+| client-methods: ExistsWhere × lock-mode | §9.6a `LockMode` is ignored on `ExistsWhere`, which adds no lock clause |  |
+| client-methods: Stream × lock-mode | §9.6a `LockMode` is ignored on `Stream`, which adds no lock clause |  |
+| client-methods: Count × composite-pk | §9.8.13f `Count` has no PK-specific changes: it takes a filter, not a key |  |
+| client-methods: ExistsWhere × composite-pk | §9.8.13f `ExistsWhere` has no PK-specific changes: it takes a filter, not a key |  |
+| client-methods: Paginate × composite-pk | §9.8.13f `Paginate` has no PK-specific changes: it takes a filter, not a key |  |
+| client-methods: Stream × composite-pk | §9.4a `Stream{Table}Input` carries only `Filter` and `Sorts`, so a composite key changes nothing in `Stream` | 2026-10-29 |
 
 ## PRD gaps
 
@@ -618,7 +726,6 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 
 | Gap | Behavior | Tests | Section | Ruling |
 |---|---|---|---|---|
-| gap.get-many.field-options-not-mutated | No generated read path writes to a `FieldOptions` the caller passed in. The O2M and M2M loaders forward the relationship's `FieldOptions` as given and declare the key they need through the inner input's `requiredColumns`, instead of setting `relFieldOptions.ID = true` / `relFieldOptions.<FK> = true`. Two edges can share one `*FieldOptions` and the loaders run concurrently, so an in-place write would be a data race as well as visible to the caller. §9.6 states what is unioned into the projection but not that the caller's struct is left untouched. | `unit: cmd/sqlgen/gen: TestRequiredColumns_noFieldOptionsMutation` | §9.6 |  |
 | gap.update.strict-doc-comment | The generated `Update` / `Increment` doc comment says `Returns ErrNotFound if the primary key does not exist.` only when `strict_updates` is true and omits the sentence otherwise; the PRD shows one unconditional wording, `(when strict_updates is true)` | `unit: cmd/sqlgen/gen: TestClientTemplate_strictUpdatesDocComments` | §8.2, §9.5 |  |
 | gap.update-many.pgx-sequential-fallback | On pgx, when the resolved querier does not implement `SendBatch`, `UpdateMany` falls back to executing the queued statements one by one with `Exec`; the PRD states only the `SendBatch` path | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_pgx` | §9.8.6a, §19.4 |  |
 | gap.restore.where-integer-eq-one | On an `integer` soft-delete column `RestoreWhere` scopes to `deleted = 1`, while SoftDelete's re-fetch (`Neq 0`) and the read path's not-deleted condition (`= 0`) treat any non-zero value as deleted, so a row with `deleted = 2` is hidden from reads but not restorable by `RestoreWhere` | `unit: cmd/sqlgen/gen: TestDeleteTemplate_restoreWhere_integer_scopesToDeleted`; `unit: cmd/sqlgen/gen: TestFuncSoftDeleteRestoreCondition/integer` | §9.8.8, §17.3 |  |

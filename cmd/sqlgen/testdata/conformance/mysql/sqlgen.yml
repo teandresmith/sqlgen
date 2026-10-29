@@ -18,3 +18,7 @@ tables:
     batch_size: 2
   revisions:
     batch_size: 2
+  order_items:
+    # Smaller than the rows a zero-input Connection subtest seeds, so the
+    # default page size is observable.
+    page_size: 2

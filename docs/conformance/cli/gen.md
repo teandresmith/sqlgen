@@ -208,7 +208,7 @@
 | gen.no-pk.override-full-surface | A `primary_key.columns` override makes the table generate with the full PK-keyed surface, as with a native `PRIMARY KEY` | `unit: cmd/sqlgen/gen: TestBuildTableContexts_NoPK_WithOverride_NotSkipped`; `unit: cmd/sqlgen/gen: TestRelationshipTargets_InferredEdgeIntoSkippedTableDropped/primary key declared` | all | |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: b5c54d392c2e7231 -->
+<!-- prd: 9.8 sha256: 12537dd133607e49 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -551,7 +551,7 @@
 | gen.soft-delete-types.integer-not-deleted | The not-deleted value of an `integer` column is `0` | `unit: cmd/sqlgen/gen: TestGetTemplate_softDeleteCondition/integer` | all | |
 
 ## §17.3 Generated Behavior
-<!-- prd: 17.3 sha256: dce1144bfbcb5b6f -->
+<!-- prd: 17.3 sha256: 3b4006f3e4748cf2 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

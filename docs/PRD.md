@@ -3478,6 +3478,8 @@ Stream yields `*{Table}` — the same entity struct used by `Get`/`GetMany`. Rel
 - **Cache always bypassed.** `CallOptions.SkipCache` is forced to `true` regardless of caller setting. Streaming a million rows through a cache layer makes no sense — the cache is for hot-path entity reads.
 - **DB connection held for the duration of iteration.** Long-running streams reduce pool capacity for concurrent requests. Document and accept the tradeoff.
 - **Refused inside a transaction unless the caller opts in.** See *Stream inside a transaction* below.
+- **An error reading the result set ends the stream.** It is yielded after the rows read before it, and no row follows it. A row that fails to scan is yielded as an error, and iteration continues.
+- **Breaking out ends the iteration.** Nothing is yielded after the consumer breaks out of the loop, and the result set is closed, so the connection is free for the next statement.
 - **Not resumable across processes.** The cursor is in-process. `Connection` is the method for pausing and resuming, since its cursor is durable across processes.
 - **Not exposed via the GraphQL/REST API layers.** Stream is a backend primitive for Go consumers, not a surface for external clients.
 
@@ -3515,6 +3517,8 @@ Three things the opt-in does and does not do:
 #### Hook integration
 
 Stream fires the query-hook chain once per call, with `Op: hook.OpStream` — **except when the in-transaction guard refuses the call**, which returns through `yield` before the chain is built, so a refused `Stream` issues no SQL and fires no hooks at all, global authorization included. That matches [9.6a](#96a-lock-modes)'s `LockMode` precondition, which likewise rejects before the chain. Tenancy, soft-delete, and other condition-injecting hooks add WHERE conditions to the input the same way they do for `OpGetMany`. The cache hook does not need an op-specific dispatch — Stream forces `options.SkipCache = true` in the method body (see Constraints above), and the existing `cacheSkipper` short-circuit (Section 27) routes the call straight to `next` without any read-through or write-through.
+
+A hook's abort error ([21.5](#215-hook-lifecycle)) or a recovered panic ([21.6](#216-panic-recovery)) is yielded once, as the stream's last value, unless the consumer has already broken out of the loop.
 
 Read-side events do not fire on `OpStream` (consistent with `OpGetMany` — only mutations emit events).
 
@@ -3686,7 +3690,7 @@ Every generated method that takes a pointer input must behave predictably when a
 
 The rule splits on direction, because "no values supplied" means something coherent on a read and nothing coherent on a write.
 
-**Reads — `GetMany`, `Stream` — normalize `nil` to the zero-value input.** The normalization happens at the top of the method, before the hook context is built, so a hook never observes a nil `QueryContext.Input` either. This invents no behavior: the zero-value input is already a legal, meaningful argument (no filter, no sorts, no limit), and every sibling read already treats "no criteria" the same way — `Count(nil)` counts all rows, `ExistsWhere(nil)` tests for any row, and `PaginateInput` / `ConnectionInput` are value types whose zero value pages everything. `GetMany(ctx, nil)` and `GetMany(ctx, &Get<T>Input{})` are therefore the same call.
+**Reads — `GetMany`, `Stream` — normalize `nil` to the zero-value input.** The normalization happens at the top of the method, before the hook context is built, so a hook never observes a nil `QueryContext.Input` either. This invents no behavior: the zero-value input is already a legal, meaningful argument (no filter, no sorts, no limit), and every sibling read already treats "no criteria" the same way — `Count(nil)` counts all rows and `ExistsWhere(nil)` tests for any row (on a soft-delete table, the not-deleted ones, [9.8](#98-generated-method-patterns) item 4), and `PaginateInput` / `ConnectionInput` are value types whose zero value pages everything. `GetMany(ctx, nil)` and `GetMany(ctx, &Get<T>Input{})` are therefore the same call.
 
 **Writes — `Create`, `Update`, `Upsert` — return [`ErrNilInput`](#22-error-handling).** These must *not* normalize to the zero value. A zero `Create<T>Input` is a legal argument that writes a row: it sends each required field's zero value, and with no required field the row takes every column's default — a nullable column with no `DEFAULT` takes NULL. That last case supplies no column at all, and the INSERT takes the dialect's all-defaults form ([Appendix A](#appendix-a-sql-builder-functions)). Treating a nil input as the zero value would therefore turn a caller's mistake into a silently written row — worse than the panic it replaces. The guard runs before the mutation executor, so a nil input fires no hook, publishes no event, and invalidates no cache entry.
 
@@ -3723,6 +3727,8 @@ When `Update` is called with an `UpdateInput` where no fields are set (all `omit
 #### Idempotent Where Operations
 
 `UpdateWhere`, `SoftDeleteWhere`, `RestoreWhere`, and `HardDeleteWhere` are idempotent — when no rows match the filter, they return `nil` (no error). This simplifies consumer code by not requiring callers to distinguish "nothing matched" from success.
+
+Reads treat a filter that matches nothing the same way: `GetMany`, `Stream`, `Paginate` and `Connection` return no entities, `Count` returns 0 and `ExistsWhere` returns `false`, each with no error.
 
 #### Non-Existent PK Behavior
 
@@ -3882,7 +3888,7 @@ This listing is the struct's full shape and its field order. **Two fields are ga
 
 The empty FieldOptions short-circuit applies to all mutation methods that return entities. When an empty `&FieldOptions{}` is set, the method performs the write but skips its follow-up entity read (`Get`/`GetMany`) and returns `nil`. It still learns the keys it writes (a `Where` variant's ID collection, MySQL's key pre-read), because they drive cache invalidation and events ([9.8.8](#988-softdelete--restore)). This is useful for fire-and-forget mutations where the caller only needs to know the write succeeded.
 
-**On the read path an all-false selection means "no rows", and the loud spelling is deliberate.** `GetMany` returns an empty slice and `Get` returns **`ErrNotFound`** — the single-row spelling of the same answer, not an inconsistency between the two. The alternative was to let a read short-circuit silently the way a mutation does and return `nil, nil`; that was rejected. On a *read*, an all-false selection is almost always a caller mistake — asking to load a row while selecting nothing from it — and a silent nil hands back a result indistinguishable from a legitimately absent row, so the mistake surfaces later and somewhere else. A clear error shows the problem where it was made. The read path is therefore **not** where the mutation-side `nil, nil` contract above gets spelled, and every entity-returning mutation guards its own trailing read rather than relying on the read to stay quiet. A mutation that forwards an all-false `FieldOptions` into its terminal `Get` unguarded reports `ErrNotFound` for a write that already committed — the defect single-row `Update` carried until [9.2](#92-write-operations)'s escape was added to it.
+**On the read path an all-false selection means "no rows", and the loud spelling is deliberate.** `GetMany` returns no entities and no error, and `Get` returns **`ErrNotFound`** — the single-row spelling of the same answer, not an inconsistency between the two. The alternative was to let `Get` short-circuit silently the way a mutation does and return `nil, nil`; that was rejected. On a *read*, an all-false selection is almost always a caller mistake — asking to load a row while selecting nothing from it — and a silent nil hands back a result indistinguishable from a legitimately absent row, so the mistake surfaces later and somewhere else. A clear error shows the problem where it was made. The read path is therefore **not** where the mutation-side `nil, nil` contract above gets spelled, and every entity-returning mutation guards its own trailing read rather than relying on the read to stay quiet. A mutation that forwards an all-false `FieldOptions` into its terminal `Get` unguarded reports `ErrNotFound` for a write that already committed — the defect single-row `Update` carried until [9.2](#92-write-operations)'s escape was added to it.
 
 **Structurally required columns.** A narrowed projection selects what the caller asked for *plus* the columns the call itself has to read back, unioned in and re-sorted before the `SELECT` is built:
 
@@ -3894,7 +3900,7 @@ The empty FieldOptions short-circuit applies to all mutation methods that return
 | an O2M relationship | every FK column of the edge's key, declared on the child fetch | the parent-child bucketing, which is keyed on them |
 | an M2M relationship | every target column the junction's target key references, declared on the target fetch | the target-to-parent map, which is keyed on them |
 
-This is a pure over-fetch of the entity struct: it never widens what a consumer surface renders, since the GraphQL layer serializes only the fields the request selected ([26.5.2](#2652-field-selection-translation--the-central-mechanism)). Every column it adds is a key, and all but one are kept API-readable by [32.4](#324-validation) for exactly this reason — primary keys under the PK rule, and resolved `cursor_keys` (PK or not) under the cursor-key rule, so a column whose value reaches an edge cursor is never one `access` has restricted. The O2M child FK columns are the exception, deliberately: [32.5](#325-interactions) allows `access` on an FK column precisely so a config can hide the raw id while leaving the nested relationship object exposable, so a restricted FK still joins the child projection. It is safe for the same reason the rest of the over-fetch is — the loader reads the value to bucket children by parent and nothing serializes it, and the walker emits no `case` for a restricted column, so no request can name it.
+The union is taken into the read's own column list: no read writes to a `FieldOptions` the caller passed in, at any depth, so one value can be reused across calls and shared between edges. This is a pure over-fetch of the entity struct: it never widens what a consumer surface renders, since the GraphQL layer serializes only the fields the request selected ([26.5.2](#2652-field-selection-translation--the-central-mechanism)). Every column it adds is a key, and all but one are kept API-readable by [32.4](#324-validation) for exactly this reason — primary keys under the PK rule, and resolved `cursor_keys` (PK or not) under the cursor-key rule, so a column whose value reaches an edge cursor is never one `access` has restricted. The O2M child FK columns are the exception, deliberately: [32.5](#325-interactions) allows `access` on an FK column precisely so a config can hide the raw id while leaving the nested relationship object exposable, so a restricted FK still joins the child projection. It is safe for the same reason the rest of the over-fetch is — the loader reads the value to bucket children by parent and nothing serializes it, and the walker emits no `case` for a restricted column, so no request can name it.
 
 The union applies **only** when the caller's selection is non-empty, so an all-false `&FieldOptions{}` still short-circuits its own entity fetch per the table above and a count-only query issues no entity fetch at all. This holds identically at every depth and for both list loaders: an all-false `FieldOptions` on a nested O2M *or* M2M relationship skips that child fetch and leaves the parent's relationship slice nil, rather than returning rows carrying nothing but the mapping key. The short-circuit is a Go-client affordance: below the envelope a GraphQL request cannot express it, because every selection set asks for the row it is written against. The generated walker therefore never hands an all-false value to a read for a row that was requested — it projects the entity's row identity instead ([26.5.2](#2652-field-selection-translation--the-central-mechanism), "Row identity"), and the only GraphQL selection that reaches a client method with an all-false `FieldOptions` is a count-only envelope, which never reaches the entity at all. O2O is the exception in kind rather than in rule: its target is columns on the parent's JOIN rather than a separate fetch, so an all-false O2O `FieldOptions` still contributes the target's key column — the value that separates a real row from a LEFT JOIN miss. `Stream` is exempt entirely: `Stream{Table}FieldOptions` carries no relationships ([9.4a](#94a-streaming-operations)) and `Stream` encodes no cursors.
 
@@ -3953,7 +3959,7 @@ The generated relationship loader receives the resolved `CallOptions` from the p
 
 `LockMode` is a `CallOptions` field that adds a row-level locking clause to read methods (`Get`, `GetMany`, `Paginate`, `Connection`). It enables read-modify-write workflows, job queue dispatchers, and other concurrency primitives that require holding a database lock on the selected rows for the duration of the enclosing transaction.
 
-LockMode applies to read methods only. Write methods (`Create`, `Update`, `Upsert`, `*Delete*`) acquire row locks implicitly via the `INSERT`/`UPDATE`/`DELETE` itself; LockMode is ignored on those methods.
+LockMode applies to read methods only. Write methods (`Create`, `Update`, `Upsert`, `*Delete*`) acquire row locks implicitly via the `INSERT`/`UPDATE`/`DELETE` itself; LockMode is ignored on those methods. It is ignored too on `Count`, `Exists`, `ExistsWhere` and `Stream`, which add no lock clause, so the total that `Paginate` and `Connection` read through `Count` is never locked.
 
 #### Lock Mode Constants
 
@@ -6823,7 +6829,7 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
     options := resolveCallOptions(opts)
     result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
         Op: hook.OpCount, Table: TableProducts, Schema: "public",
-        CallOptions: options,
+        Input: filter, CallOptions: options,
     }, func(ctx context.Context, q *hook.QueryContext) (any, error) {
         conn := database.Conn(ctx, c.querier)
 
@@ -9550,7 +9556,7 @@ When a soft delete column is detected:
 
 - **SoftDelete/SoftDeleteMany/SoftDeleteWhere** methods are generated
 - **Restore/RestoreMany/RestoreWhere** methods are generated
-- **GetMany** automatically adds a default "is not deleted" condition (e.g., `WHERE deleted_at IS NULL` or `WHERE is_deleted = FALSE`) unless the caller sets the soft delete comparator on the filter
+- **Read methods** add a default "is not deleted" condition (e.g., `WHERE deleted_at IS NULL` or `WHERE is_deleted = FALSE`) unless the caller sets the soft delete comparator on the filter ([9.8](#98-generated-method-patterns) item 4); `Get` and `Exists`, which take a key rather than a filter, always add it
 - **Filter** includes the soft delete column as a regular comparator field (e.g., `DeletedAt *comparator.NullableTime`). Setting it overrides the method's default soft delete scoping.
 - **Restore** clears the soft delete column, returning the row to the "not deleted" state. `RestoreWhere` internally scopes to soft-deleted rows so it can find rows to restore.
 
@@ -16294,6 +16300,7 @@ The `ANY`/`ALL` approach is preferred for PostgreSQL+pgx because:
 | Comments | `COMMENT ON` statements | Inline `COMMENT 'text'` | Not supported |
 | Introspection | `pg_catalog` + `information_schema` | `information_schema` | `PRAGMA` statements |
 | LEFT JOIN + column alias | `AS "alias"` | `` AS `alias` `` | `AS "alias"` |
+| Row-lock clauses (`LockMode`, [9.6a](#96a-lock-modes)) | Yes | Yes (`NOWAIT` / `SKIP LOCKED` 8.0+) | No — a non-`LockNone` mode is a runtime error |
 | `OFFSET` with no `LIMIT` | `OFFSET n` | `LIMIT 18446744073709551615 OFFSET n` | `LIMIT -1 OFFSET n` |
 
 ## Appendix C: Project Linting Configuration

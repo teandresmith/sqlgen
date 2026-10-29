@@ -5,9 +5,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/teandresmith/sqlgen/database"
 	"github.com/teandresmith/sqlgen/hook"
+	"github.com/teandresmith/sqlgen/sql"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/models"
 )
@@ -205,4 +207,50 @@ func otherTx(t *testing.T, h *Harness) context.Context {
 	}
 	t.Cleanup(func() { _ = database.Rollback(txCtx) })
 	return txCtx
+}
+
+// lockModes are the lock modes that ask for a row lock.
+var lockModes = []sql.LockMode{
+	sql.LockForUpdate,
+	sql.LockForShare,
+	sql.LockForUpdateNoWait,
+	sql.LockForUpdateSkipLocked,
+}
+
+// lockWait bounds every transaction a lock subtest opens, so a lock that
+// blocks where the subtest expects none fails the subtest instead of hanging it.
+const lockWait = 10 * time.Second
+
+// withLock returns a call option that sets LockMode.
+func withLock[FO any](mode sql.LockMode) func(*models.CallOptions[FO]) {
+	return func(o *models.CallOptions[FO]) { o.LockMode = mode }
+}
+
+// beginBoundedTx begins a transaction bounded by lockWait and rolls it back
+// at cleanup if the subtest has not ended it.
+func beginBoundedTx(t *testing.T, h *Harness) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), lockWait)
+	txCtx, err := database.NewTransaction(ctx, h.Querier, "conformance")
+	if err != nil {
+		cancel()
+		t.Fatalf("begin a transaction: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = database.Rollback(txCtx)
+		cancel()
+	})
+	return txCtx
+}
+
+// createDeletedDocument creates a document, soft-deletes it, and returns the
+// soft-deleted entity.
+func createDeletedDocument(t *testing.T, h *Harness, title string) *models.Document {
+	t.Helper()
+	d := createDocument(t, h, title)
+	deleted, err := h.Client.Documents().SoftDelete(context.Background(), d.ID)
+	if err != nil {
+		t.Fatalf("SoftDelete document %q: %v", title, err)
+	}
+	return deleted
 }
