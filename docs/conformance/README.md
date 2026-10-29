@@ -15,7 +15,9 @@ in [`docs/design/CONFORMANCE.md`](../design/CONFORMANCE.md) §3 and §5. `make r
 | [`cli/config.md`](cli/config.md) | CLI: `cmd/sqlgen/config`; §4.3, §4.13 and §4.14, and the package's unclaimed tests | unit |
 | [`cli/config-fields.md`](cli/config-fields.md) | CLI: config fields (§4, §4.1, §4.2, §4.4–§4.12, and the `config-fields` and `config-resolution` matrices); no package of its own, its rows claim `cmd/sqlgen/config`, `gen`, `gotype`, `cli` and example tests | unit, golden, example |
 | [`cli/config-features.md`](cli/config-features.md) | CLI: cache, event and tenancy config (§27.2, §28.8, §29.2, §29.11, and the `feature-fields` and `feature-resolution` matrices); no package of its own | unit, golden, example |
-| [`cli/gen.md`](cli/gen.md) | CLI: `cmd/sqlgen/gen` | unit, golden |
+| [`cli/gen.md`](cli/gen.md) | CLI: `cmd/sqlgen/gen`, and the package's unclaimed tests | unit, golden |
+| [`cli/naming.md`](cli/naming.md) | CLI: naming (§8.5 and the `naming` matrix); no package of its own, its rows claim `gen`, `config` and `cli` tests | unit, golden, example |
+| [`cli/access-control.md`](cli/access-control.md) | CLI: column access control (§32.2–§32.6 and the `access-control` matrix); no package of its own | unit, golden, example |
 | [`cli/gotype.md`](cli/gotype.md) | CLI: `cmd/sqlgen/gotype` | unit |
 | [`cli/api.md`](cli/api.md) | CLI: API generation (§26.5–§26.12 except §26.8 and §26.11, and the `api-generation` matrix); no package of its own, its rows claim `cmd/sqlgen/gen`, `cli`, `wrapper` and example tests | unit, golden, example |
 | [`cli/api-http.md`](cli/api-http.md) | CLI: API generation, REST, HTTP headers and gRPC (§26.8, §26.11, §26.13); no package of its own | unit, golden, example |
@@ -198,7 +200,7 @@ another file also cites is still owned once.
 | §8.2 Generated Artifacts Per Table | cli/gen.md |
 | §8.3 Generated Artifacts — Other | cli/gen.md |
 | §8.4 Layout Strategies | cli/gen.md |
-| §8.5 Naming Rules | cli/gen.md |
+| §8.5 Naming Rules | cli/naming.md |
 | §8.6 Primary Key Strategy | cli/gen.md |
 | §8.7 Composite Primary Keys | cli/gen.md |
 | §9 Generated Client Operations | client.md |
@@ -382,13 +384,13 @@ another file also cites is still owned once.
 | §31.3 Tool, Resource & Prompt Surface | cli/mcp.md |
 | §31.4 Protocol | cli/mcp.md |
 | §31.5 Versioning Policy | cli/mcp.md |
-| §32 Column Access Control | cli/gen.md |
+| §32 Column Access Control | cli/access-control.md |
 | §32.1 Overview | informative |
-| §32.2 Roles | cli/gen.md |
-| §32.3 Per-surface behavior | cli/gen.md |
-| §32.4 Validation | cli/gen.md |
-| §32.5 Interactions | cli/gen.md |
-| §32.6 Configuration example | cli/gen.md |
+| §32.2 Roles | cli/access-control.md |
+| §32.3 Per-surface behavior | cli/access-control.md |
+| §32.4 Validation | cli/access-control.md |
+| §32.5 Interactions | cli/access-control.md |
+| §32.6 Configuration example | cli/access-control.md |
 | §Appendix A: SQL Builder Functions | runtime.md |
 | §Appendix B: Dialect Comparison Matrix | runtime.md |
 | §Appendix C: Project Linting Configuration | informative |
