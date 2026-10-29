@@ -252,6 +252,29 @@ func hardDeleteWhere(t *testing.T, h *Harness) {
 		}
 	})
 
+	t.Run("a filter that leaves the soft-delete column unset deletes soft-deleted rows too", func(t *testing.T) {
+		h.Reset(t)
+		trashed := createDocument(t, h, "doc")
+		createDocument(t, h, "doc")
+		kept := createDocument(t, h, "kept")
+		if _, err := h.Client.Documents().SoftDelete(ctx, trashed.ID); err != nil {
+			t.Fatalf("SoftDelete(trashed) error = %v", err)
+		}
+		filter := &models.DocumentFilter{Title: &comparator.String{Eq: new("doc")}}
+		if err := h.Client.Documents().HardDeleteWhere(ctx, filter); err != nil {
+			t.Fatalf("HardDeleteWhere(title = doc) error = %v, want nil", err)
+		}
+		// Both "doc" rows are physically gone, the soft-deleted one included.
+		assertRowCount(t, h, "documents", 1)
+		got, err := h.Client.Documents().Exists(ctx, kept.ID)
+		if err != nil {
+			t.Fatalf("Documents().Exists(kept) error = %v", err)
+		}
+		if !got {
+			t.Errorf("Documents().Exists(kept) = false, want true")
+		}
+	})
+
 	t.Run("deletes inside the caller's transaction", func(t *testing.T) {
 		h.Reset(t)
 		a, b := createProduct(t, h, "a"), createProduct(t, h, "b")

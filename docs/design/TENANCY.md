@@ -144,10 +144,10 @@ How does the tenant filter propagate across relationships (§13)? Depends on the
 
 ### Q4. `SkipTenancy` and soft delete composition — **RESOLVED**
 
-`SkipTenancy: true` + `IncludeDeleted: true` → "give me all rows including soft-deleted across all tenants." Admin tooling needs this shape; most app code does not.
+`SkipTenancy: true` + the soft-delete comparator (`DeletedAt: &comparator.NullableTime{}`) → "give me all rows including soft-deleted across all tenants." Admin tooling needs this shape; most app code does not.
 
-- **Decision:** **both flags compose orthogonally. No special casing, no artificial combined-flag guard.** `SkipTenancy` toggles the tenant filter; `IncludeDeleted` toggles the soft-delete filter. Each is independent in intent and independent in effect.
-- **Rationale:** the library sets safe defaults (tenant auto-scope on, soft-deleted rows hidden) and provides explicit, named opt-outs for each. How a caller chooses to combine those opt-outs is their call — the library should not make value judgments about which escape-hatch combinations are "allowed." Disallowing `SkipTenancy: true && IncludeDeleted: true` would complicate the API for a scenario (admin / audit tooling) that genuinely needs both, and users who want one without the other can already express that.
+- **Decision:** **both flags compose orthogonally. No special casing, no artificial combined-flag guard.** `SkipTenancy` toggles the tenant filter; the soft-delete comparator toggles the soft-delete filter. Each is independent in intent and independent in effect.
+- **Rationale:** the library sets safe defaults (tenant auto-scope on, soft-deleted rows hidden) and provides explicit, named opt-outs for each. How a caller chooses to combine those opt-outs is their call — the library should not make value judgments about which escape-hatch combinations are "allowed." Disallowing `SkipTenancy: true` together with the soft-delete comparator would complicate the API for a scenario (admin / audit tooling) that genuinely needs both, and users who want one without the other can already express that.
 - **Operator guidance (doc-surface, not code-surface):** projects that want to restrict who can call `SkipTenancy` (e.g., only admin-role handlers) implement the guard at their own boundary — typically a thin wrapper that checks an auth-role ctx marker before passing `CallOptions{SkipTenancy: true}` down. The library does not ship a role mechanism and does not gate escape hatches by role; that's an app-layer concern. Same pattern applies to any `SkipXxx`-shaped flag: the library gives you the knob, your middleware decides who can turn it.
 
 ### Q5. Cache key grammar when PKs are globally unique — **RESOLVED**

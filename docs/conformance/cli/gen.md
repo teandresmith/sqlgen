@@ -208,7 +208,7 @@
 | gen.no-pk.override-full-surface | A `primary_key.columns` override makes the table generate with the full PK-keyed surface, as with a native `PRIMARY KEY` | `unit: cmd/sqlgen/gen: TestBuildTableContexts_NoPK_WithOverride_NotSkipped`; `unit: cmd/sqlgen/gen: TestRelationshipTargets_InferredEdgeIntoSkippedTableDropped/primary key declared` | all | |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: f30c5483b10b411a -->
+<!-- prd: 9.8 sha256: cb5cfb708e4473cb -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -288,7 +288,7 @@
 | artifacts.create-input.soft-delete | On a soft-delete table the soft delete column is an `omittable.Value[T]` field of `Create{Table}Input` | `unit: cmd/sqlgen/gen: TestCreateInputTemplate_requiredVsOmittableFields` | all | generated-artifacts: create-input × soft-delete |
 
 ## §11.1 Generated Filter Struct
-<!-- prd: 11.1 sha256: 57ee32e2c2949af7 -->
+<!-- prd: 11.1 sha256: f2a0debd9105df5d -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -646,7 +646,7 @@
 | artifacts.tenant-scoping.composite-pk | When the tenant column is in the PK, `{Table}PK` carries it and PK-bearing operations (`Get`, `Update`, `HardDelete`, `Increment`, `Exists`) verify it against the resolver, returning `tenancy.ErrMismatch` before any SQL on a mismatch or a zero value | `unit: cmd/sqlgen/gen: TestTenancyTemplate_tenantInPK_getEmitsVerifyMatch`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_tenantInPK_updateEmitsPKVerifyOnly`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_tenantInPK_deleteVariantsEmitVerify`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_tenantInPK_existsEmitsVerify` | all | generated-artifacts: tenant-scoping × composite-pk |
 
 ## §29.8 Soft Delete Composition
-<!-- prd: 29.8 sha256: d1a7509782f96691 -->
+<!-- prd: 29.8 sha256: f12ba7d857282f01 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

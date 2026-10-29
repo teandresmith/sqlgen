@@ -185,6 +185,9 @@ func softDeleteMany(t *testing.T, h *Harness) {
 			t.Errorf("MutationContext = {Op: %q, Table: %q, PK: %v}, want {Op: %q, Table: %q, PK: nil}",
 				m.Op, m.Table, m.PK, hook.OpSoftDeleteMany, models.TableDocuments)
 		}
+		if diff := cmp.Diff([]int64{c.ID, a.ID}, m.Input); diff != "" {
+			t.Errorf("MutationContext.Input (-want +got):\n%s", diff)
+		}
 		if diff := cmp.Diff([]any{c.ID, a.ID}, m.AffectedPKs); diff != "" {
 			t.Errorf("AffectedPKs after the mutation (-want +got):\n%s", diff)
 		}
@@ -544,6 +547,9 @@ func restoreMany(t *testing.T, h *Harness) {
 			t.Errorf("MutationContext = {Op: %q, Table: %q, PK: %v}, want {Op: %q, Table: %q, PK: nil}",
 				m.Op, m.Table, m.PK, hook.OpRestoreMany, models.TableDocuments)
 		}
+		if diff := cmp.Diff([]int64{c, a}, m.Input); diff != "" {
+			t.Errorf("MutationContext.Input (-want +got):\n%s", diff)
+		}
 		if diff := cmp.Diff([]any{c, a}, m.AffectedPKs); diff != "" {
 			t.Errorf("AffectedPKs after the mutation (-want +got):\n%s", diff)
 		}
@@ -611,6 +617,24 @@ func restoreMany(t *testing.T, h *Harness) {
 		}
 		if !slices.Contains(sdmDeletedDocumentIDs(t, h), archived) {
 			t.Errorf("archived document %d is live after the failed RestoreMany, want it still deleted", archived)
+		}
+	})
+
+	t.Run("a failed sub-batch keeps the sub-batches before it", func(t *testing.T) {
+		h.Reset(t)
+		a, b := createDocument(t, h, "a"), createDocument(t, h, "b")
+		sdmSoftDeleteDocuments(t, h, a.ID, b.ID)
+		archived := seedArchivedDocument(t, h)
+		// With batch_size: 2, {a, b} is the first sub-batch and {archived} the second, which fails.
+		_, err := h.Client.Documents().RestoreMany(ctx, []int64{a.ID, b.ID, archived})
+		if _, ok := errors.AsType[*models.ConstraintError](err); !ok {
+			t.Fatalf("RestoreMany([a, b, archived]) error = %v, want a *ConstraintError", err)
+		}
+		if diff := cmp.Diff([]int64{a.ID, b.ID}, sdmLiveDocumentIDs(t, h)); diff != "" {
+			t.Errorf("live documents after the failed RestoreMany (-want +got):\n%s", diff)
+		}
+		if diff := cmp.Diff([]int64{archived}, sdmDeletedDocumentIDs(t, h)); diff != "" {
+			t.Errorf("soft-deleted documents after the failed RestoreMany (-want +got):\n%s", diff)
 		}
 	})
 

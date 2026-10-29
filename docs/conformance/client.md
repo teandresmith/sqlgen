@@ -30,7 +30,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | update-where.no-match-nil | `UpdateWhere` is idempotent: when no row matches the filter it returns no entities and no error | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateWhere_idempotent`; `example: postgres: TestUpdateWhere_ZeroMatch_ReturnsNilNoError_Postgres`; `example: mysql: TestUpdateWhere_ZeroMatch_ReturnsNilNoError_MySQL`; `example: sqlite: TestUpdateWhere_ZeroMatch_ReturnsNilNoError_SQLite` | all |  |
 
 ## §9.3 Delete Operations
-<!-- prd: 9.3 sha256: 9a222a59e2330f57 -->
+<!-- prd: 9.3 sha256: d5f32cc7192f4832 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -78,7 +78,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | restore-many.nil-empty-input | `RestoreMany` sends no statement for a nil or empty slice and reads nothing back | `conformance: RestoreMany/nil key list sends no statement and returns nothing`; `conformance: RestoreMany/empty key list sends no statement and returns nothing` | all | client-methods: RestoreMany × nil-empty-input |
 
 ## §9.5 Edge Case Behaviors
-<!-- prd: 9.5 sha256: 13ecf0398b922d84 -->
+<!-- prd: 9.5 sha256: 235c4be55653ec92 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -115,9 +115,10 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | restore-where.not-found | `RestoreWhere` is idempotent: when no row matches the filter it returns no entities and no error | `conformance: RestoreWhere/a filter matching no row returns an empty result and no error` | all | client-methods: RestoreWhere × not-found |
 | hard-delete-where.not-found | `HardDeleteWhere` is idempotent: when no row matches the filter it returns `nil` | `conformance: HardDeleteWhere/a filter matching no row is not an error` | all | client-methods: HardDeleteWhere × not-found |
 | soft-delete-many.batch-partial | `SoftDeleteMany` splits its input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately, and previously executed sub-batches within the same call are not rolled back | `conformance: SoftDeleteMany/a failed sub-batch keeps the sub-batches before it` | all |  |
+| restore-many.batch-partial | `RestoreMany` splits its input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately, and previously executed sub-batches within the same call are not rolled back | `conformance: RestoreMany/a failed sub-batch keeps the sub-batches before it` | all |  |
 
 ## §9.6 Per-Call Options
-<!-- prd: 9.6 sha256: 5e44c24d55e5a9ed -->
+<!-- prd: 9.6 sha256: 28f7e6bf59d21c79 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -160,6 +161,13 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 |---|---|---|---|---|
 | pk-return.batch-getmany | `CreateMany` and `UpdateMany` collect the written keys and return their entities through one `GetMany` on those keys (single PK: `ID In` the keys; composite PK: `PKs`) with no limit | `unit: cmd/sqlgen/gen: TestCreateTemplate_createMany_multiRowInsert`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_pgx`; `unit: cmd/sqlgen/gen: TestCreateTemplate_createMany_compositePK`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_compositePK_updateMany` | postgres |  |
 | pk-return.upsert-fallback-binds-by-name | On a tenanted table, the `Upsert` conflict fallback `SELECT` binds its scan targets by column name, so a tenant column that sorts before the PK still lands in the tenant target | `unit: cmd/sqlgen/gen: TestUpsertTemplate_conflictRowFallbackBindsByName` | postgres |  |
+
+## §9.8 Generated Method Patterns
+<!-- prd: 9.8 sha256: cb5cfb708e4473cb -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| where-writes.no-default-soft-delete-scope | The default "is not deleted" condition is injected by the read methods only: `HardDeleteWhere` addresses every row the filter matches, soft-deleted rows included, when the filter leaves the soft-delete comparator unset | `conformance: HardDeleteWhere/a filter that leaves the soft-delete column unset deletes soft-deleted rows too` | all |  |
 
 ## §9.8.2 Get
 <!-- prd: 9.8.2 sha256: ef0c08f3be70bdff -->
@@ -228,7 +236,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert.update-set-excludes-key | `Upsert`'s update columns are the inserted columns minus the conflict-target columns and every PK column | `unit: cmd/sqlgen/gen: TestUpsertTemplate_callerStrategy`; `unit: cmd/sqlgen/gen: TestUpsertTemplate_compositePK`; `unit: cmd/sqlgen/gen: TestUpsertTemplate_mysql` | postgres, mysql |  |
 
 ## §9.8.8 SoftDelete / Restore
-<!-- prd: 9.8.8 sha256: f8654f0a37a367fb -->
+<!-- prd: 9.8.8 sha256: 5a193eeb1bcf7383 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -241,6 +249,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | restore-where.field-selection | `RestoreWhere` returns the restored entities with optional field selection; when `HasSelectedColumns()` is false it skips the terminal read and returns `nil` but still collects the keys | `conformance: RestoreWhere/a partial field selection returns only the selected columns`; `conformance: RestoreWhere/an empty field selection restores, returns nil and still records the affected keys` | all | client-methods: RestoreWhere × field-selection |
 | soft-delete-where.ignores-deleted-at-comparator | `SoftDeleteWhere` is always scoped to non-deleted rows and ignores the `DeletedAt` comparator on the filter, so a filter whose only member is that comparator produces zero conditions and returns `ErrEmptyFilter` | `conformance: SoftDeleteWhere/a deleted-at comparator on the filter is ignored`; `conformance: SoftDeleteWhere/a filter with only a deleted-at comparator returns ErrEmptyFilter` | all |  |
 | restore-where.ignores-deleted-at-comparator | `RestoreWhere` always scopes to deleted rows and ignores the `DeletedAt` comparator on the filter, so a filter whose only member is that comparator produces zero conditions and returns `ErrEmptyFilter` | `conformance: RestoreWhere/a deleted-at comparator on the filter is ignored`; `conformance: RestoreWhere/a filter with only a deleted-at comparator returns ErrEmptyFilter` | all |  |
+| soft-delete-many.hook-input | `SoftDeleteMany` and `RestoreMany` run their mutation hook chain with the key slice as the `MutationContext` `Input` | `conformance: SoftDeleteMany/fires one soft_delete_many mutation hook`; `conformance: RestoreMany/fires one restore_many mutation hook` | all |  |
 
 ## §9.8.9a Increment
 <!-- prd: 9.8.9a sha256: b2496f9df294669f -->
@@ -571,6 +580,15 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | tenancy.upsert-skip-tenancy-caller-tenant | Under `SkipTenancy`, `Upsert` does not auto-set the tenant from the resolver and inserts the caller's tenant field when it is set | `unit: cmd/sqlgen/gen: TestTenancyTemplate_upsert_skipTenancyUsesExplicitTenant` | postgres |  |
+
+## §29.8 Soft Delete Composition
+<!-- prd: 29.8 sha256: f12ba7d857282f01 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| tenancy-soft-delete.anded | On a tenanted soft-delete table the tenant and soft-delete filters are AND'd: default reads return only the caller's live rows | `example: tenancy: TestSoftDelete_AndTenancyAreANDed`; `example: tenancy: TestSoftDelete_TenantedGetANDsTenantAndSoftDeleteFilters` | all |  |
+| tenancy-soft-delete.comparator-keeps-tenant | Setting the soft-delete comparator on the filter brings back soft-deleted rows only within the caller's tenant | `example: tenancy: TestSoftDelete_IncludeDeletedScopedToTenant` | all |  |
+| tenancy-soft-delete.orthogonal | `SkipTenancy` and the soft-delete comparator compose orthogonally: together they read every row, soft-deleted ones included, across all tenants | `example: tenancy: TestSoftDelete_SkipTenancyAndIncludeDeletedAreOrthogonal` | all |  |
 
 ## §29.10 Relationship Propagation
 <!-- prd: 29.10 sha256: 46e732fe5b40a130 -->

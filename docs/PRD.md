@@ -3371,10 +3371,10 @@ All methods accept an optional trailing `...func(*CallOptions[{Table}FieldOption
 |--------|-----------|-------------|
 | `SoftDelete` | `(ctx, pk, ...func(*CallOptions[FO])) → (*Entity, error)` | Sets soft delete column and returns the updated entity. Only generated if table has a matching soft delete column. Idempotent — returns `nil, nil` if PK does not exist. |
 | `SoftDeleteMany` | `(ctx, []pk, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Batch soft delete. Returns all affected entities. |
-| `SoftDeleteWhere` | `(ctx, *Filter, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Conditional soft delete. Returns all affected entities. Returns `ErrEmptyFilter` if filter produces zero conditions. Idempotent — returns empty slice when no rows match. |
+| `SoftDeleteWhere` | `(ctx, *Filter, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Conditional soft delete. Returns all affected entities. Returns `ErrEmptyFilter` if filter produces zero conditions. Idempotent — returns no entities and no error when no rows match. |
 | `Restore` | `(ctx, pk, ...func(*CallOptions[FO])) → (*Entity, error)` | Clears soft delete column, restoring a soft-deleted row, and returns the restored entity. Only generated if table has a matching soft delete column. Idempotent — returns `nil, nil` if PK does not exist. |
 | `RestoreMany` | `(ctx, []pk, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Batch restore. Returns all restored entities. |
-| `RestoreWhere` | `(ctx, *Filter, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Conditional restore. Returns all restored entities. Returns `ErrEmptyFilter` if filter produces zero conditions. Idempotent — returns empty slice when no rows match. |
+| `RestoreWhere` | `(ctx, *Filter, ...func(*CallOptions[FO])) → ([]*Entity, error)` | Conditional restore. Returns all restored entities. Returns `ErrEmptyFilter` if filter produces zero conditions. Idempotent — returns no entities and no error when no rows match. |
 | `HardDelete` | `(ctx, pk, ...func(*CallOptions[FO])) → error` | Physical DELETE. Always generated. Idempotent — returns `nil` if PK does not exist. |
 | `HardDeleteMany` | `(ctx, []pk, ...func(*CallOptions[FO])) → error` | Batch hard delete. |
 | `HardDeleteWhere` | `(ctx, *Filter, ...func(*CallOptions[FO])) → error` | Conditional hard delete. Returns `ErrEmptyFilter` if filter produces zero conditions. Idempotent — returns `nil` when no rows match. |
@@ -3702,7 +3702,7 @@ The rule splits on direction, because "no values supplied" means something coher
 
 #### Batch Failure Semantics
 
-`CreateMany`, `UpdateMany`, `HardDeleteMany`, and `SoftDeleteMany` split their input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately. **Previously executed sub-batches within the same call are not automatically rolled back.**
+`CreateMany`, `UpdateMany`, `HardDeleteMany`, `SoftDeleteMany` and `RestoreMany` split their input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately. **Previously executed sub-batches within the same call are not automatically rolled back.**
 
 Consumers are expected to wrap batch mutations in a transaction when atomicity is required:
 
@@ -3880,7 +3880,7 @@ This listing is the struct's full shape and its field order. **Two fields are ga
 | `&ProductFieldOptions{Name: true, Price: true}` | Select specific columns + relationships | Partial entity returned |
 | `&ProductFieldOptions{}` (all false) | Caller doesn't need the result | Skip entity fetch entirely, return `nil` |
 
-The empty FieldOptions short-circuit applies to all mutation methods that return entities. When an empty `&FieldOptions{}` is set, the method performs the write but skips any follow-up queries (ID collection, `Get`/`GetMany`) and returns `nil`. This is useful for fire-and-forget mutations where the caller only needs to know the write succeeded.
+The empty FieldOptions short-circuit applies to all mutation methods that return entities. When an empty `&FieldOptions{}` is set, the method performs the write but skips its follow-up entity read (`Get`/`GetMany`) and returns `nil`. It still learns the keys it writes (a `Where` variant's ID collection, MySQL's key pre-read), because they drive cache invalidation and events ([9.8.8](#988-softdelete--restore)). This is useful for fire-and-forget mutations where the caller only needs to know the write succeeded.
 
 **On the read path an all-false selection means "no rows", and the loud spelling is deliberate.** `GetMany` returns an empty slice and `Get` returns **`ErrNotFound`** — the single-row spelling of the same answer, not an inconsistency between the two. The alternative was to let a read short-circuit silently the way a mutation does and return `nil, nil`; that was rejected. On a *read*, an all-false selection is almost always a caller mistake — asking to load a row while selecting nothing from it — and a silent nil hands back a result indistinguishable from a legitimately absent row, so the mistake surfaces later and somewhere else. A clear error shows the problem where it was made. The read path is therefore **not** where the mutation-side `nil, nil` contract above gets spelled, and every entity-returning mutation guards its own trailing read rather than relying on the read to stay quiet. A mutation that forwards an all-false `FieldOptions` into its terminal `Get` unguarded reports `ErrNotFound` for a write that already committed — the defect single-row `Update` carried until [9.2](#92-write-operations)'s escape was added to it.
 
@@ -4215,11 +4215,11 @@ type CallOptions[FO any] struct {
 | `&ProductFieldOptions{Name: true, Price: true}` | Select specific columns + relationships | Partial entity returned |
 | `&ProductFieldOptions{}` (all false) | Caller doesn't need the result | Skip entity fetch entirely, return `nil` |
 
-The empty FieldOptions short-circuit applies to all mutation methods that return entities. When an empty `&FieldOptions{}` is set, the method performs the write but skips any follow-up queries (ID collection, `Get`/`GetMany`) and returns `nil`. This is useful for fire-and-forget mutations where the caller only needs to know the write succeeded.
+The empty FieldOptions short-circuit applies to all mutation methods that return entities. When an empty `&FieldOptions{}` is set, the method performs the write but skips its follow-up entity read (`Get`/`GetMany`) and returns `nil`. It still learns the keys it writes (a `Where` variant's ID collection, MySQL's key pre-read), because they drive cache invalidation and events ([9.8.8](#988-softdelete--restore)). This is useful for fire-and-forget mutations where the caller only needs to know the write succeeded.
 
 **4. Soft delete scoping via comparator.** When a table has a soft delete column, the filter struct includes a regular comparator field for that column (e.g., `DeletedAt *comparator.NullableTime`). There is no `IncludeDeleted` or `IsSoftDeleted` — the comparator is the single mechanism for controlling soft delete filtering.
 
-When `exclude_deleted` is enabled (default when a soft delete column exists), each method checks whether the user set the soft delete comparator on the filter:
+When `exclude_deleted` is enabled (default when a soft delete column exists), each read method (`GetMany`, `Stream`, `Count`, `ExistsWhere`, and `Paginate` and `Connection` through `Count` and `GetMany`) checks whether the user set the soft delete comparator on the filter:
 - **User didn't set it** → method injects the default "is not deleted" condition (e.g., `deleted_at IS NULL` for timestamp, `is_deleted = false` for bool, `deleted = 0` for integer)
 - **User set it** → method uses the user's comparator, no default injected
 
@@ -4227,6 +4227,7 @@ Exceptions:
 - **`SoftDeleteWhere`** — always adds "is not deleted" condition (only soft-delete active rows). By-key `SoftDelete` and `SoftDeleteMany` address their keys directly
 - **`RestoreWhere`** — always adds "is deleted" condition (only restore deleted rows). By-key `Restore` and `RestoreMany` address their keys directly: clearing a live row's soft-delete column changes nothing
 - **`Get` / `Exists`** — PK methods with no filter; always inject the default when `exclude_deleted` is enabled
+- **`UpdateWhere` / `HardDeleteWhere`** — write methods; no default is injected, so they address every row the filter matches, soft-deleted rows included, as `HardDelete` and `HardDeleteMany` address their keys directly
 
 When `exclude_deleted` is disabled, no default condition is injected for any method. The user's comparator is respected if set.
 
@@ -6414,7 +6415,7 @@ func (c *productClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opt
     options := resolveCallOptions(opts)
     result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
         Op: hook.OpSoftDeleteMany, Table: TableProducts, Schema: "public",
-        PK: ids, CallOptions: options,
+        Input: ids, CallOptions: options,
     }, func(ctx context.Context, m *hook.MutationContext) (any, error) {
         conn := database.Conn(ctx, c.querier)
 
@@ -6475,6 +6476,12 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
     }, func(ctx context.Context, m *hook.MutationContext) (any, error) {
         conn := database.Conn(ctx, c.querier)
 
+        // The DeletedAt comparator is ignored; the caller's filter is not modified.
+        if filter != nil && filter.DeletedAt != nil {
+            scoped := *filter
+            scoped.DeletedAt = nil
+            filter = &scoped
+        }
         conds := filter.ToConditions(c.dialect)
         if len(conds) == 0 {
             return nil, ErrEmptyFilter
@@ -6562,6 +6569,12 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
     }, func(ctx context.Context, m *hook.MutationContext) (any, error) {
         conn := database.Conn(ctx, c.querier)
 
+        // The DeletedAt comparator is ignored; the caller's filter is not modified.
+        if filter != nil && filter.DeletedAt != nil {
+            scoped := *filter
+            scoped.DeletedAt = nil
+            filter = &scoped
+        }
         conds := filter.ToConditions(c.dialect)
         if len(conds) == 0 {
             return nil, ErrEmptyFilter
@@ -8157,7 +8170,7 @@ func (f *ProductFilter) ToConditions(dialect sql.Dialect) []sql.Condition {
 
 This follows the same reflection-free pattern as scan targets (Section 19.1) and update builders (Section 10.3) — the generator knows all fields at generation time and produces explicit per-field code. The `And`/`Or` recursion calls the same generated method on nested filter instances.
 
-**Soft delete scoping** is handled by the generated methods, not the filter. When `exclude_deleted` is enabled (default when a soft delete column exists), each method checks whether the caller set the soft delete comparator on the filter — if not, the method injects a default "is not deleted" condition (e.g., `deleted_at IS NULL`). If the caller sets the comparator, no default is injected. This keeps `ToConditions` purely a condition converter with no implicit behavior. See [Section 9.8](#98-generated-method-patterns) for implementation details.
+**Soft delete scoping** is handled by the generated methods, not the filter. When `exclude_deleted` is enabled (default when a soft delete column exists), each read method checks whether the caller set the soft delete comparator on the filter — if not, the method injects a default "is not deleted" condition (e.g., `deleted_at IS NULL`). If the caller sets the comparator, no default is injected. This keeps `ToConditions` purely a condition converter with no implicit behavior. See [Section 9.8](#98-generated-method-patterns) for implementation details.
 
 #### Relationship filters
 
@@ -15304,7 +15317,7 @@ WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL
 
 Each generated method ANDs its conditions in an order fixed at codegen, so a method emits the same SQL on every call. The order is not part of the contract (the example above is illustrative), and for the SQL engine the AND order is irrelevant.
 
-`SkipTenancy` and `IncludeDeleted` compose **orthogonally**. `SkipTenancy: true` + `IncludeDeleted: true` gives admin tooling "all rows including soft-deleted across all tenants." There is no special casing or combined-flag guard — each flag toggles one filter independently. Projects that want to restrict who can call either escape hatch implement the guard at their own boundary (typically a thin middleware that checks an auth-role ctx marker before passing `CallOptions` down).
+`SkipTenancy` and the soft-delete comparator compose **orthogonally**. `SkipTenancy: true` with the soft-delete column's comparator set on the filter (e.g. `DeletedAt: &comparator.NullableTime{}`, which suppresses the default "is not deleted" condition, [9.8](#98-generated-method-patterns)) gives admin tooling "all rows including soft-deleted across all tenants." There is no special casing or combined-flag guard — each toggles one filter independently. Projects that want to restrict who can call either escape hatch implement the guard at their own boundary (typically a thin middleware that checks an auth-role ctx marker before passing `CallOptions` and filters down).
 
 ### 29.9 Hooks Orthogonality
 
