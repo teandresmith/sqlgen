@@ -1757,6 +1757,93 @@ database versions it ran against.
      of their own claim failed. And when a config list sets an order, check that it differs from
      the order under test.
 
+   **Fourteenth slice, `client.md` owned sections, recorded 2026-10-30:**
+   - **Scope.** The 7 owned sections with no rows: §20.3, §20.4, §20.5, §22.3, §25.4, §29.7 and
+     §29.9. Measured first:
+     - §20.3 is a code sample and §20.4 repeats §4.5 word for word, so neither states a behavior
+       of its own.
+     - §20.5 and §25.4 can be shown on all four targets. Under `-race`, with a query-hook barrier
+       proving the calls overlap, a shared client, a fan-out on one `txCtx`, and a failed
+       relationship load each behave as §20.5 says, so no defect turned up.
+     - §22.3 departed broadly. 80 failing calls across the 28 methods showed five departures:
+       1. pgx returned a RETURNING set's `rows.Err()` unwrapped.
+       2. Flat methods returned their sentinels bare.
+       3. `GetMany` said `get products:`, and `Get` never said `get product:`.
+       4. On stdlib, `UpdateMany` lost its prefix when `Begin` failed.
+       5. The other 27 operation words were unstated and irregular.
+     - §29.7 and §29.9 runtime behavior exists only in the `tenancy` example (SQLite), because the
+       MySQL and PostgreSQL tenancy schemas have no tenant-in-PK table.
+   - **Rulings (11):**
+     - §20.3 and §20.4 re-owned as `informative`. The stale §20.3 sample and the §8.7 signatures
+       were fixed inline.
+     - §29.7 and §29.9 cite `example: tenancy:` tests with Applies-to `sqlite`, with new tests for
+       the gaps. The variant suite stays a §8 follow-on.
+     - New suite files: `error_wrapping.go` and `concurrency.go`; the §25.4 subtests go in `get.go`.
+     - Four §22.3 defects fixed in code: the pgx `rows.Err`, bare sentinels, the `Get`/`GetMany`
+       prefixes, and the stdlib `UpdateMany`.
+     - §22.3 amended with a per-method prefix table built on one rule: singular for one-row
+       methods, `{verb} many {table}`, `{verb} {table} where`, Increment without the column, and
+       Refresh / RefreshConcurrently for views.
+     - The inner-prefix rule: the method's own prefix leads exactly once, and the cause may carry
+       an inner method's prefix (`get product: get many products: …`). This resolved two rulings
+       my wording had set in conflict.
+     - Followed from those rulings without a question:
+       - `tenancy.ErrMismatch` is prefixed too.
+       - A §21.6 sentence says a recovered panic comes back under the prefix.
+       - §29.7 and §29.4.2 no longer name the nonexistent `UpsertInput`.
+       - The §9.4a, §9.6a and §9.8.x samples, `TENANCY.md` §10 and `ERRORS.md` §6 match the new
+         rule.
+   - **Fix (`101e8703`).** Built by one agent in a worktree pinned to the prep commit:
+     - Each exported method now wraps once at its return, and inner steps keep only a step label.
+     - Fill test: 49 `ErrorWrapping` subtests, with one or more per method, on every dialect.
+     - 42 mutants on PostgreSQL and MySQL, none equivalent.
+     - An AST scan by the reviewer found no exported return path left unprefixed.
+     - Two reviewer passes added coverage: view and Refresh tests in the `postgres` example, a
+       `tenancy.ErrMismatch` test, and a recovered-panic subtest.
+     - `/verify` did not run, because the fix has no FIX ID.
+   - **Suite (`d101220d`).**
+     - Subtests: `Concurrency` (2), plus 5 `Get`/`GetMany` subtests for §25.4 and the failed load,
+       and one §13.2 subtest for a multi-edge read inside a transaction. All are barrier-gated.
+     - Six tenancy example tests: a matching PK proceeds, `SkipTenancy` writes across tenants by
+       PK, the update input lacks the tenant, `SkipHooks` keeps the tenant filter, the hook
+       `Input` is unchanged, and `AffectedPKs` carry the tenant.
+     - Mutants killed: a memo cache and singleflight on each read, an errgroup without
+       cancellation, a partial `GetMany`, a client field written in `Get` (`-race`), the `Tx`
+       reservation removed (on pgx, PostgreSQL stdlib and MySQL), each verify-match forced to
+       fail, `AffectedPKs` without the tenant, the tenant filter dropped under `SkipHooks`, the
+       caller's input mutated, and the resolver consulted under `SkipTenancy`.
+     - Equivalent mutant: the reservation removal on SQLite, whose driver serializes the shared
+       connection itself. A subtest comment records it.
+   - **Claim check.** Three reviewer passes on the suite commit found 4 defects, all fixed:
+     - a hook-`Input` row whose test compared only the filter, which an injected internal
+       condition passed;
+     - a row citing a unit fixture with the tenant outside the PK;
+     - a shared-client row whose goroutines all read one author, so crossed results would pass;
+     - a §13.2 subtest whose two loads were not gated, so its kill was probabilistic.
+   - **Rows.** `client.md` 475 → 521 rows (5614 → 5660 in all):
+     - 31 under §22.3, plus one under a new §21.6 anchor;
+     - 3 under §20.5, 2 under §25.4, 5 under §29.7, 3 under §29.9, and one under §13.2.
+     - No PRD gap. Two adjacent findings went to `backlog.md`: the API layer's `InvalidInputError`
+       strings, and whether §22.3's `{table}` includes a schema.
+   - **Ported:** `TestLoadRelationships_MultiEdgeInsideTransaction`, deleted from the `sqlite`,
+     `mysql` and `graphql` examples. What the deletion loses: a NOT NULL-FK O2M edge, and the
+     polymorphic per-edge checks, neither of which is about serialization.
+   - **Completion sweep.** With `client.md` set to `complete`, `req-check` passes. Flipped on the
+     user's sign-off (`c1088a83`), after the report was generated.
+   - **Report.** `make conformance` at `d101220d`: 5660 rows, 5549 pass, 0 fail, 0 skip, 0 not
+     run, 111 untested. `client.md` has 520 pass and 1 untested
+     (`edge.batch-db-matched-superset-tenanted`, as before).
+   - **For the next slice:**
+     - `go test -run` splits its pattern on `/` before alternation, so
+       `X/(a/b|c/d)` matches nothing and a mutant reads as surviving with "fails=none". Run one
+       pattern per subtest path.
+     - When two rulings are worded separately, check them against each other before acting: here
+       the `Get` prefix and the `Paginate` prefix rulings conflicted, and an extra question
+       settled it.
+     - A row about a field of a struct the hook sees needs the whole struct compared, unexported
+       fields included.
+     - A barrier only proves overlap for the reads it gates.
+
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
