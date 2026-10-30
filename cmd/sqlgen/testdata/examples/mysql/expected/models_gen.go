@@ -493,11 +493,27 @@ func (c *articleClient) Create(ctx context.Context, input *CreateArticleInput, o
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[ArticleFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetArticlesInput{
+			Filter: &ArticleFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[ArticleFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -578,7 +594,8 @@ func (c *articleClient) CreateMany(ctx context.Context, inputs []*CreateArticleI
 		}
 		return c.GetMany(ctx, &GetArticlesInput{
 			Filter: &ArticleFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
+				ID:        &comparator.Number[int64]{In: allIDs},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[ArticleFieldOptions]) {
@@ -716,11 +733,27 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 				return nil, nil
 			}
 
-			return c.Get(ctx, id, func(o *CallOptions[ArticleFieldOptions]) {
+			// Read the row back whether or not it is soft-deleted: the empty
+			// DeletedAt comparator keeps GetMany's default "is not deleted"
+			// condition out.
+			written, err := c.GetMany(ctx, &GetArticlesInput{
+				Filter: &ArticleFilter{
+					ID:        &comparator.Number[int64]{Eq: new(id)},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(1),
+			}, func(o *CallOptions[ArticleFieldOptions]) {
 				*o = options
 				o.SkipHooks = true
 				o.LockMode = sql.LockNone
 			})
+			if err != nil {
+				return nil, err
+			}
+			if len(written) == 0 {
+				return nil, ErrNotFound
+			}
+			return written[0], nil
 		}
 		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
 
@@ -760,11 +793,27 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[ArticleFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetArticlesInput{
+			Filter: &ArticleFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[ArticleFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -903,7 +952,8 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 		}
 		return c.GetMany(ctx, &GetArticlesInput{
 			Filter: &ArticleFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
+				ID:        &comparator.Number[int64]{In: allIDs},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[ArticleFieldOptions]) {
@@ -968,8 +1018,17 @@ func (c *articleClient) UpdateWhere(ctx context.Context, filter *ArticleFilter, 
 			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 				return nil, nil
 			}
+			// The rows a write would address include soft-deleted ones: a
+			// filter that leaves the DeletedAt comparator unset reads them
+			// back with an empty one, so GetMany adds no "is not deleted" condition.
+			readFilter := filter
+			if filter.DeletedAt == nil {
+				scoped := *filter
+				scoped.DeletedAt = &comparator.NullableTime{}
+				readFilter = &scoped
+			}
 			return c.GetMany(ctx, &GetArticlesInput{
-				Filter: filter,
+				Filter: readFilter,
 				Limit:  new(0),
 			}, func(o *CallOptions[ArticleFieldOptions]) {
 				*o = options
@@ -1004,7 +1063,8 @@ func (c *articleClient) UpdateWhere(ctx context.Context, filter *ArticleFilter, 
 
 		return c.GetMany(ctx, &GetArticlesInput{
 			Filter: &ArticleFilter{
-				ID: &comparator.Number[int64]{In: ids},
+				ID:        &comparator.Number[int64]{In: ids},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[ArticleFieldOptions]) {
@@ -1747,11 +1807,27 @@ func (c *articleClient) Upsert(ctx context.Context, input *CreateArticleInput, t
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[ArticleFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetArticlesInput{
+			Filter: &ArticleFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[ArticleFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -1949,7 +2025,8 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 
 		return c.GetMany(ctx, &GetArticlesInput{
 			Filter: &ArticleFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
+				ID:        &comparator.Number[int64]{In: rowIDs},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[ArticleFieldOptions]) {
@@ -1984,8 +2061,8 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -6748,8 +6825,8 @@ func (c *assetClient) UpsertMany(ctx context.Context, inputs []*CreateAssetInput
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -10398,8 +10475,8 @@ func (c *categoryClient) UpsertMany(ctx context.Context, inputs []*CreateCategor
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -13013,8 +13090,8 @@ func (c *defaultOnlyRowClient) UpsertMany(ctx context.Context, inputs []*CreateD
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -15466,8 +15543,8 @@ func (c *documentClient) UpsertMany(ctx context.Context, inputs []*CreateDocumen
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -18127,8 +18204,8 @@ func (c *keyOnlyRowClient) UpsertMany(ctx context.Context, inputs []*CreateKeyOn
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -20203,8 +20280,8 @@ func (c *orderItemClient) UpsertMany(ctx context.Context, inputs []*CreateOrderI
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -22686,8 +22763,8 @@ func (c *orderClient) UpsertMany(ctx context.Context, inputs []*CreateOrderInput
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -27677,8 +27754,8 @@ func (c *productClient) UpsertMany(ctx context.Context, inputs []*CreateProductI
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -30591,8 +30668,8 @@ func (c *profileClient) UpsertMany(ctx context.Context, inputs []*CreateProfileI
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -33147,8 +33224,8 @@ func (c *sluggedRowClient) UpsertMany(ctx context.Context, inputs []*CreateSlugg
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -34334,11 +34411,27 @@ func (c *tagClient) Create(ctx context.Context, input *CreateTagInput, opts ...f
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[TagFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// IsDeleted comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetTagsInput{
+			Filter: &TagFilter{
+				ID:        &comparator.Number[int32]{Eq: new(id)},
+				IsDeleted: &comparator.Bool{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[TagFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -34408,7 +34501,8 @@ func (c *tagClient) CreateMany(ctx context.Context, inputs []*CreateTagInput, op
 		}
 		return c.GetMany(ctx, &GetTagsInput{
 			Filter: &TagFilter{
-				ID: &comparator.Number[int32]{In: allIDs},
+				ID:        &comparator.Number[int32]{In: allIDs},
+				IsDeleted: &comparator.Bool{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[TagFieldOptions]) {
@@ -34537,11 +34631,27 @@ func (c *tagClient) Update(ctx context.Context, id int32, input *UpdateTagInput,
 				return nil, nil
 			}
 
-			return c.Get(ctx, id, func(o *CallOptions[TagFieldOptions]) {
+			// Read the row back whether or not it is soft-deleted: the empty
+			// IsDeleted comparator keeps GetMany's default "is not deleted"
+			// condition out.
+			written, err := c.GetMany(ctx, &GetTagsInput{
+				Filter: &TagFilter{
+					ID:        &comparator.Number[int32]{Eq: new(id)},
+					IsDeleted: &comparator.Bool{},
+				},
+				Limit: new(1),
+			}, func(o *CallOptions[TagFieldOptions]) {
 				*o = options
 				o.SkipHooks = true
 				o.LockMode = sql.LockNone
 			})
+			if err != nil {
+				return nil, err
+			}
+			if len(written) == 0 {
+				return nil, ErrNotFound
+			}
+			return written[0], nil
 		}
 		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
 
@@ -34581,11 +34691,27 @@ func (c *tagClient) Update(ctx context.Context, id int32, input *UpdateTagInput,
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[TagFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// IsDeleted comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetTagsInput{
+			Filter: &TagFilter{
+				ID:        &comparator.Number[int32]{Eq: new(id)},
+				IsDeleted: &comparator.Bool{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[TagFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -34715,7 +34841,8 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 		}
 		return c.GetMany(ctx, &GetTagsInput{
 			Filter: &TagFilter{
-				ID: &comparator.Number[int32]{In: allIDs},
+				ID:        &comparator.Number[int32]{In: allIDs},
+				IsDeleted: &comparator.Bool{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[TagFieldOptions]) {
@@ -34771,8 +34898,17 @@ func (c *tagClient) UpdateWhere(ctx context.Context, filter *TagFilter, input *U
 			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 				return nil, nil
 			}
+			// The rows a write would address include soft-deleted ones: a
+			// filter that leaves the IsDeleted comparator unset reads them
+			// back with an empty one, so GetMany adds no "is not deleted" condition.
+			readFilter := filter
+			if filter.IsDeleted == nil {
+				scoped := *filter
+				scoped.IsDeleted = &comparator.Bool{}
+				readFilter = &scoped
+			}
 			return c.GetMany(ctx, &GetTagsInput{
-				Filter: filter,
+				Filter: readFilter,
 				Limit:  new(0),
 			}, func(o *CallOptions[TagFieldOptions]) {
 				*o = options
@@ -34807,7 +34943,8 @@ func (c *tagClient) UpdateWhere(ctx context.Context, filter *TagFilter, input *U
 
 		return c.GetMany(ctx, &GetTagsInput{
 			Filter: &TagFilter{
-				ID: &comparator.Number[int32]{In: ids},
+				ID:        &comparator.Number[int32]{In: ids},
+				IsDeleted: &comparator.Bool{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[TagFieldOptions]) {
@@ -35542,11 +35679,27 @@ func (c *tagClient) Upsert(ctx context.Context, input *CreateTagInput, target Ta
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[TagFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// IsDeleted comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetTagsInput{
+			Filter: &TagFilter{
+				ID:        &comparator.Number[int32]{Eq: new(id)},
+				IsDeleted: &comparator.Bool{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[TagFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -35733,7 +35886,8 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 
 		return c.GetMany(ctx, &GetTagsInput{
 			Filter: &TagFilter{
-				ID: &comparator.Number[int32]{In: rowIDs},
+				ID:        &comparator.Number[int32]{In: rowIDs},
+				IsDeleted: &comparator.Bool{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[TagFieldOptions]) {
@@ -35768,8 +35922,8 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -37903,8 +38057,8 @@ func (c *userCategoryClient) UpsertMany(ctx context.Context, inputs []*CreateUse
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -40093,8 +40247,8 @@ func (c *userEventClient) UpsertMany(ctx context.Context, inputs []*CreateUserEv
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -43211,8 +43365,8 @@ func (c *userClient) UpsertMany(ctx context.Context, inputs []*CreateUserInput, 
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -47342,8 +47496,8 @@ func (c *warehouseClient) UpsertMany(ctx context.Context, inputs []*CreateWareho
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.

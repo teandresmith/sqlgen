@@ -2262,11 +2262,16 @@ func pkArgImports(apiCtx *APIContext) []string {
 // resolverKeyImports is pkArgImports plus what the bulk updates' re-read of
 // their matched rows spells (APIRowKeys.Imports: the comparator package, and
 // `fmt` / an element type's package when the key needs them), on the tables
-// that emit that re-read — an update_where with `_inc` / `_dec` operators.
+// that emit that re-read — an update_where with `_inc` / `_dec` operators,
+// and on a soft-delete table the single update and the nested update with
+// operators.
 func resolverKeyImports(apiCtx *APIContext) []string {
 	out := pkArgImports(apiCtx)
 	for _, t := range apiCtx.Tables {
-		if t.Operations.UpdateWhere && t.HasUpdateInput && len(t.UpdateOps) > 0 {
+		// The bulk update with operators re-reads its rows by key, and on a
+		// soft-delete table so do the single update and the nested update
+		// with operators.
+		if t.HasUpdateInput && (t.Operations.UpdateWhere && len(t.UpdateOps) > 0 || t.HasSoftDelete) {
 			out = append(out, t.RowKeys.Imports...)
 		}
 	}

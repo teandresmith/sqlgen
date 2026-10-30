@@ -63,6 +63,9 @@ func FuncMapWithResolver(dialect sql.Dialect, resolver *gotype.Resolver) templat
 		"softDeleteTypeConst":         funcSoftDeleteTypeConst,
 		"softDeleteRestoreGoValue":    funcSoftDeleteRestoreGoValue,
 		"softDeleteFilterOverride":    funcSoftDeleteFilterOverride,
+		"softDeleteFilterAny":         funcSoftDeleteFilterAny,
+		"writtenRowCtx":               funcWrittenRowCtx,
+		"compositePKLiteral":          funcCompositePKLiteral,
 		"softDeleteSubqueryPredicate": funcSoftDeleteSubqueryPredicate,
 		"softDeleteSubqueryArg":       funcSoftDeleteSubqueryArg,
 
@@ -642,6 +645,66 @@ func funcSoftDeleteFilterOverride(f FilterFieldContext) string {
 	// column must be nullable (NullableTime), and bool / integer columns
 	// resolve to the cases above.
 	return "&" + ctype + "{Null: new(false)}"
+}
+
+// funcSoftDeleteFilterAny returns the soft-delete comparator literal that
+// scopes a write's trailing GetMany to every row, soft-deleted or not
+// ("&comparator.NullableTime{}"), or "" when the table has no soft-delete
+// column. The comparator is set, so GetMany injects no default "is not
+// deleted" condition (PRD §9.8 item 4), and it carries no condition of its
+// own, so it matches every row: a write returns the rows it wrote, including
+// one the write left soft-deleted. A soft-delete table with no filter field
+// for its column is an error, not an empty literal.
+func funcSoftDeleteFilterAny(tc TableContext) (string, error) {
+	if tc.SoftDelete == nil {
+		return "", nil
+	}
+	for _, f := range tc.FilterFields {
+		if f.IsSoftDeleteColumn {
+			return "&" + strings.TrimPrefix(f.ComparatorType, "*") + "{}", nil
+		}
+	}
+	return "", fmt.Errorf("table %s: soft-delete column %s has no filter field", tc.TableName, tc.SoftDelete.Column)
+}
+
+// WrittenRowContext is the data shape passed into the shared/written-row
+// template fragment: the single-row write method's table, and the key of the
+// row it wrote.
+type WrittenRowContext struct {
+	TableContext
+	// Key is the written key as a Go expression of the Get key type: the PK
+	// column's type, or the {Table}PK struct.
+	Key string
+	// PKsElem is Key as an element of a []{Table}PK literal, its type name
+	// elided. Composite PK only.
+	PKsElem string
+	// MissingNil returns nil, nil rather than ErrNotFound when the key reads
+	// back no row (the non-strict empty-update path).
+	MissingNil bool
+}
+
+// funcWrittenRowCtx is the template helper that constructs a
+// WrittenRowContext. The fragment lives in shared/_written_row.tmpl.
+func funcWrittenRowCtx(tc TableContext, key string, missingNil bool) WrittenRowContext {
+	elem := key
+	if tc.CompositePK {
+		elem = strings.TrimPrefix(key, tc.CompositePKStructName)
+	}
+	return WrittenRowContext{TableContext: tc, Key: key, PKsElem: elem, MissingNil: missingNil}
+}
+
+// funcCompositePKLiteral returns a {Table}PK literal whose fields are read
+// from the same-named fields of src, e.g. "OrderItemPK{OrderID:
+// input.OrderID, ProductID: input.ProductID, }" (gofmt drops the trailing
+// comma).
+func funcCompositePKLiteral(tc TableContext, src string) string {
+	var b strings.Builder
+	b.WriteString(tc.CompositePKStructName + "{")
+	for _, col := range tc.PKColumns {
+		b.WriteString(col.FieldName + ": " + src + "." + col.FieldName + ", ")
+	}
+	b.WriteString("}")
+	return b.String()
 }
 
 // --- Relationship functions ---

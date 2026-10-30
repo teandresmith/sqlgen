@@ -253,7 +253,7 @@ func (c *{{ $client }}) CreateWithRelated(ctx context.Context, input *{{ .Nested
 {{- if .NeedsTenantResolver }}
 
 	// The gate is "some client this method reaches resolves a tenant", not "an
-	// edge target is tenanted": the parent's own terminal Get re-read resolves
+	// edge target is tenanted": the parent's own terminal re-read resolves
 	// too when the caller selected a relationship.
 	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
 	if err != nil {
@@ -290,15 +290,7 @@ func (c *{{ $client }}) CreateWithRelated(ctx context.Context, input *{{ .Nested
 		// Terminal read — only when the caller selected a relationship; the
 		// parent write above stripped them.
 		if {{ .Nested.SelectsRelationshipFunc }}(options.FieldOptions) {
-			reloaded, err := c.Get(ctx, parent.{{ $pk }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-				*o = options
-				o.SkipHooks = true
-				o.LockMode = sql.LockNone
-			})
-			if err != nil {
-				return err
-			}
-			result = reloaded
+{{- template "shared/written-row-reload" (writtenRowCtx . (printf "parent.%s" $pk) false) }}
 		}
 		return nil
 	}, database.TxOptions{CallbackMode: c.callbackMode})
@@ -362,15 +354,7 @@ func (c *{{ $client }}) UpdateWithRelated(ctx context.Context, id {{ (index .PKC
 {{- end }}
 
 		if {{ .Nested.SelectsRelationshipFunc }}(options.FieldOptions) {
-			reloaded, err := c.Get(ctx, parent.{{ $pk }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-				*o = options
-				o.SkipHooks = true
-				o.LockMode = sql.LockNone
-			})
-			if err != nil {
-				return err
-			}
-			result = reloaded
+{{- template "shared/written-row-reload" (writtenRowCtx . (printf "parent.%s" $pk) false) }}
 		}
 		return nil
 	}, database.TxOptions{CallbackMode: c.callbackMode})
@@ -422,15 +406,7 @@ func (c *{{ $client }}) UpsertWithRelated(ctx context.Context, input *{{ .Nested
 {{- end }}
 
 		if {{ .Nested.SelectsRelationshipFunc }}(options.FieldOptions) {
-			reloaded, err := c.Get(ctx, parent.{{ $pk }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-				*o = options
-				o.SkipHooks = true
-				o.LockMode = sql.LockNone
-			})
-			if err != nil {
-				return err
-			}
-			result = reloaded
+{{- template "shared/written-row-reload" (writtenRowCtx . (printf "parent.%s" $pk) false) }}
 		}
 		return nil
 	}, database.TxOptions{CallbackMode: c.callbackMode})

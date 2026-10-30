@@ -1063,9 +1063,9 @@ func (c *keyOnlyRowClient) insertUpsertAndResolveID(ctx context.Context, conn da
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -1286,8 +1286,8 @@ func (c *keyOnlyRowClient) UpsertMany(ctx context.Context, inputs []*CreateKeyOn
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.

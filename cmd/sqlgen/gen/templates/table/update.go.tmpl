@@ -4,6 +4,7 @@
 {{- $structCamel := .StructName | toCamelCase -}}
 {{- $captureTenant := and .Tenancy .Tenancy.Tenanted (not .Tenancy.InPrimaryKey) }}
 {{- if .Operations.Update }}
+{{- $key := "id" }}{{ if .CompositePK }}{{ $key = "pk" }}{{ end }}
 
 // Update partially updates a {{ $singular }} by primary key and returns the updated entity.
 // Only fields where IsSet() is true are included in the SET clause. If no fields are
@@ -40,7 +41,7 @@ func (c *{{ $structCamel }}Client) Update(ctx context.Context, {{ if .CompositeP
 			if err != nil {
 				return nil, fmt.Errorf("update {{ $singular }}: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// — single-resolve.
 			// An explicit tenant is not cached: it rides on CallOptions, which
 			// every internal call inherits, and resolveTenant honours it ahead of
@@ -96,30 +97,7 @@ func (c *{{ $structCamel }}Client) Update(ctx context.Context, {{ if .CompositeP
 			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 				return nil, nil
 			}
-
-{{- if .StrictUpdates }}
-
-			return c.Get(ctx, {{ if .CompositePK }}pk{{ else }}id{{ end }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-				*o = options
-				o.SkipHooks = true
-				o.LockMode = sql.LockNone
-			})
-{{- else }}
-
-			current, err := c.Get(ctx, {{ if .CompositePK }}pk{{ else }}id{{ end }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-				*o = options
-				o.SkipHooks = true
-				o.LockMode = sql.LockNone
-			})
-			// Without strict updates a key that matches no row is not an
-			// error: there is no current entity, so Update returns no entity
-			// and a nil error, exactly as it does after a write that matched
-			// nothing.
-			if errors.Is(err, ErrNotFound) {
-				return nil, nil
-			}
-			return current, err
-{{- end }}
+{{ template "shared/written-row" (writtenRowCtx . $key (not .StrictUpdates)) }}
 		}
 {{- range .UpdateColumns }}
 
@@ -279,12 +257,7 @@ func (c *{{ $structCamel }}Client) Update(ctx context.Context, {{ if .CompositeP
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-
-		return c.Get(ctx, {{ if .CompositePK }}pk{{ else }}id{{ end }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
-		})
+{{ template "shared/written-row" (writtenRowCtx . $key false) }}
 	})
 	if err != nil {
 		return nil, err
@@ -848,7 +821,7 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 {{- if .CompositePK }}
 
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{PKs: allPKs},
+			Filter: &{{ .StructName }}Filter{PKs: allPKs{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
 			Limit:  new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
 			*o = options
@@ -866,6 +839,9 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 			Filter: &{{ .StructName }}Filter{
 				{{ $pkCol.FieldName }}: &comparator.ID{In: idStrings},
+{{- with softDeleteFilterAny . }}
+				{{ $.SoftDelete.FieldName }}: {{ . }},
+{{- end }}
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
@@ -877,6 +853,9 @@ func (c *{{ $structCamel }}Client) UpdateMany(ctx context.Context, items []Updat
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 			Filter: &{{ .StructName }}Filter{
 				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "allIDs" false }},
+{{- with softDeleteFilterAny . }}
+				{{ $.SoftDelete.FieldName }}: {{ . }},
+{{- end }}
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
@@ -990,8 +969,19 @@ func (c *{{ $structCamel }}Client) UpdateWhere(ctx context.Context, filter *{{ .
 			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 				return nil, nil
 			}
+{{- with softDeleteFilterAny . }}
+			// The rows a write would address include soft-deleted ones: a
+			// filter that leaves the {{ $.SoftDelete.FieldName }} comparator unset reads them
+			// back with an empty one, so GetMany adds no "is not deleted" condition.
+			readFilter := filter
+			if filter.{{ $.SoftDelete.FieldName }} == nil {
+				scoped := *filter
+				scoped.{{ $.SoftDelete.FieldName }} = {{ . }}
+				readFilter = &scoped
+			}
+{{- end }}
 			return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-				Filter: filter,
+				Filter: {{ if .SoftDelete }}readFilter{{ else }}filter{{ end }},
 				Limit:  new(0),
 			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
 				*o = options
@@ -1064,7 +1054,7 @@ func (c *{{ $structCamel }}Client) UpdateWhere(ctx context.Context, filter *{{ .
 		}
 
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{PKs: pks},
+			Filter: &{{ .StructName }}Filter{PKs: pks{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
 			Limit:  new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
 			*o = options
@@ -1109,7 +1099,7 @@ func (c *{{ $structCamel }}Client) UpdateWhere(ctx context.Context, filter *{{ .
 		}
 
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{PKs: pks},
+			Filter: &{{ .StructName }}Filter{PKs: pks{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
 			Limit:  new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
 			*o = options
@@ -1177,6 +1167,9 @@ func (c *{{ $structCamel }}Client) UpdateWhere(ctx context.Context, filter *{{ .
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 			Filter: &{{ .StructName }}Filter{
 				{{ $pkCol.FieldName }}: &comparator.ID{In: ids},
+{{- with softDeleteFilterAny . }}
+				{{ $.SoftDelete.FieldName }}: {{ . }},
+{{- end }}
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
@@ -1226,6 +1219,9 @@ func (c *{{ $structCamel }}Client) UpdateWhere(ctx context.Context, filter *{{ .
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 			Filter: &{{ .StructName }}Filter{
 				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids" false }},
+{{- with softDeleteFilterAny . }}
+				{{ $.SoftDelete.FieldName }}: {{ . }},
+{{- end }}
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
@@ -1274,6 +1270,9 @@ func (c *{{ $structCamel }}Client) UpdateWhere(ctx context.Context, filter *{{ .
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 			Filter: &{{ .StructName }}Filter{
 				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "ids" false }},
+{{- with softDeleteFilterAny . }}
+				{{ $.SoftDelete.FieldName }}: {{ . }},
+{{- end }}
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {

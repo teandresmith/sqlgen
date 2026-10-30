@@ -478,11 +478,27 @@ func (c *counterClient) Create(ctx context.Context, input *CreateCounterInput, o
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[CounterFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[CounterFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -562,7 +578,8 @@ func (c *counterClient) CreateMany(ctx context.Context, inputs []*CreateCounterI
 		}
 		return c.GetMany(ctx, &GetCountersInput{
 			Filter: &CounterFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
+				ID:        &comparator.Number[int64]{In: allIDs},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[CounterFieldOptions]) {
@@ -697,19 +714,31 @@ func (c *counterClient) Update(ctx context.Context, id int64, input *UpdateCount
 				return nil, nil
 			}
 
-			current, err := c.Get(ctx, id, func(o *CallOptions[CounterFieldOptions]) {
+			// Read the row back whether or not it is soft-deleted: the empty
+			// DeletedAt comparator keeps GetMany's default "is not deleted"
+			// condition out.
+			written, err := c.GetMany(ctx, &GetCountersInput{
+				Filter: &CounterFilter{
+					ID:        &comparator.Number[int64]{Eq: new(id)},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(1),
+			}, func(o *CallOptions[CounterFieldOptions]) {
 				*o = options
 				o.SkipHooks = true
 				o.LockMode = sql.LockNone
 			})
-			// Without strict updates a key that matches no row is not an
-			// error: there is no current entity, so Update returns no entity
-			// and a nil error, exactly as it does after a write that matched
-			// nothing.
-			if errors.Is(err, ErrNotFound) {
+			if err != nil {
+				return nil, err
+			}
+			if len(written) == 0 {
+				// Without strict updates a key that matches no row is not an
+				// error: there is no current entity, so Update returns no entity
+				// and a nil error, exactly as it does after a write that matched
+				// nothing.
 				return nil, nil
 			}
-			return current, err
+			return written[0], nil
 		}
 
 		// Auto-set updated_at to current time if not explicitly provided
@@ -760,11 +789,27 @@ func (c *counterClient) Update(ctx context.Context, id int64, input *UpdateCount
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[CounterFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[CounterFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -905,7 +950,8 @@ func (c *counterClient) UpdateMany(ctx context.Context, items []UpdateCounterIte
 		}
 		return c.GetMany(ctx, &GetCountersInput{
 			Filter: &CounterFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
+				ID:        &comparator.Number[int64]{In: allIDs},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[CounterFieldOptions]) {
@@ -967,8 +1013,17 @@ func (c *counterClient) UpdateWhere(ctx context.Context, filter *CounterFilter, 
 			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 				return nil, nil
 			}
+			// The rows a write would address include soft-deleted ones: a
+			// filter that leaves the DeletedAt comparator unset reads them
+			// back with an empty one, so GetMany adds no "is not deleted" condition.
+			readFilter := filter
+			if filter.DeletedAt == nil {
+				scoped := *filter
+				scoped.DeletedAt = &comparator.NullableTime{}
+				readFilter = &scoped
+			}
 			return c.GetMany(ctx, &GetCountersInput{
-				Filter: filter,
+				Filter: readFilter,
 				Limit:  new(0),
 			}, func(o *CallOptions[CounterFieldOptions]) {
 				*o = options
@@ -1008,7 +1063,8 @@ func (c *counterClient) UpdateWhere(ctx context.Context, filter *CounterFilter, 
 
 		return c.GetMany(ctx, &GetCountersInput{
 			Filter: &CounterFilter{
-				ID: &comparator.Number[int64]{In: ids},
+				ID:        &comparator.Number[int64]{In: ids},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[CounterFieldOptions]) {
@@ -1753,11 +1809,27 @@ func (c *counterClient) Upsert(ctx context.Context, input *CreateCounterInput, t
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[CounterFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetCountersInput{
+			Filter: &CounterFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[CounterFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -1954,7 +2026,8 @@ func (c *counterClient) UpsertMany(ctx context.Context, inputs []*CreateCounterI
 
 		return c.GetMany(ctx, &GetCountersInput{
 			Filter: &CounterFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
+				ID:        &comparator.Number[int64]{In: rowIDs},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[CounterFieldOptions]) {
@@ -1989,8 +2062,8 @@ func (c *counterClient) UpsertMany(ctx context.Context, inputs []*CreateCounterI
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -3305,11 +3378,27 @@ func (c *documentClient) Create(ctx context.Context, input *CreateDocumentInput,
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[DocumentFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetDocumentsInput{
+			Filter: &DocumentFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[DocumentFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -3379,7 +3468,8 @@ func (c *documentClient) CreateMany(ctx context.Context, inputs []*CreateDocumen
 		}
 		return c.GetMany(ctx, &GetDocumentsInput{
 			Filter: &DocumentFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
+				ID:        &comparator.Number[int64]{In: allIDs},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[DocumentFieldOptions]) {
@@ -3508,11 +3598,27 @@ func (c *documentClient) Update(ctx context.Context, id int64, input *UpdateDocu
 				return nil, nil
 			}
 
-			return c.Get(ctx, id, func(o *CallOptions[DocumentFieldOptions]) {
+			// Read the row back whether or not it is soft-deleted: the empty
+			// DeletedAt comparator keeps GetMany's default "is not deleted"
+			// condition out.
+			written, err := c.GetMany(ctx, &GetDocumentsInput{
+				Filter: &DocumentFilter{
+					ID:        &comparator.Number[int64]{Eq: new(id)},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(1),
+			}, func(o *CallOptions[DocumentFieldOptions]) {
 				*o = options
 				o.SkipHooks = true
 				o.LockMode = sql.LockNone
 			})
+			if err != nil {
+				return nil, err
+			}
+			if len(written) == 0 {
+				return nil, ErrNotFound
+			}
+			return written[0], nil
 		}
 		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
 
@@ -3552,11 +3658,27 @@ func (c *documentClient) Update(ctx context.Context, id int64, input *UpdateDocu
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[DocumentFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetDocumentsInput{
+			Filter: &DocumentFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[DocumentFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -3686,7 +3808,8 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 		}
 		return c.GetMany(ctx, &GetDocumentsInput{
 			Filter: &DocumentFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
+				ID:        &comparator.Number[int64]{In: allIDs},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[DocumentFieldOptions]) {
@@ -3742,8 +3865,17 @@ func (c *documentClient) UpdateWhere(ctx context.Context, filter *DocumentFilter
 			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 				return nil, nil
 			}
+			// The rows a write would address include soft-deleted ones: a
+			// filter that leaves the DeletedAt comparator unset reads them
+			// back with an empty one, so GetMany adds no "is not deleted" condition.
+			readFilter := filter
+			if filter.DeletedAt == nil {
+				scoped := *filter
+				scoped.DeletedAt = &comparator.NullableTime{}
+				readFilter = &scoped
+			}
 			return c.GetMany(ctx, &GetDocumentsInput{
-				Filter: filter,
+				Filter: readFilter,
 				Limit:  new(0),
 			}, func(o *CallOptions[DocumentFieldOptions]) {
 				*o = options
@@ -3778,7 +3910,8 @@ func (c *documentClient) UpdateWhere(ctx context.Context, filter *DocumentFilter
 
 		return c.GetMany(ctx, &GetDocumentsInput{
 			Filter: &DocumentFilter{
-				ID: &comparator.Number[int64]{In: ids},
+				ID:        &comparator.Number[int64]{In: ids},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[DocumentFieldOptions]) {
@@ -4511,11 +4644,27 @@ func (c *documentClient) Upsert(ctx context.Context, input *CreateDocumentInput,
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[DocumentFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetDocumentsInput{
+			Filter: &DocumentFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[DocumentFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -4702,7 +4851,8 @@ func (c *documentClient) UpsertMany(ctx context.Context, inputs []*CreateDocumen
 
 		return c.GetMany(ctx, &GetDocumentsInput{
 			Filter: &DocumentFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
+				ID:        &comparator.Number[int64]{In: rowIDs},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[DocumentFieldOptions]) {
@@ -4737,8 +4887,8 @@ func (c *documentClient) UpsertMany(ctx context.Context, inputs []*CreateDocumen
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -5946,11 +6096,27 @@ func (c *labelClient) Create(ctx context.Context, input *CreateLabelInput, opts 
 			return nil, nil
 		}
 
-		return c.Get(ctx, input.Name, func(o *CallOptions[LabelFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{
+				Name:      &comparator.ID{Eq: new(input.Name)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[LabelFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -6031,7 +6197,8 @@ func (c *labelClient) CreateMany(ctx context.Context, inputs []*CreateLabelInput
 		}
 		return c.GetMany(ctx, &GetLabelsInput{
 			Filter: &LabelFilter{
-				Name: &comparator.ID{In: idStrings},
+				Name:      &comparator.ID{In: idStrings},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[LabelFieldOptions]) {
@@ -6080,11 +6247,27 @@ func (c *labelClient) Update(ctx context.Context, id string, input *UpdateLabelI
 				return nil, nil
 			}
 
-			return c.Get(ctx, id, func(o *CallOptions[LabelFieldOptions]) {
+			// Read the row back whether or not it is soft-deleted: the empty
+			// DeletedAt comparator keeps GetMany's default "is not deleted"
+			// condition out.
+			written, err := c.GetMany(ctx, &GetLabelsInput{
+				Filter: &LabelFilter{
+					Name:      &comparator.ID{Eq: new(id)},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(1),
+			}, func(o *CallOptions[LabelFieldOptions]) {
 				*o = options
 				o.SkipHooks = true
 				o.LockMode = sql.LockNone
 			})
+			if err != nil {
+				return nil, err
+			}
+			if len(written) == 0 {
+				return nil, ErrNotFound
+			}
+			return written[0], nil
 		}
 		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("name")).Eq(id)}
 
@@ -6124,11 +6307,27 @@ func (c *labelClient) Update(ctx context.Context, id string, input *UpdateLabelI
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[LabelFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{
+				Name:      &comparator.ID{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[LabelFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -6260,7 +6459,8 @@ func (c *labelClient) UpdateMany(ctx context.Context, items []UpdateLabelItem, o
 		}
 		return c.GetMany(ctx, &GetLabelsInput{
 			Filter: &LabelFilter{
-				Name: &comparator.ID{In: idStrings},
+				Name:      &comparator.ID{In: idStrings},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[LabelFieldOptions]) {
@@ -6313,8 +6513,17 @@ func (c *labelClient) UpdateWhere(ctx context.Context, filter *LabelFilter, inpu
 			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 				return nil, nil
 			}
+			// The rows a write would address include soft-deleted ones: a
+			// filter that leaves the DeletedAt comparator unset reads them
+			// back with an empty one, so GetMany adds no "is not deleted" condition.
+			readFilter := filter
+			if filter.DeletedAt == nil {
+				scoped := *filter
+				scoped.DeletedAt = &comparator.NullableTime{}
+				readFilter = &scoped
+			}
 			return c.GetMany(ctx, &GetLabelsInput{
-				Filter: filter,
+				Filter: readFilter,
 				Limit:  new(0),
 			}, func(o *CallOptions[LabelFieldOptions]) {
 				*o = options
@@ -6349,7 +6558,8 @@ func (c *labelClient) UpdateWhere(ctx context.Context, filter *LabelFilter, inpu
 
 		return c.GetMany(ctx, &GetLabelsInput{
 			Filter: &LabelFilter{
-				Name: &comparator.ID{In: ids},
+				Name:      &comparator.ID{In: ids},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[LabelFieldOptions]) {
@@ -7099,11 +7309,27 @@ func (c *labelClient) Upsert(ctx context.Context, input *CreateLabelInput, targe
 			return nil, nil
 		}
 
-		return c.Get(ctx, input.Name, func(o *CallOptions[LabelFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetLabelsInput{
+			Filter: &LabelFilter{
+				Name:      &comparator.ID{Eq: new(input.Name)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[LabelFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -7250,7 +7476,8 @@ func (c *labelClient) UpsertMany(ctx context.Context, inputs []*CreateLabelInput
 		}
 		return c.GetMany(ctx, &GetLabelsInput{
 			Filter: &LabelFilter{
-				Name: &comparator.ID{In: idStrings},
+				Name:      &comparator.ID{In: idStrings},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[LabelFieldOptions]) {
@@ -11399,8 +11626,8 @@ func (c *productClient) UpsertMany(ctx context.Context, inputs []*CreateProductI
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -12732,11 +12959,27 @@ func (c *revisionClient) Create(ctx context.Context, input *CreateRevisionInput,
 			return nil, nil
 		}
 
-		return c.Get(ctx, RevisionPK{DocumentID: input.DocumentID, Number: input.Number}, func(o *CallOptions[RevisionFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{
+				PKs:       []RevisionPK{{DocumentID: input.DocumentID, Number: input.Number}},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[RevisionFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -12815,7 +13058,7 @@ func (c *revisionClient) CreateMany(ctx context.Context, inputs []*CreateRevisio
 
 		// Re-fetch via composite PK filter
 		return c.GetMany(ctx, &GetRevisionsInput{
-			Filter: &RevisionFilter{PKs: allPKs},
+			Filter: &RevisionFilter{PKs: allPKs, DeletedAt: &comparator.NullableTime{}},
 			Limit:  new(0),
 		}, func(o *CallOptions[RevisionFieldOptions]) {
 			*o = options
@@ -12866,11 +13109,27 @@ func (c *revisionClient) Update(ctx context.Context, pk RevisionPK, input *Updat
 				return nil, nil
 			}
 
-			return c.Get(ctx, pk, func(o *CallOptions[RevisionFieldOptions]) {
+			// Read the row back whether or not it is soft-deleted: the empty
+			// DeletedAt comparator keeps GetMany's default "is not deleted"
+			// condition out.
+			written, err := c.GetMany(ctx, &GetRevisionsInput{
+				Filter: &RevisionFilter{
+					PKs:       []RevisionPK{pk},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(1),
+			}, func(o *CallOptions[RevisionFieldOptions]) {
 				*o = options
 				o.SkipHooks = true
 				o.LockMode = sql.LockNone
 			})
+			if err != nil {
+				return nil, err
+			}
+			if len(written) == 0 {
+				return nil, ErrNotFound
+			}
+			return written[0], nil
 		}
 		updateConds := sql.BuildCompositePKConditions(c.dialect,
 			[]string{"document_id", "number"},
@@ -12912,11 +13171,27 @@ func (c *revisionClient) Update(ctx context.Context, pk RevisionPK, input *Updat
 			return nil, nil
 		}
 
-		return c.Get(ctx, pk, func(o *CallOptions[RevisionFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{
+				PKs:       []RevisionPK{pk},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[RevisionFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -13048,7 +13323,7 @@ func (c *revisionClient) UpdateMany(ctx context.Context, items []UpdateRevisionI
 		}
 
 		return c.GetMany(ctx, &GetRevisionsInput{
-			Filter: &RevisionFilter{PKs: allPKs},
+			Filter: &RevisionFilter{PKs: allPKs, DeletedAt: &comparator.NullableTime{}},
 			Limit:  new(0),
 		}, func(o *CallOptions[RevisionFieldOptions]) {
 			*o = options
@@ -13103,8 +13378,17 @@ func (c *revisionClient) UpdateWhere(ctx context.Context, filter *RevisionFilter
 			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 				return nil, nil
 			}
+			// The rows a write would address include soft-deleted ones: a
+			// filter that leaves the DeletedAt comparator unset reads them
+			// back with an empty one, so GetMany adds no "is not deleted" condition.
+			readFilter := filter
+			if filter.DeletedAt == nil {
+				scoped := *filter
+				scoped.DeletedAt = &comparator.NullableTime{}
+				readFilter = &scoped
+			}
 			return c.GetMany(ctx, &GetRevisionsInput{
-				Filter: filter,
+				Filter: readFilter,
 				Limit:  new(0),
 			}, func(o *CallOptions[RevisionFieldOptions]) {
 				*o = options
@@ -13138,7 +13422,7 @@ func (c *revisionClient) UpdateWhere(ctx context.Context, filter *RevisionFilter
 		}
 
 		return c.GetMany(ctx, &GetRevisionsInput{
-			Filter: &RevisionFilter{PKs: pks},
+			Filter: &RevisionFilter{PKs: pks, DeletedAt: &comparator.NullableTime{}},
 			Limit:  new(0),
 		}, func(o *CallOptions[RevisionFieldOptions]) {
 			*o = options
@@ -13914,11 +14198,27 @@ func (c *revisionClient) Upsert(ctx context.Context, input *CreateRevisionInput,
 			return nil, nil
 		}
 
-		return c.Get(ctx, RevisionPK{DocumentID: input.DocumentID, Number: input.Number}, func(o *CallOptions[RevisionFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetRevisionsInput{
+			Filter: &RevisionFilter{
+				PKs:       []RevisionPK{{DocumentID: input.DocumentID, Number: input.Number}},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[RevisionFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -14062,7 +14362,7 @@ func (c *revisionClient) UpsertMany(ctx context.Context, inputs []*CreateRevisio
 
 		// Re-fetch via composite PK filter
 		return c.GetMany(ctx, &GetRevisionsInput{
-			Filter: &RevisionFilter{PKs: rowPKs},
+			Filter: &RevisionFilter{PKs: rowPKs, DeletedAt: &comparator.NullableTime{}},
 			Limit:  new(0),
 		}, func(o *CallOptions[RevisionFieldOptions]) {
 			*o = options

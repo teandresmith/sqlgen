@@ -424,6 +424,11 @@ func TestTenantCapture_rendersSyntacticallyValidGo(t *testing.T) {
 		tc.Operations.Upsert = true
 		tc.Operations.Increment = true
 		tc.SoftDelete = &gen.SoftDeleteContext{Column: "deleted_at", FieldName: "DeletedAt", Strategy: "timestamp"}
+		// Production wires the soft-delete column's filter field with the
+		// SoftDelete context; the write read-backs name its comparator.
+		tc.FilterFields = append(tc.FilterFields, gen.FilterFieldContext{
+			FieldName: "DeletedAt", ComparatorType: "*comparator.NullableTime", Filterable: true, IsSoftDeleteColumn: true,
+		})
 		tc.ConflictTargets = []gen.ConflictTargetContext{
 			{ConstantName: "ProductConflictPK", Columns: []string{"id"}, CoversPK: true, Comment: "PRIMARY KEY (id)"},
 		}

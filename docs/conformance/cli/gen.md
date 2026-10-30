@@ -208,7 +208,7 @@
 | gen.no-pk.override-full-surface | A `primary_key.columns` override makes the table generate with the full PK-keyed surface, as with a native `PRIMARY KEY` | `unit: cmd/sqlgen/gen: TestBuildTableContexts_NoPK_WithOverride_NotSkipped`; `unit: cmd/sqlgen/gen: TestRelationshipTargets_InferredEdgeIntoSkippedTableDropped/primary key declared` | all | |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: 73ed69217fa7fa64 -->
+<!-- prd: 9.8 sha256: 94b2ece3a96a1c0a -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -230,7 +230,7 @@
 | gen.input.json-tag-only | Input structs (`Create*Input`, `Update*Input`) are never scanned from a row: each field carries a `json` tag naming its column and no `db` tag | `unit: cmd/sqlgen/gen: TestInputTemplates_FieldsCarryJSONTagOnly/create input`; `unit: cmd/sqlgen/gen: TestInputTemplates_FieldsCarryJSONTagOnly/update input` | all |  |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: 70b7ab3b64fb2cb5 -->
+<!-- prd: 9.9 sha256: b45f1f2cc0c0ce49 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

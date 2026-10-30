@@ -420,11 +420,27 @@ func (c *tagClient) Create(ctx context.Context, input *CreateTagInput, opts ...f
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[TagFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// IsDeleted comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetTagsInput{
+			Filter: &TagFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				IsDeleted: &comparator.Bool{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[TagFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -494,7 +510,8 @@ func (c *tagClient) CreateMany(ctx context.Context, inputs []*CreateTagInput, op
 		}
 		return c.GetMany(ctx, &GetTagsInput{
 			Filter: &TagFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
+				ID:        &comparator.Number[int64]{In: allIDs},
+				IsDeleted: &comparator.Bool{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[TagFieldOptions]) {
@@ -588,11 +605,27 @@ func (c *tagClient) Update(ctx context.Context, id int64, input *UpdateTagInput,
 				return nil, nil
 			}
 
-			return c.Get(ctx, id, func(o *CallOptions[TagFieldOptions]) {
+			// Read the row back whether or not it is soft-deleted: the empty
+			// IsDeleted comparator keeps GetMany's default "is not deleted"
+			// condition out.
+			written, err := c.GetMany(ctx, &GetTagsInput{
+				Filter: &TagFilter{
+					ID:        &comparator.Number[int64]{Eq: new(id)},
+					IsDeleted: &comparator.Bool{},
+				},
+				Limit: new(1),
+			}, func(o *CallOptions[TagFieldOptions]) {
 				*o = options
 				o.SkipHooks = true
 				o.LockMode = sql.LockNone
 			})
+			if err != nil {
+				return nil, err
+			}
+			if len(written) == 0 {
+				return nil, ErrNotFound
+			}
+			return written[0], nil
 		}
 
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
@@ -618,11 +651,27 @@ func (c *tagClient) Update(ctx context.Context, id int64, input *UpdateTagInput,
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[TagFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// IsDeleted comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetTagsInput{
+			Filter: &TagFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				IsDeleted: &comparator.Bool{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[TagFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -738,7 +787,8 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 		}
 		return c.GetMany(ctx, &GetTagsInput{
 			Filter: &TagFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
+				ID:        &comparator.Number[int64]{In: allIDs},
+				IsDeleted: &comparator.Bool{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[TagFieldOptions]) {
@@ -794,8 +844,17 @@ func (c *tagClient) UpdateWhere(ctx context.Context, filter *TagFilter, input *U
 			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 				return nil, nil
 			}
+			// The rows a write would address include soft-deleted ones: a
+			// filter that leaves the IsDeleted comparator unset reads them
+			// back with an empty one, so GetMany adds no "is not deleted" condition.
+			readFilter := filter
+			if filter.IsDeleted == nil {
+				scoped := *filter
+				scoped.IsDeleted = &comparator.Bool{}
+				readFilter = &scoped
+			}
 			return c.GetMany(ctx, &GetTagsInput{
-				Filter: filter,
+				Filter: readFilter,
 				Limit:  new(0),
 			}, func(o *CallOptions[TagFieldOptions]) {
 				*o = options
@@ -840,7 +899,8 @@ func (c *tagClient) UpdateWhere(ctx context.Context, filter *TagFilter, input *U
 		// Fetch affected entities with FieldOptions
 		return c.GetMany(ctx, &GetTagsInput{
 			Filter: &TagFilter{
-				ID: &comparator.Number[int64]{In: ids},
+				ID:        &comparator.Number[int64]{In: ids},
+				IsDeleted: &comparator.Bool{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[TagFieldOptions]) {
@@ -1551,11 +1611,27 @@ func (c *tagClient) Upsert(ctx context.Context, input *CreateTagInput, target Ta
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[TagFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// IsDeleted comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetTagsInput{
+			Filter: &TagFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				IsDeleted: &comparator.Bool{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[TagFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -1616,9 +1692,9 @@ func (c *tagClient) insertUpsertAndResolveID(ctx context.Context, conn database.
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -1811,7 +1887,8 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 
 		return c.GetMany(ctx, &GetTagsInput{
 			Filter: &TagFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
+				ID:        &comparator.Number[int64]{In: rowIDs},
+				IsDeleted: &comparator.Bool{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[TagFieldOptions]) {
@@ -1846,8 +1923,8 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.

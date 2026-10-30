@@ -1,0 +1,111 @@
+{{- /*
+shared/written-row emits the trailing read of a single-row write method
+(Create, Update, Upsert): it returns the row the write wrote. The fragment
+expects a WrittenRowContext (writtenRowCtx) as ".", and the enclosing closure's
+ctx and options.
+
+On a table with a soft-delete column the read goes through GetMany with the
+soft-delete comparator set and empty, so no default "is not deleted" condition
+applies: a write that leaves its row soft-deleted still returns it. Without
+one it is the plain Get. A key that reads back no row is ErrNotFound, or
+nil, nil when MissingNil is set.
+*/ -}}
+{{- define "shared/written-row" -}}
+{{- if .SoftDelete }}
+		// Read the row back whether or not it is soft-deleted: the empty
+		// {{ .SoftDelete.FieldName }} comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+			Filter: &{{ .StructName }}Filter{
+{{- if .CompositePK }}
+				PKs: []{{ .CompositePKStructName }}{ {{- .PKsElem -}} },
+{{- else }}
+				{{ (index .PKColumns 0).FieldName }}: {{ pkFilterExpr (index .PKColumns 0) .Key }},
+{{- end }}
+				{{ .SoftDelete.FieldName }}: {{ softDeleteFilterAny .TableContext }},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+{{- if .MissingNil }}
+			// Without strict updates a key that matches no row is not an
+			// error: there is no current entity, so Update returns no entity
+			// and a nil error, exactly as it does after a write that matched
+			// nothing.
+			return nil, nil
+{{- else }}
+			return nil, ErrNotFound
+{{- end }}
+		}
+		return written[0], nil
+{{- else if .MissingNil }}
+			current, err := c.Get(ctx, {{ .Key }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			// Without strict updates a key that matches no row is not an
+			// error: there is no current entity, so Update returns no entity
+			// and a nil error, exactly as it does after a write that matched
+			// nothing.
+			if errors.Is(err, ErrNotFound) {
+				return nil, nil
+			}
+			return current, err
+{{- else }}
+		return c.Get(ctx, {{ .Key }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+{{- end }}
+{{- end -}}
+
+
+{{- /*
+shared/written-row-reload is shared/written-row for a nested write's terminal
+read: inside the transaction closure it sets result to the parent row read
+back by key, or returns the error. Like the parent write's own read, it
+returns the row whether or not it is soft-deleted. Single-column keys only.
+*/ -}}
+{{- define "shared/written-row-reload" -}}
+{{- if .SoftDelete }}
+			// Read the parent back whether or not it is soft-deleted, as the
+			// parent write's own read does.
+			reloaded, err := c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+				Filter: &{{ .StructName }}Filter{
+					{{ (index .PKColumns 0).FieldName }}: {{ pkFilterExpr (index .PKColumns 0) .Key }},
+					{{ .SoftDelete.FieldName }}: {{ softDeleteFilterAny .TableContext }},
+				},
+				Limit: new(1),
+			}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			if len(reloaded) == 0 {
+				return ErrNotFound
+			}
+			result = reloaded[0]
+{{- else }}
+			reloaded, err := c.Get(ctx, {{ .Key }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+{{- end }}
+{{- end -}}

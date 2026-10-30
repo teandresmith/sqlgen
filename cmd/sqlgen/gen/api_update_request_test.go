@@ -1,6 +1,7 @@
 package gen_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -138,7 +139,8 @@ func TestBulkUpdateResolver_OperatorsRunInOneTransaction(t *testing.T) {
 // TestBulkUpdateResolver_RowKeysFollowTheKeyShape pins the key re-read for the
 // three key shapes the client's own UpdateWhere read-back distinguishes: a
 // string-compared single column, a numeric single column, and a composite
-// key, which goes through the filter's PKs member. Asserted on the rendered
+// key, which goes through the filter's PKs member; on a soft-delete table the
+// soft-delete comparator is set empty. Asserted on the rendered
 // bulk method, so the models alias is the template's own.
 func TestBulkUpdateResolver_RowKeysFollowTheKeyShape(t *testing.T) {
 	tests := []struct {
@@ -174,6 +176,21 @@ func TestBulkUpdateResolver_RowKeysFollowTheKeyShape(t *testing.T) {
 			},
 		},
 		{
+			name: "soft-delete table reads back soft-deleted rows",
+			schema: &parser.Schema{Tables: []parser.Table{{
+				Name: "counters",
+				Columns: []parser.Column{
+					{Name: "id", Type: "bigint", PrimaryKey: true},
+					{Name: "hits", Type: "integer"},
+					{Name: "deleted_at", Type: "timestamptz", Nullable: true},
+				},
+			}}},
+			method: "UpdateCounters",
+			want: []string{
+				"Filter: &models.CounterFilter{ID: &comparator.Number[int64]{In: keys}, DeletedAt: &comparator.NullableTime{}},",
+			},
+		},
+		{
 			name: "composite key",
 			schema: &parser.Schema{Tables: []parser.Table{{
 				Name: "tallies",
@@ -200,6 +217,93 @@ func TestBulkUpdateResolver_RowKeysFollowTheKeyShape(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestUpdateResolver_SoftDeleteTableReadsBackByKey pins the single update's
+// read-back on a soft-delete table: GetMany by its key with the soft-delete
+// comparator set empty, so a row the set fields soft-deleted is returned,
+// for a single-column and a composite key, with the comparator package among
+// the resolver file's key imports. A table without soft delete keeps Get.
+func TestUpdateResolver_SoftDeleteTableReadsBackByKey(t *testing.T) {
+	tests := []struct {
+		name   string
+		schema *parser.Schema
+		method string
+		want   []string
+	}{
+		{
+			name: "single-column key",
+			schema: &parser.Schema{Tables: []parser.Table{{
+				Name: "counters",
+				Columns: []parser.Column{
+					{Name: "id", Type: "bigint", PrimaryKey: true},
+					{Name: "hits", Type: "integer"},
+					{Name: "deleted_at", Type: "timestamptz", Nullable: true},
+				},
+			}}},
+			method: "UpdateCounter",
+			want: []string{
+				"keys := []int64{int64(id)}",
+				"Filter: &models.CounterFilter{ID: &comparator.Number[int64]{In: keys}, DeletedAt: &comparator.NullableTime{}},",
+				"return nil, mapErrorToGQL(models.ErrNotFound)",
+			},
+		},
+		{
+			name: "composite key",
+			schema: &parser.Schema{Tables: []parser.Table{{
+				Name: "tallies",
+				Columns: []parser.Column{
+					{Name: "owner_id", Type: "uuid", PrimaryKey: true},
+					{Name: "slot", Type: "bigint", PrimaryKey: true},
+					{Name: "hits", Type: "integer"},
+					{Name: "deleted_at", Type: "timestamptz", Nullable: true},
+				},
+			}}},
+			method: "UpdateTally",
+			want: []string{
+				"keys := []models.TallyPK{models.TallyPK{OwnerID: ownerID, Slot: int64(slot)}}",
+				"Filter: &models.TallyFilter{PKs: keys, DeletedAt: &comparator.NullableTime{}},",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			apiCtx := resolverAPIContext(t, tt.schema, nil)
+			body := extractFunc(t, renderResolvers(t, apiCtx), tt.method)
+			for _, want := range tt.want {
+				mustContain(t, body, want)
+			}
+			if strings.Contains(body, ".Get(ctx, ") {
+				t.Errorf("%s reads back through Get, which drops a soft-deleted row:\n%s", tt.method, body)
+			}
+			if imports := apiCtx.Tables[0].RowKeys.Imports; !slices.Contains(imports, "github.com/teandresmith/sqlgen/comparator") {
+				t.Errorf("RowKeys.Imports = %v, want the comparator package", imports)
+			}
+		})
+	}
+
+	// A PK parameter is named after its column, so the read-back declares no
+	// local a column name could produce and redeclare in the same scope.
+	t.Run("a key column named key", func(t *testing.T) {
+		schema := &parser.Schema{Tables: []parser.Table{{
+			Name: "settings",
+			Columns: []parser.Column{
+				{Name: "key", Type: "text", PrimaryKey: true},
+				{Name: "value", Type: "text"},
+				{Name: "deleted_at", Type: "timestamptz", Nullable: true},
+			},
+		}}}
+		body := extractFunc(t, renderResolvers(t, resolverAPIContext(t, schema, nil)), "UpdateSetting")
+		mustContain(t, body, "keys := []string{key}")
+		if strings.Contains(body, "key :=") {
+			t.Errorf("UpdateSetting declares key, which redeclares its key parameter:\n%s", body)
+		}
+	})
+
+	t.Run("a table without soft delete keeps Get", func(t *testing.T) {
+		body := extractFunc(t, renderResolvers(t, resolverAPIContext(t, resolverTestSchema(), nil)), "UpdateProduct")
+		mustContain(t, body, "m.Client.Products().Get(ctx, ")
+	})
 }
 
 // TestPKFromRow pins the key expression the bulk method reads off a matched

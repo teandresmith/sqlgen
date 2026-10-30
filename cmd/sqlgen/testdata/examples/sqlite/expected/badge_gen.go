@@ -1441,9 +1441,9 @@ func (c *badgeClient) insertUpsertAndResolveID(ctx context.Context, conn databas
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction

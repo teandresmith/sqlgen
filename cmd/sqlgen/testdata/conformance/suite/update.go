@@ -6,10 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/teandresmith/sqlgen/comparator"
 	"github.com/teandresmith/sqlgen/database"
 	"github.com/teandresmith/sqlgen/omittable"
 
@@ -18,7 +20,83 @@ import (
 
 // update is the Update contract.
 func update(t *testing.T, h *Harness) {
-	_, _ = t, h
+	ctx := context.Background()
+
+	t.Run("returns the row it soft-deletes", func(t *testing.T) {
+		h.Reset(t)
+		d := createDocument(t, h, "d")
+		got, err := h.Client.Documents().Update(ctx, d.ID, &models.UpdateDocumentInput{
+			DeletedAt: omittable.Set(models.DeletedAt(models.Now())),
+		})
+		if err != nil {
+			t.Fatalf("Update(d, DeletedAt set) error = %v, want nil", err)
+		}
+		if got == nil || got.ID != d.ID || !upDocumentDeleted(got) {
+			t.Errorf("Update(d, DeletedAt set) = %+v, want d with DeletedAt set", got)
+		}
+		if diff := cmp.Diff([]int64{d.ID}, upDeletedDocumentIDs(t, h)); diff != "" {
+			t.Errorf("soft-deleted documents after Update (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("returns a soft-deleted row it updates", func(t *testing.T) {
+		h.Reset(t)
+		d := createDeletedDocument(t, h, "before")
+		got, err := h.Client.Documents().Update(ctx, d.ID, &models.UpdateDocumentInput{Title: omittable.Set("after")})
+		if err != nil {
+			t.Fatalf("Update(soft-deleted d, Title) error = %v, want nil", err)
+		}
+		if got == nil || got.ID != d.ID || got.Title != "after" || !upDocumentDeleted(got) {
+			t.Errorf("Update(soft-deleted d, Title) = %+v, want d titled after with DeletedAt set", got)
+		}
+		if diff := cmp.Diff([]int64{d.ID}, upDeletedDocumentIDs(t, h)); diff != "" {
+			t.Errorf("soft-deleted documents after Update (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("an empty update returns a soft-deleted row unchanged", func(t *testing.T) {
+		h.Reset(t)
+		d := createDeletedDocument(t, h, "d")
+		got, err := h.Client.Documents().Update(ctx, d.ID, &models.UpdateDocumentInput{})
+		if err != nil {
+			t.Fatalf("Update(soft-deleted d, empty input) error = %v, want nil", err)
+		}
+		if got == nil || got.ID != d.ID || got.Title != "d" || !upDocumentDeleted(got) {
+			t.Errorf("Update(soft-deleted d, empty input) = %+v, want d with DeletedAt set", got)
+		}
+	})
+
+	t.Run("without strict updates a soft-deleted row is returned, not dropped as missing", func(t *testing.T) {
+		h.Reset(t)
+		cn := upCreateDeletedCounter(t, h, "c")
+		got, err := h.Client.Counters().Update(ctx, cn.ID, &models.UpdateCounterInput{Hits: omittable.Set(int64(5))})
+		if err != nil {
+			t.Fatalf("Update(soft-deleted counter, Hits) error = %v, want nil", err)
+		}
+		if got == nil || got.ID != cn.ID || got.Hits != 5 || cmp.Equal(got.DeletedAt, models.Counter{}.DeletedAt) {
+			t.Errorf("Update(soft-deleted counter, Hits) = %+v, want the counter with Hits 5 and DeletedAt set", got)
+		}
+		got, err = h.Client.Counters().Update(ctx, cn.ID, &models.UpdateCounterInput{})
+		if err != nil {
+			t.Fatalf("Update(soft-deleted counter, empty input) error = %v, want nil", err)
+		}
+		if got == nil || got.ID != cn.ID {
+			t.Errorf("Update(soft-deleted counter, empty input) = %+v, want the counter", got)
+		}
+		// A key with no row still returns no entity and no error.
+		for _, tt := range []struct {
+			name string
+			in   *models.UpdateCounterInput
+		}{
+			{"Hits", &models.UpdateCounterInput{Hits: omittable.Set(int64(1))}},
+			{"empty input", &models.UpdateCounterInput{}},
+		} {
+			got, err := h.Client.Counters().Update(ctx, cn.ID+1000, tt.in)
+			if err != nil || got != nil {
+				t.Errorf("Update(missing key, %s) = %+v, %v, want nil, nil", tt.name, got, err)
+			}
+		}
+	})
 }
 
 // updateMany is the UpdateMany contract.
@@ -83,6 +161,30 @@ func updateMany(t *testing.T, h *Harness) {
 			t.Errorf("document titles after the failed UpdateMany (-want +got):\n%s", diff)
 		}
 		assertLiveDocuments(t, h, 4)
+	})
+
+	t.Run("returns every row it updates, soft-deleted ones included", func(t *testing.T) {
+		h.Reset(t)
+		live := createDocument(t, h, "live")
+		deleted := createDeletedDocument(t, h, "deleted")
+		got, err := h.Client.Documents().UpdateMany(ctx, []models.UpdateDocumentItem{
+			{ID: live.ID, Input: &models.UpdateDocumentInput{Title: omittable.Set("live2")}},
+			{ID: deleted.ID, Input: &models.UpdateDocumentInput{Title: omittable.Set("deleted2")}},
+		})
+		if err != nil {
+			t.Fatalf("UpdateMany([live, deleted]) error = %v, want nil", err)
+		}
+		titles := make([]string, 0, len(got))
+		for _, d := range got {
+			titles = append(titles, d.Title)
+		}
+		slices.Sort(titles)
+		if diff := cmp.Diff([]string{"deleted2", "live2"}, titles); diff != "" {
+			t.Errorf("UpdateMany([live, deleted]) returned titles (-want +got):\n%s", diff)
+		}
+		if diff := cmp.Diff([]int64{deleted.ID}, upDeletedDocumentIDs(t, h)); diff != "" {
+			t.Errorf("soft-deleted documents after UpdateMany (-want +got):\n%s", diff)
+		}
 	})
 }
 
@@ -155,4 +257,41 @@ func upDocumentTitlesIn(ctx context.Context, h *Harness) (map[int64]string, erro
 		titles[id] = title
 	}
 	return titles, rows.Err()
+}
+
+func upDocumentDeleted(d *models.Document) bool {
+	return !cmp.Equal(d.DeletedAt, models.Document{}.DeletedAt)
+}
+
+// upDeletedDocumentIDs returns the keys of the soft-deleted documents, sorted.
+func upDeletedDocumentIDs(t *testing.T, h *Harness) []int64 {
+	t.Helper()
+	docs, err := h.Client.Documents().GetMany(context.Background(), &models.GetDocumentsInput{
+		Filter: &models.DocumentFilter{DeletedAt: &comparator.NullableTime{Null: new(false)}},
+	})
+	if err != nil {
+		t.Fatalf("Documents().GetMany(DeletedAt IS NOT NULL) error = %v", err)
+	}
+	ids := make([]int64, 0, len(docs))
+	for _, d := range docs {
+		ids = append(ids, d.ID)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// upCreateDeletedCounter creates a counter and soft-deletes it, returning the
+// soft-deleted entity.
+func upCreateDeletedCounter(t *testing.T, h *Harness, name string) *models.Counter {
+	t.Helper()
+	ctx := context.Background()
+	cn, err := h.Client.Counters().Create(ctx, &models.CreateCounterInput{Name: name, UpdatedAt: omittable.Set(models.Now())})
+	if err != nil {
+		t.Fatalf("Create counter %q: %v", name, err)
+	}
+	deleted, err := h.Client.Counters().SoftDelete(ctx, cn.ID)
+	if err != nil || deleted == nil {
+		t.Fatalf("SoftDelete counter %q = %+v, %v", name, deleted, err)
+	}
+	return deleted
 }

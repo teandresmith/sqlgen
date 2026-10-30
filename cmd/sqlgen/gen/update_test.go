@@ -3,6 +3,7 @@ package gen_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"text/template"
@@ -887,6 +888,63 @@ func TestUpdateTemplate_zeroCountLooksUpRowOnMySQL(t *testing.T) {
 			gate := strings.LastIndex(body, "if matched ")
 			if count < 0 || count > lookup || gate < lookup {
 				t.Errorf("row lookup must sit between the affected-row count and the matched-row gate\n\nmethod:\n%s", body)
+			}
+		})
+	}
+}
+
+// --- Tests: the write read-back returns soft-deleted rows ---
+
+// withSoftDelete adds a timestamp soft-delete column to ctx, wired as
+// production wires it: the SoftDelete context and its filter field.
+func withSoftDelete(ctx gen.TableContext) gen.TableContext {
+	ctx.SoftDelete = &gen.SoftDeleteContext{Column: "deleted_at", FieldName: "DeletedAt", Strategy: "timestamp"}
+	ctx.FilterFields = append(slices.Clone(ctx.FilterFields), gen.FilterFieldContext{
+		FieldName: "DeletedAt", ComparatorType: "*comparator.NullableTime", Filterable: true, IsSoftDeleteColumn: true,
+	})
+	return ctx
+}
+
+// On a soft-delete table the write read-backs set an empty soft-delete
+// comparator, so GetMany injects no "is not deleted" default; elsewhere Update
+// reads back through Get.
+func TestUpdateTemplate_readBackIncludesSoftDeleted(t *testing.T) {
+	const anyDeleted = "DeletedAt: &comparator.NullableTime{},"
+	tests := []struct {
+		name         string
+		ctx          gen.TableContext
+		wantScoped   int // single-row Update read-backs scoped to every row
+		wantGet      int // single-row Update read-backs through Get
+		wantMissNil  bool
+		wantFileWide int // every scoped read-back in the file
+	}{
+		{"soft delete, strict", withSoftDelete(testUpdateContext_singlePK_postgres()), 2, 0, false, 5},
+		{"soft delete, not strict", withSoftDelete(testUpdateContext_noStrictUpdates()), 2, 0, true, 5},
+		{"no soft delete", testUpdateContext_singlePK_postgres(), 0, 2, false, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := executeUpdateTemplate(t, tt.ctx, sql.NewPostgresDialect())
+			body := singleRowUpdateBody(t, output)
+			if got := strings.Count(body, anyDeleted); got != tt.wantScoped {
+				t.Errorf("single-row Update has %d read-backs with %q, want %d\n\nbody:\n%s", got, anyDeleted, tt.wantScoped, body)
+			}
+			if got := strings.Count(body, "c.Get(ctx, id,"); got != tt.wantGet {
+				t.Errorf("single-row Update has %d read-backs through Get, want %d\n\nbody:\n%s", got, tt.wantGet, body)
+			}
+			// Without strict updates the empty-update read-back of a key with
+			// no row returns nil, nil rather than ErrNotFound.
+			from, to := strings.Index(body, "// Empty update — no fields set"), strings.Index(body, "query, args := sql.BuildUpdate")
+			if from < 0 || to < from {
+				t.Fatalf("Update body lacks the empty-update path markers (at %d and %d):\n%s", from, to, body)
+			}
+			emptyPath := body[from:to]
+			missNil := strings.Contains(emptyPath, "if len(written) == 0 {") && !strings.Contains(emptyPath, "return nil, ErrNotFound")
+			if tt.wantScoped > 0 && missNil != tt.wantMissNil {
+				t.Errorf("empty-update read-back returns nil, nil on no row = %v, want %v\n\npath:\n%s", missNil, tt.wantMissNil, emptyPath)
+			}
+			if got := strings.Count(output, anyDeleted) + strings.Count(output, "scoped.DeletedAt = &comparator.NullableTime{}"); got != tt.wantFileWide {
+				t.Errorf("file has %d read-backs scoped to every row, want %d", got, tt.wantFileWide)
 			}
 		})
 	}

@@ -70,7 +70,7 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 			if err != nil {
 				return nil, fmt.Errorf("upsert {{ $singular }}: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve).
 			// An explicit tenant is not cached: it rides on CallOptions, which
 			// every internal call inherits, and resolveTenant honours it ahead of
@@ -96,7 +96,7 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 			if err != nil {
 				return nil, fmt.Errorf("upsert {{ $singular }}: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve). The resolver's answer is cached, not
 			// this table's reading of it.
 			// An explicit tenant is not cached: it rides on CallOptions, which
@@ -177,12 +177,7 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-
-		return c.Get(ctx, id, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
-		})
+{{ template "shared/written-row" (writtenRowCtx . "id" false) }}
 {{- else }}
 
 {{- if and $captureTenant (supportsReturning) }}
@@ -298,26 +293,11 @@ func (c *{{ $structCamel }}Client) Upsert(ctx context.Context, input *Create{{ .
 			return nil, nil
 		}
 {{- if .CompositePK }}
-
-		return c.Get(ctx, {{ .CompositePKStructName }}{ {{- range .PKColumns }}{{ .FieldName }}: input.{{ .FieldName }}, {{ end -}} }, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
-		})
+{{ template "shared/written-row" (writtenRowCtx . (compositePKLiteral . "input") false) }}
 {{- else if eq .PKStrategy "app" }}
-
-		return c.Get(ctx, pkValue, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
-		})
+{{ template "shared/written-row" (writtenRowCtx . "pkValue" false) }}
 {{- else }}
-
-		return c.Get(ctx, input.{{ $pkCol.FieldName }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
-		})
+{{ template "shared/written-row" (writtenRowCtx . (printf "input.%s" $pkCol.FieldName) false) }}
 {{- end }}
 {{- end }}
 	})
@@ -483,9 +463,9 @@ func (c *{{ $structCamel }}Client) insertUpsertAndResolveID(ctx context.Context,
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction

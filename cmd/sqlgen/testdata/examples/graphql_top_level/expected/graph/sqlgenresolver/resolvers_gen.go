@@ -490,8 +490,7 @@ func (m *M) UpdateProducts(ctx context.Context, filter *models.ProductFilter, in
 		// so relationship loading stays batched. It bypasses the cache only:
 		// the writes above defer their cache invalidation to commit, and a
 		// read-through here would answer with the rows' pre-mutation state.
-		// Query hooks run as on any read, and soft-delete scoping drops a row
-		// the set fields soft-deleted, as the operator-free path does.
+		// Query hooks run as on any read.
 		res, err = m.Client.Products().GetMany(ctx, &models.GetProductsInput{
 			Filter: &models.ProductFilter{ID: &comparator.ID{In: keys}},
 			Limit:  new(0),

@@ -981,6 +981,9 @@ func renderNested(t *testing.T, tc gen.TableContext) string {
 	tmpl, err := template.New("nested.go.tmpl").
 		Funcs(gen.FuncMap(sql.NewPostgresDialect())).
 		ParseFiles(filepath.Join("templates", "table", "nested.go.tmpl"))
+	if err == nil {
+		_, err = tmpl.ParseGlob("templates/shared/_*.tmpl")
+	}
 	if err != nil {
 		t.Fatalf("parsing nested template: %v", err)
 	}
@@ -1019,6 +1022,35 @@ func TestNestedTemplate_EveryEmittedSurfaceParses(t *testing.T) {
 			}
 			renderNested(t, tc)
 		}
+	}
+}
+
+// TestNestedTemplate_TerminalReadKeepsSoftDeletedParent renders a nested
+// parent with and without a soft-delete column: with one, the terminal read
+// goes through GetMany with an empty soft-delete comparator, so a parent the
+// write left soft-deleted is read back; without one it stays the plain Get.
+func TestNestedTemplate_TerminalReadKeepsSoftDeletedParent(t *testing.T) {
+	tc, ok := buildNestedContexts(t, nil)["users"]
+	if !ok || tc.Nested == nil {
+		t.Fatal("fixture has no nested users parent")
+	}
+	plain := renderNested(t, tc)
+	if !strings.Contains(plain, "reloaded, err := c.Get(ctx, parent.") || strings.Contains(plain, "result = reloaded[0]") {
+		t.Errorf("terminal read without a soft-delete column is not the plain Get:\n%s", plain)
+	}
+
+	tc.SoftDelete = &gen.SoftDeleteContext{Column: "deleted_at", FieldName: "DeletedAt"}
+	tc.FilterFields = append(tc.FilterFields, gen.FilterFieldContext{
+		FieldName: "DeletedAt", ComparatorType: "*comparator.NullableTime", IsSoftDeleteColumn: true,
+	})
+	scoped := renderNested(t, tc)
+	for _, want := range []string{"reloaded, err := c.GetMany(ctx, &GetUsersInput{", "DeletedAt: &comparator.NullableTime{},", "result = reloaded[0]"} {
+		if got := strings.Count(scoped, want); got != 3 {
+			t.Errorf("soft-delete terminal reads contain %q %d times, want 3 (one per nested method)", want, got)
+		}
+	}
+	if strings.Contains(scoped, "c.Get(ctx, parent.") {
+		t.Error("a soft-delete parent's terminal read still goes through Get, which drops a soft-deleted parent")
 	}
 }
 

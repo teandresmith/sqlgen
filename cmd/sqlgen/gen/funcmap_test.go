@@ -336,6 +336,42 @@ func TestFuncSoftDeleteFilterOverride(t *testing.T) {
 	}
 }
 
+func TestFuncSoftDeleteFilterAny(t *testing.T) {
+	sd := &gen.SoftDeleteContext{Column: "deleted_at", FieldName: "DeletedAt"}
+	tests := []struct {
+		name    string
+		tc      gen.TableContext
+		want    string
+		wantErr bool
+	}{
+		{name: "no soft-delete column", tc: gen.TableContext{TableName: "products"}, want: ""},
+		{name: "a soft-delete column sets its comparator empty", tc: gen.TableContext{
+			TableName:    "documents",
+			SoftDelete:   sd,
+			FilterFields: []gen.FilterFieldContext{{ComparatorType: "*comparator.NullableTime", IsSoftDeleteColumn: true}},
+		}, want: "&comparator.NullableTime{}"},
+		{name: "a soft-delete column with no filter field is an error", tc: gen.TableContext{
+			TableName:  "documents",
+			SoftDelete: sd,
+		}, wantErr: true},
+	}
+
+	fm := gen.FuncMap(sql.NewPostgresDialect())
+	anyRow := fm["softDeleteFilterAny"].(func(gen.TableContext) (string, error))
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := anyRow(tt.tc)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("softDeleteFilterAny error = %v, want error %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("softDeleteFilterAny = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestFuncFKToStringByGoType pins the FK conversion table — picking the
 // FK→string expression from the target's Go type string instead of the
 // parent's PK column. Required by the M2M relationship loader (relationship

@@ -32,7 +32,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | stream.happy-path | `Stream` yields each row its `Filter` matches once, in `Sorts` order, as the full entity with its relationship fields nil | `conformance: Stream/yields only the matching rows, each once, in the requested sort order` | all | client-methods: Stream × happy-path |
 
 ## §9.2 Write Operations
-<!-- prd: 9.2 sha256: 7a20f40676acbad6 -->
+<!-- prd: 9.2 sha256: f685337cae26f63b -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -40,6 +40,13 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | update.empty-field-options-both-paths | A non-nil `FieldOptions` that selects nothing makes `Update` return `nil, nil` without the re-fetch, on the empty-update path as well as after the UPDATE | `unit: cmd/sqlgen/gen: TestUpdateTemplate_emptyFieldOptions/single PK postgres`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_emptyFieldOptions/single PK mysql`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_emptyFieldOptions/composite PK`; `example: postgres: TestUpdate_EmptyFieldOptions_SkipsRefetch_Postgres`; `example: postgres: TestUpdate_EmptyFieldOptions_EmptyUpdate_NoStatements_Postgres` | postgres, mysql |  |
 | update-where.empty-filter | `UpdateWhere` returns `ErrEmptyFilter` when the filter produces zero conditions | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateWhere_postgres`; `example: postgres: TestUpdateWhere_EmptyFilter_ReturnsErrEmptyFilter_Postgres`; `example: mysql: TestUpdateWhere_EmptyFilter_ReturnsErrEmptyFilter_MySQL`; `example: sqlite: TestUpdateWhere_EmptyFilter_ReturnsErrEmptyFilter_SQLite` | all |  |
 | update-where.no-match-nil | `UpdateWhere` is idempotent: when no row matches the filter it returns no entities and no error | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateWhere_idempotent`; `example: postgres: TestUpdateWhere_ZeroMatch_ReturnsNilNoError_Postgres`; `example: mysql: TestUpdateWhere_ZeroMatch_ReturnsNilNoError_MySQL`; `example: sqlite: TestUpdateWhere_ZeroMatch_ReturnsNilNoError_SQLite` | all |  |
+| create.soft-delete | `Create` returns the created entity, soft-deleted or not: an input that sets the soft-delete column returns the row it wrote | `conformance: Create/returns the row it wrote when the input soft-deletes it` | all | client-methods: Create × soft-delete |
+| create-many.soft-delete | `CreateMany` returns all created entities, soft-deleted ones included | `conformance: CreateMany/returns every row it wrote, soft-deleted ones included` | all | client-methods: CreateMany × soft-delete |
+| update.soft-delete | `Update` returns the entity whether or not it is soft-deleted, after an update that sets the soft-delete column, an update addressed to a soft-deleted row, and on the empty-update path; without strict updates as well, where a key with no row still returns `nil` | `conformance: Update/returns the row it soft-deletes`; `conformance: Update/returns a soft-deleted row it updates`; `conformance: Update/an empty update returns a soft-deleted row unchanged`; `conformance: Update/without strict updates a soft-deleted row is returned, not dropped as missing` | all | client-methods: Update × soft-delete |
+| update-many.soft-delete | `UpdateMany` returns all updated entities, soft-deleted ones included | `conformance: UpdateMany/returns every row it updates, soft-deleted ones included` | all | client-methods: UpdateMany × soft-delete |
+| update-where.soft-delete | `UpdateWhere` returns all affected entities, soft-deleted ones included; with no fields set it returns every row the filter matches, soft-deleted ones included | `conformance: UpdateWhere/returns every row the filter matches, soft-deleted ones included`; `conformance: UpdateWhere/an empty update returns every row the filter matches, soft-deleted ones included` | all | client-methods: UpdateWhere × soft-delete |
+| upsert.soft-delete | `Upsert` returns the row it wrote, soft-deleted or not: an insert that sets the soft-delete column, or a conflict with a soft-deleted row, returns that row | `conformance: Upsert/returns the row it inserts when the input soft-deletes it`; `conformance: Upsert/returns a soft-deleted row its conflict updates` | all | client-methods: Upsert × soft-delete |
+| upsert-many.soft-delete | `UpsertMany` returns one entity per deduped input, soft-deleted rows included: an input that sets the soft-delete column returns the row it wrote | `conformance: UpsertMany/returns every row it writes, soft-deleted ones included` | all | client-methods: UpsertMany × soft-delete |
 
 ## §9.3 Delete Operations
 <!-- prd: 9.3 sha256: d5f32cc7192f4832 -->
@@ -153,7 +160,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | paginate.not-found | A `Paginate` whose filter matches no row returns no items, a zero `TotalCount` and `HasMore` false | `conformance: Paginate/a filter matching no row returns an empty page with a zero total` | all | client-methods: Paginate × not-found |
 
 ## §9.6 Per-Call Options
-<!-- prd: 9.6 sha256: 5f50ae1dfc3342cc -->
+<!-- prd: 9.6 sha256: b57f2ae9223a7a29 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -209,7 +216,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | paginate.lock-held | Inside a transaction, `Paginate` with a `LockMode` locks its page rows against another transaction and leaves a row after the page unlocked | `conformance: Paginate/a lock mode inside a transaction locks the page rows` | postgres, mysql | client-methods: Paginate × lock-mode |
 
 ## §9.7 PK Resolution and Entity Return Path
-<!-- prd: 9.7 sha256: 10169126860ffdb4 -->
+<!-- prd: 9.7 sha256: 442bc404a9084ea1 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -217,11 +224,12 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | pk-return.upsert-fallback-binds-by-name | On a tenanted table, the `Upsert` conflict fallback `SELECT` binds its scan targets by column name, so a tenant column that sorts before the PK still lands in the tenant target | `unit: cmd/sqlgen/gen: TestUpsertTemplate_conflictRowFallbackBindsByName` | postgres |  |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: 73ed69217fa7fa64 -->
+<!-- prd: 9.8 sha256: 94b2ece3a96a1c0a -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | where-writes.no-default-soft-delete-scope | The default "is not deleted" condition is injected by the read methods only: `HardDeleteWhere` addresses every row the filter matches, soft-deleted rows included, when the filter leaves the soft-delete comparator unset | `conformance: HardDeleteWhere/a filter that leaves the soft-delete column unset deletes soft-deleted rows too` | all |  |
+| write-readback.no-default-soft-delete-scope | The read that returns `Update`'s, `UpdateMany`'s and `UpdateWhere`'s entities injects no default "is not deleted" condition, on the empty-update path too; on a table without a soft-delete column `Update` reads back through `Get` | `unit: cmd/sqlgen/gen: TestUpdateTemplate_readBackIncludesSoftDeleted/soft delete, strict`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_readBackIncludesSoftDeleted/soft delete, not strict`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_readBackIncludesSoftDeleted/no soft delete`; `unit: cmd/sqlgen/gen: TestFuncSoftDeleteFilterAny/a soft-delete column sets its comparator empty`; `unit: cmd/sqlgen/gen: TestFuncSoftDeleteFilterAny/no soft-delete column`; `unit: cmd/sqlgen/gen: TestNestedTemplate_TerminalReadKeepsSoftDeletedParent` | postgres |  |
 
 ## §9.8.2 Get
 <!-- prd: 9.8.2 sha256: ef0c08f3be70bdff -->
@@ -246,11 +254,11 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | get-many.o2m-loads-own-children | `GetMany` loads an O2M relationship only when its `FieldOptions` selects it, and then gives each row its own children, every parent column selected | `conformance: GetMany/default field options load no relationship`; `conformance: GetMany/selecting a relationship loads each row's own children` | all |  |
 
 ## §9.8.4 Create
-<!-- prd: 9.8.4 sha256: 5d901667c4f1e471 -->
+<!-- prd: 9.8.4 sha256: 74d1b6a8e94f2422 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| create.refetch-skip-hooks | `Create` returns the created entity through a follow-up `Get` with `SkipHooks = true`, so the mutation hooks do not fire again for the fetch | `unit: cmd/sqlgen/gen: TestCreateTemplate_goldenFile_dbStrategyPostgres` | postgres |  |
+| create.refetch-skip-hooks | `Create` returns the created entity through a follow-up read by key with `SkipHooks = true`, so the mutation hooks do not fire again for the fetch | `unit: cmd/sqlgen/gen: TestCreateTemplate_goldenFile_dbStrategyPostgres` | postgres |  |
 | create.has-selected-columns-method | Each `<T>FieldOptions` has a generated `HasSelectedColumns() bool` method | `unit: cmd/sqlgen/gen: TestFieldOptionsTemplate_hasSelectedColumnsMethod` | all |  |
 
 ## §9.8.5 CreateMany
@@ -283,12 +291,12 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | update-where.mysql-preselect | On MySQL, `UpdateWhere` selects the matching keys with `collectAffectedIDs` before the UPDATE and uses no `RETURNING` | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateWhere_mysql`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_goldenFile_mysql` | mysql |  |
 
 ## §9.8.7 Upsert
-<!-- prd: 9.8.7 sha256: 0143daa965ade021 -->
+<!-- prd: 9.8.7 sha256: 30440e9a27c433b8 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | conflict.enum-type | `Upsert`'s conflict target is a generated named type `{Table}ConflictTarget` whose constants are declared as that type, not a free-form column list | `unit: cmd/sqlgen/gen: TestUpsertTemplate_conflictTargetEnum` | postgres |  |
-| upsert.pk-returning | On PostgreSQL and SQLite, `Upsert` resolves the written row's PK from the upsert statement with `RETURNING "id"`, then returns the entity through `Get` | `unit: cmd/sqlgen/gen: TestUpsertTemplate_insertUpsertAndResolveID_postgres`; `unit: cmd/sqlgen/gen: TestUpsertTemplate_sqlite` | postgres, sqlite |  |
+| upsert.pk-returning | On PostgreSQL and SQLite, `Upsert` resolves the written row's PK from the upsert statement with `RETURNING "id"`, then returns the entity through a read by that key | `unit: cmd/sqlgen/gen: TestUpsertTemplate_insertUpsertAndResolveID_postgres`; `unit: cmd/sqlgen/gen: TestUpsertTemplate_sqlite` | postgres, sqlite |  |
 | upsert.pk-mysql-last-insert-id | On MySQL, `Upsert` on an `AUTO_INCREMENT` table resolves the PK with `LastInsertId()` and uses no `RETURNING` | `unit: cmd/sqlgen/gen: TestUpsertTemplate_mysql` | mysql |  |
 | upsert.update-set-excludes-key | `Upsert`'s update columns are the inserted columns minus the conflict-target columns and every PK column | `unit: cmd/sqlgen/gen: TestUpsertTemplate_callerStrategy`; `unit: cmd/sqlgen/gen: TestUpsertTemplate_compositePK`; `unit: cmd/sqlgen/gen: TestUpsertTemplate_mysql` | postgres, mysql |  |
 
@@ -400,11 +408,14 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | connection.composite-pk | A composite-PK `Connection` encodes every PK column in its cursor, so forward and backward pages visit each tuple once, in key order | `conformance: Connection/composite keys page every tuple once in key order in both directions` | all | client-methods: Connection × composite-pk |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: 70b7ab3b64fb2cb5 -->
+<!-- prd: 9.9 sha256: b45f1f2cc0c0ce49 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | nested.one-transaction | `CreateWithRelated`, `UpdateWithRelated` and `UpsertWithRelated` each run their writes inside `database.WithTransaction`, under a name that is a bare SQL identifier so the call composes as a `SAVEPOINT` inside a caller's transaction | `unit: cmd/sqlgen/gen: TestNestedTemplate_SavepointNamesAreBareIdentifiers` | all |  |
+| create-with-related.soft-delete | `CreateWithRelated`'s terminal read reads the parent back by key the way the flat write does, so a parent the write left soft-deleted is returned whether or not a relationship is selected | `example: graphql: TestNested_SoftDeletedParentIsReturnedWithOrWithoutRelationships` | postgres | client-methods: CreateWithRelated × soft-delete |
+| update-with-related.soft-delete | `UpdateWithRelated`'s terminal read reads the parent back by key the way the flat write does, so a parent the write left soft-deleted is returned whether or not a relationship is selected | `example: graphql: TestNested_SoftDeletedParentIsReturnedWithOrWithoutRelationships` | postgres | client-methods: UpdateWithRelated × soft-delete |
+| upsert-with-related.soft-delete | `UpsertWithRelated`'s terminal read reads the parent back by key the way the flat write does, so a parent the write left soft-deleted is returned whether or not a relationship is selected | `example: graphql: TestNested_SoftDeletedParentIsReturnedWithOrWithoutRelationships` | postgres | client-methods: UpsertWithRelated × soft-delete |
 
 ## §9.9.6 Execution order
 <!-- prd: 9.9.6 sha256: 5124ee487b6462d9 -->

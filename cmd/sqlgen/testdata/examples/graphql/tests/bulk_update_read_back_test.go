@@ -14,8 +14,8 @@ import (
 
 // The bulk `updateProducts(filter, input)` read-back when `_inc` / `_dec`
 // operators are present: the matched rows come back from one batched read,
-// and a set field that soft-deletes a row drops it from the result exactly as
-// the operator-free mutation does.
+// and a row a set field soft-deletes is returned exactly as the operator-free
+// mutation returns it.
 
 // upfTracedServer boots a GraphQL handler over a client whose every statement,
 // transactional ones included, is counted (see statement_counter_test.go).
@@ -93,21 +93,28 @@ func TestBulkUpdateReadBack_StatementCountIsOneReadPlusTheOperators(t *testing.T
 	}
 }
 
-// TestBulkUpdateReadBack_SoftDeletingSetFieldDropsTheRow pins that a set field
-// soft-deleting the matched row, sent with an operator, answers like the
-// operator-free mutation: no error, and the row absent from the result.
-func TestBulkUpdateReadBack_SoftDeletingSetFieldDropsTheRow(t *testing.T) {
+// TestBulkUpdateReadBack_SoftDeletingSetFieldReturnsTheRow pins that a set
+// field soft-deleting the matched row answers the same with or without an
+// operator: no error, the set field written, the operator applied, and the
+// row in the result.
+func TestBulkUpdateReadBack_SoftDeletingSetFieldReturnsTheRow(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
+		name      string
+		input     string
+		wantStock int
 	}{
-		{name: "operator-free", input: `{ deletedAt: "2026-01-01T00:00:00Z" }`},
-		{name: "with an operator", input: `{ deletedAt: "2026-01-01T00:00:00Z", stock_inc: 1 }`},
+		{name: "operator-free", input: `{ deletedAt: "2026-01-01T00:00:00Z" }`, wantStock: 10},
+		{name: "with an operator", input: `{ deletedAt: "2026-01-01T00:00:00Z", stock_inc: 1 }`, wantStock: 11},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			truncateAll(t)
 			upfSeedProducts(t, "upf-soft-delete", 1)
+			var id string
+			if err := testPool.QueryRow(context.Background(),
+				`SELECT id::text FROM products WHERE name = 'upf-soft-delete'`).Scan(&id); err != nil {
+				t.Fatalf("read seeded product key: %v", err)
+			}
 
 			resp := gqlExec(t, `
 				mutation {
@@ -117,16 +124,73 @@ func TestBulkUpdateReadBack_SoftDeletingSetFieldDropsTheRow(t *testing.T) {
 			if len(resp.Errors) > 0 {
 				t.Fatalf("updateProducts(%s): graphql errors: %+v", tt.input, resp.Errors)
 			}
-			if string(resp.Data) != `{"updateProducts":[]}` {
-				t.Errorf("updateProducts(%s) data = %s, want the soft-deleted row absent", tt.input, resp.Data)
+			if want := `{"updateProducts":[{"id":"` + id + `"}]}`; string(resp.Data) != want {
+				t.Errorf("updateProducts(%s) data = %s, want %s: the soft-deleted row returned", tt.input, resp.Data, want)
 			}
-			var deleted bool
+			var (
+				deleted bool
+				stock   int
+			)
 			if err := testPool.QueryRow(context.Background(),
-				`SELECT deleted_at IS NOT NULL FROM products WHERE name = 'upf-soft-delete'`).Scan(&deleted); err != nil {
+				`SELECT deleted_at IS NOT NULL, stock FROM products WHERE name = 'upf-soft-delete'`).Scan(&deleted, &stock); err != nil {
 				t.Fatalf("read back products row: %v", err)
 			}
 			if !deleted {
 				t.Errorf("updateProducts(%s): deleted_at is NULL, want the set field written", tt.input)
+			}
+			if stock != tt.wantStock {
+				t.Errorf("updateProducts(%s): stock = %d, want %d", tt.input, stock, tt.wantStock)
+			}
+		})
+	}
+}
+
+// TestUpdateReadBack_SoftDeletingSetFieldReturnsTheRow pins the same answer
+// for the single-row update mutations: a set field that soft-deletes the row
+// writes it, applies any operator, and returns the row rather than NOT_FOUND,
+// on updateProduct and on updateProductWithRelated alike.
+func TestUpdateReadBack_SoftDeletingSetFieldReturnsTheRow(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutation  string
+		field     string
+		wantStock int
+	}{
+		{name: "update, operator-free", mutation: `updateProduct(id: $id, input: { deletedAt: "2026-01-01T00:00:00Z" }) { id }`, field: "updateProduct", wantStock: 10},
+		{name: "update, with an operator", mutation: `updateProduct(id: $id, input: { deletedAt: "2026-01-01T00:00:00Z", stock_inc: 1 }) { id }`, field: "updateProduct", wantStock: 11},
+		{name: "nested update, operator-free", mutation: `updateProductWithRelated(id: $id, input: { product: { deletedAt: "2026-01-01T00:00:00Z" } }) { id }`, field: "updateProductWithRelated", wantStock: 10},
+		{name: "nested update, with an operator", mutation: `updateProductWithRelated(id: $id, input: { product: { deletedAt: "2026-01-01T00:00:00Z", stock_inc: 1 } }) { id }`, field: "updateProductWithRelated", wantStock: 11},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			truncateAll(t)
+			upfSeedProducts(t, "up-soft-delete", 1)
+			var id string
+			if err := testPool.QueryRow(context.Background(),
+				`SELECT id::text FROM products WHERE name = 'up-soft-delete'`).Scan(&id); err != nil {
+				t.Fatalf("read seeded product key: %v", err)
+			}
+
+			resp := gqlExec(t, `mutation ($id: UUID!) { `+tt.mutation+` }`, map[string]any{"id": id}, nil)
+			if len(resp.Errors) > 0 {
+				t.Fatalf("%s: graphql errors: %+v", tt.mutation, resp.Errors)
+			}
+			if want := `{"` + tt.field + `":{"id":"` + id + `"}}`; string(resp.Data) != want {
+				t.Errorf("%s data = %s, want %s: the soft-deleted row returned", tt.mutation, resp.Data, want)
+			}
+			var (
+				deleted bool
+				stock   int
+			)
+			if err := testPool.QueryRow(context.Background(),
+				`SELECT deleted_at IS NOT NULL, stock FROM products WHERE name = 'up-soft-delete'`).Scan(&deleted, &stock); err != nil {
+				t.Fatalf("read back products row: %v", err)
+			}
+			if !deleted {
+				t.Errorf("%s: deleted_at is NULL, want the set field written", tt.mutation)
+			}
+			if stock != tt.wantStock {
+				t.Errorf("%s: stock = %d, want %d", tt.mutation, stock, tt.wantStock)
 			}
 		})
 	}

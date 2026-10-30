@@ -252,9 +252,10 @@ type APITableContext struct {
 	// rowIdentityFields for how the set is chosen; empty only for an entity
 	// with no columns at all, which the walker then leaves untouched.
 	RowIdentityFields []string
-	// RowKeys spells the bulk update's re-read of the rows it matched: how
-	// each row's key is collected and the one filter that selects them all.
-	// Zero when the table has no primary key.
+	// RowKeys spells the updates' re-read of the rows they wrote: how each
+	// row's key is collected and the one filter that selects them all, for
+	// the bulk update with operators and, on a soft-delete table, the single
+	// and nested updates. Zero when the table has no primary key.
 	RowKeys APIRowKeys
 	// Nested is the GraphQL projection of the table's nested-mutation surface
 	// (PRD §9.9, §26.5.1) — the three `…WithRelated` mutations, their wrapper
@@ -2715,6 +2716,10 @@ func buildAPITableContext(tc TableContext, apiOps ResolvedOperations, g *config.
 	apiFilterRels := buildAPIFilterRelationships(tc.RelationshipFilters, g.FieldCasing, exposedTargets, filterFieldNameSet(apiFilterFields))
 	sortFields, sortEnumType, sortInputType := buildAPISortBindings(ent, fields)
 
+	rowKeys, err := buildAPIRowKeys(tc)
+	if err != nil {
+		return APITableContext{}, err
+	}
 	return APITableContext{
 		StructName:          tc.StructName,
 		SnakeName:           tc.SnakeName,
@@ -2776,12 +2781,12 @@ func buildAPITableContext(tc TableContext, apiOps ResolvedOperations, g *config.
 		SortFields:          sortFields,
 
 		RowIdentityFields: rowIdentityFields(ent),
-		RowKeys:           buildAPIRowKeys(tc),
+		RowKeys:           rowKeys,
 	}, nil
 }
 
-// APIRowKeys is the Go the bulk update emits to re-read, in one GetMany, the
-// rows it matched. The spellings fix the loop variable to `row` and the key
+// APIRowKeys is the Go the updates emit to re-read, in one GetMany, the rows
+// they wrote. The spellings fix the loop variable to `row` and the key
 // slice to `keys`, and leave the models package off so the template can
 // qualify them with its own alias.
 type APIRowKeys struct {
@@ -2794,21 +2799,46 @@ type APIRowKeys struct {
 	ElemType string // "string" / "int64" / "UserCategoryPK"
 	// FromRow reads one key off `row`, converted to ElemType.
 	FromRow string // "row.ID.String()" / "row.ID" / "UserCategoryPK{UserID: row.UserID, …}"
+	// FromKeyFormat converts a key of the model's key type to ElemType: a
+	// format whose one %s is the key expression.
+	FromKeyFormat string // "%s.String()" / "%s"
 	// FilterMember is the `<T>Filter` member that selects every row in
 	// `keys`.
 	FilterMember string // "ID: &comparator.ID{In: keys}" / "PKs: keys"
-	// Imports are the import paths FromRow / FilterMember / ElemType need
-	// beyond the models package, sorted.
+	// Imports are the import paths FromRow / FromKeyFormat / FilterMember /
+	// ElemType need beyond the models package, sorted.
 	Imports []string
 }
 
 // buildAPIRowKeys derives APIRowKeys from the table's key the same way the
 // client's own UpdateWhere read-back does: a composite key through the
-// filter's PKs member, a single column through its comparator's `In`.
-func buildAPIRowKeys(tc TableContext) APIRowKeys {
+// filter's PKs member, a single column through its comparator's `In`, and on
+// a soft-delete table the soft-delete comparator set empty, so a row the
+// update soft-deleted is read back too.
+func buildAPIRowKeys(tc TableContext) (APIRowKeys, error) {
 	if len(tc.PKColumns) == 0 {
-		return APIRowKeys{}
+		return APIRowKeys{}, nil
 	}
+	keys := buildAPIRowKeyMembers(tc)
+	lit, err := funcSoftDeleteFilterAny(tc)
+	if err != nil {
+		return APIRowKeys{}, err
+	}
+	if lit != "" {
+		keys.FilterMember += ", " + tc.SoftDelete.FieldName + ": " + lit
+		if !slices.Contains(keys.Imports, comparatorImport) {
+			keys.Imports = append(keys.Imports, comparatorImport)
+			slices.Sort(keys.Imports)
+		}
+	}
+	return keys, nil
+}
+
+// comparatorImport is the import path of the runtime comparator package.
+const comparatorImport = "github.com/teandresmith/sqlgen/comparator"
+
+// buildAPIRowKeyMembers is buildAPIRowKeys without the soft-delete member.
+func buildAPIRowKeyMembers(tc TableContext) APIRowKeys {
 	if tc.CompositePK {
 		var b strings.Builder
 		b.WriteString(tc.CompositePKStructName + "{")
@@ -2819,16 +2849,17 @@ func buildAPIRowKeys(tc TableContext) APIRowKeys {
 			b.WriteString(col.FieldName + ": row." + col.FieldName)
 		}
 		b.WriteString("}")
-		return APIRowKeys{Composite: true, ElemType: tc.CompositePKStructName, FromRow: b.String(), FilterMember: "PKs: keys"}
+		return APIRowKeys{Composite: true, ElemType: tc.CompositePKStructName, FromRow: b.String(), FromKeyFormat: "%s", FilterMember: "PKs: keys"}
 	}
 	col := tc.PKColumns[0]
 	base := strings.TrimPrefix(col.GoType, "*")
-	imports := []string{"github.com/teandresmith/sqlgen/comparator"}
+	imports := []string{comparatorImport}
 	family, _ := pkComparatorFamily(base)
-	elem, fromRow := base, "row."+col.FieldName
+	elem, fromRow, fromKey := base, "row."+col.FieldName, "%s"
 	if family == "ID" {
 		elem = "string"
 		fromRow = funcFKToStringByGoType(base, fromRow)
+		fromKey = funcFKToStringByGoType(base, fromKey)
 		if strings.HasPrefix(fromRow, "fmt.") {
 			imports = append(imports, "fmt")
 		}
@@ -2838,10 +2869,11 @@ func buildAPIRowKeys(tc TableContext) APIRowKeys {
 	}
 	slices.Sort(imports)
 	return APIRowKeys{
-		ElemType:     elem,
-		FromRow:      fromRow,
-		FilterMember: col.FieldName + ": " + pkFilterInExpr(base, "keys", false),
-		Imports:      imports,
+		ElemType:      elem,
+		FromRow:       fromRow,
+		FromKeyFormat: fromKey,
+		FilterMember:  col.FieldName + ": " + pkFilterInExpr(base, "keys", false),
+		Imports:       imports,
 	}
 }
 

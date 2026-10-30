@@ -84,9 +84,9 @@ func (c *{{ $structCamel }}Client) Create(ctx context.Context, input *Create{{ .
 			if err != nil {
 				return nil, fmt.Errorf("create {{ $singular }}: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value (and
-			// the GetMany inside Get's body) instead of re-invoking the user
-			// resolver — single-resolve. What is cached is the
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
 			// resolver's answer, not this table's reading of it: a zero return
 			// is cached as a zero, and each table downstream re-applies its own
 			// tenancy.required branch to it.
@@ -162,12 +162,7 @@ func (c *{{ $structCamel }}Client) Create(ctx context.Context, input *Create{{ .
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
-
-		return c.Get(ctx, id, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
-		})
+{{ template "shared/written-row" (writtenRowCtx . "id" false) }}
 {{- else }}
 
 		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
@@ -197,26 +192,11 @@ func (c *{{ $structCamel }}Client) Create(ctx context.Context, input *Create{{ .
 			return nil, nil
 		}
 {{- if .CompositePK }}
-
-		return c.Get(ctx, {{ .CompositePKStructName }}{ {{- range .PKColumns }}{{ .FieldName }}: input.{{ .FieldName }}, {{ end -}} }, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
-		})
+{{ template "shared/written-row" (writtenRowCtx . (compositePKLiteral . "input") false) }}
 {{- else if eq .PKStrategy "app" }}
-
-		return c.Get(ctx, pkValue, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
-		})
+{{ template "shared/written-row" (writtenRowCtx . "pkValue" false) }}
 {{- else }}
-
-		return c.Get(ctx, input.{{ $pkCol.FieldName }}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
-			*o = options
-			o.SkipHooks = true
-			o.LockMode = sql.LockNone
-		})
+{{ template "shared/written-row" (writtenRowCtx . (printf "input.%s" $pkCol.FieldName) false) }}
 {{- end }}
 {{- end }}
 	})
@@ -462,7 +442,7 @@ func (c *{{ $structCamel }}Client) CreateMany(ctx context.Context, inputs []*Cre
 
 		// Re-fetch via composite PK filter
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{PKs: allPKs},
+			Filter: &{{ .StructName }}Filter{PKs: allPKs{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
 			Limit:  new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
 			*o = options
@@ -480,6 +460,9 @@ func (c *{{ $structCamel }}Client) CreateMany(ctx context.Context, inputs []*Cre
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 			Filter: &{{ .StructName }}Filter{
 				{{ $pkCol.FieldName }}: &comparator.ID{In: idStrings},
+{{- with softDeleteFilterAny . }}
+				{{ $.SoftDelete.FieldName }}: {{ . }},
+{{- end }}
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
@@ -491,6 +474,9 @@ func (c *{{ $structCamel }}Client) CreateMany(ctx context.Context, inputs []*Cre
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 			Filter: &{{ .StructName }}Filter{
 				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "allIDs" false }},
+{{- with softDeleteFilterAny . }}
+				{{ $.SoftDelete.FieldName }}: {{ . }},
+{{- end }}
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {

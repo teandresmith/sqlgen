@@ -448,7 +448,7 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 
 		// Re-fetch via composite PK filter
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
-			Filter: &{{ .StructName }}Filter{PKs: rowPKs},
+			Filter: &{{ .StructName }}Filter{PKs: rowPKs{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
 			Limit:  new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
 			*o = options
@@ -465,6 +465,9 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 			Filter: &{{ .StructName }}Filter{
 				{{ $pkCol.FieldName }}: &comparator.ID{In: idStrings},
+{{- with softDeleteFilterAny . }}
+				{{ $.SoftDelete.FieldName }}: {{ . }},
+{{- end }}
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
@@ -477,6 +480,9 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 			Filter: &{{ .StructName }}Filter{
 				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "rowIDs" false }},
+{{- with softDeleteFilterAny . }}
+				{{ $.SoftDelete.FieldName }}: {{ . }},
+{{- end }}
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
@@ -519,8 +525,8 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.

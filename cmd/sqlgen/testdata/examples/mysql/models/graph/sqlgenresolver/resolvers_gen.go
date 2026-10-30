@@ -175,7 +175,13 @@ func (m *M) UpdateArticle(ctx context.Context, id int, input UpdateArticleReques
 			return nil, mapErrorToGQL(err)
 		}
 	}
-	res, err := m.Client.Articles().Get(ctx, int64(id), func(o *models.CallOptions[models.ArticleFieldOptions]) {
+	// The row is read back whether or not it is soft-deleted: the set fields
+	// may have soft-deleted it, and Get would then report it missing.
+	keys := []int64{int64(id)}
+	rows, err := m.Client.Articles().GetMany(ctx, &models.GetArticlesInput{
+		Filter: &models.ArticleFilter{ID: &comparator.Number[int64]{In: keys}, DeletedAt: &comparator.NullableTime{}},
+		Limit:  new(1),
+	}, func(o *models.CallOptions[models.ArticleFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.ArticleFieldOptions](ctx) {
 			f(o)
@@ -184,7 +190,10 @@ func (m *M) UpdateArticle(ctx context.Context, id int, input UpdateArticleReques
 	if err != nil {
 		return nil, mapErrorToGQL(err)
 	}
-	return res, nil
+	if len(rows) == 0 {
+		return nil, mapErrorToGQL(models.ErrNotFound)
+	}
+	return rows[0], nil
 }
 
 // UpdateArticles resolves the bulk update-where mutation for articles.
@@ -1155,8 +1164,7 @@ func (m *M) UpdateDefaultOnlyRows(ctx context.Context, filter *models.DefaultOnl
 		// so relationship loading stays batched. It bypasses the cache only:
 		// the writes above defer their cache invalidation to commit, and a
 		// read-through here would answer with the rows' pre-mutation state.
-		// Query hooks run as on any read, and soft-delete scoping drops a row
-		// the set fields soft-deleted, as the operator-free path does.
+		// Query hooks run as on any read.
 		res, err = m.Client.DefaultOnlyRows().GetMany(ctx, &models.GetDefaultOnlyRowsInput{
 			Filter: &models.DefaultOnlyRowFilter{ID: &comparator.Number[int64]{In: keys}},
 			Limit:  new(0),
@@ -1780,8 +1788,7 @@ func (m *M) UpdateOrders(ctx context.Context, filter *models.OrderFilter, input 
 		// so relationship loading stays batched. It bypasses the cache only:
 		// the writes above defer their cache invalidation to commit, and a
 		// read-through here would answer with the rows' pre-mutation state.
-		// Query hooks run as on any read, and soft-delete scoping drops a row
-		// the set fields soft-deleted, as the operator-free path does.
+		// Query hooks run as on any read.
 		res, err = m.Client.Orders().GetMany(ctx, &models.GetOrdersInput{
 			Filter: &models.OrderFilter{ID: &comparator.Number[int64]{In: keys}},
 			Limit:  new(0),
@@ -2231,8 +2238,7 @@ func (m *M) UpdateOrderItems(ctx context.Context, filter *models.OrderItemFilter
 		// so relationship loading stays batched. It bypasses the cache only:
 		// the writes above defer their cache invalidation to commit, and a
 		// read-through here would answer with the rows' pre-mutation state.
-		// Query hooks run as on any read, and soft-delete scoping drops a row
-		// the set fields soft-deleted, as the operator-free path does.
+		// Query hooks run as on any read.
 		res, err = m.Client.OrderItems().GetMany(ctx, &models.GetOrderItemsInput{
 			Filter: &models.OrderItemFilter{ID: &comparator.Number[int64]{In: keys}},
 			Limit:  new(0),
@@ -2579,8 +2585,7 @@ func (m *M) UpdateProducts(ctx context.Context, filter *models.ProductFilter, in
 		// so relationship loading stays batched. It bypasses the cache only:
 		// the writes above defer their cache invalidation to commit, and a
 		// read-through here would answer with the rows' pre-mutation state.
-		// Query hooks run as on any read, and soft-delete scoping drops a row
-		// the set fields soft-deleted, as the operator-free path does.
+		// Query hooks run as on any read.
 		res, err = m.Client.Products().GetMany(ctx, &models.GetProductsInput{
 			Filter: &models.ProductFilter{ID: &comparator.Number[int64]{In: keys}},
 			Limit:  new(0),
@@ -3472,7 +3477,13 @@ func (m *M) UpdateTag(ctx context.Context, id int, input UpdateTagRequest) (*mod
 			return nil, mapErrorToGQL(err)
 		}
 	}
-	res, err := m.Client.Tags().Get(ctx, int32(id), func(o *models.CallOptions[models.TagFieldOptions]) {
+	// The row is read back whether or not it is soft-deleted: the set fields
+	// may have soft-deleted it, and Get would then report it missing.
+	keys := []int32{int32(id)}
+	rows, err := m.Client.Tags().GetMany(ctx, &models.GetTagsInput{
+		Filter: &models.TagFilter{ID: &comparator.Number[int32]{In: keys}, IsDeleted: &comparator.Bool{}},
+		Limit:  new(1),
+	}, func(o *models.CallOptions[models.TagFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.TagFieldOptions](ctx) {
 			f(o)
@@ -3481,7 +3492,10 @@ func (m *M) UpdateTag(ctx context.Context, id int, input UpdateTagRequest) (*mod
 	if err != nil {
 		return nil, mapErrorToGQL(err)
 	}
-	return res, nil
+	if len(rows) == 0 {
+		return nil, mapErrorToGQL(models.ErrNotFound)
+	}
+	return rows[0], nil
 }
 
 // UpdateTags resolves the bulk update-where mutation for tags.
@@ -4130,8 +4144,7 @@ func (m *M) UpdateUsers(ctx context.Context, filter *models.UserFilter, input Up
 		// so relationship loading stays batched. It bypasses the cache only:
 		// the writes above defer their cache invalidation to commit, and a
 		// read-through here would answer with the rows' pre-mutation state.
-		// Query hooks run as on any read, and soft-delete scoping drops a row
-		// the set fields soft-deleted, as the operator-free path does.
+		// Query hooks run as on any read.
 		res, err = m.Client.Users().GetMany(ctx, &models.GetUsersInput{
 			Filter: &models.UserFilter{ID: &comparator.Number[int64]{In: keys}},
 			Limit:  new(0),
@@ -4537,8 +4550,7 @@ func (m *M) UpdateUserCategories(ctx context.Context, filter *models.UserCategor
 		// so relationship loading stays batched. It bypasses the cache only:
 		// the writes above defer their cache invalidation to commit, and a
 		// read-through here would answer with the rows' pre-mutation state.
-		// Query hooks run as on any read, and soft-delete scoping drops a row
-		// the set fields soft-deleted, as the operator-free path does.
+		// Query hooks run as on any read.
 		res, err = m.Client.UserCategories().GetMany(ctx, &models.GetUserCategoriesInput{
 			Filter: &models.UserCategoryFilter{PKs: keys},
 			Limit:  new(0),
@@ -5068,8 +5080,7 @@ func (m *M) UpdateWarehouses(ctx context.Context, filter *models.WarehouseFilter
 		// so relationship loading stays batched. It bypasses the cache only:
 		// the writes above defer their cache invalidation to commit, and a
 		// read-through here would answer with the rows' pre-mutation state.
-		// Query hooks run as on any read, and soft-delete scoping drops a row
-		// the set fields soft-deleted, as the operator-free path does.
+		// Query hooks run as on any read.
 		res, err = m.Client.Warehouses().GetMany(ctx, &models.GetWarehousesInput{
 			Filter: &models.WarehouseFilter{ID: &comparator.Number[int64]{In: keys}},
 			Limit:  new(0),

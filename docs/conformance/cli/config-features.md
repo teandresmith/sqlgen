@@ -167,14 +167,14 @@ against the global block (`feature-resolution`). The runtime behavior of each fe
 | config.tenancy.view.cache-unchanged | Making a view tenanted does not extend the §29.5 key grammar, add an affected-tenant carrier or change the view fingerprint | `unit: cmd/sqlgen/gen: TestGenerate_TenantedViewLeavesCacheOutputUnchanged` | all |  |
 
 ## §29.11 Constraints
-<!-- prd: 29.11 sha256: f55e4f2b94195dbc -->
+<!-- prd: 29.11 sha256: 764a48a1507c0353 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | config.tenancy.constraint.mixed-types-opt-out | Opting an entity out (`tables.<name>.tenancy.enabled: false` / `views.<name>.tenancy.enabled: false`) removes it from the uniform-type check, so a divergent schema then generates | `unit: cmd/sqlgen/gen: TestGenerate_TenancyOptOutLeavesUniformTypeCheck/opting the divergent table and view out generates`; `unit: cmd/sqlgen/gen: TestGenerate_TenancyOptOutLeavesUniformTypeCheck/divergent table and view without an opt-out are rejected`; `unit: cmd/sqlgen/gen: TestGenerate_TenancyOptOutLeavesUniformTypeCheck/opting out only the table still rejects the divergent view` | all |  |
 | config.tenancy.constraint.no-mid-tx-switch-detection | sqlgen does not detect a tenant switch inside a transaction: a child ctx carrying a different tenant between two writes in one transaction writes rows in two tenants, without error | `example: tenancy: TestTx_MidTransactionTenantSwitchIsNotDetected` | all |  |
 | config.tenancy.constraint.resolver-per-operation | The resolver is invoked per operation, not once at transaction open: N mutations inside one `WithTx` invoke it exactly N times | `example: tenancy: TestTx_Resolver_CalledExactlyOncePerMutation` | all |  |
-| config.tenancy.constraint.chain-resolves-once | One chained `Create` (`Create` → terminal `Get` → `GetMany`) invokes the resolver exactly once | `example: tenancy: TestTx_Resolver_ChainReusesCachedValue` | all |  |
+| config.tenancy.constraint.chain-resolves-once | One chained `Create` (`Create` → its terminal read → `GetMany`) invokes the resolver exactly once | `example: tenancy: TestTx_Resolver_ChainReusesCachedValue` | all |  |
 | config.tenancy.constraint.cache-per-logical-op | The resolved-tenant ctx cache is scoped to one logical operation and never outlives it: two sequential operations on the same ctx resolve twice | `example: tenancy: TestTx_Resolver_SequentialOpsResolveIndependently` | all |  |
 | config.tenancy.constraint.nested-resolves-once | A nested mutation and the inner writes it fans out to share one resolve |  | all |  |
 | config.tenancy.constraint.err-missing-names-table | `ErrMissing` fires at the first tenanted call, with the table and the resolver named | `example: tenancy: TestErrMissing_FirstTenantedCallNamesTableAndResolver` | all |  |

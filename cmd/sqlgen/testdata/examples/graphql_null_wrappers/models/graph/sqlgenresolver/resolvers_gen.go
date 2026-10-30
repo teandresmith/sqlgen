@@ -328,7 +328,13 @@ func (m *M) UpdateAccount(ctx context.Context, id int64, input UpdateAccountRequ
 			return nil, mapErrorToGQL(err)
 		}
 	}
-	res, err := m.Client.Accounts().Get(ctx, id, func(o *models.CallOptions[models.AccountFieldOptions]) {
+	// The row is read back whether or not it is soft-deleted: the set fields
+	// may have soft-deleted it, and Get would then report it missing.
+	keys := []int64{id}
+	rows, err := m.Client.Accounts().GetMany(ctx, &models.GetAccountsInput{
+		Filter: &models.AccountFilter{ID: &comparator.Number[int64]{In: keys}, DeletedAt: &comparator.NullableTime{}},
+		Limit:  new(1),
+	}, func(o *models.CallOptions[models.AccountFieldOptions]) {
 		o.FieldOptions = fo
 		for _, f := range callOptionsFromHTTP[models.AccountFieldOptions](ctx) {
 			f(o)
@@ -337,7 +343,10 @@ func (m *M) UpdateAccount(ctx context.Context, id int64, input UpdateAccountRequ
 	if err != nil {
 		return nil, mapErrorToGQL(err)
 	}
-	return res, nil
+	if len(rows) == 0 {
+		return nil, mapErrorToGQL(models.ErrNotFound)
+	}
+	return rows[0], nil
 }
 
 // UpdateAccounts resolves the bulk update-where mutation for accounts.
@@ -525,10 +534,11 @@ func (m *M) UpdateAccounts(ctx context.Context, filter *models.AccountFilter, in
 		// so relationship loading stays batched. It bypasses the cache only:
 		// the writes above defer their cache invalidation to commit, and a
 		// read-through here would answer with the rows' pre-mutation state.
-		// Query hooks run as on any read, and soft-delete scoping drops a row
-		// the set fields soft-deleted, as the operator-free path does.
+		// Query hooks run as on any read. It is not soft-delete scoped, so a
+		// row the set fields soft-deleted is returned, as the operator-free
+		// path returns it.
 		res, err = m.Client.Accounts().GetMany(ctx, &models.GetAccountsInput{
-			Filter: &models.AccountFilter{ID: &comparator.Number[int64]{In: keys}},
+			Filter: &models.AccountFilter{ID: &comparator.Number[int64]{In: keys}, DeletedAt: &comparator.NullableTime{}},
 			Limit:  new(0),
 		}, func(o *models.CallOptions[models.AccountFieldOptions]) {
 			o.FieldOptions = fo
@@ -866,8 +876,7 @@ func (m *M) UpdateEntries(ctx context.Context, filter *models.EntryFilter, input
 		// so relationship loading stays batched. It bypasses the cache only:
 		// the writes above defer their cache invalidation to commit, and a
 		// read-through here would answer with the rows' pre-mutation state.
-		// Query hooks run as on any read, and soft-delete scoping drops a row
-		// the set fields soft-deleted, as the operator-free path does.
+		// Query hooks run as on any read.
 		res, err = m.Client.Entries().GetMany(ctx, &models.GetEntriesInput{
 			Filter: &models.EntryFilter{ID: &comparator.Number[int64]{In: keys}},
 			Limit:  new(0),

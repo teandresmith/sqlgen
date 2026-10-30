@@ -541,9 +541,9 @@ func (c *articleClient) Create(ctx context.Context, input *CreateArticleInput, o
 			if err != nil {
 				return nil, fmt.Errorf("create article: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value (and
-			// the GetMany inside Get's body) instead of re-invoking the user
-			// resolver — single-resolve. What is cached is the
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
 			// resolver's answer, not this table's reading of it: a zero return
 			// is cached as a zero, and each table downstream re-applies its own
 			// tenancy.required branch to it.
@@ -610,11 +610,27 @@ func (c *articleClient) Create(ctx context.Context, input *CreateArticleInput, o
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[ArticleFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetArticlesInput{
+			Filter: &ArticleFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[ArticleFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -756,7 +772,8 @@ func (c *articleClient) CreateMany(ctx context.Context, inputs []*CreateArticleI
 		}
 		return c.GetMany(ctx, &GetArticlesInput{
 			Filter: &ArticleFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
+				ID:        &comparator.Number[int64]{In: allIDs},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[ArticleFieldOptions]) {
@@ -846,7 +863,7 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 			if err != nil {
 				return nil, fmt.Errorf("update article: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// — single-resolve.
 			// An explicit tenant is not cached: it rides on CallOptions, which
 			// every internal call inherits, and resolveTenant honours it ahead of
@@ -898,11 +915,27 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 				return nil, nil
 			}
 
-			return c.Get(ctx, id, func(o *CallOptions[ArticleFieldOptions]) {
+			// Read the row back whether or not it is soft-deleted: the empty
+			// DeletedAt comparator keeps GetMany's default "is not deleted"
+			// condition out.
+			written, err := c.GetMany(ctx, &GetArticlesInput{
+				Filter: &ArticleFilter{
+					ID:        &comparator.Number[int64]{Eq: new(id)},
+					DeletedAt: &comparator.NullableTime{},
+				},
+				Limit: new(1),
+			}, func(o *CallOptions[ArticleFieldOptions]) {
 				*o = options
 				o.SkipHooks = true
 				o.LockMode = sql.LockNone
 			})
+			if err != nil {
+				return nil, err
+			}
+			if len(written) == 0 {
+				return nil, ErrNotFound
+			}
+			return written[0], nil
 		}
 		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
 		if applyTenancy {
@@ -949,11 +982,27 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[ArticleFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetArticlesInput{
+			Filter: &ArticleFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[ArticleFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -1139,7 +1188,8 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 		}
 		return c.GetMany(ctx, &GetArticlesInput{
 			Filter: &ArticleFilter{
-				ID: &comparator.Number[int64]{In: allIDs},
+				ID:        &comparator.Number[int64]{In: allIDs},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[ArticleFieldOptions]) {
@@ -1238,8 +1288,17 @@ func (c *articleClient) UpdateWhere(ctx context.Context, filter *ArticleFilter, 
 			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 				return nil, nil
 			}
+			// The rows a write would address include soft-deleted ones: a
+			// filter that leaves the DeletedAt comparator unset reads them
+			// back with an empty one, so GetMany adds no "is not deleted" condition.
+			readFilter := filter
+			if filter.DeletedAt == nil {
+				scoped := *filter
+				scoped.DeletedAt = &comparator.NullableTime{}
+				readFilter = &scoped
+			}
 			return c.GetMany(ctx, &GetArticlesInput{
-				Filter: filter,
+				Filter: readFilter,
 				Limit:  new(0),
 			}, func(o *CallOptions[ArticleFieldOptions]) {
 				*o = options
@@ -1288,7 +1347,8 @@ func (c *articleClient) UpdateWhere(ctx context.Context, filter *ArticleFilter, 
 		// Fetch affected entities with FieldOptions
 		return c.GetMany(ctx, &GetArticlesInput{
 			Filter: &ArticleFilter{
-				ID: &comparator.Number[int64]{In: ids},
+				ID:        &comparator.Number[int64]{In: ids},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[ArticleFieldOptions]) {
@@ -2241,7 +2301,7 @@ func (c *articleClient) Upsert(ctx context.Context, input *CreateArticleInput, t
 			if err != nil {
 				return nil, fmt.Errorf("upsert article: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve). The resolver's answer is cached, not
 			// this table's reading of it.
 			// An explicit tenant is not cached: it rides on CallOptions, which
@@ -2307,11 +2367,27 @@ func (c *articleClient) Upsert(ctx context.Context, input *CreateArticleInput, t
 			return nil, nil
 		}
 
-		return c.Get(ctx, id, func(o *CallOptions[ArticleFieldOptions]) {
+		// Read the row back whether or not it is soft-deleted: the empty
+		// DeletedAt comparator keeps GetMany's default "is not deleted"
+		// condition out.
+		written, err := c.GetMany(ctx, &GetArticlesInput{
+			Filter: &ArticleFilter{
+				ID:        &comparator.Number[int64]{Eq: new(id)},
+				DeletedAt: &comparator.NullableTime{},
+			},
+			Limit: new(1),
+		}, func(o *CallOptions[ArticleFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		if len(written) == 0 {
+			return nil, ErrNotFound
+		}
+		return written[0], nil
 	})
 	if err != nil {
 		return nil, err
@@ -2377,9 +2453,9 @@ func (c *articleClient) insertUpsertAndResolveID(ctx context.Context, conn datab
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -2658,7 +2734,8 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 
 		return c.GetMany(ctx, &GetArticlesInput{
 			Filter: &ArticleFilter{
-				ID: &comparator.Number[int64]{In: rowIDs},
+				ID:        &comparator.Number[int64]{In: rowIDs},
+				DeletedAt: &comparator.NullableTime{},
 			},
 			Limit: new(0),
 		}, func(o *CallOptions[ArticleFieldOptions]) {
@@ -2693,8 +2770,8 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -4679,9 +4756,9 @@ func (c *auditLogClient) insertUpsertAndResolveID(ctx context.Context, conn data
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -4909,8 +4986,8 @@ func (c *auditLogClient) UpsertMany(ctx context.Context, inputs []*CreateAuditLo
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -6091,9 +6168,9 @@ func (c *legacyWidgetClient) Create(ctx context.Context, input *CreateLegacyWidg
 			if err != nil {
 				return nil, fmt.Errorf("create legacy_widget: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value (and
-			// the GetMany inside Get's body) instead of re-invoking the user
-			// resolver — single-resolve. What is cached is the
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
 			// resolver's answer, not this table's reading of it: a zero return
 			// is cached as a zero, and each table downstream re-applies its own
 			// tenancy.required branch to it.
@@ -6356,7 +6433,7 @@ func (c *legacyWidgetClient) Update(ctx context.Context, id int64, input *Update
 			if err != nil {
 				return nil, fmt.Errorf("update legacy_widget: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// — single-resolve.
 			// An explicit tenant is not cached: it rides on CallOptions, which
 			// every internal call inherits, and resolveTenant honours it ahead of
@@ -7067,7 +7144,7 @@ func (c *legacyWidgetClient) Upsert(ctx context.Context, input *CreateLegacyWidg
 			if err != nil {
 				return nil, fmt.Errorf("upsert legacy_widget: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve). The resolver's answer is cached, not
 			// this table's reading of it.
 			// An explicit tenant is not cached: it rides on CallOptions, which
@@ -7183,9 +7260,9 @@ func (c *legacyWidgetClient) insertUpsertAndResolveID(ctx context.Context, conn 
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -7479,8 +7556,8 @@ func (c *legacyWidgetClient) UpsertMany(ctx context.Context, inputs []*CreateLeg
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -8933,7 +9010,7 @@ func (c *orderItemClient) Update(ctx context.Context, pk OrderItemPK, input *Upd
 			if err != nil {
 				return nil, fmt.Errorf("update order_item: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// — single-resolve.
 			// An explicit tenant is not cached: it rides on CallOptions, which
 			// every internal call inherits, and resolveTenant honours it ahead of
@@ -9572,7 +9649,7 @@ func (c *orderItemClient) Upsert(ctx context.Context, input *CreateOrderItemInpu
 			if err != nil {
 				return nil, fmt.Errorf("upsert order_item: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve).
 			// An explicit tenant is not cached: it rides on CallOptions, which
 			// every internal call inherits, and resolveTenant honours it ahead of
@@ -13070,9 +13147,9 @@ func (c *postClient) Create(ctx context.Context, input *CreatePostInput, opts ..
 			if err != nil {
 				return nil, fmt.Errorf("create post: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value (and
-			// the GetMany inside Get's body) instead of re-invoking the user
-			// resolver — single-resolve. What is cached is the
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
 			// resolver's answer, not this table's reading of it: a zero return
 			// is cached as a zero, and each table downstream re-applies its own
 			// tenancy.required branch to it.
@@ -13336,7 +13413,7 @@ func (c *postClient) Update(ctx context.Context, id int64, input *UpdatePostInpu
 			if err != nil {
 				return nil, fmt.Errorf("update post: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// — single-resolve.
 			// An explicit tenant is not cached: it rides on CallOptions, which
 			// every internal call inherits, and resolveTenant honours it ahead of
@@ -14072,7 +14149,7 @@ func (c *postClient) Upsert(ctx context.Context, input *CreatePostInput, target 
 			if err != nil {
 				return nil, fmt.Errorf("upsert post: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve). The resolver's answer is cached, not
 			// this table's reading of it.
 			// An explicit tenant is not cached: it rides on CallOptions, which
@@ -14188,9 +14265,9 @@ func (c *postClient) insertUpsertAndResolveID(ctx context.Context, conn database
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -14485,8 +14562,8 @@ func (c *postClient) UpsertMany(ctx context.Context, inputs []*CreatePostInput, 
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -15876,9 +15953,9 @@ func (c *productClient) Create(ctx context.Context, input *CreateProductInput, o
 			if err != nil {
 				return nil, fmt.Errorf("create product: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value (and
-			// the GetMany inside Get's body) instead of re-invoking the user
-			// resolver — single-resolve. What is cached is the
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
 			// resolver's answer, not this table's reading of it: a zero return
 			// is cached as a zero, and each table downstream re-applies its own
 			// tenancy.required branch to it.
@@ -16153,7 +16230,7 @@ func (c *productClient) Update(ctx context.Context, id int64, input *UpdateProdu
 			if err != nil {
 				return nil, fmt.Errorf("update product: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// — single-resolve.
 			// An explicit tenant is not cached: it rides on CallOptions, which
 			// every internal call inherits, and resolveTenant honours it ahead of
@@ -16893,7 +16970,7 @@ func (c *productClient) Upsert(ctx context.Context, input *CreateProductInput, t
 			if err != nil {
 				return nil, fmt.Errorf("upsert product: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve). The resolver's answer is cached, not
 			// this table's reading of it.
 			// An explicit tenant is not cached: it rides on CallOptions, which
@@ -17014,9 +17091,9 @@ func (c *productClient) insertUpsertAndResolveID(ctx context.Context, conn datab
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -17317,8 +17394,8 @@ func (c *productClient) UpsertMany(ctx context.Context, inputs []*CreateProductI
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -18763,9 +18840,9 @@ func (c *tagLinkClient) Create(ctx context.Context, input *CreateTagLinkInput, o
 			if err != nil {
 				return nil, fmt.Errorf("create tag_link: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value (and
-			// the GetMany inside Get's body) instead of re-invoking the user
-			// resolver — single-resolve. What is cached is the
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
 			// resolver's answer, not this table's reading of it: a zero return
 			// is cached as a zero, and each table downstream re-applies its own
 			// tenancy.required branch to it.
@@ -18998,7 +19075,7 @@ func (c *tagLinkClient) Update(ctx context.Context, pk TagLinkPK, input *UpdateT
 			if err != nil {
 				return nil, fmt.Errorf("update tag_link: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// — single-resolve.
 			// An explicit tenant is not cached: it rides on CallOptions, which
 			// every internal call inherits, and resolveTenant honours it ahead of
@@ -19710,7 +19787,7 @@ func (c *tagLinkClient) Upsert(ctx context.Context, input *CreateTagLinkInput, t
 			if err != nil {
 				return nil, fmt.Errorf("upsert tag_link: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve). The resolver's answer is cached, not
 			// this table's reading of it.
 			// An explicit tenant is not cached: it rides on CallOptions, which
@@ -21735,9 +21812,9 @@ func (c *tagClient) Create(ctx context.Context, input *CreateTagInput, opts ...f
 			if err != nil {
 				return nil, fmt.Errorf("create tag: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value (and
-			// the GetMany inside Get's body) instead of re-invoking the user
-			// resolver — single-resolve. What is cached is the
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
 			// resolver's answer, not this table's reading of it: a zero return
 			// is cached as a zero, and each table downstream re-applies its own
 			// tenancy.required branch to it.
@@ -22000,7 +22077,7 @@ func (c *tagClient) Update(ctx context.Context, id int64, input *UpdateTagInput,
 			if err != nil {
 				return nil, fmt.Errorf("update tag: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// — single-resolve.
 			// An explicit tenant is not cached: it rides on CallOptions, which
 			// every internal call inherits, and resolveTenant honours it ahead of
@@ -22729,7 +22806,7 @@ func (c *tagClient) Upsert(ctx context.Context, input *CreateTagInput, target Ta
 			if err != nil {
 				return nil, fmt.Errorf("upsert tag: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve). The resolver's answer is cached, not
 			// this table's reading of it.
 			// An explicit tenant is not cached: it rides on CallOptions, which
@@ -22845,9 +22922,9 @@ func (c *tagClient) insertUpsertAndResolveID(ctx context.Context, conn database.
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -23141,8 +23218,8 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -24677,9 +24754,9 @@ func (c *userProfileClient) Create(ctx context.Context, input *CreateUserProfile
 			if err != nil {
 				return nil, fmt.Errorf("create user_profile: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value (and
-			// the GetMany inside Get's body) instead of re-invoking the user
-			// resolver — single-resolve. What is cached is the
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
 			// resolver's answer, not this table's reading of it: a zero return
 			// is cached as a zero, and each table downstream re-applies its own
 			// tenancy.required branch to it.
@@ -24952,7 +25029,7 @@ func (c *userProfileClient) Update(ctx context.Context, id int64, input *UpdateU
 			if err != nil {
 				return nil, fmt.Errorf("update user_profile: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// — single-resolve.
 			// An explicit tenant is not cached: it rides on CallOptions, which
 			// every internal call inherits, and resolveTenant honours it ahead of
@@ -25674,7 +25751,7 @@ func (c *userProfileClient) Upsert(ctx context.Context, input *CreateUserProfile
 			if err != nil {
 				return nil, fmt.Errorf("upsert user_profile: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve). The resolver's answer is cached, not
 			// this table's reading of it.
 			// An explicit tenant is not cached: it rides on CallOptions, which
@@ -25795,9 +25872,9 @@ func (c *userProfileClient) insertUpsertAndResolveID(ctx context.Context, conn d
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -26096,8 +26173,8 @@ func (c *userProfileClient) UpsertMany(ctx context.Context, inputs []*CreateUser
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -27893,9 +27970,9 @@ func (c *userClient) Create(ctx context.Context, input *CreateUserInput, opts ..
 			if err != nil {
 				return nil, fmt.Errorf("create user: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value (and
-			// the GetMany inside Get's body) instead of re-invoking the user
-			// resolver — single-resolve. What is cached is the
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
 			// resolver's answer, not this table's reading of it: a zero return
 			// is cached as a zero, and each table downstream re-applies its own
 			// tenancy.required branch to it.
@@ -28158,7 +28235,7 @@ func (c *userClient) Update(ctx context.Context, id int64, input *UpdateUserInpu
 			if err != nil {
 				return nil, fmt.Errorf("update user: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// — single-resolve.
 			// An explicit tenant is not cached: it rides on CallOptions, which
 			// every internal call inherits, and resolveTenant honours it ahead of
@@ -28887,7 +28964,7 @@ func (c *userClient) Upsert(ctx context.Context, input *CreateUserInput, target 
 			if err != nil {
 				return nil, fmt.Errorf("upsert user: resolve tenant: %w", err)
 			}
-			// Stash on ctx so the chained terminal Get reuses this value
+			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve). The resolver's answer is cached, not
 			// this table's reading of it.
 			// An explicit tenant is not cached: it rides on CallOptions, which
@@ -29003,9 +29080,9 @@ func (c *userClient) insertUpsertAndResolveID(ctx context.Context, conn database
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
@@ -29299,8 +29376,8 @@ func (c *userClient) UpsertMany(ctx context.Context, inputs []*CreateUserInput, 
 // The lookup applies neither the soft-delete filter nor a tenant predicate. The
 // unique index matched regardless of either, so a soft-deleted or other-tenant
 // row is still the row that conflicted and still the row whose key this
-// resolves; the terminal GetMany then applies the read path's own filters,
-// exactly as on the DO UPDATE SET branch.
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
 //
 // It is a second statement, so a concurrent delete between the two leaves a row
 // unmatched. That is reported rather than silently returned short.
@@ -31816,9 +31893,9 @@ func (c *workspaceClient) insertUpsertAndResolveID(ctx context.Context, conn dat
 //
 // The lookup does not exclude soft-deleted rows: the unique index matched
 // regardless of the soft-delete column, so a soft-deleted row is still the row
-// that conflicted and still the row whose PK this resolves. (The terminal Get
-// then applies the read path's own soft-delete filter, exactly as it does on
-// the DO UPDATE SET branch.)
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
 //
 // This is a second statement, so a concurrent delete between the insert and
 // this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
