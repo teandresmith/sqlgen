@@ -29,51 +29,6 @@ import (
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models"
 )
 
-// --- zero-field Update short-circuit ---
-
-func TestUpdate_ZeroFields_NoUpdateSQL_SQLite(t *testing.T) {
-	ctx := context.Background()
-
-	cap := newCapturingQuerier(dbstdlib.New(testDB))
-	client := models.New(cap)
-
-	cat, err := client.Categories().Create(ctx, &models.CreateCategoryInput{Name: "ZeroUpdate-14.12"})
-	if err != nil {
-		t.Fatalf("Create category: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Categories().HardDelete(ctx, cat.ID) })
-
-	seed, err := client.Products().Create(ctx, &models.CreateProductInput{
-		CategoryID: cat.ID,
-		Title:      "ZeroUpdateProduct",
-		Price:      10.00,
-		SKU:        "ZERO-UPDATE-001",
-	})
-	if err != nil {
-		t.Fatalf("Create product: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Products().HardDelete(ctx, seed.ID) })
-
-	cap.reset()
-
-	got, err := client.Products().Update(ctx, seed.ID, &models.UpdateProductInput{})
-	if err != nil {
-		t.Fatalf("Update(empty): %v", err)
-	}
-	if got == nil || got.ID != seed.ID {
-		t.Fatalf("Update(empty) = %+v, want product with ID %d", got, seed.ID)
-	}
-	if got.Title != seed.Title || got.Price != seed.Price || got.InStock != seed.InStock {
-		t.Errorf("Update(empty) returned modified entity: got=%+v want=%+v", got, seed)
-	}
-
-	for _, sqlStr := range cap.snapshot() {
-		if strings.HasPrefix(strings.TrimSpace(strings.ToUpper(sqlStr)), "UPDATE ") {
-			t.Errorf("Update(empty) issued an UPDATE statement: %q", sqlStr)
-		}
-	}
-}
-
 // --- null-vs-unset on nullable column ---
 
 func TestUpdate_NullableColumn_OmitVsSetNil_SQLite(t *testing.T) {

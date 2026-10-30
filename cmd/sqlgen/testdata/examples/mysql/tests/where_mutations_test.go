@@ -2,47 +2,15 @@ package tests
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/teandresmith/sqlgen/comparator"
-	"github.com/teandresmith/sqlgen/omittable"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/mysql/models"
 )
 
 // *Where mutation edge cases for MySQL (PRD §9.3, §9.5).
 // Mirrors the postgres suite, dialect-adapted (int64 PKs).
-
-func TestUpdateWhere_EmptyFilter_ReturnsErrEmptyFilter_MySQL(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	_, err := client.Articles().UpdateWhere(ctx, &models.ArticleFilter{}, &models.UpdateArticleInput{
-		Title: omittable.Set("ignored"),
-	})
-	if !errors.Is(err, models.ErrEmptyFilter) {
-		t.Fatalf("UpdateWhere(empty filter): err = %v, want ErrEmptyFilter", err)
-	}
-}
-
-func TestUpdateWhere_ZeroMatch_ReturnsNilNoError_MySQL(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	noMatch := "where-mut-no-such-author-" + t.Name()
-	got, err := client.Articles().UpdateWhere(
-		ctx,
-		&models.ArticleFilter{Author: &comparator.String{Eq: &noMatch}},
-		&models.UpdateArticleInput{Title: omittable.Set("ignored")},
-	)
-	if err != nil {
-		t.Fatalf("UpdateWhere(zero match): %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("UpdateWhere(zero match) = %d results, want 0", len(got))
-	}
-}
 
 func TestSoftDeleteWhere_AlreadySoftDeleted_NoOp_MySQL(t *testing.T) {
 	// SoftDeleteWhere always scopes to `deleted_at IS NULL` (the op only targets

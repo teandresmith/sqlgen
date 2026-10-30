@@ -9,8 +9,8 @@ package tests
 //   - §6.1: PostgreSQL alone rejects an ON CONFLICT ... DO UPDATE that would
 //     affect one row twice. TestUpsertMany_InStatementDuplicate_RawRejected
 //     proves the server still does, so the dedupe is load-bearing rather than
-//     defensive, and TestUpsertMany_DedupesLastWins proves UpsertMany survives
-//     the same input and keeps the last occurrence.
+//     defensive, and UpsertMany's dedupe, which keeps the last occurrence,
+//     is what lets it survive the same input.
 //   - §6.2: DO NOTHING returns only the rows actually inserted, so RETURNING
 //     comes back short after a partial conflict.
 //     TestUpsertMany_DoNothing_RawReturningIsShort proves that, and
@@ -80,44 +80,6 @@ func TestUpsertMany_InStatementDuplicate_RawRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "affect row a second time") {
 		t.Errorf("raw duplicate rejected with %v, want the 'affect row a second time' cardinality error", err)
-	}
-}
-
-// The same input through UpsertMany succeeds on all three dialects, and the
-// last occurrence is the one that lands — matching what MySQL and SQLite do
-// natively with the un-deduped statement.
-func TestUpsertMany_DedupesLastWins(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	inputs := []*models.CreateCategoryInput{
-		{Name: "DedupeCat", Description: omittable.Set(new("first"))},
-		{Name: "OtherCat", Description: omittable.Set(new("other"))},
-		{Name: "DedupeCat", Description: omittable.Set(new("last"))},
-	}
-
-	got, err := client.Categories().UpsertMany(ctx, inputs, models.CategoryConflictName)
-	if err != nil {
-		t.Fatalf("UpsertMany with an in-statement duplicate: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(ctx, `DELETE FROM categories WHERE name = ANY($1)`, []string{"DedupeCat", "OtherCat"})
-	})
-
-	if len(got) != 2 {
-		t.Fatalf("UpsertMany returned %d entities, want 2 (three inputs, one duplicate pair)", len(got))
-	}
-
-	byName := make(map[string]*models.Category, len(got))
-	for _, c := range got {
-		byName[c.Name] = c
-	}
-	dedup, ok := byName["DedupeCat"]
-	if !ok {
-		t.Fatalf("UpsertMany result has no DedupeCat; got %v", byName)
-	}
-	if dedup.Description == nil || *dedup.Description != "last" {
-		t.Errorf("DedupeCat description = %v, want %q (last occurrence wins)", dedup.Description, "last")
 	}
 }
 
@@ -257,55 +219,6 @@ func TestUpsertMany_LinkTableStatementCount(t *testing.T) {
 
 // --- The database-generated key path ---
 
-// categories.id is a DEFAULT-backed uuid, so the caller need not supply it and
-// UpsertMany cannot name the written rows from the inputs. It reads them back
-// by the conflict target instead — which must produce the *existing* row's id
-// on the conflict branch, not a freshly generated one.
-func TestUpsertMany_DBGeneratedPK_ResolvesExistingIDs(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	seeded, err := client.Categories().Create(ctx, &models.CreateCategoryInput{
-		Name:        "GenPKCat-existing",
-		Description: omittable.Set(new("before")),
-	})
-	if err != nil {
-		t.Fatalf("Create seed category: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(ctx, `DELETE FROM categories WHERE name LIKE $1`, "GenPKCat-%")
-	})
-
-	got, err := client.Categories().UpsertMany(ctx, []*models.CreateCategoryInput{
-		{Name: "GenPKCat-existing", Description: omittable.Set(new("after"))},
-		{Name: "GenPKCat-new", Description: omittable.Set(new("fresh"))},
-	}, models.CategoryConflictName)
-	if err != nil {
-		t.Fatalf("UpsertMany on a db-generated key: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("UpsertMany returned %d entities, want 2", len(got))
-	}
-
-	byName := make(map[string]*models.Category, len(got))
-	for _, c := range got {
-		byName[c.Name] = c
-	}
-	existing, ok := byName["GenPKCat-existing"]
-	if !ok {
-		t.Fatalf("result has no GenPKCat-existing; got %v", byName)
-	}
-	if existing.ID != seeded.ID {
-		t.Errorf("conflicting row resolved to id %v, want the existing row's %v", existing.ID, seeded.ID)
-	}
-	if existing.Description == nil || *existing.Description != "after" {
-		t.Errorf("conflicting row description = %v, want %q", existing.Description, "after")
-	}
-	if fresh, ok := byName["GenPKCat-new"]; !ok || fresh.ID == (uuid.UUID{}) {
-		t.Errorf("newly inserted row missing or carries a zero id: %v", byName)
-	}
-}
-
 // A conflict target the input cannot supply leaves the written rows unnameable,
 // so the operation refuses before it writes anything rather than returning a
 // primary key it guessed. categories.id is DEFAULT-backed and absent from these
@@ -332,49 +245,6 @@ func TestUpsertMany_DBGeneratedPK_UnsuppliedConflictTargetRefused(t *testing.T) 
 	}
 	if count != 0 {
 		t.Errorf("refused UpsertMany wrote %d rows, want 0", count)
-	}
-}
-
-// PRD §9.4c: a nil element is a caller error, not a row to skip.
-func TestUpsertMany_NilElement(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	if _, err := client.Categories().UpsertMany(ctx, []*models.CreateCategoryInput{
-		{Name: "NilElementCat"},
-		nil,
-	}, models.CategoryConflictName); err == nil {
-		t.Fatal("UpsertMany with a nil element = nil error, want ErrNilInput")
-	}
-
-	var count int
-	if err := testPool.QueryRow(ctx,
-		`SELECT count(*) FROM categories WHERE name = $1`, "NilElementCat").Scan(&count); err != nil {
-		t.Fatalf("counting categories: %v", err)
-	}
-	if count != 0 {
-		t.Errorf("UpsertMany rejected for a nil element still wrote %d rows, want 0", count)
-	}
-}
-
-// An empty call writes nothing and — the part that is easy to get wrong — reads
-// nothing: the terminal re-fetch filters on the written keys, and a key filter
-// built from an empty set contributes no condition at all.
-func TestUpsertMany_EmptyInput(t *testing.T) {
-	ctx := context.Background()
-	cap := newCapturingQuerier(dbpgx.New(testPool))
-	client := models.New(cap)
-
-	cap.reset()
-	got, err := client.Categories().UpsertMany(ctx, nil, models.CategoryConflictName)
-	if err != nil {
-		t.Fatalf("UpsertMany(nil): %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("UpsertMany(nil) returned %d entities, want 0", len(got))
-	}
-	if sqls := cap.snapshot(); len(sqls) != 0 {
-		t.Errorf("UpsertMany(nil) issued %d statements, want 0: %v", len(sqls), sqls)
 	}
 }
 

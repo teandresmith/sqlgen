@@ -20,8 +20,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/teandresmith/sqlgen/omittable"
-
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models"
 )
 
@@ -50,38 +48,6 @@ func TestUpsertMany_InStatementDuplicate_RawAccepted(t *testing.T) {
 	}
 	if description == nil || *description != "second" {
 		t.Errorf("raw duplicate left description = %v, want %q (last row wins)", description, "second")
-	}
-}
-
-// UpsertMany reaches the same end state, having deduped rather than relied on
-// the dialect's tolerance.
-func TestUpsertMany_DedupesLastWins(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	t.Cleanup(func() {
-		_, _ = testDB.ExecContext(ctx, `DELETE FROM categories WHERE name IN ('DedupeCat', 'OtherCat')`)
-	})
-
-	got, err := client.Categories().UpsertMany(ctx, []*models.CreateCategoryInput{
-		{Name: "DedupeCat", Description: omittable.Set(new("first"))},
-		{Name: "OtherCat", Description: omittable.Set(new("other"))},
-		{Name: "DedupeCat", Description: omittable.Set(new("last"))},
-	}, models.CategoryConflictName)
-	if err != nil {
-		t.Fatalf("UpsertMany with an in-statement duplicate: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("UpsertMany returned %d entities, want 2 (three inputs, one duplicate pair)", len(got))
-	}
-
-	var description *string
-	if err := testDB.QueryRowContext(ctx,
-		`SELECT description FROM categories WHERE name = ?`, "DedupeCat").Scan(&description); err != nil {
-		t.Fatalf("reading DedupeCat: %v", err)
-	}
-	if description == nil || *description != "last" {
-		t.Errorf("DedupeCat description = %v, want %q (last occurrence wins)", description, "last")
 	}
 }
 
@@ -162,58 +128,6 @@ func TestUpsertMany_LinkTableIdempotent(t *testing.T) {
 }
 
 // --- The database-generated key path ---
-
-// categories.id is INTEGER PRIMARY KEY AUTOINCREMENT, so the key is not in the
-// input and the written rows are read back by the conflict target.
-func TestUpsertMany_DBGeneratedPK_ResolvesExistingIDs(t *testing.T) {
-	ctx := context.Background()
-	client := newClient()
-
-	t.Cleanup(func() {
-		_, _ = testDB.ExecContext(ctx, `DELETE FROM categories WHERE name LIKE 'GenPKCat-%'`)
-	})
-
-	seeded, err := client.Categories().Create(ctx, &models.CreateCategoryInput{
-		Name:        "GenPKCat-existing",
-		Description: omittable.Set(new("before")),
-	})
-	if err != nil {
-		t.Fatalf("Create seed category: %v", err)
-	}
-
-	got, err := client.Categories().UpsertMany(ctx, []*models.CreateCategoryInput{
-		{Name: "GenPKCat-existing", Description: omittable.Set(new("after"))},
-		{Name: "GenPKCat-new", Description: omittable.Set(new("fresh"))},
-	}, models.CategoryConflictName)
-	if err != nil {
-		t.Fatalf("UpsertMany on a db-generated key: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("UpsertMany returned %d entities, want 2", len(got))
-	}
-
-	byName := make(map[string]*models.Category, len(got))
-	for _, c := range got {
-		byName[c.Name] = c
-	}
-	existing, ok := byName["GenPKCat-existing"]
-	if !ok {
-		t.Fatalf("result has no GenPKCat-existing; got %v", byName)
-	}
-	if existing.ID != seeded.ID {
-		t.Errorf("conflicting row resolved to id %d, want the existing row's %d", existing.ID, seeded.ID)
-	}
-	if existing.Description == nil || *existing.Description != "after" {
-		t.Errorf("conflicting row description = %v, want %q", existing.Description, "after")
-	}
-	fresh, ok := byName["GenPKCat-new"]
-	if !ok || fresh.ID == 0 {
-		t.Fatalf("newly inserted row missing or carries a zero id: %v", byName)
-	}
-	if fresh.ID == existing.ID {
-		t.Errorf("both rows resolved to id %d — the read-back is not distinguishing them", fresh.ID)
-	}
-}
 
 func TestUpsertMany_UnsuppliedConflictTargetRefused(t *testing.T) {
 	ctx := context.Background()

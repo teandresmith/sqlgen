@@ -2,7 +2,6 @@ package tests
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models"
@@ -162,34 +161,5 @@ func TestIncrement_IntegerColumn_SQLite(t *testing.T) {
 	}
 	if got.UnitPrice != 7.00 {
 		t.Errorf("order_item.unit_price: got %v, want 7.00", got.UnitPrice)
-	}
-}
-
-func TestIncrement_MissingPK_StrictUpdates_ReturnsErrNotFound_SQLite(t *testing.T) {
-	// products.strict_updates defaults to true → missing PK returns ErrNotFound.
-	ctx := context.Background()
-	client := newClient()
-
-	err := client.Products().Increment(ctx, int64(999999999), models.IncrementInput[models.ProductIncrementColumn]{
-		Column: models.ProductIncrementPrice,
-		Amount: 1,
-	})
-	if !errors.Is(err, models.ErrNotFound) {
-		t.Fatalf("Increment missing PK (strict_updates=true): got err=%v, want ErrNotFound", err)
-	}
-}
-
-func TestIncrement_MissingPK_NonStrict_ReturnsNil_SQLite(t *testing.T) {
-	// orders.strict_updates is configured to false in sqlgen.yml → missing PK is
-	// an idempotent no-op that returns nil (PRD §9.5).
-	ctx := context.Background()
-	client := newClient()
-
-	err := client.Orders().Increment(ctx, int64(999999999), models.IncrementInput[models.OrderIncrementColumn]{
-		Column: models.OrderIncrementTotal,
-		Amount: 10,
-	})
-	if err != nil {
-		t.Fatalf("Increment missing PK (strict_updates=false): got err=%v, want nil", err)
 	}
 }

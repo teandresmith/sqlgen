@@ -3706,7 +3706,7 @@ The rule splits on direction, because "no values supplied" means something coher
 
 #### Batch Failure Semantics
 
-`CreateMany`, `UpdateMany`, `HardDeleteMany`, `SoftDeleteMany` and `RestoreMany` split their input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately. **Previously executed sub-batches within the same call are not automatically rolled back.**
+`CreateMany`, `UpdateMany`, `UpsertMany`, `HardDeleteMany`, `SoftDeleteMany` and `RestoreMany` split their input into sub-batches of `generation.batch_size`. If any sub-batch fails, the operation returns an error immediately. **Previously executed sub-batches within the same call are not automatically rolled back.**
 
 Consumers are expected to wrap batch mutations in a transaction when atomicity is required:
 
@@ -3762,7 +3762,7 @@ tables:
     strict_updates: false
 ```
 
-Delete operations are always idempotent regardless of this setting — there is no `strict_deletes` option.
+Delete operations are always idempotent regardless of this setting — there is no `strict_deletes` option. An `UpdateMany` key matching no row is neither an error nor returned, whatever `strict_updates` says.
 
 #### Upsert Conflict Keys
 
@@ -3817,7 +3817,7 @@ product, err := client.Products().Upsert(ctx, input, <pkg>.ProductConflictRegion
 
 **MySQL note:** MySQL's `ON DUPLICATE KEY UPDATE` does not accept an explicit conflict target — it triggers on any unique constraint violation. The `conflictKeys` parameter is accepted for API consistency but does not affect the generated MySQL SQL. The consumer should be aware that MySQL may trigger on a different constraint than the one specified. The one case the generator rules out is a target naming a column the INSERT does not write, which carries no conflict clause on any dialect (below).
 
-**Update columns in upsert:** The `DO UPDATE SET` clause includes all non-PK, non-conflict-key columns from the `CreateInput`. Columns that are part of the conflict target or PK are excluded from the SET clause (they are the identity, not the payload). `UpsertMany` also excludes every non-PK auto-increment column: `serial`, an identity column (`BY DEFAULT` or `ALWAYS`), MySQL `AUTO_INCREMENT`, a column whose default is `nextval(…)`, or a SQLite rowid alias that `primary_key.columns` demoted ([8.6](#86-primary-key-strategy)). A batch binds every input column in every row, so a row that leaves such a column unset carries `DEFAULT` (`NULL` on SQLite), and setting it from that row would draw a new value on every conflict. PostgreSQL rejects the clause outright on a `GENERATED ALWAYS` identity (SQLSTATE `428C9`, whether or not a row conflicts), a `serial` or `AUTO_INCREMENT` column is redrawn, and a demoted rowid alias re-keys the row. A value the caller sets for such a column therefore applies on insert, not on conflict. The single-row `Upsert` keeps the rule as stated: it writes only the columns the caller set, so it updates such a column only when asked to.
+**Update columns in upsert:** The `DO UPDATE SET` clause includes all non-PK, non-conflict-key columns from the `CreateInput`. Columns that are part of the conflict target or PK are excluded from the SET clause (they are the identity, not the payload). `UpsertMany` also excludes every non-PK auto-increment column: `serial`, an identity column (`BY DEFAULT` or `ALWAYS`), MySQL `AUTO_INCREMENT`, a column whose default is `nextval(…)`, or a SQLite rowid alias that `primary_key.columns` demoted ([8.6](#86-primary-key-strategy)). A batch binds every input column in every row, so a row that leaves such a column unset carries `DEFAULT` (`NULL` on SQLite), and setting it from that row would draw a new value on every conflict. PostgreSQL rejects the clause outright on a `GENERATED ALWAYS` identity (SQLSTATE `428C9`, whether or not a row conflicts), a `serial` or `AUTO_INCREMENT` column is redrawn, and a demoted rowid alias re-keys the row. A value the caller sets for such a column therefore applies on insert, not on conflict. The single-row `Upsert` keeps the rule as stated: it writes only the columns the caller set, so it updates such a column only when asked to. On conflict, `UpsertMany` sets each column of that SET clause from the row, and a field the row left unset takes its `DEFAULT` (`NULL` without one), because a batch binds every input column in every row. A soft-deleted conflicting row is therefore restored unless the row sets the soft-delete column; the single-row `Upsert` leaves an unset column, the soft-delete column included, as the conflicting row has it.
 
 **Tables with no unique constraints:** If a table has no UNIQUE constraints, `{Table}ConflictPK` is the only conflict target generated.
 
@@ -3850,7 +3850,7 @@ Where the key is not knowable before the write (`db` strategy: `serial`, `AUTO_I
 | Dialect | Why the statement cannot name the rows |
 |---------|----------------------------------------|
 | MySQL | `LAST_INSERT_ID()` after a batch that mixed inserts with conflicts names the first **newly inserted** row, not the batch's first row. Fabricating keys from the first — which `CreateMany` does for a plain multi-row INSERT, as `firstID + i × auto_increment_increment` ([9.8.5](#985-createmany)) — yields a wrong key for every row |
-| PostgreSQL / SQLite | `RETURNING` omits every row that took the `DO NOTHING` branch, and its row order is not contractual |
+| PostgreSQL / SQLite | `RETURNING` omits every row that took the `DO NOTHING` branch, so its rows cannot be paired with the inputs by position |
 
 **Both halves compare values as Go sees them, which the database's own equality can outrun.** Row identity — for the dedupe, and for matching a written row to the row read back for it — is computed from the bound value, while the unique index compares under the column's collation and storage rules. Where the two disagree the Go side is the stricter: a case-insensitive collation (MySQL's default `utf8mb4_0900_ai_ci`), `CHAR(n)` padding, or a timestamp precision the column truncates. Two rows the database would call one are then left undeduped. PostgreSQL rejects the statement, loudly; MySQL and SQLite accept it and write one row for the two, and the terminal read, which then finds fewer rows than deduped inputs, returns an error naming the cause, after the write. Where the key is read back (a database-generated key, or a target that does not cover the primary key), a written row may also fail to match its key read (an error naming the cause, after the write). Neither is silent when the call reads its rows back; a call whose `FieldOptions` selects nothing skips the terminal read ([9.8](#98-generated-method-patterns) item 3), and with it the count check, and records the keys as supplied. A conflict target on a case-sensitively-compared column — which every UUID, integer and default-collation text key is — is unaffected.
 
@@ -3959,7 +3959,7 @@ The generated relationship loader receives the resolved `CallOptions` from the p
 
 `LockMode` is a `CallOptions` field that adds a row-level locking clause to read methods (`Get`, `GetMany`, `Paginate`, `Connection`). It enables read-modify-write workflows, job queue dispatchers, and other concurrency primitives that require holding a database lock on the selected rows for the duration of the enclosing transaction.
 
-LockMode applies to read methods only. Write methods (`Create`, `Update`, `Upsert`, `*Delete*`) acquire row locks implicitly via the `INSERT`/`UPDATE`/`DELETE` itself; LockMode is ignored on those methods. It is ignored too on `Count`, `Exists`, `ExistsWhere` and `Stream`, which add no lock clause, so the total that `Paginate` and `Connection` read through `Count` is never locked.
+LockMode applies to read methods only. Write methods (`Create`, `CreateMany`, `Update`, `UpdateMany`, `UpdateWhere`, `Upsert`, `UpsertMany`, `Increment`, `*Delete*`, `Restore*`) acquire row locks implicitly via the `INSERT`/`UPDATE`/`DELETE` itself; LockMode is ignored on those methods. It is ignored too on `Count`, `Exists`, `ExistsWhere` and `Stream`, which add no lock clause, so the total that `Paginate` and `Connection` read through `Count` is never locked.
 
 #### Lock Mode Constants
 
@@ -4176,7 +4176,7 @@ The follow-up `SELECT` must **not** apply the soft-delete filter: the unique ind
 
 The follow-up `SELECT` requests more than one column when the table is tenanted, and `BuildSelect` **sorts** its column list where `RETURNING` does not. Scan targets on that path are therefore bound by column name, never by position: a tenant column that sorts before the PK (`account_id`, `company_id`) would otherwise bind to the wrong target, silently when the two share a Go type.
 
-**Batched, the same lookup is the only mechanism.** `UpsertMany` ([9.2](#92-write-operations)) cannot use either row of the table above: `LAST_INSERT_ID()` after a batch that mixed inserts with conflicts names the first *newly inserted* row rather than the batch's first, and `RETURNING` omits every `DO NOTHING` row while promising nothing about the order of the rest. A table whose key is known before the write takes it from the inputs **on a conflict target that covers every primary-key column**; on any other target, and on a table whose key is database-generated, it reads the sub-batch back by the conflict columns it targeted — the batched form of the lookup above, resolving every row rather than one, and applying neither the soft-delete filter nor a tenant predicate for the same reason. The extra condition is not a `db`-strategy quirk: a conflict on a non-key unique constraint leaves the existing row's key in place on every strategy, so an input-sourced key would name a row that does not exist ([9.5 Batch upsert](#batch-upsert--dedupe-return-shape-and-key-resolution)). Because it resolves keys rather than writing, it leaves [25.1](#251-query-count-guarantee)'s write bound unchanged, exactly as the trailing `Get` / `GetMany` does. See [9.5 Batch upsert](#batch-upsert--dedupe-return-shape-and-key-resolution).
+**Batched, the same lookup is the only mechanism.** `UpsertMany` ([9.2](#92-write-operations)) cannot use either row of the table above: `LAST_INSERT_ID()` after a batch that mixed inserts with conflicts names the first *newly inserted* row rather than the batch's first, and `RETURNING` omits every `DO NOTHING` row, so its rows cannot be paired with the inputs by position. A table whose key is known before the write takes it from the inputs **on a conflict target that covers every primary-key column**; on any other target, and on a table whose key is database-generated, it reads the sub-batch back by the conflict columns it targeted — the batched form of the lookup above, resolving every row rather than one, and applying neither the soft-delete filter nor a tenant predicate for the same reason. The extra condition is not a `db`-strategy quirk: a conflict on a non-key unique constraint leaves the existing row's key in place on every strategy, so an input-sourced key would name a row that does not exist ([9.5 Batch upsert](#batch-upsert--dedupe-return-shape-and-key-resolution)). Because it resolves keys rather than writing, it leaves [25.1](#251-query-count-guarantee)'s write bound unchanged, exactly as the trailing `Get` / `GetMany` does. See [9.5 Batch upsert](#batch-upsert--dedupe-return-shape-and-key-resolution).
 
 A `DO UPDATE SET pk = pk` self-assignment would also make `RETURNING` yield a row, but it converts a logical no-op into a physical row write — tuple rewrite, row lock, and `UPDATE` triggers firing on a row nothing changed — and is therefore not used.
 
@@ -5613,7 +5613,7 @@ Previously completed sub-batches are **not rolled back** on failure. Wrap in a t
 
 **`multiInsertAndResolveIDs` — generated per table, dialect-aware (same generation-time branching as `insertAndResolveID`):**
 
-**PostgreSQL/SQLite variant (RETURNING supported):**
+**PostgreSQL/SQLite variant (RETURNING supported):** a plain multi-row `INSERT ... VALUES` returns its `RETURNING` rows in `VALUES` order on both databases, and the variant relies on it: the i-th key read is the i-th input's row, which keeps `AffectedPKs` index-aligned with the inputs ([28.4](#284-publisher-interface)).
 
 ```go
 func (c *productClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]uuid.UUID, error) {
