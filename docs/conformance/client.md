@@ -1,6 +1,6 @@
 # Generated Client Requirements
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- matrix: client-methods rows=method:Get,GetMany,Count,Exists,ExistsWhere,Stream,Paginate,Connection,Create,CreateMany,Update,UpdateMany,UpdateWhere,Upsert,UpsertMany,Increment,CreateWithRelated,UpdateWithRelated,UpsertWithRelated,SoftDelete,SoftDeleteMany,SoftDeleteWhere,Restore,RestoreMany,RestoreWhere,HardDelete,HardDeleteMany,HardDeleteWhere cols=happy-path,nil-empty-input,not-found,soft-delete,transaction,hooks,error-mapping,field-selection,lock-mode,composite-pk -->
 
 Requirements of the generated client, proved by the cross-dialect conformance suite in
