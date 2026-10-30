@@ -612,7 +612,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | hard-delete-many.hook-abort | A hook can abort: it returns an error without calling `next()`, and the delete does not run | `conformance: HardDeleteMany/a hook that aborts deletes nothing` | all | |
 
 ## §22.2 Constraint Errors
-<!-- prd: 22.2 sha256: 4495bff3390ca0b2 -->
+<!-- prd: 22.2 sha256: 79ed9d573708c0cf -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

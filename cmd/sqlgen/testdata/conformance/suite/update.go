@@ -77,11 +77,7 @@ func updateMany(t *testing.T, h *Harness) {
 		h.Reset(t)
 		ids := createDocuments(t, h, 4)
 		_, err := h.Client.Documents().UpdateMany(ctx, upFailingItems(ids))
-		// Only that an error came back is uniform: pgx's SendBatch path
-		// returns the driver's error unmapped.
-		if err == nil {
-			t.Fatal("UpdateMany error = nil, want the CHECK violation")
-		}
+		upAssertCheckError(t, err)
 		want := map[int64]string{ids[0]: "updated", ids[1]: "updated", ids[2]: "doc", ids[3]: "doc"}
 		if diff := cmp.Diff(want, upDocumentTitles(t, h)); diff != "" {
 			t.Errorf("document titles after the failed UpdateMany (-want +got):\n%s", diff)

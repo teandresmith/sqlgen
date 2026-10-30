@@ -11433,7 +11433,7 @@ The sentinels are declared once in the runtime `database` package. The generated
 
 ### 22.2 Constraint Errors
 
-Database constraint violations are parsed from driver-specific error codes and wrapped into a structured `ConstraintError`. The driver adapters apply the same mapping to `COMMIT` as to every statement. Some errors only `COMMIT` can report: a PostgreSQL `DEFERRABLE` constraint, a SQLite deferred foreign key, a Galera certification failure (MySQL 1213). Those reach the caller as the same `ConstraintError` or `ErrDeadlock` they would have been at statement time:
+Database constraint violations are parsed from driver-specific error codes and wrapped into a structured `ConstraintError`, those read from the results of the pgx adapter's `SendBatch` included. The driver adapters apply the same mapping to `COMMIT` as to every statement. Some errors only `COMMIT` can report: a PostgreSQL `DEFERRABLE` constraint, a SQLite deferred foreign key, a Galera certification failure (MySQL 1213). Those reach the caller as the same `ConstraintError` or `ErrDeadlock` they would have been at statement time:
 
 ```go
 type ConstraintError struct {

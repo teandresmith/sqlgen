@@ -52,8 +52,9 @@ func TestConformance(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SHOW server_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	q := &suite.CountingQuerier{Inner: dbpgx.New(pool)}
-	base := batchingQuerier{CountingQuerier: q, pool: pool}
+	adapter := dbpgx.New(pool)
+	q := &suite.CountingQuerier{Inner: adapter}
+	base := batchingQuerier{CountingQuerier: q, batcher: adapter.(batcher)}
 	suite.Run(t, &suite.Harness{
 		Dialect:  "postgres",
 		Driver:   "pgx",
@@ -70,16 +71,22 @@ func TestConformance(t *testing.T) {
 	})
 }
 
-// batchingQuerier is the counting querier with the pool's SendBatch, so the
-// generated client takes its pgx batch path. It records each queued statement.
+// batcher is the pgx adapter's SendBatch.
+type batcher interface {
+	SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResults
+}
+
+// batchingQuerier is the counting querier with the adapter's SendBatch, so
+// the generated client takes its pgx batch path. It records each queued
+// statement.
 type batchingQuerier struct {
 	*suite.CountingQuerier
-	pool *pgxpool.Pool
+	batcher batcher
 }
 
 func (b batchingQuerier) SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResults {
 	for _, qq := range batch.QueuedQueries {
 		b.Record(qq.SQL)
 	}
-	return b.pool.SendBatch(ctx, batch)
+	return b.batcher.SendBatch(ctx, batch)
 }

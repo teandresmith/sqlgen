@@ -284,6 +284,60 @@ func TestSendBatch(t *testing.T) {
 	}
 }
 
+func TestSendBatchMapsConstraintErrors(t *testing.T) {
+	q := pgxadapter.New(testPool)
+	ctx := context.Background()
+	adapter := q.(interface {
+		SendBatch(ctx context.Context, batch *pgx.Batch) pgx.BatchResults
+	})
+	// An empty name violates CHECK (length(name) > 0).
+	const insert = "INSERT INTO test_users (name, email) VALUES ($1, $2) RETURNING id"
+
+	tests := []struct {
+		name string
+		read func(br pgx.BatchResults) error
+	}{
+		{name: "Exec", read: func(br pgx.BatchResults) error {
+			_, err := br.Exec()
+			return err
+		}},
+		{name: "Query", read: func(br pgx.BatchResults) error {
+			rows, err := br.Query()
+			rows.Close()
+			return err
+		}},
+		{name: "QueryRow Scan", read: func(br pgx.BatchResults) error {
+			var id int
+			return br.QueryRow().Scan(&id)
+		}},
+		{name: "Close", read: func(br pgx.BatchResults) error {
+			return br.Close()
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _ = q.Exec(ctx, "DELETE FROM test_orders")
+			_, _ = q.Exec(ctx, "DELETE FROM test_users")
+			batch := &pgx.Batch{}
+			batch.Queue(insert, "", "batch@example.com")
+			br := adapter.SendBatch(ctx, batch)
+			err := tt.read(br)
+			_ = br.Close()
+
+			if !errors.Is(err, database.ErrConstraintViolation) {
+				t.Fatalf("batch %s error = %v, want ErrConstraintViolation", tt.name, err)
+			}
+			ce, ok := errors.AsType[*database.ConstraintError](err)
+			if !ok {
+				t.Fatalf("batch %s error = %T, want *database.ConstraintError", tt.name, err)
+			}
+			if ce.Type != database.ConstraintCheck {
+				t.Errorf("ConstraintError.Type = %q, want %q", ce.Type, database.ConstraintCheck)
+			}
+		})
+	}
+}
+
 func TestQuerierMethodsImplemented(t *testing.T) {
 	// Compile-time check is in pgx.go: var _ database.Querier = (*pgxAdapter)(nil)
 	// This test verifies New() returns a non-nil value at runtime.
