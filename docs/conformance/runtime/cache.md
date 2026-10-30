@@ -1,54 +1,11 @@
-# Runtime Requirements
+# Runtime Requirements: Caching
 
 <!-- seeding: in-progress -->
-<!-- packages: sql comparator omittable database database/mock database/pgx database/stdlib cache cache/memory cache/redis cache/msgpack tenancy event event/memorybus event/natsbus hook types manifest metrics/otel -->
-<!-- matrix: sql-builders rows=builder cols=basic,returning,empty-input,composite-key,quoted-identifier -->
-<!-- matrix: comparators rows=operator cols=value,nil,empty-list,escaping -->
-<!-- matrix: condition-composition rows=shape cols=placeholder-numbering,nesting -->
-<!-- matrix: lock-modes rows=mode cols=postgres,mysql,sqlite -->
-<!-- matrix: transactions rows=feature cols=pgx,stdlib-postgres,mysql,sqlite -->
-<!-- matrix: error-mapping rows=error-class cols=pgx,stdlib-postgres,mysql,sqlite -->
+<!-- packages: cache cache/memory cache/redis cache/msgpack metrics/otel -->
 <!-- matrix: cache-keys rows=key-shape cols=single-pk,composite-pk,schema,no-schema,tenanted -->
-<!-- matrix: hooks rows=hook-point cols=fires,order,skip,panic-recovery -->
-<!-- matrix: omittable rows=state cols=value,json-round-trip -->
 
-No requirements yet. See [README.md](README.md) for the format.
-
-## §10.4 JSON Serialization
-<!-- prd: 10.4 sha256: 104cc937927c7e3c -->
-
-| ID | Requirement | Tests | Applies to | Matrix cell |
-|---|---|---|---|---|
-| omittable.json-omitzero | A generated input field of type `omittable.Value[T]` carries the `omitzero` option in its `json` tag | `unit: cmd/sqlgen/gen: TestCreateInputTemplate_dbStrategyUUIDPK_omittable`; `unit: cmd/sqlgen/gen: TestInputTemplate_goldenFile_products`; `unit: cmd/sqlgen/gen: TestInputTemplate_goldenFile_orderItems` | all |  |
-
-## §18.6 Deferred Side Effects
-<!-- prd: 18.6 sha256: 8c6ba66b441da9ef -->
-
-| ID | Requirement | Tests | Applies to | Matrix cell |
-|---|---|---|---|---|
-| tx.callback-mode-option | The unified client exposes `WithCallbackMode(mode database.CallbackMode) ClientOption` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_clientOption` | all |  |
-
-## §21.3 Registration
-<!-- prd: 21.3 sha256: 194161143ad28aaf -->
-
-| ID | Requirement | Tests | Applies to | Matrix cell |
-|---|---|---|---|---|
-| hook.register-options | The unified client registers hooks through functional options `WithMutationHook(h hook.MutationHook) ClientOption` and `WithQueryHook(h hook.QueryHook) ClientOption` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_clientOption` | all |  |
-
-## §21.6 Panic Recovery
-<!-- prd: 21.6 sha256: c3ace23d53631bac -->
-
-| ID | Requirement | Tests | Applies to | Matrix cell |
-|---|---|---|---|---|
-| hook.panic-handler-option | The unified client exposes `WithPanicHandler(handler func(ctx context.Context, r any, table hook.TableName, op string) error) ClientOption` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_clientOption` | all |  |
-
-## §22.2 Constraint Errors
-<!-- prd: 22.2 sha256: 79ed9d573708c0cf -->
-
-| ID | Requirement | Tests | Applies to | Matrix cell |
-|---|---|---|---|---|
-| error-mapping.mysql-not-null | The MySQL adapter maps `1048` and `1364` to a `ConstraintError` of `Type` `ConstraintNotNull` that unwraps to `ErrConstraintViolation`, with the column parsed from the message | `unit: database/stdlib: TestMapMySQLErrorConstraintCodes/1048 not null violation`; `unit: database/stdlib: TestMapMySQLErrorConstraintCodes/1364 insert omits a NOT NULL column with no default`; `unit: database/stdlib: TestMapMySQLErrorNotNullColumn/1048 names the column`; `unit: database/stdlib: TestMapMySQLErrorNotNullColumn/1364 names the column` | mysql | error-mapping: not-null × mysql |
-| error-mapping.pgx-send-batch | The pgx adapter's `SendBatch` maps a constraint error read from its results (`Exec`, `Query`, `QueryRow`'s `Scan`, `Close`) to a structured `ConstraintError` that unwraps to `ErrConstraintViolation`, as it does for a statement | `integration: database/pgx: TestSendBatchMapsConstraintErrors`; `conformance: UpdateMany/a failed sub-batch rolls back its earlier items and keeps the sub-batches before it` | pgx | |
+Caching (§27), its tenant key grammar (§29.5), and the OpenTelemetry metrics recorder (§27.13). See
+[README.md](../README.md) for the format.
 
 ## §27 Caching
 <!-- prd: 27 sha256: dfe94499db41cc8f -->
@@ -148,13 +105,6 @@ No requirements yet. See [README.md](README.md) for the format.
 | cache.metrics.read-write | Read-through reports `Hit` or `Miss` and `GetLatency`; every cache write reports `Set` and `SetLatency`, labeled with the table's schema and `TableName` constant | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsReadThroughHelper`; `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsSetHelperSinglePK` | all |  |
 | cache.metrics.hydration | Hydration reports `HydrationStart` when launched and `HydrationComplete` with the query error, the set error, or nil on success | `unit: cmd/sqlgen/gen: TestCacheTemplate_hydrateReportsHydrationComplete` | all |  |
 
-## §29.3.1 TenantResolver
-<!-- prd: 29.3.1 sha256: da9765396bb05c1c -->
-
-| ID | Requirement | Tests | Applies to | Matrix cell |
-|---|---|---|---|---|
-| tenancy.resolver-concrete-type | With tenancy enabled, the unified client emits `WithTenantResolver(r tenancy.TenantResolver[T]) ClientOption` and holds a concrete `tenantResolver tenancy.TenantResolver[T]` field, where `T` is the resolved Go type of the tenant column | `unit: cmd/sqlgen/gen: TestBuildClientContext_tenancyEnabledProducesResolverWiring`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_clientRawHasBypassComment` | all |  |
-
 ## §29.5 Cache Key Grammar Extension
 <!-- prd: 29.5 sha256: 343278b8870f1d6b -->
 
@@ -171,24 +121,6 @@ No requirements yet. See [README.md](README.md) for the format.
 | cache-key.tenant-capture-composite-pk | On a composite-PK table whose tenant column is outside the PK, the capture projection carries every PK column and the tenant: PostgreSQL's `UpdateMany` widens `RETURNING` to the PK columns and the tenant, and MySQL's `UpdateWhere` widens `collectAffectedPKs` to return the tenants | `unit: cmd/sqlgen/gen: TestTenantCapture_compositeTenantOutsidePK` | postgres, mysql |  |
 | cache-key.tenant-in-pk-no-capture | On a table whose tenant column is part of the primary key, no mutation runs an extra tenant capture: `Create`, `Update`, the delete family and the client emit no `AffectedTenants`, `captureAffectedTenants` or `capturedTenant` | `unit: cmd/sqlgen/gen: TestTenantCapture_tenantInPK_noCarrier` | postgres |  |
 
-## §29.6 Event Metadata
-<!-- prd: 29.6 sha256: 451a081517626c58 -->
-
-| ID | Requirement | Tests | Applies to | Matrix cell |
-|---|---|---|---|---|
-| tenant-event.stamp-row-derived | On a tenanted table whose tenant column is outside the PK, each fanned-out event's `Metadata["tenant"]` is read from its own row's element of `MutationContext.AffectedTenants`, not from the resolver | `unit: cmd/sqlgen/gen: TestEventHooks_tenantedTable_emitsTenantMetadata`; `example: tenancy: TestEventTenantStamp_SkipTenancyManyStampsPerRowTenants` | all |  |
-| tenant-event.stamp-from-pk | When the tenant column is part of the primary key, the event's tenant stamp is read from the affected PK value (the PK struct's tenant field, or the PK itself when the tenant is the sole PK), and `AffectedTenants` is not read | `unit: cmd/sqlgen/gen: TestEventHooks_tenantInPK_stampsFromPKStruct`; `unit: cmd/sqlgen/gen: TestEventHooks_tenantIsSolePK_stampsFromPK`; `example: tenancy: TestEventTenantStamp_TenantInPKStampsFromPKStruct` | all |  |
-| tenant-event.stamp-percent-v | The tenant stamp is formatted with `%v` | `unit: cmd/sqlgen/gen: TestEventHooks_tenantedTable_emitsTenantMetadata`; `unit: cmd/sqlgen/gen: TestEventHooks_tenantInPK_stampsFromPKStruct` | all |  |
-| tenant-event.uncaptured-key-absent | An event whose row tenant was not captured (no element, or a nil element) carries no `"tenant"` key | `unit: cmd/sqlgen/gen: TestEventHooks_tenantedTable_emitsTenantMetadata` | all |  |
-| tenant-event.stamp-before-on-commit | The tenant stamp is computed before the publish closure handed to `OnCommit` is built | `unit: cmd/sqlgen/gen: TestEventHooks_tenantedTable_emitsTenantMetadata` | all |  |
-
-## §30.6 Runtime-Embedded Manifest
-<!-- prd: 30.6 sha256: dc335fc02e406523 -->
-
-| ID | Requirement | Tests | Applies to | Matrix cell |
-|---|---|---|---|---|
-| manifest-embed.embed-directives | `manifest_embed_gen.go` always embeds `manifest/manifest_gen.json`, and embeds `all:manifest/entities` only in the `per_entity` layout | `unit: cmd/sqlgen/gen: TestBuildManifestEmbedContext_Paths`; `unit: cmd/sqlgen/gen: TestManifestEmbedTemplate_PerEntityLayout`; `unit: cmd/sqlgen/gen: TestManifestEmbedTemplate_SingleLayout` | all |  |
-
 ## PRD gaps
 
 Behavior the code has, pinned by tests, that no PRD text states. Each gap waits for
@@ -198,4 +130,3 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 |---|---|---|---|---|
 | gap.fingerprint.width | The fingerprint is deterministic and is the first 4 bytes of the sha256 as 8 hex characters; §27.5 states sha256 and shows `v1a2b3c`-style examples but no width | `unit: cmd/sqlgen/gen: TestFingerprint_deterministic` | §27.5 |  |
 | gap.cache.view-invalidate-bare-every-schema | On PostgreSQL a bare `invalidate_on` entry names the table in every schema that has one, keying the map under each qualified value; §27.11 says only that bare and qualified spellings name the same source | `unit: cmd/sqlgen/gen: TestBuildCacheContext_viewInvalidateMap/postgres bare spelling names the table in every schema` | §27.11 |  |
-| gap.manifest-embed.per-entity-zero-entities | A `per_entity` package with zero entities downgrades to the single-file embed (no `//go:embed all:` directive); §30.6 says the entities embed is emitted in `per_entity` layout without an exception | `unit: cmd/sqlgen/gen: TestBuildManifestEmbedContext_PerEntityZeroEntities` | §30.6 |  |

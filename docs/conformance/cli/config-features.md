@@ -7,7 +7,8 @@
 The `cache:`, `events:` and `tenancy:` blocks: each field's default, the value it keeps when set,
 and its JSON Schema entry (`feature-fields`), and how per-table and per-view values resolve
 against the global block (`feature-resolution`). The runtime behavior of each feature is in
-[`runtime.md`](../runtime.md) and [`client.md`](../client.md).
+[`runtime/cache.md`](../runtime/cache.md), [`runtime/events.md`](../runtime/events.md),
+[`runtime/support.md`](../runtime/support.md) and [`client.md`](../client.md).
 
 ## §27.2 Configuration
 <!-- prd: 27.2 sha256: b0d2532a42a58ee8 -->

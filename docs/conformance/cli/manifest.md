@@ -4,7 +4,7 @@
 <!-- packages: cmd/sqlgen/manifest -->
 <!-- matrix: manifest-artifacts rows=artifact cols=emitted,gated,removed-when-disabled,ownership,deterministic -->
 
-The generated manifest (§30): configuration, the emitted artifacts, the JSON shape, versioning, extended schema metadata and the `manifest` subcommands. The runtime-embedded manifest (§30.6) is in `runtime.md`. The `manifest-artifacts` matrix has one row per §30.3 artifact, the GraphQL breadcrumb pair included; `emitted` is the artifact written when the manifest is enabled and its own gate is on, `gated` not written when that gate is off, `removed-when-disabled` gone after the next `generate` once `enabled` flips to false, `ownership` the overwrite and removal guard (the breadcrumb provenance marker, the manifest directory's anchors), and `deterministic` byte-identical across two runs with `--manifest-timestamp` pinned.
+The generated manifest (§30): configuration, the emitted artifacts, the JSON shape, versioning, extended schema metadata and the `manifest` subcommands. The runtime-embedded manifest (§30.6) is in `runtime/support.md`. The `manifest-artifacts` matrix has one row per §30.3 artifact, the GraphQL breadcrumb pair included; `emitted` is the artifact written when the manifest is enabled and its own gate is on, `gated` not written when that gate is off, `removed-when-disabled` gone after the next `generate` once `enabled` flips to false, `ownership` the overwrite and removal guard (the breadcrumb provenance marker, the manifest directory's anchors), and `deterministic` byte-identical across two runs with `--manifest-timestamp` pinned.
 
 ## §30 Manifest
 <!-- prd: 30 sha256: 87240615158d6b11 -->
@@ -736,7 +736,7 @@ Tests in this file's packages that back no PRD behavior.
 | cmd/sqlgen/manifest: TestEmitMarkdown_FKCell | markdown rendering detail (schema-qualified FK cell); no PRD statement about the markdown relationships table |
 | cmd/sqlgen/manifest: TestEmitMarkdown_FeaturesLine | markdown rendering detail (_index.md "Features:" line); PRD §30.3 fixes no _index.md content beyond the scan table / cross-reference |
 | cmd/sqlgen/manifest: TestEmitMarkdown_GeneratedSQLBlock | markdown rendering detail (per-entity SQL block); PRD specifies sql_bodies for the JSON only |
-| cmd/sqlgen/manifest: TestFeatureStructs_noDriftBetweenBuilderAndRuntime | internal invariant: builder/runtime feature-struct parity behind the §30.6 decode; runtime.md has no §30.6 rows yet |
+| cmd/sqlgen/manifest: TestFeatureStructs_noDriftBetweenBuilderAndRuntime | internal invariant: builder/runtime feature-struct parity behind the §30.6 decode |
 | cmd/sqlgen/manifest: TestRunStage_NoAPIBlockLeavesGraphBreadcrumbs | internal guard (the stale sweep does not guess a default graph dir when no api block names one); no PRD statement or row |
 
 ## PRD gaps

@@ -8,7 +8,12 @@ in [`docs/design/CONFORMANCE.md`](../design/CONFORMANCE.md) §3 and §5. `make r
 
 | File | Module | Test homes |
 |---|---|---|
-| [`runtime.md`](runtime.md) | Runtime: `sql`, `comparator`, `omittable`, `database` and drivers, `cache`, `tenancy`, `event`, `hook`, `types`, `manifest` | unit, integration |
+| [`runtime/sql.md`](runtime/sql.md) | Runtime: `sql`, `comparator`, `omittable` (§10, §11.2–§11.5, §15.1, Appendix A, Appendix B) | unit |
+| [`runtime/database.md`](runtime/database.md) | Runtime: `database`, `database/mock`, `database/pgx`, `database/stdlib` (§18, §19, §22, §22.2) | unit, integration |
+| [`runtime/hooks.md`](runtime/hooks.md) | Runtime: `hook` (§21, §24, §24.2) | unit |
+| [`runtime/cache.md`](runtime/cache.md) | Runtime: `cache`, `cache/memory`, `cache/redis`, `cache/msgpack`, `metrics/otel` (§27, §29.5) | unit, integration |
+| [`runtime/events.md`](runtime/events.md) | Runtime: `event`, `event/memorybus`, `event/natsbus` (§28, §29.6) | unit, integration |
+| [`runtime/support.md`](runtime/support.md) | Runtime: `types`, `manifest`, `tenancy` (§29.3, §30.6) | unit |
 | [`parser/dialects.md`](parser/dialects.md) | Parser: `parser/postgres`, `parser/mysql`, `parser/sqlite` (§5, §5.1, §5.2, and the `schema-model` matrix) | unit, integration |
 | [`parser/schema.md`](parser/schema.md) | Parser: `parser` (§5.3–§5.7, §16.1, §17.1) | unit, integration |
 | [`parser/introspect.md`](parser/introspect.md) | Parser: `parser/introspect` (§6–§6.4, §16.2) | unit, integration |
@@ -35,7 +40,7 @@ suite under `cmd/sqlgen/testdata/conformance` is checked through `client.md`.
 <!-- unregistered: cmd/sqlgen/internal/livedb cmd/sqlgen/internal/reqcheck -->
 
 A file that passes about 500 rows is split into a directory of per-package files, such as
-`cli/config.md`. The ownership map below then names the per-package file.
+`cli/config.md` or `runtime/sql.md`. The ownership map below then names the per-package file.
 
 ## Format
 
@@ -221,17 +226,17 @@ another file also cites is still owned once.
 | §9.7 PK Resolution and Entity Return Path | client.md |
 | §9.8 Generated Method Patterns | client.md |
 | §9.9 Nested Mutations | client.md |
-| §10 Omittable Package | runtime.md |
-| §10.1 The Problem | runtime.md |
-| §10.2 API | runtime.md |
-| §10.3 Usage in Generated Code | runtime.md |
-| §10.4 JSON Serialization | runtime.md |
-| §11 Filtering & Comparators | runtime.md |
+| §10 Omittable Package | runtime/sql.md |
+| §10.1 The Problem | runtime/sql.md |
+| §10.2 API | runtime/sql.md |
+| §10.3 Usage in Generated Code | runtime/sql.md |
+| §10.4 JSON Serialization | runtime/sql.md |
+| §11 Filtering & Comparators | runtime/sql.md |
 | §11.1 Generated Filter Struct | cli/gen.md |
-| §11.2 Comparator Types | runtime.md |
-| §11.3 Comparator Interface | runtime.md |
-| §11.4 Custom Conditions | runtime.md |
-| §11.5 Condition Composition | runtime.md |
+| §11.2 Comparator Types | runtime/sql.md |
+| §11.3 Comparator Interface | runtime/sql.md |
+| §11.4 Custom Conditions | runtime/sql.md |
+| §11.5 Condition Composition | runtime/sql.md |
 | §12 Field Selection | cli/gen.md |
 | §12.1 FieldOptions Struct | cli/gen.md |
 | §12.2 Column Map | cli/gen.md |
@@ -247,7 +252,7 @@ another file also cites is still owned once.
 | §14.1 Offset-Based | client.md |
 | §14.2 Cursor-Based (Relay Pagination) | client.md |
 | §15 Sorting | client.md |
-| §15.1 Sort Type | runtime.md |
+| §15.1 Sort Type | runtime/sql.md |
 | §15.2 Generated Sorter Helpers | cli/gen.md |
 | §15.3 Usage in GetMany | client.md |
 | §16 Views | cli/gen.md |
@@ -262,40 +267,40 @@ another file also cites is still owned once.
 | §17.3 Generated Behavior | client.md |
 | §17.4 Unique Constraint Consideration | informative |
 | §17.5 Update Tracking | client.md |
-| §18 Transaction Support | runtime.md |
-| §18.1 Context-Based Injection | runtime.md |
-| §18.2 Transaction Options | runtime.md |
-| §18.3 API | runtime.md |
-| §18.4 Tx.IsClosed and Safe Fallback | runtime.md |
-| §18.5 Concurrent Safety | runtime.md |
-| §18.6 Deferred Side Effects | runtime.md |
+| §18 Transaction Support | runtime/database.md |
+| §18.1 Context-Based Injection | runtime/database.md |
+| §18.2 Transaction Options | runtime/database.md |
+| §18.3 API | runtime/database.md |
+| §18.4 Tx.IsClosed and Safe Fallback | runtime/database.md |
+| §18.5 Concurrent Safety | runtime/database.md |
+| §18.6 Deferred Side Effects | runtime/database.md |
 | §18.7 Known Limitations | informative |
-| §19 Database Abstraction Layer | runtime.md |
-| §19.1 Core Package (`database/`) | runtime.md |
-| §19.2 Driver Packages | runtime.md |
-| §19.3 Import Isolation | runtime.md |
-| §19.4 Batch Behavior by Driver | runtime.md |
+| §19 Database Abstraction Layer | runtime/database.md |
+| §19.1 Core Package (`database/`) | runtime/database.md |
+| §19.2 Driver Packages | runtime/database.md |
+| §19.3 Import Isolation | runtime/database.md |
+| §19.4 Batch Behavior by Driver | runtime/database.md |
 | §20 Unified Client | client.md |
 | §20.1 Purpose | informative |
 | §20.2 Generated Structure | client.md |
 | §20.3 Usage Examples | informative |
 | §20.4 Configuration | informative |
 | §20.5 Concurrency Safety | client.md |
-| §21 Hooks & Middleware | runtime.md |
-| §21.1 Design Principles | runtime.md |
-| §21.2 Hook Types | runtime.md |
-| §21.3 Registration | runtime.md |
-| §21.4 Conditional Execution Helpers | runtime.md |
-| §21.5 Hook Lifecycle | runtime.md |
-| §21.6 Panic Recovery | runtime.md |
-| §21.7 Global Hooks (untyped — all tables) | runtime.md |
-| §21.8 Entity-Level Hooks (type-safe — specific tables) | runtime.md |
-| §21.9 Registration Summary | runtime.md |
+| §21 Hooks & Middleware | runtime/hooks.md |
+| §21.1 Design Principles | runtime/hooks.md |
+| §21.2 Hook Types | runtime/hooks.md |
+| §21.3 Registration | runtime/hooks.md |
+| §21.4 Conditional Execution Helpers | runtime/hooks.md |
+| §21.5 Hook Lifecycle | runtime/hooks.md |
+| §21.6 Panic Recovery | runtime/hooks.md |
+| §21.7 Global Hooks (untyped — all tables) | runtime/hooks.md |
+| §21.8 Entity-Level Hooks (type-safe — specific tables) | runtime/hooks.md |
+| §21.9 Registration Summary | runtime/hooks.md |
 | §21.10 Rejected Alternative: Per-Operation Hook Methods | informative |
-| §21.11 Testing Hooks | runtime.md |
-| §22 Error Handling | runtime.md |
+| §21.11 Testing Hooks | runtime/hooks.md |
+| §22 Error Handling | runtime/database.md |
 | §22.1 Generated Error Types | cli/gen.md |
-| §22.2 Constraint Errors | runtime.md |
+| §22.2 Constraint Errors | runtime/database.md |
 | §22.3 Error Wrapping Convention | client.md |
 | §22.4 Stack Traces and Custom Error Packages | cli/gen.md |
 | §22.5 Check Constraint Validation | cli/gen.md |
@@ -310,9 +315,9 @@ another file also cites is still owned once.
 | §23.8 Stale File Cleanup | cli/commands.md |
 | §23.9 Exit Codes | cli/commands.md |
 | §23.10 Watch Mode | cli/commands.md |
-| §24 Logging & Observability | runtime.md |
+| §24 Logging & Observability | runtime/hooks.md |
 | §24.1 Two-Level Tracing Model | informative |
-| §24.2 Operation-Level Tracing (via Hooks) | runtime.md |
+| §24.2 Operation-Level Tracing (via Hooks) | runtime/hooks.md |
 | §24.3 SQL-Level Tracing (via Driver) | informative |
 | §24.4 Why This Split | informative |
 | §25 Performance Characteristics | client.md |
@@ -334,39 +339,39 @@ another file also cites is still owned once.
 | §26.11 Per-Call Options via HTTP Headers | cli/api-http.md |
 | §26.12 Known Limitations | cli/api.md |
 | §26.13 gRPC API Generation | cli/api-http.md |
-| §27 Caching | runtime.md |
+| §27 Caching | runtime/cache.md |
 | §27.1 Overview | informative |
 | §27.2 Configuration | cli/config-features.md |
-| §27.3 Cache Interface | runtime.md |
-| §27.4 Injection via Hooks | runtime.md |
-| §27.5 Cache Key Generation | runtime.md |
-| §27.6 Cache Invariant | runtime.md |
-| §27.7 Cache Behavior by Operation | runtime.md |
-| §27.8 Hydration | runtime.md |
-| §27.9 Invalidation Strategies | runtime.md |
-| §27.10 Serialization | runtime.md |
-| §27.11 View Cache Invalidation | runtime.md |
-| §27.12 Cache Warming | runtime.md |
-| §27.13 Cache Metrics | runtime.md |
-| §28 Event System | runtime.md |
+| §27.3 Cache Interface | runtime/cache.md |
+| §27.4 Injection via Hooks | runtime/cache.md |
+| §27.5 Cache Key Generation | runtime/cache.md |
+| §27.6 Cache Invariant | runtime/cache.md |
+| §27.7 Cache Behavior by Operation | runtime/cache.md |
+| §27.8 Hydration | runtime/cache.md |
+| §27.9 Invalidation Strategies | runtime/cache.md |
+| §27.10 Serialization | runtime/cache.md |
+| §27.11 View Cache Invalidation | runtime/cache.md |
+| §27.12 Cache Warming | runtime/cache.md |
+| §27.13 Cache Metrics | runtime/cache.md |
+| §28 Event System | runtime/events.md |
 | §28.1 Overview | informative |
-| §28.2 Package Structure | runtime.md |
-| §28.3 Event Structure | runtime.md |
-| §28.4 Publisher Interface | runtime.md |
-| §28.5 Subscriber Interface | runtime.md |
-| §28.6 Event Input | runtime.md |
-| §28.7 Transport Implementations | runtime.md |
+| §28.2 Package Structure | runtime/events.md |
+| §28.3 Event Structure | runtime/events.md |
+| §28.4 Publisher Interface | runtime/events.md |
+| §28.5 Subscriber Interface | runtime/events.md |
+| §28.6 Event Input | runtime/events.md |
+| §28.7 Transport Implementations | runtime/events.md |
 | §28.8 Configuration | cli/config-features.md |
 | §28.9 Generated Event Hook Architecture | cli/gen.md |
 | §28.10 Use Cases | informative |
-| §28.11 Cache Invalidation via Events | runtime.md |
+| §28.11 Cache Invalidation via Events | runtime/events.md |
 | §29 Tenancy | client.md |
 | §29.1 Overview | informative |
 | §29.2 Configuration | cli/config-features.md |
-| §29.3 Runtime Integration | runtime.md |
+| §29.3 Runtime Integration | runtime/support.md |
 | §29.4 Generated Behavior | client.md |
-| §29.5 Cache Key Grammar Extension | runtime.md |
-| §29.6 Event Metadata | runtime.md |
+| §29.5 Cache Key Grammar Extension | runtime/cache.md |
+| §29.6 Event Metadata | runtime/events.md |
 | §29.7 Composite Primary Keys | client.md |
 | §29.8 Soft Delete Composition | client.md |
 | §29.9 Hooks Orthogonality | client.md |
@@ -379,7 +384,7 @@ another file also cites is still owned once.
 | §30.3 Generated Artifacts | cli/manifest.md |
 | §30.4 JSON Schema | cli/manifest.md |
 | §30.5 Versioning Policy | cli/manifest.md |
-| §30.6 Runtime-Embedded Manifest | runtime.md |
+| §30.6 Runtime-Embedded Manifest | runtime/support.md |
 | §30.7 Extended Schema Metadata | cli/manifest.md |
 | §30.8 CLI Tooling | cli/manifest.md |
 | §31 MCP Server | cli/mcp.md |
@@ -395,6 +400,6 @@ another file also cites is still owned once.
 | §32.4 Validation | cli/access-control.md |
 | §32.5 Interactions | cli/access-control.md |
 | §32.6 Configuration example | cli/access-control.md |
-| §Appendix A: SQL Builder Functions | runtime.md |
-| §Appendix B: Dialect Comparison Matrix | runtime.md |
+| §Appendix A: SQL Builder Functions | runtime/sql.md |
+| §Appendix B: Dialect Comparison Matrix | runtime/sql.md |
 | §Appendix C: Project Linting Configuration | informative |
