@@ -64,25 +64,6 @@ CREATE TABLE authors (
     deleted_at TIMESTAMP(6) NULL
 );
 
--- One-to-many on a nullable foreign key, so every verb is generated. The CHECK
--- is a constraint a nested create can violate, and a soft-deleted post is a
--- connect target the visibility read hides.
-CREATE TABLE posts (
-    id         BIGINT AUTO_INCREMENT PRIMARY KEY,
-    author_id  BIGINT NULL,
-    title      VARCHAR(64) NOT NULL CHECK (title <> ''),
-    deleted_at TIMESTAMP(6) NULL,
-    FOREIGN KEY (author_id) REFERENCES authors(id)
-);
-
--- Has-one: a UNIQUE nullable foreign key on the child.
-CREATE TABLE author_profiles (
-    id        BIGINT AUTO_INCREMENT PRIMARY KEY,
-    author_id BIGINT NULL UNIQUE,
-    bio       TEXT NOT NULL,
-    FOREIGN KEY (author_id) REFERENCES authors(id)
-);
-
 -- Many-to-many: a UNIQUE tag name is a constraint a nested create can violate.
 CREATE TABLE tags (
     id   BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -96,4 +77,23 @@ CREATE TABLE author_tags (
     PRIMARY KEY (author_id, tag_id),
     FOREIGN KEY (author_id) REFERENCES authors(id),
     FOREIGN KEY (tag_id) REFERENCES tags(id)
+);
+
+-- Has-one: a UNIQUE nullable foreign key on the child.
+CREATE TABLE author_profiles (
+    id        BIGINT AUTO_INCREMENT PRIMARY KEY,
+    author_id BIGINT NULL UNIQUE,
+    bio       TEXT NOT NULL,
+    FOREIGN KEY (author_id) REFERENCES authors(id)
+);
+
+-- One-to-many on a nullable foreign key, so every verb is generated. The CHECK
+-- is a constraint a nested create can violate, and a soft-deleted post is a
+-- connect target the visibility read hides.
+CREATE TABLE posts (
+    id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+    author_id  BIGINT NULL,
+    title      VARCHAR(64) NOT NULL CHECK (title <> ''),
+    deleted_at TIMESTAMP(6) NULL,
+    FOREIGN KEY (author_id) REFERENCES authors(id)
 );

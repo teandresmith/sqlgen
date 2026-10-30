@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -359,4 +360,15 @@ func authorTagPairs(t *testing.T, h *Harness) [][2]int64 {
 		t.Fatalf("read author tags: %v", err)
 	}
 	return got
+}
+
+// beginCounter counts the transactions begun on the querier it wraps.
+type beginCounter struct {
+	database.Querier
+	n atomic.Int32
+}
+
+func (q *beginCounter) Begin(ctx context.Context, name string, opts ...database.TxOptions) (*database.Tx, error) {
+	q.n.Add(1)
+	return q.Querier.Begin(ctx, name, opts...)
 }

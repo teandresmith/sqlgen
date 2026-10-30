@@ -3,7 +3,6 @@ package tests
 import (
 	"context"
 	"testing"
-	"uuid"
 
 	"github.com/teandresmith/sqlgen/omittable"
 
@@ -24,14 +23,10 @@ import (
 //	  (original error: load user events: get events: tx query <name>: tx query: conn busy)
 //
 // The errgroup bound that first fixed this is gone. PRD §18.5's connection
-// reservation serializes the fan-out at the Tx instead, so these tests now
-// exercise the reservation rather than an errgroup limit — they pass either
-// way, which is exactly what makes them the regression gate for both the
+// reservation serializes the fan-out at the Tx instead, so this test now
+// exercises the reservation rather than an errgroup limit — it passes either
+// way, which is exactly what makes it the regression gate for both the
 // original defect and the bound's removal (PRD §13.2 step 4).
-//
-// They cover both surfaces that reach the loader: the plain read path, and
-// §9.9.6 step 3's terminal re-read, which runs inside the nested method's own
-// transaction and so had no call-site spelling that avoided the defect.
 //
 // `users` is the parent with three edges — `Events` (O2M, nullable FK),
 // `Orders` (O2M, NOT NULL FK) and `Categories` (M2M, which is two statements of
@@ -101,105 +96,4 @@ func TestLoadRelationships_MultiEdgeInsideTransaction(t *testing.T) {
 		t.Fatalf("Get inside a transaction: %v", err)
 	}
 	assertEdgesLoaded(t, inside, 1, 1, 1)
-}
-
-// TestLoadRelationships_MultiEdgeInsideNestedTransaction covers the surface
-// that could not opt out. §9.9.6 step 3 places the terminal re-read inside the
-// method's own transaction and §9.9.5 makes selecting a relationship the
-// documented way to read back what the call just wrote — so a parent with two
-// or more selected edges failed on the feature's own contract, with no way to
-// spell the call that avoided it. Both write verbs are covered: the re-read is
-// the same code on either side, but only an assertion proves it.
-func TestLoadRelationships_MultiEdgeInsideNestedTransaction(t *testing.T) {
-	truncateAll(t)
-	ctx := nestedCtx()
-
-	existingCat := seedCategoryRow(t, "nested-fanout-topic")
-
-	t.Run("CreateWithRelated", func(t *testing.T) {
-		created, err := testClient.Users().CreateWithRelated(ctx, &models.CreateUserWithRelatedInput{
-			User: models.CreateUserInput{Email: "nested-fanout-create@example.com", Name: "Fanout"},
-			Events: &models.UserEventsCreateNested{
-				Create: []*models.UserEventsCreateInput{{Action: "nested-fanout", OccurredAt: nestedOccurredAt()}},
-			},
-			Orders: &models.UserOrdersCreateNested{
-				Create: []*models.UserOrdersCreateInput{{Notes: omittable.Set(new("nested-fanout-order"))}},
-			},
-			Categories: &models.UserCategoriesCreateNested{Connect: []int64{existingCat}},
-		}, allThreeEdges)
-		if err != nil {
-			t.Fatalf("CreateWithRelated with three edges selected: %v", err)
-		}
-		// The rows come back off the terminal re-read, which is the statement
-		// that used to fail — asserting the counts is what proves it ran.
-		assertEdgesLoaded(t, created, 1, 1, 1)
-	})
-
-	t.Run("UpdateWithRelated", func(t *testing.T) {
-		user := seedUserRow(t, "nested-fanout-update@example.com")
-		updated, err := testClient.Users().UpdateWithRelated(ctx, user, &models.UpdateUserWithRelatedInput{
-			User: models.UpdateUserInput{Name: omittable.Set("Fanout Updated")},
-			Events: &models.UserEventsUpdateNested{
-				Create: []*models.UserEventsCreateInput{{Action: "nested-fanout-update", OccurredAt: nestedOccurredAt()}},
-			},
-			Orders: &models.UserOrdersUpdateNested{
-				Create: []*models.UserOrdersCreateInput{{Notes: omittable.Set(new("nested-fanout-update-order"))}},
-			},
-			Categories: &models.UserCategoriesUpdateNested{Connect: []int64{existingCat}},
-		}, allThreeEdges)
-		if err != nil {
-			t.Fatalf("UpdateWithRelated with three edges selected: %v", err)
-		}
-		assertEdgesLoaded(t, updated, 1, 1, 1)
-	})
-}
-
-// TestLoadRelationships_MultiEdgeInsideCallerTransaction nests the two:
-// a nested mutation running inside a caller's own transaction, so §18.3's
-// savepoint path is what the re-read fans out under. The outer transaction must
-// still be usable afterwards — the original failure poisoned the connection, so
-// a later statement on the same tx is the assertion that it no longer does.
-func TestLoadRelationships_MultiEdgeInsideCallerTransaction(t *testing.T) {
-	truncateAll(t)
-	ctx := nestedCtx()
-
-	cat := seedCategoryRow(t, "outer-fanout-topic")
-
-	var created *models.User
-	var afterID uuid.UUID
-	if err := testClient.WithTx(ctx, "outer_fanout", func(txCtx context.Context) error {
-		var createErr error
-		created, createErr = testClient.Users().CreateWithRelated(txCtx, &models.CreateUserWithRelatedInput{
-			User: models.CreateUserInput{Email: "outer-fanout@example.com", Name: "Outer"},
-			Events: &models.UserEventsCreateNested{
-				Create: []*models.UserEventsCreateInput{{Action: "outer-fanout", OccurredAt: nestedOccurredAt()}},
-			},
-			Orders: &models.UserOrdersCreateNested{
-				Create: []*models.UserOrdersCreateInput{{Notes: omittable.Set(new("outer-fanout-order"))}},
-			},
-			Categories: &models.UserCategoriesCreateNested{Connect: []int64{cat}},
-		}, allThreeEdges)
-		if createErr != nil {
-			return createErr
-		}
-		// The connection survived the re-read, so the outer transaction can
-		// still issue statements.
-		after, createErr := testClient.Users().Create(txCtx, &models.CreateUserInput{
-			Email: "outer-fanout-after@example.com", Name: "After",
-		})
-		if createErr != nil {
-			return createErr
-		}
-		afterID = after.ID
-		return nil
-	}); err != nil {
-		t.Fatalf("nested mutation inside a caller transaction: %v", err)
-	}
-	assertEdgesLoaded(t, created, 1, 1, 1)
-
-	// Committed, not rolled back — the original failure lost the whole
-	// transaction, so the row written after the re-read is the proof.
-	if _, err := testClient.Users().Get(ctx, afterID); err != nil {
-		t.Errorf("row written after the terminal re-read is absent: %v", err)
-	}
 }

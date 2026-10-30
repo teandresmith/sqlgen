@@ -38,11 +38,13 @@ tables:
         type: one_to_one
         table: author_profiles
         fk: author_id
+    # Listed out of the byte order of their Go field names, which is the order
+    # the edges are processed in, so that order is observable.
     nested_mutations:
       relationships:
-        - name: Posts
-        - name: Profile
         - name: Tags
+        - name: Profile
+        - name: Posts
   posts:
     # A nested create spans several CreateMany chunks.
     batch_size: 2
