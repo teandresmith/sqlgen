@@ -1679,6 +1679,84 @@ database versions it ran against.
      before writing its subtest. And read a gate's exit code from its own file, never from the
      tail of a wrapper.
 
+   **Thirteenth slice, `client.md` nested writes, recorded 2026-10-30:**
+   - **Scope.** `CreateWithRelated`, `UpdateWithRelated` and `UpsertWithRelated` brought to the writes
+     standard. Measured first: 51 example tests had a nested method as their subject (27 portable, 13
+     dialect-specific: polymorphic, self-referential, tenancy, MySQL's key step or exact statement
+     counts; 11 GraphQL surface), all in `graphql` and `mysql`. No conformance table could take a
+     nested edge (`products` → `order_items` points at a composite-PK target, which fails E1). The
+     three soft-delete cells cited only a PostgreSQL example test. No capability was needed: the
+     nested bodies are byte-identical across dialects and MySQL differs only inside the inner flat
+     calls. Every §9.9.7 count falls inside the method's own transaction, which `CountingQuerier`
+     cannot see (§4.3), so no subtest counts statements and those rows keep their template refs.
+   - **Rulings before writing (4):** the schema (`authors` with an O2M `posts` on a nullable FK, a
+     config-declared has-one `author_profiles` on a UNIQUE nullable FK, and M2M `tags` through the
+     pure junction `author_tags`; edges listed by name); §9.6a and §9.4c amended to name the three
+     methods; and an empty-`FieldOptions` defect fixed in code. Seven more came during the slice:
+     `batch_size: 2` on `authors`, because a nested verb chunks its id lists at the parent's batch
+     size (whose size §9.9.7 means went to `backlog.md`); the edge allowlist reordered to Tags,
+     Profile, Posts so the byte order of processing is observable; `ErrNestedVerbConflict`'s `ID` is
+     the offending target under §22.2, so it is a row, not a gap; a nil create-list entry folded into
+     the §9.4c amendment; §9.9.6 clarified that the terminal read's relationship loads take the
+     caller's toggles, as §9.6 already said; the O2M half of "a repeated connect id is one adoption"
+     read from §9.9.5's set-operation wording; and one anchor per cell type.
+   - **Suite.** Three writers, one per method (`cwr`, `uwr`, `swr`), each with its own file and a
+     worktree pinned at the post-fix commit. The suite gained 106 subtests per dialect, all passing on
+     the four targets; the one in-transaction lock subtest needs `CapRowLocks`. A shared
+     `beginCounter` shows a nil input begins no transaction, which `CountingQuerier` cannot. About 55,
+     65 and 41 mutations, on MySQL too where an inner call differs. Equivalent mutants, claiming no
+     cell: copying the caller's `LockMode` onto the parent write (each flat write ignores it), and
+     onto the terminal read on PostgreSQL and MySQL, where the parent row is unseen by any other
+     transaction or already locked by the write; there only the in-transaction `NOWAIT` subtest on
+     `UpdateWithRelated` sees it.
+   - **Claim check before porting.** Two read-only checkers found 23 defects, all fixed: a nil-input
+     check a post-`BEGIN` guard would pass, a "past the batch size" subtest on a 200-row batch, a
+     hook `Input` asserted by pointer identity, edge-order subtests whose order matched the config
+     list, a chunking row a no-chunking implementation passed (now an exact per-call hook count), a
+     verify-read row whose refs no mutant of the verify read fails (the refs left), a strip row cited
+     to the wrong subtest, a verb-conflict fixture where a late check wrote nothing to catch,
+     rollback subtests that did not show the earlier writes ran, an occupancy fixture whose only
+     profile a loosened key also returns, two stale oracle comments and presence-only nits.
+   - **Rows.** `client.md` 433 → 475 rows (5572 → 5614 in all): 42 new rows under §9.4c, §9.6a,
+     §9.9 and the new §9.9.3, §9.9.5 and §9.9.9 anchors, conformance refs on 11 template-seeded
+     §9.9.x rows and the §9.6 empty-`FieldOptions` row, three `n/a` cells citing §9.9.4 E3 and E1 (composite-pk), the three
+     soft-delete rows moved to suite refs on every dialect, and one repointed ref in
+     `cli/config-fields.md`. No PRD gap. No golden was newly claimed, so none needed a mutation run.
+   - **Ported:** 16 graphql example tests, in the porting commit itself (`68587989`), among them
+     the connect attribution, rollback, savepoint, nil-`FieldOptions`, unlink, clear, three-way
+     split, both-branch upsert and soft-deleted-parent tests and the multi-edge terminal reads. Two
+     were split: graphql's verb-conflict test keeps its explicit-key case, and MySQL's O2M adoption
+     test keeps its REPEATABLE READ race. The NOT NULL O2M edge tests, the polymorphic,
+     self-referential and tenancy tests, the MySQL key-step and statement-count tests, the
+     `strict_updates: false` tests and the GraphQL surface tests stay.
+   - **Defects: 1, fixed with a fail-first test.** An empty `&FieldOptions{}` returned a parent
+     with only its key set, because the parent write forces the key on; the three methods now
+     return `nil` (`26863337`). `/verify` did not run, because the fix has no FIX ID.
+   - **PRD amendments**, each with its fill test: §9.6a (the three methods ignore `LockMode` and pass
+     it to no inner call), §9.4c (a nil input returns `ErrNilInput` before the transaction; a nil or
+     empty verb block writes nothing; a nil create-list entry is `ErrNilInput` on that edge's
+     `create`), and §9.9.6 (the terminal read's relationship loads). Two findings went to
+     `backlog.md`: whose `batch_size` §9.9.7 means, and §9.8.6's rationale for the escape on
+     `Update`, which no nested call takes.
+   - **Review.** sqlgen-reviewer passes on the prep, the fix, and the suite, registry and deletions.
+     Among their findings: the parent batch size above, the five cell types filed under different
+     anchors per method, and stale comments left in two example files after the deletions.
+   - **Completion sweep.** The 3 nested methods have no empty cell, no untested row and no unsigned
+     `n/a`; all 28 methods' 280 cells are filled or `n/a`. With `client.md` set to `complete`,
+     `req-check` fails only on the 7 owned sections with no rows (§20.3, §20.4, §20.5, §22.3,
+     §25.4, §29.7, §29.9). Not flipped.
+   - **Report.** `make conformance` at `68587989`: 5614 rows, 5503 pass, 0 fail, 0 skip, 0 not
+     run, 111 untested; `client.md` 474 pass, 1 untested (`edge.batch-db-matched-superset-tenanted`,
+     as before).
+   - **For the next slice (the 7 empty owned sections):** they are all that stands between
+     `client.md` and `complete`, and several are prose a suite cannot show (§20.3's examples,
+     §20.4's configuration), so measure which ones state a testable behavior before writing any,
+     and expect `n/a`-style rulings for the rest. §29.7 and §29.9 are tenancy sections the core
+     schema cannot reach without the variant suite (§8). A row's cited subtests must kill a mutant
+     of what the row states, not of something nearby: two rows here cited subtests that no mutant
+     of their own claim failed. And when a config list sets an order, check that it differs from
+     the order under test.
+
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
