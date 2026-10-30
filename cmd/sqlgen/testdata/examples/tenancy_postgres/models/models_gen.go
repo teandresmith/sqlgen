@@ -932,7 +932,10 @@ type UpdateArticleItem struct {
 
 // UpdateMany partially updates multiple articles and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleItem, opts ...func(*CallOptions[ArticleFieldOptions])) ([]*Article, error) {
 	// UpdateArticleItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -1082,29 +1085,42 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						rows, err := conn.Query(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update articles batch: %w", err)
-						}
-						matched := 0
-						for rows.Next() {
-							var rowTenant uuid.UUID
-							if err := rows.Scan(&rowTenant); err != nil {
-								rows.Close()
-								return nil, fmt.Errorf("scan updated article tenant: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_article", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							rows, err := conn.Query(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update articles batch: %w", err)
 							}
-							tenantByPK[queuedItems[i].ID] = rowTenant
-							matched++
-						}
-						if err := rows.Err(); err != nil {
+							matched := 0
+							for rows.Next() {
+								var rowTenant uuid.UUID
+								if err := rows.Scan(&rowTenant); err != nil {
+									rows.Close()
+									return fmt.Errorf("scan updated article tenant: %w", err)
+								}
+								tenantByPK[queuedItems[i].ID] = rowTenant
+								matched++
+							}
+							if err := rows.Err(); err != nil {
+								rows.Close()
+								return fmt.Errorf("update articles batch: %w", err)
+							}
 							rows.Close()
-							return nil, fmt.Errorf("update articles batch: %w", err)
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						rows.Close()
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -4363,7 +4379,10 @@ type UpdateLineItemItem struct {
 
 // UpdateMany partially updates multiple line_items and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemItem, opts ...func(*CallOptions[LineItemFieldOptions])) ([]*LineItem, error) {
 	// UpdateLineItemItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -4512,29 +4531,42 @@ func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemI
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						rows, err := conn.Query(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update line_items batch: %w", err)
-						}
-						matched := 0
-						for rows.Next() {
-							var rowTenant uuid.UUID
-							if err := rows.Scan(&rowTenant); err != nil {
-								rows.Close()
-								return nil, fmt.Errorf("scan updated line_item tenant: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_line_item", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							rows, err := conn.Query(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update line_items batch: %w", err)
 							}
-							tenantByPK[queuedItems[i].PK] = rowTenant
-							matched++
-						}
-						if err := rows.Err(); err != nil {
+							matched := 0
+							for rows.Next() {
+								var rowTenant uuid.UUID
+								if err := rows.Scan(&rowTenant); err != nil {
+									rows.Close()
+									return fmt.Errorf("scan updated line_item tenant: %w", err)
+								}
+								tenantByPK[queuedItems[i].PK] = rowTenant
+								matched++
+							}
+							if err := rows.Err(); err != nil {
+								rows.Close()
+								return fmt.Errorf("update line_items batch: %w", err)
+							}
 							rows.Close()
-							return nil, fmt.Errorf("update line_items batch: %w", err)
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						rows.Close()
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}

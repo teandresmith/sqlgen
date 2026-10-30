@@ -125,6 +125,7 @@ func testUpdateContext_noUpdateColumns() gen.TableContext {
 func testUpdateContext_compositePK() gen.TableContext {
 	return gen.TableContext{
 		StructName:            "OrderItem",
+		SnakeName:             "order_item",
 		TableName:             "order_items",
 		TableNameConstant:     "TableOrderItems",
 		Schema:                "public",
@@ -318,6 +319,47 @@ func TestUpdateTemplate_updateMany_pgx(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing pgx UpdateMany pattern: %q\n\nfull output:\n%s", want, output)
 		}
+	}
+	assertPgxUpdateManyFallbackInTransaction(t, output, "conn.Exec(ctx, q, batchArgs[i]...)")
+}
+
+// assertPgxUpdateManyFallbackInTransaction checks that pgx UpdateMany's
+// statement-by-statement fallback, taken when the querier has no SendBatch,
+// runs each sub-batch inside database.WithTransaction on the transaction's
+// connection, so a failing item rolls back its sub-batch as SendBatch does.
+// stmt is the fallback's per-statement call.
+func assertPgxUpdateManyFallbackInTransaction(t *testing.T, output, stmt string) {
+	t.Helper()
+	start := strings.Index(output, ") UpdateMany(")
+	if start < 0 {
+		t.Fatalf("output has no UpdateMany\n\nfull output:\n%s", output)
+	}
+	body := output[start:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+	order := []string{
+		"for start := 0; start < len(items); start += c.batchSize {",
+		"batcher.SendBatch(ctx, pgxBatch)",
+		"} else {",
+		`database.WithTransaction(ctx, c.querier, "update_many_`,
+		"conn := database.Conn(ctx, c.querier)",
+		"for i, q := range batchQueries {",
+		stmt,
+		"return nil",
+		"}); err != nil {",
+		"return nil, err",
+	}
+	at := 0
+	for _, want := range order {
+		i := strings.Index(body[at:], want)
+		if i < 0 {
+			t.Fatalf("UpdateMany missing %q after offset %d; want the fallback's statements inside a per-batch transaction\n\nbody:\n%s", want, at, body)
+		}
+		at += i + len(want)
+	}
+	if got := strings.Count(body, stmt); got != 1 {
+		t.Errorf("UpdateMany sends %q %d times, want once, inside the fallback's transaction\n\nbody:\n%s", stmt, got, body)
 	}
 }
 

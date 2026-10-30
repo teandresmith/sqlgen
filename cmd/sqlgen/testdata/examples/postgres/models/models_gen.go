@@ -690,7 +690,10 @@ type UpdateEventItem struct {
 
 // UpdateMany partially updates multiple events and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *eventClient) UpdateMany(ctx context.Context, items []UpdateEventItem, opts ...func(*CallOptions[EventFieldOptions])) ([]*Event, error) {
 	// UpdateEventItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -779,18 +782,31 @@ func (c *eventClient) UpdateMany(ctx context.Context, items []UpdateEventItem, o
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update events batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_event", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update events batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update events batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update events batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -3057,7 +3073,10 @@ type UpdateNoteWatcherItem struct {
 
 // UpdateMany partially updates multiple note_watchers and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *noteWatcherClient) UpdateMany(ctx context.Context, items []UpdateNoteWatcherItem, opts ...func(*CallOptions[NoteWatcherFieldOptions])) ([]*NoteWatcher, error) {
 	// UpdateNoteWatcherItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -3139,18 +3158,31 @@ func (c *noteWatcherClient) UpdateMany(ctx context.Context, items []UpdateNoteWa
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update note_watchers batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_note_watcher", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update note_watchers batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update note_watchers batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update note_watchers batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -4915,7 +4947,10 @@ type UpdateAuditNoteItem struct {
 
 // UpdateMany partially updates multiple notes and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *auditNoteClient) UpdateMany(ctx context.Context, items []UpdateAuditNoteItem, opts ...func(*CallOptions[AuditNoteFieldOptions])) ([]*AuditNote, error) {
 	// UpdateAuditNoteItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -5004,18 +5039,31 @@ func (c *auditNoteClient) UpdateMany(ctx context.Context, items []UpdateAuditNot
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update notes batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_audit_note", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update notes batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update notes batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update notes batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -7319,7 +7367,10 @@ type UpdateAuditUserItem struct {
 
 // UpdateMany partially updates multiple users and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *auditUserClient) UpdateMany(ctx context.Context, items []UpdateAuditUserItem, opts ...func(*CallOptions[AuditUserFieldOptions])) ([]*AuditUser, error) {
 	// UpdateAuditUserItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -7411,18 +7462,31 @@ func (c *auditUserClient) UpdateMany(ctx context.Context, items []UpdateAuditUse
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update users batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_audit_user", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update users batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update users batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update users batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -9592,7 +9656,10 @@ type UpdateArticleItem struct {
 
 // UpdateMany partially updates multiple articles and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleItem, opts ...func(*CallOptions[ArticleFieldOptions])) ([]*Article, error) {
 	// UpdateArticleItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -9687,18 +9754,31 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update articles batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_article", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update articles batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update articles batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update articles batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -12266,7 +12346,10 @@ type UpdateAssetDocumentLinkItem struct {
 
 // UpdateMany partially updates multiple asset_document_links and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *assetDocumentLinkClient) UpdateMany(ctx context.Context, items []UpdateAssetDocumentLinkItem, opts ...func(*CallOptions[AssetDocumentLinkFieldOptions])) ([]*AssetDocumentLink, error) {
 	// UpdateAssetDocumentLinkItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -12348,18 +12431,31 @@ func (c *assetDocumentLinkClient) UpdateMany(ctx context.Context, items []Update
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update asset_document_links batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_asset_document_link", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update asset_document_links batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update asset_document_links batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update asset_document_links batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -14721,7 +14817,10 @@ type UpdateAssetItem struct {
 
 // UpdateMany partially updates multiple assets and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *assetClient) UpdateMany(ctx context.Context, items []UpdateAssetItem, opts ...func(*CallOptions[AssetFieldOptions])) ([]*Asset, error) {
 	// UpdateAssetItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -14807,18 +14906,31 @@ func (c *assetClient) UpdateMany(ctx context.Context, items []UpdateAssetItem, o
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update assets batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_asset", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update assets batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update assets batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update assets batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -17511,7 +17623,10 @@ type UpdateCategoryItem struct {
 
 // UpdateMany partially updates multiple categories and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *categoryClient) UpdateMany(ctx context.Context, items []UpdateCategoryItem, opts ...func(*CallOptions[CategoryFieldOptions])) ([]*Category, error) {
 	// UpdateCategoryItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -17600,18 +17715,31 @@ func (c *categoryClient) UpdateMany(ctx context.Context, items []UpdateCategoryI
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update categories batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_category", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update categories batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update categories batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update categories batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -19801,7 +19929,10 @@ type UpdateCounterItem struct {
 
 // UpdateMany partially updates multiple counters and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *counterClient) UpdateMany(ctx context.Context, items []UpdateCounterItem, opts ...func(*CallOptions[CounterFieldOptions])) ([]*Counter, error) {
 	// UpdateCounterItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -19895,18 +20026,31 @@ func (c *counterClient) UpdateMany(ctx context.Context, items []UpdateCounterIte
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update counters batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_counter", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update counters batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update counters batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update counters batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -22062,7 +22206,10 @@ type UpdateDefaultOnlyRowItem struct {
 
 // UpdateMany partially updates multiple default_only_rows and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *defaultOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateDefaultOnlyRowItem, opts ...func(*CallOptions[DefaultOnlyRowFieldOptions])) ([]*DefaultOnlyRow, error) {
 	// UpdateDefaultOnlyRowItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -22151,18 +22298,31 @@ func (c *defaultOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateDef
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update default_only_rows batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_default_only_row", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update default_only_rows batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update default_only_rows batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update default_only_rows batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -24455,7 +24615,10 @@ type UpdateDocumentItem struct {
 
 // UpdateMany partially updates multiple documents and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentItem, opts ...func(*CallOptions[DocumentFieldOptions])) ([]*Document, error) {
 	// UpdateDocumentItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -24547,18 +24710,31 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update documents batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_document", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update documents batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update documents batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update documents batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -26857,7 +27033,10 @@ type UpdateFingerprintItem struct {
 
 // UpdateMany partially updates multiple fingerprints and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *fingerprintClient) UpdateMany(ctx context.Context, items []UpdateFingerprintItem, opts ...func(*CallOptions[FingerprintFieldOptions])) ([]*Fingerprint, error) {
 	// UpdateFingerprintItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -26940,18 +27119,31 @@ func (c *fingerprintClient) UpdateMany(ctx context.Context, items []UpdateFinger
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update fingerprints batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_fingerprint", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update fingerprints batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update fingerprints batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update fingerprints batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -28756,7 +28948,10 @@ type UpdateHostFingerprintItem struct {
 
 // UpdateMany partially updates multiple host_fingerprints and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *hostFingerprintClient) UpdateMany(ctx context.Context, items []UpdateHostFingerprintItem, opts ...func(*CallOptions[HostFingerprintFieldOptions])) ([]*HostFingerprint, error) {
 	// UpdateHostFingerprintItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -28838,18 +29033,31 @@ func (c *hostFingerprintClient) UpdateMany(ctx context.Context, items []UpdateHo
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update host_fingerprints batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_host_fingerprint", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update host_fingerprints batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update host_fingerprints batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update host_fingerprints batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -30763,7 +30971,10 @@ type UpdateHostItem struct {
 
 // UpdateMany partially updates multiple hosts and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *hostClient) UpdateMany(ctx context.Context, items []UpdateHostItem, opts ...func(*CallOptions[HostFieldOptions])) ([]*Host, error) {
 	// UpdateHostItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -30846,18 +31057,31 @@ func (c *hostClient) UpdateMany(ctx context.Context, items []UpdateHostItem, opt
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update hosts batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_host", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update hosts batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update hosts batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update hosts batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -32684,7 +32908,10 @@ type UpdateKeyOnlyRowItem struct {
 
 // UpdateMany partially updates multiple key_only_rows and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *keyOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateKeyOnlyRowItem, opts ...func(*CallOptions[KeyOnlyRowFieldOptions])) ([]*KeyOnlyRow, error) {
 	// UpdateKeyOnlyRowItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -32764,18 +32991,31 @@ func (c *keyOnlyRowClient) UpdateMany(ctx context.Context, items []UpdateKeyOnly
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update key_only_rows batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_key_only_row", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update key_only_rows batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update key_only_rows batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update key_only_rows batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -34690,7 +34930,10 @@ type UpdatePublicNoteItem struct {
 
 // UpdateMany partially updates multiple notes and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *publicNoteClient) UpdateMany(ctx context.Context, items []UpdatePublicNoteItem, opts ...func(*CallOptions[PublicNoteFieldOptions])) ([]*PublicNote, error) {
 	// UpdatePublicNoteItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -34779,18 +35022,31 @@ func (c *publicNoteClient) UpdateMany(ctx context.Context, items []UpdatePublicN
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update notes batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_public_note", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update notes batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update notes batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update notes batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -36868,7 +37124,10 @@ type UpdateOrderItemItem struct {
 
 // UpdateMany partially updates multiple order_items and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderItemItem, opts ...func(*CallOptions[OrderItemFieldOptions])) ([]*OrderItem, error) {
 	// UpdateOrderItemItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -36963,18 +37222,31 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update order_items batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_order_item", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update order_items batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update order_items batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update order_items batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -39354,7 +39626,10 @@ type UpdateOrderItem struct {
 
 // UpdateMany partially updates multiple orders and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *orderClient) UpdateMany(ctx context.Context, items []UpdateOrderItem, opts ...func(*CallOptions[OrderFieldOptions])) ([]*Order, error) {
 	// UpdateOrderItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -39457,18 +39732,31 @@ func (c *orderClient) UpdateMany(ctx context.Context, items []UpdateOrderItem, o
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update orders batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_order", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update orders batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update orders batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update orders batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -41719,7 +42007,10 @@ type UpdateProductTagLabelItem struct {
 
 // UpdateMany partially updates multiple product_tag_labels and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdateProductTagLabelItem, opts ...func(*CallOptions[ProductTagLabelFieldOptions])) ([]*ProductTagLabel, error) {
 	// UpdateProductTagLabelItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -41804,18 +42095,31 @@ func (c *productTagLabelClient) UpdateMany(ctx context.Context, items []UpdatePr
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update product_tag_labels batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_product_tag_label", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update product_tag_labels batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update product_tag_labels batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update product_tag_labels batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -43959,7 +44263,10 @@ type UpdateProductItem struct {
 
 // UpdateMany partially updates multiple products and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductItem, opts ...func(*CallOptions[ProductFieldOptions])) ([]*Product, error) {
 	// UpdateProductItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -44074,18 +44381,31 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update products batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_product", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update products batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update products batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update products batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -46669,7 +46989,10 @@ type UpdateProfileItem struct {
 
 // UpdateMany partially updates multiple profiles and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *profileClient) UpdateMany(ctx context.Context, items []UpdateProfileItem, opts ...func(*CallOptions[ProfileFieldOptions])) ([]*Profile, error) {
 	// UpdateProfileItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -46767,18 +47090,31 @@ func (c *profileClient) UpdateMany(ctx context.Context, items []UpdateProfileIte
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update profiles batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_profile", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update profiles batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update profiles batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update profiles batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -49213,7 +49549,10 @@ type UpdateRateLimitItem struct {
 
 // UpdateMany partially updates multiple rate_limits and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *rateLimitClient) UpdateMany(ctx context.Context, items []UpdateRateLimitItem, opts ...func(*CallOptions[RateLimitFieldOptions])) ([]*RateLimit, error) {
 	// UpdateRateLimitItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -49306,18 +49645,31 @@ func (c *rateLimitClient) UpdateMany(ctx context.Context, items []UpdateRateLimi
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update rate_limits batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_rate_limit", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update rate_limits batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update rate_limits batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update rate_limits batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -51221,7 +51573,10 @@ type UpdateSequenceRowItem struct {
 
 // UpdateMany partially updates multiple sequence_rows and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *sequenceRowClient) UpdateMany(ctx context.Context, items []UpdateSequenceRowItem, opts ...func(*CallOptions[SequenceRowFieldOptions])) ([]*SequenceRow, error) {
 	// UpdateSequenceRowItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -51316,18 +51671,31 @@ func (c *sequenceRowClient) UpdateMany(ctx context.Context, items []UpdateSequen
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update sequence_rows batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_sequence_row", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update sequence_rows batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update sequence_rows batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update sequence_rows batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -53473,7 +53841,10 @@ type UpdateSluggedRowItem struct {
 
 // UpdateMany partially updates multiple slugged_rows and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *sluggedRowClient) UpdateMany(ctx context.Context, items []UpdateSluggedRowItem, opts ...func(*CallOptions[SluggedRowFieldOptions])) ([]*SluggedRow, error) {
 	// UpdateSluggedRowItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -53559,18 +53930,31 @@ func (c *sluggedRowClient) UpdateMany(ctx context.Context, items []UpdateSlugged
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update slugged_rows batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_slugged_row", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update slugged_rows batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update slugged_rows batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update slugged_rows batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -55607,7 +55991,10 @@ type UpdateTagItem struct {
 
 // UpdateMany partially updates multiple tags and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts ...func(*CallOptions[TagFieldOptions])) ([]*Tag, error) {
 	// UpdateTagItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -55693,18 +56080,31 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update tags batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_tag", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update tags batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update tags batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update tags batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -58164,7 +58564,10 @@ type UpdateUserCategoryItem struct {
 
 // UpdateMany partially updates multiple user_categories and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *userCategoryClient) UpdateMany(ctx context.Context, items []UpdateUserCategoryItem, opts ...func(*CallOptions[UserCategoryFieldOptions])) ([]*UserCategory, error) {
 	// UpdateUserCategoryItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -58246,18 +58649,31 @@ func (c *userCategoryClient) UpdateMany(ctx context.Context, items []UpdateUserC
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update user_categories batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_user_category", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update user_categories batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update user_categories batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update user_categories batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -60688,7 +61104,10 @@ type UpdatePublicUserItem struct {
 
 // UpdateMany partially updates multiple users and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *publicUserClient) UpdateMany(ctx context.Context, items []UpdatePublicUserItem, opts ...func(*CallOptions[PublicUserFieldOptions])) ([]*PublicUser, error) {
 	// UpdatePublicUserItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -60794,18 +61213,31 @@ func (c *publicUserClient) UpdateMany(ctx context.Context, items []UpdatePublicU
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update users batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_public_user", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update users batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update users batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update users batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -63806,7 +64238,10 @@ type UpdateWarehouseItem struct {
 
 // UpdateMany partially updates multiple warehouses and returns the updated entities.
 // Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
-// On pgx, uses SendBatch for pipelined execution within each batch.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *warehouseClient) UpdateMany(ctx context.Context, items []UpdateWarehouseItem, opts ...func(*CallOptions[WarehouseFieldOptions])) ([]*Warehouse, error) {
 	// UpdateWarehouseItem.Input is a pointer, so a zero-valued item
 	// carries a nil one — a shape that compiles naturally. Rejected before the
@@ -63916,18 +64351,31 @@ func (c *warehouseClient) UpdateMany(ctx context.Context, items []UpdateWarehous
 						return nil, fmt.Errorf("close update batch: %w", err)
 					}
 				} else {
-					for i, q := range batchQueries {
-						execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
-						if err != nil {
-							return nil, fmt.Errorf("update warehouses batch: %w", err)
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_warehouse", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("update warehouses batch: %w", err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("update warehouses batch rows affected: %w", err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
 						}
-						matched, err := execResult.RowsAffected()
-						if err != nil {
-							return nil, fmt.Errorf("update warehouses batch rows affected: %w", err)
-						}
-						if matched > 0 {
-							writtenItems = append(writtenItems, queuedItems[i])
-						}
+						return nil
+					}); err != nil {
+						return nil, err
 					}
 				}
 			}

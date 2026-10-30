@@ -35,7 +35,8 @@ type Harness struct {
 	// Base is the querier Client was built on: Querier itself, or a
 	// driver-specific wrapper around it that records what it sends. A subtest
 	// that builds a client of its own builds it on Base, so it takes the same
-	// code paths Client does.
+	// code paths Client does, unless it means to bypass Base's driver
+	// capabilities.
 	Base database.Querier
 	// Caps are the dialect's capabilities. A subtest whose expectation differs
 	// by dialect derives it from these, never from Dialect.

@@ -217,7 +217,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | pk-return.upsert-fallback-binds-by-name | On a tenanted table, the `Upsert` conflict fallback `SELECT` binds its scan targets by column name, so a tenant column that sorts before the PK still lands in the tenant target | `unit: cmd/sqlgen/gen: TestUpsertTemplate_conflictRowFallbackBindsByName` | postgres |  |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: 12537dd133607e49 -->
+<!-- prd: 9.8 sha256: 73ed69217fa7fa64 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -266,12 +266,12 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | create-many.sqlite-default-expr | The SQLite `CreateMany` sentinel for an unset omittable column carries the column's DDL default expression, or `NULL` for a column without a default | `unit: cmd/sqlgen/gen: TestCreateInputFieldClassification_defaultExprFallsBackToNULL`; `golden: sqlite` | sqlite |  |
 
 ## §9.8.6a UpdateMany
-<!-- prd: 9.8.6a sha256: 0f9385aeae2917fb -->
+<!-- prd: 9.8.6a sha256: 0ec42b1ad95bb7ba -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | update-many.item-type | On a single-PK table `UpdateMany` takes `[]Update{Table}Item`, each item pairing the PK (field named and typed after the PK column) with an `*Update{Table}Input` | `unit: cmd/sqlgen/gen: TestGenerate_UpdateManyItemNamesThePKAfterItsColumn/postgres text key product_code`; `unit: cmd/sqlgen/gen: TestGenerate_UpdateManyItemNamesThePKAfterItsColumn/postgres uuid key ticket_ref`; `unit: cmd/sqlgen/gen: TestGenerate_UpdateManyItemNamesThePKAfterItsColumn/mysql varchar key product_code`; `unit: cmd/sqlgen/gen: TestGenerate_UpdateManyItemNamesThePKAfterItsColumn/sqlite text key product_code` | all |  |
-| update-many.pgx-send-batch | On pgx, `UpdateMany` queues each item's UPDATE into a `pgx.Batch` and sends each sub-batch with `SendBatch` | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_pgx` | pgx |  |
+| update-many.pgx-send-batch | On pgx, `UpdateMany` queues each item's UPDATE into a `pgx.Batch` and, when the resolved querier implements `SendBatch`, sends each sub-batch with `SendBatch` | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_pgx` | pgx |  |
 | update-many.stdlib-sequential | On stdlib, `UpdateMany` runs each sub-batch's UPDATEs in turn inside one transaction: when an item fails, its sub-batch rolls back and earlier sub-batches persist | `example: sqlite: TestUpdateMany_FailingItemRollsBackBatch`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_stdlib` | sqlite |  |
 
 ## §9.8.6b UpdateWhere
@@ -567,11 +567,12 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | hard-delete-where.rollback | `WithTransaction` rolls back when its function returns an error, so a `HardDeleteWhere` inside it leaves no change | `conformance: HardDeleteWhere/rolled-back transaction leaves rows` | all |  |
 
 ## §19.4 Batch Behavior by Driver
-<!-- prd: 19.4 sha256: 41bde47074962425 -->
+<!-- prd: 19.4 sha256: 202766eee8ffadf8 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | restore-many.batch-split | Regardless of driver, all batch operations split their input into sub-batches of `generation.batch_size`, so `RestoreMany` sends one statement per sub-batch | `conformance: RestoreMany/splits the keys into sub-batches of the table's batch size` | all | |
+| update-many.pgx-fallback-atomic | Every driver makes each `UpdateMany` sub-batch atomic: a failing item rolls back the items of its sub-batch written before it, earlier sub-batches stay applied, and the call returns the error. On pgx, when the querier has no `SendBatch` (a wrapping middleware, or a caller's transaction), the sub-batch's statements run one by one in a transaction, or in a savepoint inside the caller's transaction, which can then continue | `conformance: UpdateMany/through a querier that cannot send a batch, a failed sub-batch rolls back its earlier items and keeps the sub-batches before it`; `conformance: UpdateMany/inside the caller's transaction, a failed sub-batch rolls back to its savepoint and the transaction continues and commits`; `conformance: UpdateMany/a failed sub-batch rolls back its earlier items and keeps the sub-batches before it`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_pgx`; `unit: cmd/sqlgen/gen: TestTenantCapture_updateMany_pgxFallbackInTransaction`; `example: tenancy_postgres: TestPgxCapture_UpdateManyInTransactionEvictsPrecisely` | all | |
 
 ## §20.2 Generated Structure
 <!-- prd: 20.2 sha256: f946fd3347f5662e -->
@@ -634,7 +635,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | load.chunk-size | Each relationship loader step binds parent keys in chunks of `floor(L / 2 / N)` keys, `L` being 32766 on SQLite and 65535 on MySQL and PostgreSQL: 16383 and 32767 for a single-column key; on PostgreSQL with pgx a one-column O2M FK filter binds every parent key as one array parameter instead | `unit: cmd/sqlgen/gen: TestFuncLoadChunkSize`; `unit: cmd/sqlgen/gen: TestGetTemplate_o2mRelationshipLoading`; `unit: cmd/sqlgen/gen: TestGetTemplate_m2mRelationshipLoading` | all |  |
 
 ## §25.3 Batch Operations
-<!-- prd: 25.3 sha256: f6b1af10841cf723 -->
+<!-- prd: 25.3 sha256: 17070ea1e3317227 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -728,7 +729,6 @@ the user's ruling: amend the PRD, which turns the gap into requirement rows, or 
 | Gap | Behavior | Tests | Section | Ruling |
 |---|---|---|---|---|
 | gap.update.strict-doc-comment | The generated `Update` / `Increment` doc comment says `Returns ErrNotFound if the primary key does not exist.` only when `strict_updates` is true and omits the sentence otherwise; the PRD shows one unconditional wording, `(when strict_updates is true)` | `unit: cmd/sqlgen/gen: TestClientTemplate_strictUpdatesDocComments` | §8.2, §9.5 |  |
-| gap.update-many.pgx-sequential-fallback | On pgx, when the resolved querier does not implement `SendBatch`, `UpdateMany` falls back to executing the queued statements one by one with `Exec`; the PRD states only the `SendBatch` path | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_pgx` | §9.8.6a, §19.4 |  |
 | gap.restore.where-integer-eq-one | On an `integer` soft-delete column `RestoreWhere` scopes to `deleted = 1`, while SoftDelete's re-fetch (`Neq 0`) and the read path's not-deleted condition (`= 0`) treat any non-zero value as deleted, so a row with `deleted = 2` is hidden from reads but not restorable by `RestoreWhere` | `unit: cmd/sqlgen/gen: TestDeleteTemplate_restoreWhere_integer_scopesToDeleted`; `unit: cmd/sqlgen/gen: TestFuncSoftDeleteRestoreCondition/integer` | §9.8.8, §17.3 |  |
 | gap.conflict.duplicate-unique-one-target | Two UNIQUE constraints over the same column set (MySQL `email`, `email_2`) yield one conflict-target constant (`UserConflictEmail`), not one per constraint | `unit: cmd/sqlgen/gen: TestConflictTargetDuplicateUnique` | §9.5 |  |
 | gap.call-options.json-tags-caller-field | `CallOptions` fields carry json tags (`skip_cache`, `skip_events`, `skip_hooks`, `skip_tenancy`, `tenant`, `field_options`, `lock_mode`, `allow_in_transaction`) and the struct ends with an unexported `caller callerOptions` field (the outermost call's hook toggles) that the §9.6 listing, stated as the struct's full shape, does not show | `unit: cmd/sqlgen/gen: TestBuildSharedTypesContext_callOptionsFields`; `unit: cmd/sqlgen/gen: TestBuildSharedTypesContext_callOptionsFieldsTenancyEnabled` | §9.6 |  |

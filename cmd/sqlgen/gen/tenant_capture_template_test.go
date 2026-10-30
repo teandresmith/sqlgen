@@ -571,6 +571,14 @@ func TestTenantCapture_compositeTenantOutsidePK(t *testing.T) {
 	}
 }
 
+// pgx UpdateMany's tenant-capturing fallback, taken when the querier has no
+// SendBatch, runs each sub-batch's RETURNING statements inside a per-batch
+// transaction, as the plain fallback does.
+func TestTenantCapture_updateMany_pgxFallbackInTransaction(t *testing.T) {
+	out := renderTenantCapture(t, captureProductContext("postgres", "pgx"), "table/update", sql.NewPostgresDialect())
+	assertPgxUpdateManyFallbackInTransaction(t, out, "conn.Query(ctx, q, batchArgs[i]...)")
+}
+
 // MySQL UpdateMany captures tenants with one pre-read per sub-batch, inside
 // the batch loop, so the pre-read's IN list is bounded by batch_size like the
 // delete family's.

@@ -5819,7 +5819,7 @@ All dialects use the same pattern: `Exec` the UPDATE, then `Get` to return the r
 
 #### 9.8.6a UpdateMany
 
-Batch update — each item is a (PK, UpdateInput) pair. Each row has different SET values, so they cannot be combined into a single SQL statement. On pgx, `SendBatch` pipelines all statements in one round-trip. On stdlib, each UPDATE executes sequentially within an implicit transaction (Section 19.4). Wrapped in a mutation hook chain with `OpUpdateMany`. The internal `GetMany` call uses `SkipHooks = true` to prevent nested hook invocation.
+Batch update — each item is a (PK, UpdateInput) pair. Each row has different SET values, so they cannot be combined into a single SQL statement. On pgx, `SendBatch` pipelines each sub-batch's statements in one round-trip. When the querier has no `SendBatch` (a wrapping middleware, or a caller's transaction), pgx runs the sub-batch's statements one by one in a transaction, or in a savepoint inside the caller's transaction. On stdlib, each UPDATE executes sequentially within an implicit transaction. Every driver makes each sub-batch atomic: a failing item rolls back its sub-batch, and earlier sub-batches stay applied (Section 19.4). Wrapped in a mutation hook chain with `OpUpdateMany`. The internal `GetMany` call uses `SkipHooks = true` to prevent nested hook invocation.
 
 ```go
 // UpdateMany partially updates multiple products and returns the updated entities.
@@ -5920,10 +5920,15 @@ type UpdateProductItem struct {
 }
 ```
 
-**pgx optimization:** On pgx, the generated code wraps the per-row UPDATEs in a `SendBatch` call, pipelining all statements over a single network round-trip instead of executing sequentially. See Section 19.4.
+**pgx optimization:** On pgx, the generated code wraps each sub-batch's per-row UPDATEs in a `SendBatch` call, pipelining them over a single network round-trip instead of executing sequentially. `SendBatch` runs the batch in an implicit transaction. The generated code type-asserts the resolved querier for `SendBatch`; when it has none (a wrapping middleware, or a caller's transaction, since `*database.Tx` has no `SendBatch`), it runs the sub-batch's statements one by one inside `database.WithTransaction`, which opens a savepoint when the context already carries a transaction. Either way a failing item rolls back its sub-batch. See Section 19.4.
 
 ```go
-// UpdateMany — pgx variant using SendBatch for pipelined execution
+// UpdateMany partially updates multiple products and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of generation.batch_size.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
 func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductItem, opts ...func(*CallOptions[ProductFieldOptions])) ([]*Product, error) {
     options := resolveCallOptions(opts)
     result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -5939,6 +5944,8 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 
             // Build all UPDATE statements for this batch
             pgxBatch := &pgx.Batch{}
+            var batchQueries []string
+            var batchArgs [][]any
             for _, item := range batch {
                 setClauses := make(map[string]any)
                 if v, ok := item.Input.Name.Get(); ok {
@@ -5975,20 +5982,38 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
                     Conditions: []sql.Condition{sql.Where("id").Eq(item.ID)},
                 })
                 pgxBatch.Queue(query, args...)
+                batchQueries = append(batchQueries, query)
+                batchArgs = append(batchArgs, args)
                 allIDs = append(allIDs, item.ID)
             }
 
-            // Send all UPDATEs in one network round-trip
+            // Send all UPDATEs in one network round-trip when the querier can
+            // send a batch; otherwise one by one in a transaction (a savepoint
+            // inside the caller's transaction)
             if pgxBatch.Len() > 0 {
-                br := conn.SendBatch(ctx, pgxBatch)
-                for range pgxBatch.Len() {
-                    if _, err := br.Exec(); err != nil {
-                        br.Close()
-                        return nil, fmt.Errorf("update products batch: %w", err)
+                if batcher, ok := conn.(interface {
+                    SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+                }); ok {
+                    br := batcher.SendBatch(ctx, pgxBatch)
+                    for range pgxBatch.Len() {
+                        if _, err := br.Exec(); err != nil {
+                            br.Close()
+                            return nil, fmt.Errorf("update products batch: %w", err)
+                        }
                     }
-                }
-                if err := br.Close(); err != nil {
-                    return nil, fmt.Errorf("close update batch: %w", err)
+                    if err := br.Close(); err != nil {
+                        return nil, fmt.Errorf("close update batch: %w", err)
+                    }
+                } else if err := database.WithTransaction(ctx, c.querier, "update_many_product", func(ctx context.Context) error {
+                    conn := database.Conn(ctx, c.querier)
+                    for i, q := range batchQueries {
+                        if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
+                            return fmt.Errorf("update products batch: %w", err)
+                        }
+                    }
+                    return nil
+                }); err != nil {
+                    return nil, err
                 }
             }
         }
@@ -10452,13 +10477,13 @@ Batch operations (`CreateMany`, `UpdateMany`, `HardDeleteMany`, `SoftDeleteMany`
 | `HardDeleteMany` | `DELETE FROM ... WHERE id IN (...)` | Single statement | Single statement |
 | `SoftDeleteMany` | `UPDATE ... SET deleted_at = CURRENT_TIMESTAMP WHERE id IN (...)` | Single statement | Single statement |
 | `RestoreMany` | `UPDATE ... SET deleted_at = NULL WHERE id IN (...)` | Single statement | Single statement |
-| `UpdateMany` | N individual `UPDATE ... SET ... WHERE id = $` | Pipelined via `SendBatch` (1 round-trip) | Sequential in a transaction (N round-trips) |
+| `UpdateMany` | N individual `UPDATE ... SET ... WHERE id = $` | Pipelined via `SendBatch` (1 round-trip); sequential in a transaction when the querier has no `SendBatch` | Sequential in a transaction (N round-trips) |
 
 For `CreateMany`, `HardDeleteMany`, `SoftDeleteMany`, and `RestoreMany`, both drivers produce identical SQL and have the same performance characteristics — one round-trip per batch.
 
 **`UpdateMany` on stdlib:**
 
-Since each row in an `UpdateMany` call has different update values, the statements cannot be combined into a single SQL statement. On pgx, `SendBatch` pipelines all N statements over one network round-trip. On stdlib, no such pipelining exists.
+Since each row in an `UpdateMany` call has different update values, the statements cannot be combined into a single SQL statement. On pgx, `SendBatch` pipelines a sub-batch's N statements over one network round-trip when the querier implements it. On stdlib, no such pipelining exists.
 
 The stdlib fallback executes each UPDATE **sequentially within an implicit transaction**:
 
@@ -10479,7 +10504,13 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateItem) erro
 
 If the caller already has an active transaction in the context, this becomes a savepoint (section 18.3) — no nested transaction is created.
 
-**Performance implication:** `UpdateMany` on stdlib is N round-trips per batch instead of 1. For high-throughput update workloads, pgx is strongly recommended. The stdlib driver is best suited for MySQL and SQLite use cases where pgx is not an option, or for PostgreSQL deployments where pgx's CGO-free alternative (`lib/pq` via stdlib) is preferred for operational simplicity.
+**`UpdateMany` on pgx without `SendBatch`:**
+
+pgx pipelines a sub-batch only when the resolved querier implements `SendBatch`. A wrapping middleware may not, and a caller's transaction never does: `*database.Tx` has no `SendBatch`. When the querier has no `SendBatch`, pgx runs the sub-batch's statements one by one in a transaction, or in a savepoint inside the caller's transaction, exactly as stdlib does.
+
+**Every driver makes each sub-batch atomic.** A failing item rolls back the items of its sub-batch written before it: through `SendBatch`'s implicit transaction, or through the per-sub-batch transaction or savepoint. Sub-batches already committed stay applied, and the call returns the error. Inside a caller's transaction the failed sub-batch rolls back to its savepoint, so the caller's transaction can continue.
+
+**Performance implication:** `UpdateMany` on stdlib, and on pgx without `SendBatch` (inside any transaction among them), is N round-trips per batch instead of 1. For high-throughput update workloads, pgx is strongly recommended. The stdlib driver is best suited for MySQL and SQLite use cases where pgx is not an option, or for PostgreSQL deployments where pgx's CGO-free alternative (`lib/pq` via stdlib) is preferred for operational simplicity.
 
 **Batch size still applies.** Regardless of driver, all batch operations split their input into sub-batches of `generation.batch_size` (default: 200). Each sub-batch is processed independently. This prevents parameter count limits from being exceeded and bounds memory usage.
 
@@ -12072,7 +12103,7 @@ sqlgen is **reflection-free at runtime**. No `reflect` package calls appear in t
 
 ### 25.3 Batch Operations
 
-Batch operations (`CreateMany`, `UpdateMany`, etc.) are bounded by `generation.batch_size` (default: 200). Each sub-batch is one write statement (except `UpdateMany` on stdlib — see section 19.4). The total write count for a batch of M items is `ceil(M / batch_size)`. On MySQL, each `CreateMany` sub-batch of two or more rows on a database-generated key is followed by one key-step read ([9.8.5](#985-createmany)), outside the write count as [25.1](#251-query-count-guarantee) states.
+Batch operations (`CreateMany`, `UpdateMany`, etc.) are bounded by `generation.batch_size` (default: 200). Each sub-batch is one write statement (except `UpdateMany`, which sends one UPDATE per item — see section 19.4). The total write count for a batch of M items is `ceil(M / batch_size)`. On MySQL, each `CreateMany` sub-batch of two or more rows on a database-generated key is followed by one key-step read ([9.8.5](#985-createmany)), outside the write count as [25.1](#251-query-count-guarantee) states.
 
 ### 25.4 No Implicit Caching
 

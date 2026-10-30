@@ -208,7 +208,7 @@
 | gen.no-pk.override-full-surface | A `primary_key.columns` override makes the table generate with the full PK-keyed surface, as with a native `PRIMARY KEY` | `unit: cmd/sqlgen/gen: TestBuildTableContexts_NoPK_WithOverride_NotSkipped`; `unit: cmd/sqlgen/gen: TestRelationshipTargets_InferredEdgeIntoSkippedTableDropped/primary key declared` | all | |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: 12537dd133607e49 -->
+<!-- prd: 9.8 sha256: 73ed69217fa7fa64 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
