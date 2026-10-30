@@ -240,7 +240,7 @@ func (c *ownerProfileClient) Get(ctx context.Context, id int64, opts ...func(*Ca
 		return ownerProfiles[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get owner_profile: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -259,7 +259,7 @@ func (c *ownerProfileClient) GetMany(ctx context.Context, input *GetOwnerProfile
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get owner_profiles: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many owner_profiles: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableOwnerProfiles, Schema: "",
@@ -331,14 +331,14 @@ func (c *ownerProfileClient) GetMany(ctx context.Context, input *GetOwnerProfile
 
 			rows, err := conn.Query(ctx, result, resultArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("get owner_profiles: %w", err)
+				return nil, err
 			}
 			defer rows.Close()
 
 			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
 			joinColumns, err := rows.Columns()
 			if err != nil {
-				return nil, fmt.Errorf("get owner_profiles columns: %w", err)
+				return nil, fmt.Errorf("columns: %w", err)
 			}
 			ownerProfiles, err = scanOwnerProfilesWithOneToOneJoins(rows, joinColumns)
 			if err != nil {
@@ -356,7 +356,7 @@ func (c *ownerProfileClient) GetMany(ctx context.Context, input *GetOwnerProfile
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("get owner_profiles: %w", err)
+				return nil, err
 			}
 			defer rows.Close()
 
@@ -369,7 +369,7 @@ func (c *ownerProfileClient) GetMany(ctx context.Context, input *GetOwnerProfile
 		return ownerProfiles, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many owner_profiles: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -385,7 +385,7 @@ func (c *ownerProfileClient) Create(ctx context.Context, input *CreateOwnerProfi
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create owner_profile: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -404,7 +404,7 @@ func (c *ownerProfileClient) Create(ctx context.Context, input *CreateOwnerProfi
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create owner_profile: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -420,7 +420,7 @@ func (c *ownerProfileClient) Create(ctx context.Context, input *CreateOwnerProfi
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create owner_profile: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -436,7 +436,7 @@ func (c *ownerProfileClient) CreateMany(ctx context.Context, inputs []*CreateOwn
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many owner_profiles: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -474,7 +474,7 @@ func (c *ownerProfileClient) CreateMany(ctx context.Context, inputs []*CreateOwn
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create owner_profiles batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 		}
@@ -497,7 +497,7 @@ func (c *ownerProfileClient) CreateMany(ctx context.Context, inputs []*CreateOwn
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many owner_profiles: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -556,7 +556,7 @@ func (c *ownerProfileClient) Update(ctx context.Context, id int64, input *Update
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update owner_profile: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -595,11 +595,11 @@ func (c *ownerProfileClient) Update(ctx context.Context, id int64, input *Update
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update owner_profile: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update owner_profile rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -618,7 +618,7 @@ func (c *ownerProfileClient) Update(ctx context.Context, id int64, input *Update
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update owner_profile: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -643,7 +643,7 @@ func (c *ownerProfileClient) UpdateMany(ctx context.Context, items []UpdateOwner
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many owner_profiles: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -698,11 +698,11 @@ func (c *ownerProfileClient) UpdateMany(ctx context.Context, items []UpdateOwner
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update owner_profile %v: %w", item.ID, err)
+						return fmt.Errorf("item %v: %w", item.ID, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update owner_profile %v rows affected: %w", item.ID, err)
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
 					}
 					if matched > 0 {
 						writtenItems = append(writtenItems, item)
@@ -741,7 +741,7 @@ func (c *ownerProfileClient) UpdateMany(ctx context.Context, items []UpdateOwner
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many owner_profiles: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -759,7 +759,7 @@ func (c *ownerProfileClient) UpdateWhere(ctx context.Context, filter *OwnerProfi
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update owner_profiles where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -806,7 +806,7 @@ func (c *ownerProfileClient) UpdateWhere(ctx context.Context, filter *OwnerProfi
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update owner_profiles where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -843,7 +843,7 @@ func (c *ownerProfileClient) UpdateWhere(ctx context.Context, filter *OwnerProfi
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update owner_profiles where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -866,11 +866,11 @@ func (c *ownerProfileClient) HardDelete(ctx context.Context, id int64, opts ...f
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete owner_profile: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete owner_profile rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -879,7 +879,10 @@ func (c *ownerProfileClient) HardDelete(ctx context.Context, id int64, opts ...f
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete owner_profile: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple owner_profiles from the database.
@@ -908,7 +911,7 @@ func (c *ownerProfileClient) HardDeleteMany(ctx context.Context, ids []int64, op
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete owner_profiles: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[int64]struct{}, end-start)
 			for rows.Next() {
@@ -938,7 +941,10 @@ func (c *ownerProfileClient) HardDeleteMany(ctx context.Context, ids []int64, op
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many owner_profiles: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all owner_profiles matching the filter.
@@ -965,7 +971,7 @@ func (c *ownerProfileClient) HardDeleteWhere(ctx context.Context, filter *OwnerP
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete owner_profiles where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -982,7 +988,10 @@ func (c *ownerProfileClient) HardDeleteWhere(ctx context.Context, filter *OwnerP
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete owner_profiles where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that
@@ -1039,7 +1048,7 @@ func (c *ownerProfileClient) Upsert(ctx context.Context, input *CreateOwnerProfi
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert owner_profile: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1064,7 +1073,7 @@ func (c *ownerProfileClient) Upsert(ctx context.Context, input *CreateOwnerProfi
 
 		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
 		if err != nil {
-			return nil, fmt.Errorf("upsert owner_profile: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -1080,7 +1089,7 @@ func (c *ownerProfileClient) Upsert(ctx context.Context, input *CreateOwnerProfi
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert owner_profile: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1216,7 +1225,7 @@ func (c *ownerProfileClient) UpsertMany(ctx context.Context, inputs []*CreateOwn
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many owner_profiles: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1247,7 +1256,7 @@ func (c *ownerProfileClient) UpsertMany(ctx context.Context, inputs []*CreateOwn
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 		if !haveConflictKey {
-			return nil, fmt.Errorf("upsert owner_profiles: conflict target names a column the input does not supply, so the written rows cannot be identified")
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
 
 		// One value row per input, built before any statement runs: the dedupe
@@ -1282,7 +1291,7 @@ func (c *ownerProfileClient) UpsertMany(ctx context.Context, inputs []*CreateOwn
 					// its database-generated primary key would be unknowable.
 					// Refused before anything is written rather than returned
 					// short.
-					return nil, fmt.Errorf("upsert owner_profiles: input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
 				}
 				if keyed {
 					if j, ok := seen[key]; ok {
@@ -1314,12 +1323,12 @@ func (c *ownerProfileClient) UpsertMany(ctx context.Context, inputs []*CreateOwn
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert owner_profiles batch: %w", err)
+				return nil, err
 			}
 
 			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
 			if err != nil {
-				return nil, fmt.Errorf("upsert owner_profiles batch: %w", err)
+				return nil, err
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 		}
@@ -1349,12 +1358,12 @@ func (c *ownerProfileClient) UpsertMany(ctx context.Context, inputs []*CreateOwn
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowIDs); len(written) != want {
-			return nil, fmt.Errorf("upsert owner_profiles: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many owner_profiles: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1495,12 +1504,12 @@ func (c *ownerProfileClient) Exists(ctx context.Context, id int64, opts ...func(
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists owner_profile: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists owner_profile: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1523,12 +1532,12 @@ func (c *ownerProfileClient) ExistsWhere(ctx context.Context, filter *OwnerProfi
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists owner_profile where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists owner_profiles where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1552,12 +1561,12 @@ func (c *ownerProfileClient) Count(ctx context.Context, filter *OwnerProfileFilt
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count owner_profiles: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count owner_profiles: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -1583,7 +1592,7 @@ func (c *ownerProfileClient) Paginate(ctx context.Context, input PaginateInput[O
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate owner_profiles count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -1594,7 +1603,7 @@ func (c *ownerProfileClient) Paginate(ctx context.Context, input PaginateInput[O
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate owner_profiles: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[OwnerProfile]{
@@ -1606,7 +1615,7 @@ func (c *ownerProfileClient) Paginate(ctx context.Context, input PaginateInput[O
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate owner_profiles: %w", err)
 	}
 	return result.(*PaginateResult[OwnerProfile]), nil
 }
@@ -1638,7 +1647,7 @@ func (c *ownerProfileClient) Connection(ctx context.Context, input ConnectionInp
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection owner_profiles count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -1682,7 +1691,7 @@ func (c *ownerProfileClient) Connection(ctx context.Context, input ConnectionInp
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection owner_profiles: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -1721,7 +1730,7 @@ func (c *ownerProfileClient) Connection(ctx context.Context, input ConnectionInp
 		return &Connection[OwnerProfile]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection owner_profiles: %w", err)
 	}
 	return result.(*Connection[OwnerProfile]), nil
 }
@@ -1883,9 +1892,13 @@ func (c *ownerProfileClient) Stream(ctx context.Context, input *StreamOwnerProfi
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *OwnerProfile, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream owner_profiles: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -1924,7 +1937,7 @@ func (c *ownerProfileClient) Stream(ctx context.Context, input *StreamOwnerProfi
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream owner_profiles: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -1947,7 +1960,7 @@ func (c *ownerProfileClient) Stream(ctx context.Context, input *StreamOwnerProfi
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream owner_profiles: %w", err))
 		}
 	}
 }

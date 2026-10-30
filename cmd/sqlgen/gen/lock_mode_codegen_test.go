@@ -166,7 +166,7 @@ func TestLockModeGuard_GetManyMethod_allDialects(t *testing.T) {
 			dialect: "postgres",
 			mustContain: []string{
 				"if options.LockMode != sql.LockNone {",
-				`return nil, fmt.Errorf("get products: LockMode requires an active transaction")`,
+				`return nil, fmt.Errorf("get many products: LockMode requires an active transaction")`,
 				"options.SkipCache = true",
 			},
 			mustNotHave: []string{"c.mysqlVersion.get(ctx)", "is unsupported on sqlite dialect"},
@@ -175,7 +175,7 @@ func TestLockModeGuard_GetManyMethod_allDialects(t *testing.T) {
 			dialect: "mysql",
 			mustContain: []string{
 				"if options.LockMode != sql.LockNone {",
-				`return nil, fmt.Errorf("get products: LockMode requires an active transaction")`,
+				`return nil, fmt.Errorf("get many products: LockMode requires an active transaction")`,
 				"options.SkipCache = true",
 				"version, err := c.mysqlVersion.get(ctx)",
 				"if version.Major < 8 {",
@@ -185,7 +185,7 @@ func TestLockModeGuard_GetManyMethod_allDialects(t *testing.T) {
 		{
 			dialect: "sqlite",
 			mustContain: []string{
-				`return nil, fmt.Errorf("get products: LockMode is unsupported on sqlite dialect")`,
+				`return nil, fmt.Errorf("get many products: LockMode is unsupported on sqlite dialect")`,
 			},
 			mustNotHave: []string{
 				"database.InTransaction(ctx)",

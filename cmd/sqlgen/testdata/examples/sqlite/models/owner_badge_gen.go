@@ -239,7 +239,7 @@ func (c *ownerBadgeClient) Get(ctx context.Context, pk OwnerBadgePK, opts ...fun
 		return ownerBadges[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get owner_badge: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -258,7 +258,7 @@ func (c *ownerBadgeClient) GetMany(ctx context.Context, input *GetOwnerBadgesInp
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get owner_badges: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many owner_badges: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableOwnerBadges, Schema: "",
@@ -323,7 +323,7 @@ func (c *ownerBadgeClient) GetMany(ctx context.Context, input *GetOwnerBadgesInp
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get owner_badges: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -335,7 +335,7 @@ func (c *ownerBadgeClient) GetMany(ctx context.Context, input *GetOwnerBadgesInp
 		return ownerBadges, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many owner_badges: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -351,7 +351,7 @@ func (c *ownerBadgeClient) Create(ctx context.Context, input *CreateOwnerBadgeIn
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create owner_badge: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -369,7 +369,7 @@ func (c *ownerBadgeClient) Create(ctx context.Context, input *CreateOwnerBadgeIn
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("create owner_badge: %w", err)
+			return nil, err
 		}
 
 		m.AffectedPKs = []any{OwnerBadgePK{OwnerID: input.OwnerID, BadgeCode: input.BadgeCode}}
@@ -386,7 +386,7 @@ func (c *ownerBadgeClient) Create(ctx context.Context, input *CreateOwnerBadgeIn
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create owner_badge: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -402,7 +402,7 @@ func (c *ownerBadgeClient) CreateMany(ctx context.Context, inputs []*CreateOwner
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many owner_badges: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -440,7 +440,7 @@ func (c *ownerBadgeClient) CreateMany(ctx context.Context, inputs []*CreateOwner
 			})
 			_, err := conn.Exec(ctx, query, queryArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("create owner_badges batch: %w", err)
+				return nil, err
 			}
 			for _, input := range batch {
 				allPKs = append(allPKs, OwnerBadgePK{OwnerID: input.OwnerID, BadgeCode: input.BadgeCode})
@@ -465,7 +465,7 @@ func (c *ownerBadgeClient) CreateMany(ctx context.Context, inputs []*CreateOwner
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many owner_badges: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -482,7 +482,7 @@ func (c *ownerBadgeClient) Update(ctx context.Context, pk OwnerBadgePK, input *U
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update owner_badge: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -517,11 +517,11 @@ func (c *ownerBadgeClient) Update(ctx context.Context, pk OwnerBadgePK, input *U
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update owner_badge: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update owner_badge rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -540,7 +540,7 @@ func (c *ownerBadgeClient) Update(ctx context.Context, pk OwnerBadgePK, input *U
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update owner_badge: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -565,7 +565,7 @@ func (c *ownerBadgeClient) UpdateMany(ctx context.Context, items []UpdateOwnerBa
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many owner_badges: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -616,11 +616,11 @@ func (c *ownerBadgeClient) UpdateMany(ctx context.Context, items []UpdateOwnerBa
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update owner_badge %v: %w", item.PK, err)
+						return fmt.Errorf("item %v: %w", item.PK, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update owner_badge %v rows affected: %w", item.PK, err)
+						return fmt.Errorf("item %v rows affected: %w", item.PK, err)
 					}
 					if matched > 0 {
 						writtenItems = append(writtenItems, item)
@@ -658,7 +658,7 @@ func (c *ownerBadgeClient) UpdateMany(ctx context.Context, items []UpdateOwnerBa
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many owner_badges: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -676,7 +676,7 @@ func (c *ownerBadgeClient) UpdateWhere(ctx context.Context, filter *OwnerBadgeFi
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update owner_badges where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -717,7 +717,7 @@ func (c *ownerBadgeClient) UpdateWhere(ctx context.Context, filter *OwnerBadgeFi
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update owner_badges where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -752,7 +752,7 @@ func (c *ownerBadgeClient) UpdateWhere(ctx context.Context, filter *OwnerBadgeFi
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update owner_badges where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -777,11 +777,11 @@ func (c *ownerBadgeClient) HardDelete(ctx context.Context, pk OwnerBadgePK, opts
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete owner_badge: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete owner_badge rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -790,7 +790,10 @@ func (c *ownerBadgeClient) HardDelete(ctx context.Context, pk OwnerBadgePK, opts
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete owner_badge: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple owner_badges from the database.
@@ -825,7 +828,7 @@ func (c *ownerBadgeClient) HardDeleteMany(ctx context.Context, pks []OwnerBadgeP
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete owner_badges: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[OwnerBadgePK]struct{}, end-start)
 			for rows.Next() {
@@ -855,7 +858,10 @@ func (c *ownerBadgeClient) HardDeleteMany(ctx context.Context, pks []OwnerBadgeP
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many owner_badges: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all owner_badges matching the filter.
@@ -882,7 +888,7 @@ func (c *ownerBadgeClient) HardDeleteWhere(ctx context.Context, filter *OwnerBad
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete owner_badges where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -900,7 +906,10 @@ func (c *ownerBadgeClient) HardDeleteWhere(ctx context.Context, filter *OwnerBad
 		m.AffectedPKs = toAnySlice(pks)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete owner_badges where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that
@@ -955,7 +964,7 @@ func (c *ownerBadgeClient) Upsert(ctx context.Context, input *CreateOwnerBadgeIn
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert owner_badge: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -981,7 +990,7 @@ func (c *ownerBadgeClient) Upsert(ctx context.Context, input *CreateOwnerBadgeIn
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("upsert owner_badge: %w", err)
+			return nil, err
 		}
 
 		m.AffectedPKs = []any{OwnerBadgePK{OwnerID: input.OwnerID, BadgeCode: input.BadgeCode}}
@@ -998,7 +1007,7 @@ func (c *ownerBadgeClient) Upsert(ctx context.Context, input *CreateOwnerBadgeIn
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert owner_badge: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1031,7 +1040,7 @@ func (c *ownerBadgeClient) UpsertMany(ctx context.Context, inputs []*CreateOwner
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many owner_badges: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1120,7 +1129,7 @@ func (c *ownerBadgeClient) UpsertMany(ctx context.Context, inputs []*CreateOwner
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert owner_badges batch: %w", err)
+				return nil, err
 			}
 		}
 
@@ -1148,12 +1157,12 @@ func (c *ownerBadgeClient) UpsertMany(ctx context.Context, inputs []*CreateOwner
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowPKs); len(written) != want {
-			return nil, fmt.Errorf("upsert owner_badges: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many owner_badges: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1177,12 +1186,12 @@ func (c *ownerBadgeClient) Exists(ctx context.Context, pk OwnerBadgePK, opts ...
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists owner_badge: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists owner_badge: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1205,12 +1214,12 @@ func (c *ownerBadgeClient) ExistsWhere(ctx context.Context, filter *OwnerBadgeFi
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists owner_badge where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists owner_badges where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1234,12 +1243,12 @@ func (c *ownerBadgeClient) Count(ctx context.Context, filter *OwnerBadgeFilter, 
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count owner_badges: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count owner_badges: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -1265,7 +1274,7 @@ func (c *ownerBadgeClient) Paginate(ctx context.Context, input PaginateInput[Own
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate owner_badges count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -1276,7 +1285,7 @@ func (c *ownerBadgeClient) Paginate(ctx context.Context, input PaginateInput[Own
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate owner_badges: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[OwnerBadge]{
@@ -1288,7 +1297,7 @@ func (c *ownerBadgeClient) Paginate(ctx context.Context, input PaginateInput[Own
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate owner_badges: %w", err)
 	}
 	return result.(*PaginateResult[OwnerBadge]), nil
 }
@@ -1320,7 +1329,7 @@ func (c *ownerBadgeClient) Connection(ctx context.Context, input ConnectionInput
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection owner_badges count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -1364,7 +1373,7 @@ func (c *ownerBadgeClient) Connection(ctx context.Context, input ConnectionInput
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection owner_badges: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -1403,7 +1412,7 @@ func (c *ownerBadgeClient) Connection(ctx context.Context, input ConnectionInput
 		return &Connection[OwnerBadge]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection owner_badges: %w", err)
 	}
 	return result.(*Connection[OwnerBadge]), nil
 }
@@ -1557,9 +1566,13 @@ func (c *ownerBadgeClient) Stream(ctx context.Context, input *StreamOwnerBadgesI
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *OwnerBadge, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream owner_badges: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -1598,7 +1611,7 @@ func (c *ownerBadgeClient) Stream(ctx context.Context, input *StreamOwnerBadgesI
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream owner_badges: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -1621,7 +1634,7 @@ func (c *ownerBadgeClient) Stream(ctx context.Context, input *StreamOwnerBadgesI
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream owner_badges: %w", err))
 		}
 	}
 }

@@ -233,7 +233,7 @@ func TestUpdateTemplate_strictUpdates(t *testing.T) {
 
 	wantPatterns := []string{
 		"matched, err := execResult.RowsAffected()",
-		`fmt.Errorf("update product rows affected: %w", err)`,
+		`fmt.Errorf("rows affected: %w", err)`,
 		"if matched == 0 {",
 		"return nil, ErrNotFound",
 	}

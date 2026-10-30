@@ -3541,6 +3541,9 @@ func (c *productClient) Stream(ctx context.Context, input *StreamProductsInput, 
         // breaks or panics out of yield; yield must not be called after either.
         var stopped bool
         emit := func(p *Product, err error) bool {
+            if err != nil {
+                err = fmt.Errorf("stream products: %w", err)
+            }
             stopped = true
             if !yield(p, err) { return false }
             stopped = false
@@ -3574,7 +3577,7 @@ func (c *productClient) Stream(ctx context.Context, input *StreamProductsInput, 
 
             rows, err := conn.Query(ctx, query, args...)
             if err != nil {
-                emit(nil, fmt.Errorf("stream products: %w", err))
+                emit(nil, err)
                 return nil, nil
             }
             defer rows.Close()
@@ -3595,7 +3598,7 @@ func (c *productClient) Stream(ctx context.Context, input *StreamProductsInput, 
         // A recovered panic (21.6) or a hook's abort error (21.5) is the chain's
         // return value; Stream has no error return, so it is yielded last.
         if err != nil && !stopped {
-            yield(nil, err)
+            yield(nil, fmt.Errorf("stream products: %w", err))
         }
     }
 }
@@ -4000,7 +4003,7 @@ Row locks are meaningless outside a transaction. The generated method body check
 ```go
 if options.LockMode != LockNone {
     if !database.InTransaction(ctx) {
-        return nil, fmt.Errorf("get %s: LockMode requires an active transaction (use Begin or WithTx)", c.table.Name)
+        return nil, fmt.Errorf("get product: LockMode requires an active transaction")
     }
     options.SkipCache = true // forced — reading from cache would skip the actual DB lock
 }
@@ -4762,7 +4765,7 @@ func (c *productClient) Get(ctx context.Context, id uuid.UUID, opts ...func(*Cal
         return products[0], nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("get product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -4801,7 +4804,7 @@ func (c *orderItemClient) Get(ctx context.Context, pk OrderItemPK, opts ...func(
         return items[0], nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("get order_item: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -4897,7 +4900,7 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
 
             rows, err := conn.Query(ctx, result, resultArgs...)
             if err != nil {
-                return nil, fmt.Errorf("get products: %w", err)
+                return nil, err
             }
             defer rows.Close()
 
@@ -4918,7 +4921,7 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
 
             rows, err := conn.Query(ctx, query, args...)
             if err != nil {
-                return nil, fmt.Errorf("get products: %w", err)
+                return nil, err
             }
             defer rows.Close()
 
@@ -4940,7 +4943,7 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
         return products, nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("get many products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5302,14 +5305,14 @@ func (c *productClient) Create(ctx context.Context, input *CreateProductInput, o
             })
             _, err := conn.Exec(ctx, query, queryArgs...)
             if err != nil {
-                return nil, fmt.Errorf("create product: %w", err)
+                return nil, err
             }
             return nil, nil
         }
 
         id, err := c.insertAndResolveID(ctx, conn, columns, args)
         if err != nil {
-            return nil, fmt.Errorf("create product: %w", err)
+            return nil, err
         }
         return c.Get(ctx, id, func(o *CallOptions[ProductFieldOptions]) {
             *o = options
@@ -5317,7 +5320,7 @@ func (c *productClient) Create(ctx context.Context, input *CreateProductInput, o
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("create product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5367,7 +5370,7 @@ func (c *productClient) Create(ctx context.Context, input *CreateProductInput, o
 
         id, err := c.insertAndResolveID(ctx, conn, columns, args)
         if err != nil {
-            return nil, fmt.Errorf("create product: %w", err)
+            return nil, err
         }
         return c.Get(ctx, id, func(o *CallOptions[ProductFieldOptions]) {
             *o = options
@@ -5375,7 +5378,7 @@ func (c *productClient) Create(ctx context.Context, input *CreateProductInput, o
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("create product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5403,7 +5406,7 @@ func (c *productClient) Create(ctx context.Context, input *CreateProductInput, o
 
         id, err := c.insertAndResolveID(ctx, conn, columns, args)
         if err != nil {
-            return nil, fmt.Errorf("create product: %w", err)
+            return nil, err
         }
         return c.Get(ctx, id, func(o *CallOptions[ProductFieldOptions]) {
             *o = options
@@ -5411,7 +5414,7 @@ func (c *productClient) Create(ctx context.Context, input *CreateProductInput, o
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("create product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5573,7 +5576,7 @@ func (c *productClient) CreateMany(ctx context.Context, inputs []*CreateProductI
             // Resolve IDs for the batch (same per-row logic as Create)
             ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
             if err != nil {
-                return nil, fmt.Errorf("create products batch: %w", err)
+                return nil, err
             }
             allIDs = append(allIDs, ids...)
         }
@@ -5590,7 +5593,7 @@ func (c *productClient) CreateMany(ctx context.Context, inputs []*CreateProductI
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("create many products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5787,12 +5790,12 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 
         execResult, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("update product: %w", err)
+            return nil, err
         }
         if c.strictUpdates {
             count, err := execResult.RowsAffected()
             if err != nil {
-                return nil, fmt.Errorf("update product rows affected: %w", err)
+                return nil, fmt.Errorf("rows affected: %w", err)
             }
             if count == 0 {
                 return nil, ErrNotFound
@@ -5805,7 +5808,7 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
         return c.Get(ctx, id, internalOpts)
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("update product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5882,7 +5885,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 
                 _, err := conn.Exec(ctx, query, args...)
                 if err != nil {
-                    return nil, fmt.Errorf("update product %s: %w", item.ID, err)
+                    return nil, fmt.Errorf("item %v: %w", item.ID, err)
                 }
                 allIDs = append(allIDs, item.ID)
             }
@@ -5904,7 +5907,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("update many products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -5949,6 +5952,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
             pgxBatch := &pgx.Batch{}
             var batchQueries []string
             var batchArgs [][]any
+            var queuedIDs []int64 // the item each queued UPDATE belongs to
             for _, item := range batch {
                 setClauses := make(map[string]any)
                 if v, ok := item.Input.Name.Get(); ok {
@@ -5987,6 +5991,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
                 pgxBatch.Queue(query, args...)
                 batchQueries = append(batchQueries, query)
                 batchArgs = append(batchArgs, args)
+                queuedIDs = append(queuedIDs, item.ID)
                 allIDs = append(allIDs, item.ID)
             }
 
@@ -5998,20 +6003,20 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
                     SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
                 }); ok {
                     br := batcher.SendBatch(ctx, pgxBatch)
-                    for range pgxBatch.Len() {
+                    for i := range pgxBatch.Len() {
                         if _, err := br.Exec(); err != nil {
                             br.Close()
-                            return nil, fmt.Errorf("update products batch: %w", err)
+                            return nil, fmt.Errorf("item %v: %w", queuedIDs[i], err)
                         }
                     }
                     if err := br.Close(); err != nil {
-                        return nil, fmt.Errorf("close update batch: %w", err)
+                        return nil, fmt.Errorf("close batch: %w", err)
                     }
                 } else if err := database.WithTransaction(ctx, c.querier, "update_many_product", func(ctx context.Context) error {
                     conn := database.Conn(ctx, c.querier)
                     for i, q := range batchQueries {
                         if _, err := conn.Exec(ctx, q, batchArgs[i]...); err != nil {
-                            return fmt.Errorf("update products batch: %w", err)
+                            return fmt.Errorf("item %v: %w", queuedIDs[i], err)
                         }
                     }
                     return nil
@@ -6037,7 +6042,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("update many products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6122,7 +6127,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
             })
             _, err := conn.Exec(ctx, query, args...)
             if err != nil {
-                return nil, fmt.Errorf("update products where: %w", err)
+                return nil, err
             }
             return nil, nil
         }
@@ -6136,7 +6141,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 
         rows, err := conn.Query(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("update products where: %w", err)
+            return nil, err
         }
         defer rows.Close()
 
@@ -6167,7 +6172,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("update products where: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6215,7 +6220,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
         // drive cache invalidation and events (m.AffectedPKs).
         ids, err := c.collectAffectedIDs(ctx, conn, conds)
         if err != nil {
-            return nil, fmt.Errorf("update products where: %w", err)
+            return nil, err
         }
         if len(ids) == 0 {
             return nil, nil
@@ -6228,7 +6233,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
         })
         _, err = conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("update products where: %w", err)
+            return nil, err
         }
         m.AffectedPKs = toAnySlice(ids)
 
@@ -6248,7 +6253,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("update products where: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6295,7 +6300,7 @@ func (c *productClient) Upsert(ctx context.Context, input *CreateProductInput, t
         // Resolve PK (same pattern as Create)
         id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
         if err != nil {
-            return nil, fmt.Errorf("upsert product: %w", err)
+            return nil, err
         }
 
         return c.Get(ctx, id, func(o *CallOptions[ProductFieldOptions]) {
@@ -6304,7 +6309,7 @@ func (c *productClient) Upsert(ctx context.Context, input *CreateProductInput, t
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("upsert product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6352,7 +6357,7 @@ func (c *productClient) SoftDelete(ctx context.Context, id uuid.UUID, opts ...fu
 
         _, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("soft delete product: %w", err)
+            return nil, err
         }
 
         // Empty FieldOptions — caller doesn't need the result (Section 9.6)
@@ -6381,7 +6386,7 @@ func (c *productClient) SoftDelete(ctx context.Context, id uuid.UUID, opts ...fu
         return results[0], nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("soft delete product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6407,7 +6412,7 @@ func (c *productClient) Restore(ctx context.Context, id uuid.UUID, opts ...func(
 
         _, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("restore product: %w", err)
+            return nil, err
         }
 
         // Empty FieldOptions — caller doesn't need the result (Section 9.6)
@@ -6432,7 +6437,7 @@ func (c *productClient) Restore(ctx context.Context, id uuid.UUID, opts ...func(
         return results[0], nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("restore product: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6461,7 +6466,7 @@ func (c *productClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 
         _, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("soft delete products: %w", err)
+            return nil, err
         }
 
         // Empty FieldOptions — skip fetch (Section 9.6)
@@ -6481,7 +6486,7 @@ func (c *productClient) SoftDeleteMany(ctx context.Context, ids []uuid.UUID, opt
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("soft delete many products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6534,7 +6539,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
             })
             _, err := conn.Exec(ctx, query, args...)
             if err != nil {
-                return nil, fmt.Errorf("soft delete products where: %w", err)
+                return nil, err
             }
             return nil, nil
         }
@@ -6549,7 +6554,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
 
         rows, err := conn.Query(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("soft delete products where: %w", err)
+            return nil, err
         }
         defer rows.Close()
 
@@ -6581,7 +6586,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("soft delete products where: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6623,7 +6628,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
             var err error
             ids, err = c.collectAffectedIDs(ctx, conn, conds)
             if err != nil {
-                return nil, fmt.Errorf("soft delete products where: %w", err)
+                return nil, err
             }
             if len(ids) == 0 {
                 return nil, nil
@@ -6637,7 +6642,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
         })
         _, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("soft delete products where: %w", err)
+            return nil, err
         }
 
         if skipFetch {
@@ -6656,7 +6661,7 @@ func (c *productClient) SoftDeleteWhere(ctx context.Context, filter *ProductFilt
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("soft delete products where: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6736,11 +6741,14 @@ func (c *productClient) HardDelete(ctx context.Context, id uuid.UUID, opts ...fu
 
         _, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("hard delete product: %w", err)
+            return nil, err
         }
         return nil, nil
     })
-    return err
+    if err != nil {
+        return fmt.Errorf("hard delete product: %w", err)
+    }
+    return nil
 }
 ```
 
@@ -6770,13 +6778,13 @@ func (c *productClient) Increment(ctx context.Context, id uuid.UUID, input Incre
 
         execResult, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("increment product %s: %w", input.Column, err)
+            return nil, err
         }
 
         if c.strictUpdates {
             count, err := execResult.RowsAffected()
             if err != nil {
-                return nil, fmt.Errorf("increment product rows affected: %w", err)
+                return nil, fmt.Errorf("rows affected: %w", err)
             }
             if count == 0 {
                 return nil, ErrNotFound
@@ -6784,7 +6792,10 @@ func (c *productClient) Increment(ctx context.Context, id uuid.UUID, input Incre
         }
         return nil, nil
     })
-    return err
+    if err != nil {
+        return fmt.Errorf("increment product: %w", err)
+    }
+    return nil
 }
 ```
 
@@ -6840,12 +6851,12 @@ func (c *productClient) Exists(ctx context.Context, id uuid.UUID, opts ...func(*
 
         var exists bool
         if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-            return false, fmt.Errorf("exists product: %w", err)
+            return false, err
         }
         return exists, nil
     })
     if err != nil {
-        return false, err
+        return false, fmt.Errorf("exists product: %w", err)
     }
     return result.(bool), nil
 }
@@ -6875,12 +6886,12 @@ func (c *productClient) Count(ctx context.Context, filter *ProductFilter, opts .
 
         var count int64
         if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-            return 0, fmt.Errorf("count products: %w", err)
+            return 0, err
         }
         return count, nil
     })
     if err != nil {
-        return 0, err
+        return 0, fmt.Errorf("count products: %w", err)
     }
     return result.(int64), nil
 }
@@ -6912,7 +6923,7 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
         // Total count (delegates to Count with SkipHooks)
         totalCount, err := c.Count(ctx, input.Filter, internalOpts)
         if err != nil {
-            return nil, fmt.Errorf("paginate products count: %w", err)
+            return nil, err
         }
 
         // Page data via GetMany with SkipHooks (handles FieldOptions and relationships)
@@ -6923,7 +6934,7 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
             Offset: new(input.Offset),
         }, internalOpts)
         if err != nil {
-            return nil, fmt.Errorf("paginate products: %w", err)
+            return nil, err
         }
 
         return &PaginateResult[Product]{
@@ -6935,7 +6946,7 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
         }, nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("paginate products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -6975,7 +6986,7 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
         // Total count (separate COUNT query with SkipHooks — no cursor conditions)
         totalCount, err := c.Count(ctx, input.Filter, internalOpts)
         if err != nil {
-            return nil, fmt.Errorf("connection products count: %w", err)
+            return nil, err
         }
 
         // Decode cursors and build keyset conditions
@@ -7014,7 +7025,7 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
             conditions: keysetConds,
         }, internalOpts)
         if err != nil {
-            return nil, fmt.Errorf("connection products: %w", err)
+            return nil, err
         }
 
         // Trim extra row and determine page boundaries
@@ -7053,7 +7064,7 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
         return &Connection[Product]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("connection products: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -7397,7 +7408,7 @@ func (c *orderItemClient) Create(ctx context.Context, input *CreateOrderItemInpu
         })
         _, err := conn.Exec(ctx, query, queryArgs...)
         if err != nil {
-            return nil, fmt.Errorf("create order item: %w", err)
+            return nil, err
         }
 
         // Empty FieldOptions — caller doesn't need the result
@@ -7412,7 +7423,7 @@ func (c *orderItemClient) Create(ctx context.Context, input *CreateOrderItemInpu
         })
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("create order_item: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -7461,7 +7472,7 @@ func (c *orderItemClient) CreateMany(ctx context.Context, inputs []*CreateOrderI
         })
         _, err := conn.Exec(ctx, query, queryArgs...)
         if err != nil {
-            return nil, fmt.Errorf("create order items batch: %w", err)
+            return nil, fmt.Errorf("create many order_items: %w", err)
         }
     }
 
@@ -7470,10 +7481,14 @@ func (c *orderItemClient) CreateMany(ctx context.Context, inputs []*CreateOrderI
     }
 
     // Re-fetch via composite PK batch condition
-    return c.GetMany(ctx, &GetOrderItemsInput{
+    items, err := c.GetMany(ctx, &GetOrderItemsInput{
         Filter: &OrderItemFilter{PKs: allPKs},
         Limit:  new(0),
     }, opts...)
+    if err != nil {
+        return nil, fmt.Errorf("create many order_items: %w", err)
+    }
+    return items, nil
 }
 ```
 
@@ -7533,12 +7548,12 @@ func (c *orderItemClient) Update(ctx context.Context, pk OrderItemPK, input *Upd
 
         execResult, err := conn.Exec(ctx, query, args...)
         if err != nil {
-            return nil, fmt.Errorf("update order item: %w", err)
+            return nil, err
         }
         if c.strictUpdates {
             count, err := execResult.RowsAffected()
             if err != nil {
-                return nil, fmt.Errorf("update order item rows affected: %w", err)
+                return nil, fmt.Errorf("rows affected: %w", err)
             }
             if count == 0 {
                 return nil, ErrNotFound
@@ -7551,7 +7566,7 @@ func (c *orderItemClient) Update(ctx context.Context, pk OrderItemPK, input *Upd
         return c.Get(ctx, pk, internalOpts)
     })
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("update order_item: %w", err)
     }
     if result == nil {
         return nil, nil
@@ -7581,7 +7596,7 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 
     _, err := conn.Exec(ctx, query, args...)
     if err != nil {
-        return fmt.Errorf("hard delete order items: %w", err)
+        return fmt.Errorf("hard delete many order_items: %w", err)
     }
     return nil
 }
@@ -7637,7 +7652,7 @@ query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 
 rows, err := conn.Query(ctx, query, args...)
 if err != nil {
-    return nil, fmt.Errorf("update order items where: %w", err)
+    return nil, err // the method's outer return adds "update order_items where: "
 }
 defer rows.Close()
 
@@ -7645,7 +7660,7 @@ var pks []OrderItemPK
 for rows.Next() {
     var pk OrderItemPK
     if err := rows.Scan(&pk.OrderID, &pk.ProductID); err != nil {
-        return nil, fmt.Errorf("scan updated order item pk: %w", err)
+        return nil, fmt.Errorf("scan updated order_item pk: %w", err)
     }
     pks = append(pks, pk)
 }
@@ -11106,7 +11121,7 @@ func recoveryHook(next hook.MutationHandler) hook.MutationHandler {
 }
 ```
 
-The default recovery hook converts the panic into an error, e.g. `sqlgen: panic in create public.users: boom`. `Table` already carries the schema whenever the table has one ([5.5](#55-schema-qualification--table-naming) "Schema in Generated Code"), so the message names it once; a context whose `Table` lacks the schema (hand-built, say) gets `Schema` prefixed. The operation returns an error to the caller instead of crashing the server. Consumers who need logging or reporting should use `WithPanicHandler`.
+The default recovery hook converts the panic into an error, e.g. `sqlgen: panic in create public.users: boom`. The method then returns it under its prefix ([22.3](#223-error-wrapping-convention)), e.g. `create user: sqlgen: panic in create public.users: boom`. `Table` already carries the schema whenever the table has one ([5.5](#55-schema-qualification--table-naming) "Schema in Generated Code"), so the message names it once; a context whose `Table` lacks the schema (hand-built, say) gets `Schema` prefixed. The operation returns an error to the caller instead of crashing the server. Consumers who need logging or reporting should use `WithPanicHandler`.
 
 **Custom recovery handler:**
 
@@ -11524,6 +11539,34 @@ fmt.Errorf("get many products: %w", err)
 ```
 
 This allows consumers to identify which operation and entity failed without inspecting stack traces.
+
+**Prefix by method.** Every error an entity or view client method returns starts with that method's prefix exactly once, sentinels included: a missing key is `get product: sqlgen: resource not found`, and a nil input is `create product: sqlgen: nil input`. `{table}` is the table or view name as written in SQL (`order_items`), and `{singular}` is that name singularized (`order_item`), for the methods that address one row. What follows the prefix is the cause, which may itself start with the prefix of a client method the method calls internally: `Get` reads through `GetMany`, so a failing `Get` reads `get product: get many products: …`.
+
+| Method | Prefix |
+|---|---|
+| `Get` | `get {singular}` |
+| `GetMany` | `get many {table}` |
+| `Count` | `count {table}` |
+| `Exists` | `exists {singular}` |
+| `ExistsWhere` | `exists {table} where` |
+| `Stream` (each yielded error) | `stream {table}` |
+| `Paginate` | `paginate {table}` |
+| `Connection` | `connection {table}` |
+| `Create` | `create {singular}` |
+| `CreateMany` | `create many {table}` |
+| `Update` | `update {singular}` |
+| `UpdateMany` | `update many {table}` |
+| `UpdateWhere` | `update {table} where` |
+| `Upsert` | `upsert {singular}` |
+| `UpsertMany` | `upsert many {table}` |
+| `Increment` | `increment {singular}` |
+| `SoftDelete`, `Restore`, `HardDelete` | `soft delete {singular}`, `restore {singular}`, `hard delete {singular}` |
+| `SoftDeleteMany`, `RestoreMany`, `HardDeleteMany` | `soft delete many {table}`, `restore many {table}`, `hard delete many {table}` |
+| `SoftDeleteWhere`, `RestoreWhere`, `HardDeleteWhere` | `soft delete {table} where`, `restore {table} where`, `hard delete {table} where` |
+| `CreateWithRelated`, `UpdateWithRelated`, `UpsertWithRelated` | `create {singular} with related`, `update {singular} with related`, `upsert {singular} with related` |
+| `Refresh`, `RefreshConcurrently` (materialized views) | `refresh {table}`, `refresh concurrently {table}` |
+
+The prefix is the same on every dialect and driver, whichever statement or transaction step failed: beginning a method's own transaction, executing a statement, or reading its result set.
 
 **Nested mutations extend the pattern by edge and verb**, not by row:
 

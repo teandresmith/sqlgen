@@ -2,6 +2,7 @@ package suite
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -371,4 +372,40 @@ type beginCounter struct {
 func (q *beginCounter) Begin(ctx context.Context, name string, opts ...database.TxOptions) (*database.Tx, error) {
 	q.n.Add(1)
 	return q.Querier.Begin(ctx, name, opts...)
+}
+
+// errBeginRefused is the error beginRefuser fails every Begin with.
+var errBeginRefused = errors.New("begin refused by querier")
+
+// beginRefuser fails every transaction begun on it and counts the attempts.
+// It exposes only the Querier methods, so a pgx client built on it takes the
+// statement-by-statement path rather than SendBatch.
+type beginRefuser struct {
+	database.Querier
+	n atomic.Int32
+}
+
+func (q *beginRefuser) Begin(context.Context, string, ...database.TxOptions) (*database.Tx, error) {
+	q.n.Add(1)
+	return nil, errBeginRefused
+}
+
+// selectAuthorPosts selects an author's key and its Posts edge.
+func selectAuthorPosts(o *models.CallOptions[models.AuthorFieldOptions]) {
+	o.FieldOptions = &models.AuthorFieldOptions{ID: true, Posts: &models.PostRelationshipOptions{}}
+}
+
+// failingPostsReads returns a client on h's querier whose query hook fails
+// every read of the posts table, and the error it fails them with.
+func failingPostsReads(h *Harness) (*models.Client, error) {
+	errLoad := errors.New("posts read refused by hook")
+	fail := func(next hook.QueryHandler) hook.QueryHandler {
+		return func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			if q.Table == models.TablePosts {
+				return nil, errLoad
+			}
+			return next(ctx, q)
+		}
+	}
+	return models.New(h.Base, models.WithQueryHook(fail)), errLoad
 }

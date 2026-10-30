@@ -80,7 +80,7 @@ func (c *productSummaryClient) Get(ctx context.Context, id uuid.UUID, opts ...fu
 		return productSummaries[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get product_summary: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -158,7 +158,7 @@ func (c *productSummaryClient) GetMany(ctx context.Context, input *GetProductSum
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get product_summary: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -170,7 +170,7 @@ func (c *productSummaryClient) GetMany(ctx context.Context, input *GetProductSum
 		return productSummaries, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many product_summary: %w", err)
 	}
 	if result == nil {
 		return nil, nil

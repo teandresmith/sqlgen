@@ -95,7 +95,7 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many {{ .TableName }}: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -124,7 +124,7 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("upsert {{ .TableName }}: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value
 			// instead of re-invoking the user resolver.
@@ -170,11 +170,11 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 		// keeps its own key, so it is read back after the write instead.
 		pkFromInput := {{ $structCamel }}ConflictCoversPK[target]
 		if !pkFromInput && !haveConflictKey {
-			return nil, fmt.Errorf("upsert {{ .TableName }}: conflict target names a column the input does not supply, so the written rows cannot be identified")
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
 {{- else if $needsPKLookup }}
 		if !haveConflictKey {
-			return nil, fmt.Errorf("upsert {{ .TableName }}: conflict target names a column the input does not supply, so the written rows cannot be identified")
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
 {{- end }}
 
@@ -240,7 +240,7 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 			} else if v, ok := input.{{ .FieldName }}.Get(); ok {
 				{{ .FieldName | toCamelCase | safeGoIdent }} = v
 			} else {
-				return nil, fmt.Errorf("upsert {{ $.TableName }}: tenant column {{ .ColumnName }} required when SkipTenancy is set or resolver is absent")
+				return nil, fmt.Errorf("tenant column {{ .ColumnName }} required when SkipTenancy is set or resolver is absent")
 			}
 {{- else if eq $.Dialect "sqlite" }}
 			var {{ .FieldName | toCamelCase | safeGoIdent }} any = sql.NewDefaultExpr({{ printf "%q" .DefaultExpr }})
@@ -297,7 +297,7 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 					// its database-generated primary key would be unknowable.
 					// Refused before anything is written rather than returned
 					// short.
-					return nil, fmt.Errorf("upsert {{ .TableName }}: input %d supplies no definite value for every conflict column, so its generated {{ $pkCol.Name }} cannot be resolved", i)
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated {{ $pkCol.Name }} cannot be resolved", i)
 				}
 {{- else if $mayReadBack }}
 				if !keyed && !pkFromInput {
@@ -305,7 +305,7 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 					// only come from the read-back — which needs a definite
 					// conflict value to match on. Refused before anything is
 					// written rather than returned short.
-					return nil, fmt.Errorf("upsert {{ .TableName }}: input %d supplies no definite value for every conflict column, so the key of the row it writes cannot be resolved", i)
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so the key of the row it writes cannot be resolved", i)
 				}
 {{- end }}
 				if keyed {
@@ -353,13 +353,13 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert {{ .TableName }} batch: %w", err)
+				return nil, err
 			}
 {{- if $needsPKLookup }}
 
 			batchIDs{{ if $captureTenant }}, batchTenants{{ end }}, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
 			if err != nil {
-				return nil, fmt.Errorf("upsert {{ .TableName }} batch: %w", err)
+				return nil, err
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 {{- if $captureTenant }}
@@ -376,7 +376,7 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 			if !pkFromInput {
 				batchKeys{{ if $captureTenant }}, batchTenants{{ end }}, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
 				if err != nil {
-					return nil, fmt.Errorf("upsert {{ .TableName }} batch: %w", err)
+					return nil, err
 				}
 				resolved{{ if .CompositePK }}PKs{{ else }}IDs{{ end }} = append(resolved{{ if .CompositePK }}PKs{{ else }}IDs{{ end }}, batchKeys...)
 {{- if $captureTenant }}
@@ -402,7 +402,7 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range .PKColumns }}{{ printf "%q" .Name }}, {{ end -}} }, pkValueSets),
 			})
 			if err != nil {
-				return nil, fmt.Errorf("upsert {{ .TableName }} batch: capture tenants: %w", err)
+				return nil, fmt.Errorf("capture tenants: %w", err)
 			}
 			for _, pk := range batchPKs {
 				rowTenants = append(rowTenants, tenantByPK[pk])
@@ -411,7 +411,7 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 			batchIDs := rowIDs[start:end]
 			tenantByPK, err := c.captureAffectedTenants(ctx, conn, []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" $pkCol.Name }})).In(toAnySlice(batchIDs)...)})
 			if err != nil {
-				return nil, fmt.Errorf("upsert {{ .TableName }} batch: capture tenants: %w", err)
+				return nil, fmt.Errorf("capture tenants: %w", err)
 			}
 			for _, id := range batchIDs {
 				rowTenants = append(rowTenants, tenantByPK[id])
@@ -499,12 +499,12 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(row{{ if .CompositePK }}PKs{{ else }}IDs{{ end }}); len(written) != want {
-			return nil, fmt.Errorf("upsert {{ .TableName }}: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many {{ .TableName }}: %w", err)
 	}
 	if result == nil {
 		return nil, nil

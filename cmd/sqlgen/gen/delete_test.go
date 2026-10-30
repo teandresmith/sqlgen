@@ -275,7 +275,7 @@ func TestDeleteTemplate_softDeleteMany(t *testing.T) {
 		"sql.BuildSoftDelete(c.dialect, c.table, sql.SoftDeleteOptions{",
 		"for start := 0; start < len(ids); start += c.batchSize {",
 		`delConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(idStrings[start:end])...)}`,
-		`fmt.Errorf("soft delete products: %w", err)`,
+		`fmt.Errorf("soft delete many products: %w", err)`,
 		"ID: &comparator.ID{In: idStrings}",
 		"DeletedAt: &comparator.NullableTime{Null: new(false)}",
 		"Limit: new(0)",
@@ -465,7 +465,7 @@ func TestDeleteTemplate_hardDeleteMany(t *testing.T) {
 		"func (c *productClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opts ...func(*CallOptions[ProductFieldOptions])) error",
 		"for start := 0; start < len(ids); start += c.batchSize {",
 		`sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)`,
-		`fmt.Errorf("hard delete products: %w", err)`,
+		`fmt.Errorf("hard delete many products: %w", err)`,
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {

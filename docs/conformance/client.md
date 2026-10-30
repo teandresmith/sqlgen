@@ -91,7 +91,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | paginate.happy-path | `Paginate` returns the `Limit` rows after `Offset` in the caller's sort; `TotalCount` counts every matching row, `Offset` and `Limit` are echoed, and `HasMore` is true exactly when `Limit > 0` and `Offset+Limit < TotalCount` | `conformance: Paginate/returns the requested page in the caller's sort with the total count` | all | client-methods: Paginate × happy-path |
 
 ## §9.4a Streaming Operations
-<!-- prd: 9.4a sha256: 61d0478f0b65d482 -->
+<!-- prd: 9.4a sha256: 0670ee2de64913a4 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -227,7 +227,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | nested.empty-field-options-returns-nil | An empty `&FieldOptions{}` makes `CreateWithRelated`, `UpdateWithRelated` and `UpsertWithRelated` perform their writes, nested ones included, and return `nil` | `unit: cmd/sqlgen/gen: TestNestedTemplate_EmptyFieldOptionsReturnsNil`; `conformance: CreateWithRelated/an empty FieldOptions writes every edge and returns nil`; `conformance: UpdateWithRelated/an empty FieldOptions performs every write and returns nil`; `conformance: UpsertWithRelated/an empty FieldOptions writes, nested rows included, and returns nil` | all |  |
 
 ## §9.6a Lock Modes
-<!-- prd: 9.6a sha256: 3d62ff5b5967e274 -->
+<!-- prd: 9.6a sha256: 107442e7a05a46e0 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -281,7 +281,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert.idempotent-returns-row | A conflict that changes nothing still resolves the PK: an idempotent `Upsert` returns the conflicting row, not a not-found error. This covers the MySQL no-change OK packet and the `DO NOTHING` branch | `conformance: Upsert/a conflict that changes nothing returns the existing row`; `conformance: Upsert/a conflict on a target that covers every column it writes leaves the row as it is and returns it` | all | |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: 120d1a80c5977e6a -->
+<!-- prd: 9.8 sha256: 443c6079c27bb433 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -289,7 +289,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | write-readback.no-default-soft-delete-scope | The read that returns `Update`'s, `UpdateMany`'s and `UpdateWhere`'s entities injects no default "is not deleted" condition, on the empty-update path too; on a table without a soft-delete column `Update` reads back through `Get` | `unit: cmd/sqlgen/gen: TestUpdateTemplate_readBackIncludesSoftDeleted/soft delete, strict`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_readBackIncludesSoftDeleted/soft delete, not strict`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_readBackIncludesSoftDeleted/no soft delete`; `unit: cmd/sqlgen/gen: TestFuncSoftDeleteFilterAny/a soft-delete column sets its comparator empty`; `unit: cmd/sqlgen/gen: TestFuncSoftDeleteFilterAny/no soft-delete column`; `unit: cmd/sqlgen/gen: TestNestedTemplate_TerminalReadKeepsSoftDeletedParent` | postgres |  |
 
 ## §9.8.2 Get
-<!-- prd: 9.8.2 sha256: ef0c08f3be70bdff -->
+<!-- prd: 9.8.2 sha256: 19c52b5b9be25695 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -298,7 +298,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | get.soft-delete | A soft-deleted row is not returned by `Get`: its key gives `ErrNotFound`, while a live row's key returns it | `conformance: Get/a soft-deleted row returns ErrNotFound` | all | client-methods: Get × soft-delete |
 
 ## §9.8.3 GetMany
-<!-- prd: 9.8.3 sha256: 85f94c1e4a858d9c -->
+<!-- prd: 9.8.3 sha256: 75069df918145bbd -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -311,7 +311,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | get-many.o2m-loads-own-children | `GetMany` loads an O2M relationship only when its `FieldOptions` selects it, and then gives each row its own children, every parent column selected | `conformance: GetMany/default field options load no relationship`; `conformance: GetMany/selecting a relationship loads each row's own children` | all |  |
 
 ## §9.8.4 Create
-<!-- prd: 9.8.4 sha256: 74d1b6a8e94f2422 -->
+<!-- prd: 9.8.4 sha256: 23095c256704c340 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -319,7 +319,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | create.has-selected-columns-method | Each `<T>FieldOptions` has a generated `HasSelectedColumns() bool` method | `unit: cmd/sqlgen/gen: TestFieldOptionsTemplate_hasSelectedColumnsMethod` | all |  |
 
 ## §9.8.5 CreateMany
-<!-- prd: 9.8.5 sha256: f7deab70d6a2f699 -->
+<!-- prd: 9.8.5 sha256: 1bf5b8ac7d14f470 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -332,7 +332,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | create-many.refetch-skip-hooks | `CreateMany`'s internal `GetMany` runs with `SkipHooks = true`, so the read-back fires no hook | `conformance: CreateMany/the read-back fires no query hook` | all |  |
 
 ## §9.8.6a UpdateMany
-<!-- prd: 9.8.6a sha256: 0ec42b1ad95bb7ba -->
+<!-- prd: 9.8.6a sha256: 9d5075b7afa9fdce -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -341,7 +341,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | update-many.stdlib-sequential | On stdlib, `UpdateMany` runs each sub-batch's UPDATEs in turn inside one transaction: when an item fails, its sub-batch rolls back and earlier sub-batches persist | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateMany_stdlib`; `conformance: UpdateMany/a failed sub-batch rolls back its earlier items and keeps the sub-batches before it` | sqlite |  |
 
 ## §9.8.6b UpdateWhere
-<!-- prd: 9.8.6b sha256: dd8c98e6ecb54b73 -->
+<!-- prd: 9.8.6b sha256: ec15497021cded10 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -349,7 +349,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | update-where.mysql-preselect | On MySQL, `UpdateWhere` selects the matching keys with `collectAffectedIDs` before the UPDATE and uses no `RETURNING` | `unit: cmd/sqlgen/gen: TestUpdateTemplate_updateWhere_mysql`; `unit: cmd/sqlgen/gen: TestUpdateTemplate_goldenFile_mysql` | mysql |  |
 
 ## §9.8.7 Upsert
-<!-- prd: 9.8.7 sha256: 30440e9a27c433b8 -->
+<!-- prd: 9.8.7 sha256: dac15fd27de0780a -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -359,7 +359,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert.update-set-excludes-key | `Upsert`'s update columns are the inserted columns minus the conflict-target columns and every PK column | `unit: cmd/sqlgen/gen: TestUpsertTemplate_callerStrategy`; `unit: cmd/sqlgen/gen: TestUpsertTemplate_compositePK`; `unit: cmd/sqlgen/gen: TestUpsertTemplate_mysql` | postgres, mysql |  |
 
 ## §9.8.8 SoftDelete / Restore
-<!-- prd: 9.8.8 sha256: 5a193eeb1bcf7383 -->
+<!-- prd: 9.8.8 sha256: 58fef265b9fa14c1 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -375,14 +375,14 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | soft-delete-many.hook-input | `SoftDeleteMany` and `RestoreMany` run their mutation hook chain with the key slice as the `MutationContext` `Input` | `conformance: SoftDeleteMany/fires one soft_delete_many mutation hook`; `conformance: RestoreMany/fires one restore_many mutation hook` | all |  |
 
 ## §9.8.9a Increment
-<!-- prd: 9.8.9a sha256: b2496f9df294669f -->
+<!-- prd: 9.8.9a sha256: 902ce00c13859bb6 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | increment.single-pk | On a single-PK table `Increment(ctx, id, IncrementInput[{Table}IncrementColumn], ...)` returns only `error` and issues one `BuildIncrement` UPDATE of `input.Column` by `input.Amount` where the PK equals `id` | `unit: cmd/sqlgen/gen: TestIncrementTemplate_positiveAmount`; `unit: cmd/sqlgen/gen: TestIncrementTemplate_goldenFile` | postgres |  |
 
 ## §9.8.10 Exists / Count
-<!-- prd: 9.8.10 sha256: ca1ca2a2b6a71af8 -->
+<!-- prd: 9.8.10 sha256: 075ae70c40558471 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -396,7 +396,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | count.hooks | `Count` runs one query hook chain, as `OpCount`, with the filter as `Input` and no `PK` | `conformance: Count/fires one count query hook carrying the filter` | all | client-methods: Count × hooks |
 
 ## §9.8.11 Paginate
-<!-- prd: 9.8.11 sha256: 0f2acb383d9dc21c -->
+<!-- prd: 9.8.11 sha256: a282e6fd3ecbd73e -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -405,7 +405,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | paginate.field-selection | A narrowed `FieldOptions` on `Paginate` fills only the selected columns of each item | `conformance: Paginate/a narrowed field selection fills only the selected columns` | all | client-methods: Paginate × field-selection |
 
 ## §9.8.12 Connection
-<!-- prd: 9.8.12 sha256: 0d8fbdeb0a18fd07 -->
+<!-- prd: 9.8.12 sha256: 10616028818c0f98 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -415,7 +415,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | connection.soft-delete | `Connection` leaves soft-deleted rows out of the edges and the total unless the filter sets the soft-delete comparator | `conformance: Connection/soft-deleted rows are left out of the edges and the total unless the filter sets the deleted-at comparator` | all | client-methods: Connection × soft-delete |
 
 ## §9.8.13 Composite Primary Key Patterns
-<!-- prd: 9.8.13 sha256: a48f8e9d5fb61a23 -->
+<!-- prd: 9.8.13 sha256: e186202c94a7834f -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -423,28 +423,28 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | composite.where-returning-pk-columns | On PostgreSQL a composite-PK `UpdateWhere` returns every PK column (`RETURNING "order_id", "product_id"`), scans them into a `{Table}PK`, and re-fetches through the filter's `PKs` | `unit: cmd/sqlgen/gen: TestUpdateTemplate_compositePK_updateWhere` | postgres |  |
 
 ## §9.8.13a Create (composite PK)
-<!-- prd: 9.8.13a sha256: c8e0fe43c3fa025b -->
+<!-- prd: 9.8.13a sha256: 49b36479ee200ddd -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | composite.create-no-resolve | A composite-PK `Create` generates no `insertAndResolveID`: it `Exec`s the INSERT with every PK column taken from the input and returns `Get` on the `{Table}PK` built from the input | `unit: cmd/sqlgen/gen: TestCreateTemplate_compositePK`; `unit: cmd/sqlgen/gen: TestCreateTemplate_noInsertResolve_compositePK`; `unit: cmd/sqlgen/gen: TestCreateTemplate_goldenFile_compositePK` | postgres |  |
 
 ## §9.8.13b CreateMany (composite PK)
-<!-- prd: 9.8.13b sha256: 82313e958718dea8 -->
+<!-- prd: 9.8.13b sha256: 3f4b6a3fa7a901f6 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | composite.create-many-pks-from-input | A composite-PK `CreateMany` generates no `multiInsertAndResolveIDs`: it collects each `{Table}PK` from the inputs, `Exec`s the multi-row INSERT, and re-fetches through the filter's `PKs` | `unit: cmd/sqlgen/gen: TestCreateTemplate_createMany_compositePK`; `unit: cmd/sqlgen/gen: TestCreateTemplate_noInsertResolve_compositePK` | postgres |  |
 
 ## §9.8.13d HardDeleteMany (composite PK)
-<!-- prd: 9.8.13d sha256: dfe6d3d1b326ec3c -->
+<!-- prd: 9.8.13d sha256: e6be01184e876995 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | soft-delete.composite-batch-condition | On a composite-PK table `SoftDeleteMany` and `RestoreMany` build their WHERE with `BuildCompositePKBatchCondition` over every PK column | `unit: cmd/sqlgen/gen: TestDeleteTemplate_goldenFile_compositePK` | postgres |  |
 
 ## §9.8.13e Where Variants — collectAffectedPKs (composite PK)
-<!-- prd: 9.8.13e sha256: 7e93bac41aaa637e -->
+<!-- prd: 9.8.13e sha256: 2c450aaa5ddab472 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -764,6 +764,13 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | create.hook-abort | A hook can abort: it returns an error without calling `next()`, and `Create` writes nothing | `conformance: Create/a hook that aborts writes nothing` | all |  |
 | create-many.hook-abort | A hook can abort: it returns an error without calling `next()`, and `CreateMany` writes nothing | `conformance: CreateMany/a hook that aborts writes nothing` | all |  |
 
+## §21.6 Panic Recovery
+<!-- prd: 21.6 sha256: c3ace23d53631bac -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| panic.method-prefix | The method returns a recovered panic under its own prefix: a panicking hook on `Create` returns `create product: sqlgen: panic in create {Table}: boom`, and `Stream` yields it as `stream products: sqlgen: panic in stream {Table}: …` | `conformance: ErrorWrapping/Create prefixes a recovered panic with create and the singular`; `conformance: Stream/a panicking hook is yielded as the recovered error after no rows` | all |  |
+
 ## §22.2 Constraint Errors
 <!-- prd: 22.2 sha256: 79ed9d573708c0cf -->
 
@@ -787,6 +794,43 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | increment.error-mapping | A constraint violation from `Increment` is wrapped into a structured `ConstraintError` that unwraps to `ErrConstraintViolation`: decrementing a column below its CHECK gives `Type` `ConstraintCheck` and writes nothing. Unique, foreign-key and not-null are unreachable: §9.8.9a / §8.2 restrict the column to numeric, non-PK, non-FK columns, the schema puts no UNIQUE on an incrementable column, and `col + n` on a NOT NULL column never yields NULL | `conformance: Increment/decrementing below a CHECK returns a check ConstraintError and writes nothing` | all | client-methods: Increment × error-mapping |
 | upsert.error-mapping | A constraint violation from `Upsert` is wrapped into a structured `ConstraintError` that unwraps to `ErrConstraintViolation`. `Upsert` can reach all four kinds: a missing referenced row gives `ConstraintForeignKey`; a conflict that breaks a CHECK gives `ConstraintCheck` and leaves the row unchanged; leaving out a NOT NULL column with no default gives `ConstraintNotNull`, naming the column; and a `{Table}ConflictPK` upsert on a database-generated key that collides on another UNIQUE column gives `ConstraintUnique`, because that target is no target (§9.5) | `conformance: Upsert/referencing a missing row returns a foreign key ConstraintError`; `conformance: Upsert/a conflict that breaks a CHECK returns a check ConstraintError and leaves the row unchanged`; `conformance: Upsert/leaving out a NOT NULL column with no default returns a not-null ConstraintError`; `conformance: Upsert/a primary-key target colliding on another unique column returns a unique ConstraintError, not an update` | all | client-methods: Upsert × error-mapping |
 | upsert-many.error-mapping | A constraint violation from `UpsertMany` is wrapped into a structured `ConstraintError` that unwraps to `ErrConstraintViolation`. A missing referenced row gives `ConstraintForeignKey`, a conflict that breaks a CHECK gives `ConstraintCheck`, and leaving out a NOT NULL column with no default gives `ConstraintNotNull`, naming the column. A unique violation is not a cross-dialect outcome: §9.5 refuses a target naming a database-generated key before writing, and on MySQL `ON DUPLICATE KEY UPDATE` takes the update branch on a collision with any unique constraint | `conformance: UpsertMany/referencing a missing row returns a foreign key ConstraintError`; `conformance: UpsertMany/a conflict that breaks a CHECK returns a check ConstraintError and leaves the row unchanged`; `conformance: UpsertMany/leaving out a NOT NULL column with no default returns a not-null ConstraintError` | all | client-methods: UpsertMany × error-mapping |
+
+## §22.3 Error Wrapping Convention
+<!-- prd: 22.3 sha256: d20dc2d6a39a14fd -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| error-prefix.get | Every error `Get` returns starts exactly once with `get {singular}: `, sentinels included, and its cause stays reachable with `errors.Is`. A database failure carries the internal `GetMany`'s prefix after its own | `conformance: ErrorWrapping/Get prefixes a database failure with get and the singular, ahead of the get many cause`; `conformance: ErrorWrapping/Get prefixes a missing key with get and the singular`; `conformance: ErrorWrapping/Get prefixes a missing key on a multi-word table with get and the singularized table name`; `conformance: ErrorWrapping/Get prefixes a failed relationship load with get and the singular` | all |  |
+| error-prefix.get-many | Every error `GetMany` returns starts exactly once with `get many {table}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/GetMany prefixes a database failure with get many and the table`; `conformance: ErrorWrapping/GetMany prefixes a failed relationship load with get many and the table` | all |  |
+| error-prefix.count | Every error `Count` returns starts exactly once with `count {table}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/Count prefixes a database failure with count and the table` | all |  |
+| error-prefix.exists | Every error `Exists` returns starts exactly once with `exists {singular}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/Exists prefixes a database failure with exists and the singular` | all |  |
+| error-prefix.exists-where | Every error `ExistsWhere` returns starts exactly once with `exists {table} where: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/ExistsWhere prefixes a database failure with exists, the table and where` | all |  |
+| error-prefix.stream | Every error `Stream` returns starts exactly once with `stream {table}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/Stream prefixes a yielded database failure with stream and the table` | all |  |
+| error-prefix.paginate | Every error `Paginate` returns starts exactly once with `paginate {table}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/Paginate prefixes a database failure with paginate and the table` | all |  |
+| error-prefix.connection | Every error `Connection` returns starts exactly once with `connection {table}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/Connection prefixes a database failure with connection and the table`; `conformance: ErrorWrapping/Connection prefixes an invalid cursor with connection and the table` | all |  |
+| error-prefix.create | Every error `Create` returns starts exactly once with `create {singular}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/Create prefixes a constraint violation with create and the singular`; `conformance: ErrorWrapping/Create prefixes a nil input with create and the singular` | all |  |
+| error-prefix.create-many | Every error `CreateMany` returns starts exactly once with `create many {table}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/CreateMany prefixes a constraint violation with create many and the table`; `conformance: ErrorWrapping/CreateMany prefixes a nil element with create many and the table` | all |  |
+| error-prefix.update | Every error `Update` returns starts exactly once with `update {singular}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/Update prefixes a constraint violation with update and the singular`; `conformance: ErrorWrapping/Update prefixes a missing key with update and the singular`; `conformance: ErrorWrapping/Update prefixes a nil input with update and the singular` | all |  |
+| error-prefix.update-many | Every error `UpdateMany` returns starts exactly once with `update many {table}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/UpdateMany prefixes a transaction that cannot begin with update many and the table`; `conformance: ErrorWrapping/UpdateMany prefixes a failing item with update many and the table`; `conformance: ErrorWrapping/UpdateMany prefixes a nil item input with update many and the table` | all |  |
+| error-prefix.update-where | Every error `UpdateWhere` returns starts exactly once with `update {table} where: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/UpdateWhere prefixes a constraint violation with update, the table and where`; `conformance: ErrorWrapping/UpdateWhere prefixes an empty filter on a multi-word table with update, the table name as written and where`; `conformance: ErrorWrapping/UpdateWhere prefixes a nil input with update, the table and where` | all |  |
+| error-prefix.upsert | Every error `Upsert` returns starts exactly once with `upsert {singular}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/Upsert prefixes a constraint violation with upsert and the singular`; `conformance: ErrorWrapping/Upsert prefixes a nil input with upsert and the singular` | all |  |
+| error-prefix.upsert-many | Every error `UpsertMany` returns starts exactly once with `upsert many {table}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/UpsertMany prefixes a constraint violation with upsert many and the table`; `conformance: ErrorWrapping/UpsertMany prefixes a nil element with upsert many and the table` | all |  |
+| error-prefix.increment | Every error `Increment` returns starts exactly once with `increment {singular}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/Increment prefixes a constraint violation with increment and the singular, without the column`; `conformance: ErrorWrapping/Increment prefixes a missing key with increment and the singular` | all |  |
+| error-prefix.soft-delete | Every error `SoftDelete` returns starts exactly once with `soft delete {singular}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/SoftDelete prefixes a constraint violation with soft delete and the singular` | all |  |
+| error-prefix.soft-delete-many | Every error `SoftDeleteMany` returns starts exactly once with `soft delete many {table}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/SoftDeleteMany prefixes a constraint violation with soft delete many and the table` | all |  |
+| error-prefix.soft-delete-where | Every error `SoftDeleteWhere` returns starts exactly once with `soft delete {table} where: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/SoftDeleteWhere prefixes a constraint violation with soft delete, the table and where`; `conformance: ErrorWrapping/SoftDeleteWhere prefixes an empty filter with soft delete, the table and where` | all |  |
+| error-prefix.restore | Every error `Restore` returns starts exactly once with `restore {singular}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/Restore prefixes a constraint violation with restore and the singular` | all |  |
+| error-prefix.restore-many | Every error `RestoreMany` returns starts exactly once with `restore many {table}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/RestoreMany prefixes a constraint violation with restore many and the table` | all |  |
+| error-prefix.restore-where | Every error `RestoreWhere` returns starts exactly once with `restore {table} where: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/RestoreWhere prefixes a constraint violation with restore, the table and where`; `conformance: ErrorWrapping/RestoreWhere prefixes an empty filter with restore, the table and where` | all |  |
+| error-prefix.hard-delete | Every error `HardDelete` returns starts exactly once with `hard delete {singular}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/HardDelete prefixes a constraint violation with hard delete and the singular` | all |  |
+| error-prefix.hard-delete-many | Every error `HardDeleteMany` returns starts exactly once with `hard delete many {table}: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/HardDeleteMany prefixes a constraint violation with hard delete many and the table` | all |  |
+| error-prefix.hard-delete-where | Every error `HardDeleteWhere` returns starts exactly once with `hard delete {table} where: `, sentinels included, and its cause stays reachable with `errors.Is` | `conformance: ErrorWrapping/HardDeleteWhere prefixes a constraint violation with hard delete, the table and where`; `conformance: ErrorWrapping/HardDeleteWhere prefixes an empty filter with hard delete, the table and where` | all |  |
+| error-prefix.create-with-related | Every error `CreateWithRelated` returns starts exactly once with `create {singular} with related: `, sentinels included, and its cause stays reachable with `errors.Is`. An edge failure is `… with related: {edge}: {verb}: {cause}` with the edge and verb once, not repeated from the `*NestedMutationError` | `conformance: ErrorWrapping/CreateWithRelated prefixes an edge failure once with create with related, the edge and the verb`; `conformance: ErrorWrapping/CreateWithRelated prefixes a nil input with create with related and the singular` | all |  |
+| error-prefix.update-with-related | Every error `UpdateWithRelated` returns starts exactly once with `update {singular} with related: `, sentinels included, and its cause stays reachable with `errors.Is`. An edge failure is `… with related: {edge}: {verb}: {cause}` with the edge and verb once, not repeated from the `*NestedMutationError` | `conformance: ErrorWrapping/UpdateWithRelated prefixes an edge failure once with update with related, the edge and the verb` | all |  |
+| error-prefix.upsert-with-related | Every error `UpsertWithRelated` returns starts exactly once with `upsert {singular} with related: `, sentinels included, and its cause stays reachable with `errors.Is`. An edge failure is `… with related: {edge}: {verb}: {cause}` with the edge and verb once, not repeated from the `*NestedMutationError` | `conformance: ErrorWrapping/UpsertWithRelated prefixes an edge failure once with upsert with related, the edge and the verb` | all |  |
+| error-prefix.view-reads | Every error a view client's `Get`, `GetMany`, `Count`, `Paginate` and `Connection` return starts exactly once with that method's prefix on the view name (`get order_total`, `get many order_totals`, `count order_totals`, `paginate order_totals`, `connection order_totals`), and its cause stays reachable with `errors.Is` | `example: postgres: TestViewErrors_CarryTheMethodPrefix/Get_prefixes_a_missing_key_with_get_and_the_singular`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/Get_prefixes_a_database_failure_with_get_and_the_singular`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/GetMany_prefixes_a_database_failure_with_get_many_and_the_view`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/Count_prefixes_a_database_failure_with_count_and_the_view`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/Paginate_prefixes_a_database_failure_with_paginate_and_the_view`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/Connection_prefixes_an_invalid_cursor_with_connection_and_the_view` | postgres, pgx |  |
+| error-prefix.refresh | Every error a materialized view's `Refresh` returns starts exactly once with `refresh {table}: `, and `RefreshConcurrently`'s with `refresh concurrently {table}: `, its refusal inside a transaction included, the cause reachable with `errors.Is` | `example: postgres: TestViewErrors_CarryTheMethodPrefix/Refresh_prefixes_a_database_failure_with_refresh_and_the_view`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/RefreshConcurrently_prefixes_a_database_failure_with_refresh_concurrently_and_the_view`; `example: postgres: TestViewErrors_CarryTheMethodPrefix/RefreshConcurrently_prefixes_its_refusal_inside_a_transaction_with_refresh_concurrently_and_the_view` | postgres, pgx |  |
+| error-prefix.tenant-mismatch | A `tenancy.ErrMismatch` is returned under the method's prefix like any other error, on `Get`, `Update` and `Create` alike | `example: tenancy: TestErrMismatch_CarriesTheMethodPrefix` | sqlite |  |
 
 ## §25.1 Query Count Guarantee
 <!-- prd: 25.1 sha256: 56257757d02b513e -->

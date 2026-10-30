@@ -321,7 +321,7 @@ conds = append(conds, input.conditions...)
 if !options.SkipTenancy {
     workspaceID, err := c.tenantResolver(ctx)
     if err != nil {
-        return nil, fmt.Errorf("get products: resolve tenant: %w", err)
+        return nil, fmt.Errorf("resolve tenant: %w", err) // outer return wraps "get many products: "
     }
     conds = append(conds, sql.Where("workspace_id").Eq(workspaceID))
 }
@@ -336,7 +336,7 @@ query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
 })
 ```
 
-Error wrapping follows the project convention `"{op} {table-plural-or-singular}: %w"` — `GetMany` uses plural (`"get products: %w"`); `Get` would use singular if it resolved its own SQL, but it delegates, so the wrap happens once in `GetMany`.
+Error wrapping follows PRD §22.3: `GetMany` prefixes its errors `get many products:`, and `Get`, which reads through `GetMany`, puts its own `get product:` in front (`get product: get many products: …`).
 
 ### 10.4 Write Operations — `Create`, `Update`, `Upsert`
 
@@ -348,7 +348,7 @@ var workspaceID string // [tenancy] concrete T at codegen
 if !options.SkipTenancy {
     resolved, err := c.tenantResolver(ctx)
     if err != nil {
-        return nil, fmt.Errorf("create product: resolve tenant: %w", err)
+        return nil, fmt.Errorf("resolve tenant: %w", err) // outer return wraps "create product: "
     }
     // [tenancy] Mismatch check (Q1): caller-set tenant must match the resolver.
     if v, ok := input.WorkspaceID.Get(); ok && v != resolved {
@@ -383,7 +383,7 @@ var workspaceID string
 if !options.SkipTenancy {
     resolved, err := c.tenantResolver(ctx)
     if err != nil {
-        return nil, fmt.Errorf("update product: resolve tenant: %w", err)
+        return nil, fmt.Errorf("resolve tenant: %w", err) // outer return wraps "update product: "
     }
     if v, ok := input.WorkspaceID.Get(); ok && v != resolved {
         return nil, tenancy.ErrMismatch
@@ -433,7 +433,7 @@ if len(conds) == 0 {
 if !options.SkipTenancy {
     resolved, err := c.tenantResolver(ctx)
     if err != nil {
-        return nil, fmt.Errorf("update products where: resolve tenant: %w", err)
+        return nil, fmt.Errorf("resolve tenant: %w", err) // outer return wraps "update products where: "
     }
     if v, ok := input.WorkspaceID.Get(); ok && v != resolved {
         return nil, tenancy.ErrMismatch
@@ -460,7 +460,7 @@ conds := input.Filter.ToConditions(c.dialect)
 if !options.SkipTenancy {
     workspaceID, err := c.tenantResolver(ctx)
     if err != nil {
-        return nil, fmt.Errorf("get products: resolve tenant: %w", err)
+        return nil, fmt.Errorf("resolve tenant: %w", err) // outer return wraps "get many products: "
     }
     // [tenancy] Parent-side tenant filter (always present on tenanted parents).
     conds = append(conds, sql.Where("p.workspace_id").Eq(workspaceID))

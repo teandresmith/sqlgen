@@ -504,7 +504,7 @@ func TestUpsertManyTemplate_lookupColumnsCopiedBeforeSort(t *testing.T) {
 func TestUpsertManyTemplate_nilInputGuard(t *testing.T) {
 	output := executeUpsertManyTemplate(t, testUpsertManyContext_compositePK(), sql.NewPostgresDialect())
 
-	guardAt := strings.Index(output, "return nil, ErrNilInput")
+	guardAt := strings.Index(output, `return nil, fmt.Errorf("upsert many order_items: %w", ErrNilInput)`)
 	executorAt := strings.Index(output, "c.executeMutation(")
 	if guardAt < 0 || executorAt < 0 {
 		t.Fatalf("could not locate nil guard (%d) or executor (%d)", guardAt, executorAt)

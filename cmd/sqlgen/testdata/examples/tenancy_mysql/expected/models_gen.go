@@ -464,7 +464,7 @@ func (c *articleClient) Get(ctx context.Context, id int64, opts ...func(*CallOpt
 		return articles[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get article: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -485,16 +485,16 @@ func (c *articleClient) GetMany(ctx context.Context, input *GetArticlesInput, op
 
 	if options.LockMode != sql.LockNone {
 		if !database.InTransaction(ctx) {
-			return nil, fmt.Errorf("get articles: LockMode requires an active transaction")
+			return nil, fmt.Errorf("get many articles: LockMode requires an active transaction")
 		}
 		options.SkipCache = true
 		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
 			version, err := c.mysqlVersion.get(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("get articles: %w", err)
+				return nil, fmt.Errorf("get many articles: %w", err)
 			}
 			if version.Major < 8 {
-				return nil, fmt.Errorf("get articles: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+				return nil, fmt.Errorf("get many articles: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -540,7 +540,7 @@ func (c *articleClient) GetMany(ctx context.Context, input *GetArticlesInput, op
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("get articles: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -579,7 +579,7 @@ func (c *articleClient) GetMany(ctx context.Context, input *GetArticlesInput, op
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get articles: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -591,7 +591,7 @@ func (c *articleClient) GetMany(ctx context.Context, input *GetArticlesInput, op
 		return articles, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many articles: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -607,7 +607,7 @@ func (c *articleClient) Create(ctx context.Context, input *CreateArticleInput, o
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create article: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -634,7 +634,7 @@ func (c *articleClient) Create(ctx context.Context, input *CreateArticleInput, o
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("create article: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal read (Get, or GetMany
 			// on a soft-delete table) reuses this value instead of
@@ -685,7 +685,7 @@ func (c *articleClient) Create(ctx context.Context, input *CreateArticleInput, o
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create article: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -718,7 +718,7 @@ func (c *articleClient) Create(ctx context.Context, input *CreateArticleInput, o
 		return written[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create article: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -734,7 +734,7 @@ func (c *articleClient) CreateMany(ctx context.Context, inputs []*CreateArticleI
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many articles: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -763,7 +763,7 @@ func (c *articleClient) CreateMany(ctx context.Context, inputs []*CreateArticleI
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("create articles: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value
 			// (and the per-input verify-match short-circuits via the cache)
@@ -811,7 +811,7 @@ func (c *articleClient) CreateMany(ctx context.Context, inputs []*CreateArticleI
 				} else if v, ok := input.WorkspaceID.Get(); ok {
 					workspaceID = v
 				} else {
-					return nil, fmt.Errorf("create articles: tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+					return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
 				}
 				allTenants = append(allTenants, workspaceID)
 				var viewCount any = sql.Default
@@ -834,7 +834,7 @@ func (c *articleClient) CreateMany(ctx context.Context, inputs []*CreateArticleI
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create articles batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 		}
@@ -859,7 +859,7 @@ func (c *articleClient) CreateMany(ctx context.Context, inputs []*CreateArticleI
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many articles: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -953,7 +953,7 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update article: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -972,7 +972,7 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("update article: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal read reuses this value
 			// — single-resolve.
@@ -1056,7 +1056,7 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 		// was resolved.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, updateConds)
 		if err != nil {
-			return nil, fmt.Errorf("update article: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		// The key conditions match at most one row. Its tenant is read
 		// without a lookup by key: the database matched the row under its
@@ -1074,11 +1074,11 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update article: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update article rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// MySQL counts the rows a statement changed, not the rows it
 		// matched, so a row the write leaves as it was reports none. Only
@@ -1087,7 +1087,7 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 		if matched == 0 {
 			found, err := c.rowMatches(ctx, conn, updateConds)
 			if err != nil {
-				return nil, fmt.Errorf("update article: match row: %w", err)
+				return nil, fmt.Errorf("match row: %w", err)
 			}
 			if found {
 				matched = 1
@@ -1127,7 +1127,7 @@ func (c *articleClient) Update(ctx context.Context, id int64, input *UpdateArtic
 		return written[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update article: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1152,7 +1152,7 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many articles: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1179,7 +1179,7 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("update articles: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the per-item verify-match short-circuits via the
 			// cache and the chained terminal GetMany reuses this value
@@ -1234,7 +1234,7 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 				}
 				batchTenants, err := c.captureAffectedTenants(ctx, conn, preConds)
 				if err != nil {
-					return fmt.Errorf("update articles: capture tenants: %w", err)
+					return fmt.Errorf("capture tenants: %w", err)
 				}
 				for pk, tenant := range batchTenants {
 					// Keep the first capture: a key repeated in a later
@@ -1280,11 +1280,11 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update article %v: %w", item.ID, err)
+						return fmt.Errorf("item %v: %w", item.ID, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update article %v rows affected: %w", item.ID, err)
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
 					}
 					// MySQL counts the rows a statement changed, not the rows it
 					// matched, so an item that leaves its row as it was reports
@@ -1293,7 +1293,7 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 					if matched == 0 {
 						found, err := c.rowMatches(ctx, conn, itemConds)
 						if err != nil {
-							return fmt.Errorf("update article %v: match row: %w", item.ID, err)
+							return fmt.Errorf("item %v: match row: %w", item.ID, err)
 						}
 						if found {
 							matched = 1
@@ -1340,7 +1340,7 @@ func (c *articleClient) UpdateMany(ctx context.Context, items []UpdateArticleIte
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many articles: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1358,7 +1358,7 @@ func (c *articleClient) UpdateWhere(ctx context.Context, filter *ArticleFilter, 
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update articles where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1381,7 +1381,7 @@ func (c *articleClient) UpdateWhere(ctx context.Context, filter *ArticleFilter, 
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("update articles where: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value
 			// — single-resolve.
@@ -1449,7 +1449,7 @@ func (c *articleClient) UpdateWhere(ctx context.Context, filter *ArticleFilter, 
 		// cache keys — before the UPDATE (no RETURNING)
 		ids, affectedTenants, err := c.collectAffectedIDs(ctx, conn, conds)
 		if err != nil {
-			return nil, fmt.Errorf("update articles where: %w", err)
+			return nil, err
 		}
 		if len(ids) == 0 {
 			return nil, nil
@@ -1461,7 +1461,7 @@ func (c *articleClient) UpdateWhere(ctx context.Context, filter *ArticleFilter, 
 		})
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update articles where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(ids)
 		m.AffectedTenants = affectedTenants
@@ -1484,7 +1484,7 @@ func (c *articleClient) UpdateWhere(ctx context.Context, filter *ArticleFilter, 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update articles where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1537,7 +1537,7 @@ func (c *articleClient) SoftDelete(ctx context.Context, id int64, opts ...func(*
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete article: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value —
 			// the tenant resolves once per operation.
@@ -1560,7 +1560,7 @@ func (c *articleClient) SoftDelete(ctx context.Context, id int64, opts ...func(*
 		// key from the row itself.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, delConds)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete article: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		// The key conditions match at most one row. Its tenant is read
 		// without a lookup by key: the database matched the row under its
@@ -1578,11 +1578,11 @@ func (c *articleClient) SoftDelete(ctx context.Context, id int64, opts ...func(*
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete article: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("soft delete article rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// MySQL counts the rows a statement changed, not the rows it
 		// matched, so a row the write leaves as it was reports none. Only
@@ -1591,7 +1591,7 @@ func (c *articleClient) SoftDelete(ctx context.Context, id int64, opts ...func(*
 		if matched == 0 {
 			found, err := c.rowMatches(ctx, conn, delConds)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete article: match row: %w", err)
+				return nil, fmt.Errorf("match row: %w", err)
 			}
 			if found {
 				matched = 1
@@ -1631,7 +1631,7 @@ func (c *articleClient) SoftDelete(ctx context.Context, id int64, opts ...func(*
 		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete article: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1660,7 +1660,7 @@ func (c *articleClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ..
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete articles: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value —
 			// the tenant resolves once per operation.
@@ -1693,7 +1693,7 @@ func (c *articleClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ..
 			// MySQL has no RETURNING, so a pre-read captures the tenants first.
 			batchTenants, err := c.captureAffectedTenants(ctx, conn, delConds)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete articles: capture tenants: %w", err)
+				return nil, fmt.Errorf("capture tenants: %w", err)
 			}
 			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 
@@ -1703,7 +1703,7 @@ func (c *articleClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ..
 				Conditions: delConds,
 			})
 			if _, err := conn.Exec(ctx, query, args...); err != nil {
-				return nil, fmt.Errorf("soft delete articles: %w", err)
+				return nil, err
 			}
 		}
 
@@ -1740,7 +1740,7 @@ func (c *articleClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ..
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete many articles: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1776,7 +1776,7 @@ func (c *articleClient) SoftDeleteWhere(ctx context.Context, filter *ArticleFilt
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete articles where: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value —
 			// the tenant resolves once per operation.
@@ -1798,7 +1798,7 @@ func (c *articleClient) SoftDeleteWhere(ctx context.Context, filter *ArticleFilt
 		// cache keys — before the soft delete (no RETURNING)
 		ids, affectedTenants, err := c.collectAffectedIDs(ctx, conn, conds)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete articles where: %w", err)
+			return nil, err
 		}
 		if len(ids) == 0 {
 			return nil, nil
@@ -1811,7 +1811,7 @@ func (c *articleClient) SoftDeleteWhere(ctx context.Context, filter *ArticleFilt
 		})
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete articles where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(ids)
 		m.AffectedTenants = affectedTenants
@@ -1833,7 +1833,7 @@ func (c *articleClient) SoftDeleteWhere(ctx context.Context, filter *ArticleFilt
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete articles where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1855,7 +1855,7 @@ func (c *articleClient) Restore(ctx context.Context, id int64, opts ...func(*Cal
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("restore article: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value —
 			// the tenant resolves once per operation.
@@ -1878,7 +1878,7 @@ func (c *articleClient) Restore(ctx context.Context, id int64, opts ...func(*Cal
 		// key from the row itself.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, restoreConds)
 		if err != nil {
-			return nil, fmt.Errorf("restore article: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		// The key conditions match at most one row. Its tenant is read
 		// without a lookup by key: the database matched the row under its
@@ -1895,11 +1895,11 @@ func (c *articleClient) Restore(ctx context.Context, id int64, opts ...func(*Cal
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore article: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("restore article rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// MySQL counts the rows a statement changed, not the rows it
 		// matched, so a row the write leaves as it was reports none. Only
@@ -1908,7 +1908,7 @@ func (c *articleClient) Restore(ctx context.Context, id int64, opts ...func(*Cal
 		if matched == 0 {
 			found, err := c.rowMatches(ctx, conn, restoreConds)
 			if err != nil {
-				return nil, fmt.Errorf("restore article: match row: %w", err)
+				return nil, fmt.Errorf("match row: %w", err)
 			}
 			if found {
 				matched = 1
@@ -1945,7 +1945,7 @@ func (c *articleClient) Restore(ctx context.Context, id int64, opts ...func(*Cal
 		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore article: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1974,7 +1974,7 @@ func (c *articleClient) RestoreMany(ctx context.Context, ids []int64, opts ...fu
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("restore articles: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value —
 			// the tenant resolves once per operation.
@@ -2007,7 +2007,7 @@ func (c *articleClient) RestoreMany(ctx context.Context, ids []int64, opts ...fu
 			// MySQL has no RETURNING, so a pre-read captures the tenants first.
 			batchTenants, err := c.captureAffectedTenants(ctx, conn, restoreConds)
 			if err != nil {
-				return nil, fmt.Errorf("restore articles: capture tenants: %w", err)
+				return nil, fmt.Errorf("capture tenants: %w", err)
 			}
 			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 
@@ -2016,7 +2016,7 @@ func (c *articleClient) RestoreMany(ctx context.Context, ids []int64, opts ...fu
 				Conditions: restoreConds,
 			})
 			if _, err := conn.Exec(ctx, query, args...); err != nil {
-				return nil, fmt.Errorf("restore articles: %w", err)
+				return nil, err
 			}
 		}
 
@@ -2052,7 +2052,7 @@ func (c *articleClient) RestoreMany(ctx context.Context, ids []int64, opts ...fu
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore many articles: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -2088,7 +2088,7 @@ func (c *articleClient) RestoreWhere(ctx context.Context, filter *ArticleFilter,
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("restore articles where: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value —
 			// the tenant resolves once per operation.
@@ -2110,7 +2110,7 @@ func (c *articleClient) RestoreWhere(ctx context.Context, filter *ArticleFilter,
 		// cache keys — before the restore (no RETURNING)
 		ids, affectedTenants, err := c.collectAffectedIDs(ctx, conn, conds)
 		if err != nil {
-			return nil, fmt.Errorf("restore articles where: %w", err)
+			return nil, err
 		}
 		if len(ids) == 0 {
 			return nil, nil
@@ -2122,7 +2122,7 @@ func (c *articleClient) RestoreWhere(ctx context.Context, filter *ArticleFilter,
 		})
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore articles where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(ids)
 		m.AffectedTenants = affectedTenants
@@ -2143,7 +2143,7 @@ func (c *articleClient) RestoreWhere(ctx context.Context, filter *ArticleFilter,
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore articles where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -2164,7 +2164,7 @@ func (c *articleClient) HardDelete(ctx context.Context, id int64, opts ...func(*
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete article: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -2178,7 +2178,7 @@ func (c *articleClient) HardDelete(ctx context.Context, id int64, opts ...func(*
 		// key from the row itself.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, hardConds)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete article: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		// The key conditions match at most one row. Its tenant is read
 		// without a lookup by key: the database matched the row under its
@@ -2194,11 +2194,11 @@ func (c *articleClient) HardDelete(ctx context.Context, id int64, opts ...func(*
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete article: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete article rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -2208,7 +2208,10 @@ func (c *articleClient) HardDelete(ctx context.Context, id int64, opts ...func(*
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete article: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple articles from the database.
@@ -2224,7 +2227,7 @@ func (c *articleClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete articles: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -2248,7 +2251,7 @@ func (c *articleClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 			// MySQL has no RETURNING, so a pre-read captures the tenants first.
 			batchTenants, err := c.captureAffectedTenants(ctx, conn, hardConds)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete articles: capture tenants: %w", err)
+				return nil, fmt.Errorf("capture tenants: %w", err)
 			}
 			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 
@@ -2256,7 +2259,7 @@ func (c *articleClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 				Conditions: hardConds,
 			})
 			if _, err := conn.Exec(ctx, query, args...); err != nil {
-				return nil, fmt.Errorf("hard delete articles: %w", err)
+				return nil, err
 			}
 		}
 
@@ -2276,7 +2279,10 @@ func (c *articleClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many articles: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all articles matching the filter.
@@ -2297,7 +2303,7 @@ func (c *articleClient) HardDeleteWhere(ctx context.Context, filter *ArticleFilt
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete articles where: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -2308,7 +2314,7 @@ func (c *articleClient) HardDeleteWhere(ctx context.Context, filter *ArticleFilt
 		// cache keys — before the DELETE (no RETURNING)
 		ids, affectedTenants, err := c.collectAffectedIDs(ctx, conn, conds)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete articles where: %w", err)
+			return nil, err
 		}
 		if len(ids) == 0 {
 			return nil, nil
@@ -2320,13 +2326,16 @@ func (c *articleClient) HardDeleteWhere(ctx context.Context, filter *ArticleFilt
 
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete articles where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(ids)
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete articles where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
@@ -2403,7 +2412,7 @@ func (c *articleClient) Upsert(ctx context.Context, input *CreateArticleInput, t
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert article: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -2420,7 +2429,7 @@ func (c *articleClient) Upsert(ctx context.Context, input *CreateArticleInput, t
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("upsert article: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve). The resolver's answer is cached, not
@@ -2468,7 +2477,7 @@ func (c *articleClient) Upsert(ctx context.Context, input *CreateArticleInput, t
 
 		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
 		if err != nil {
-			return nil, fmt.Errorf("upsert article: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 		m.AffectedTenants = []any{capturedTenant}
@@ -2501,7 +2510,7 @@ func (c *articleClient) Upsert(ctx context.Context, input *CreateArticleInput, t
 		return written[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert article: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -2579,7 +2588,7 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many articles: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -2607,7 +2616,7 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("upsert articles: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value
 			// instead of re-invoking the user resolver.
@@ -2640,7 +2649,7 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 		if !haveConflictKey {
-			return nil, fmt.Errorf("upsert articles: conflict target names a column the input does not supply, so the written rows cannot be identified")
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
 
 		// One value row per input, built before any statement runs: the dedupe
@@ -2669,7 +2678,7 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 			} else if v, ok := input.WorkspaceID.Get(); ok {
 				workspaceID = v
 			} else {
-				return nil, fmt.Errorf("upsert articles: tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+				return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
 			}
 			var viewCount any = sql.Default
 			if v, ok := input.ViewCount.Get(); ok {
@@ -2703,7 +2712,7 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 					// its database-generated primary key would be unknowable.
 					// Refused before anything is written rather than returned
 					// short.
-					return nil, fmt.Errorf("upsert articles: input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
 				}
 				if keyed {
 					if j, ok := seen[key]; ok {
@@ -2735,12 +2744,12 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert articles batch: %w", err)
+				return nil, err
 			}
 
 			batchIDs, batchTenants, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
 			if err != nil {
-				return nil, fmt.Errorf("upsert articles batch: %w", err)
+				return nil, err
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 			rowTenants = append(rowTenants, batchTenants...)
@@ -2773,12 +2782,12 @@ func (c *articleClient) UpsertMany(ctx context.Context, inputs []*CreateArticleI
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowIDs); len(written) != want {
-			return nil, fmt.Errorf("upsert articles: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many articles: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -2937,7 +2946,7 @@ func (c *articleClient) Increment(ctx context.Context, id int64, input Increment
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("increment article: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				incConds = append(incConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -2951,7 +2960,7 @@ func (c *articleClient) Increment(ctx context.Context, id int64, input Increment
 		// key from the row itself.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, incConds)
 		if err != nil {
-			return nil, fmt.Errorf("increment article: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		// The key conditions match at most one row. Its tenant is read
 		// without a lookup by key: the database matched the row under its
@@ -2965,12 +2974,12 @@ func (c *articleClient) Increment(ctx context.Context, id int64, input Increment
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("increment article %s: %w", input.Column, err)
+			return nil, err
 		}
 
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("increment article rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// MySQL counts the rows a statement changed, not the rows it
 		// matched, so an increment that leaves its row as it was (an amount
@@ -2979,7 +2988,7 @@ func (c *articleClient) Increment(ctx context.Context, id int64, input Increment
 		if matched == 0 {
 			found, err := c.rowMatches(ctx, conn, incConds)
 			if err != nil {
-				return nil, fmt.Errorf("increment article: match row: %w", err)
+				return nil, fmt.Errorf("match row: %w", err)
 			}
 			if found {
 				matched = 1
@@ -2992,7 +3001,10 @@ func (c *articleClient) Increment(ctx context.Context, id int64, input Increment
 		m.AffectedTenants = []any{capturedTenant}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("increment article: %w", err)
+	}
+	return nil
 }
 
 // Exists returns true if a article with the given primary key exists.
@@ -3015,7 +3027,7 @@ func (c *articleClient) Exists(ctx context.Context, id int64, opts ...func(*Call
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return false, fmt.Errorf("exists article: resolve tenant: %w", err)
+				return false, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -3026,12 +3038,12 @@ func (c *articleClient) Exists(ctx context.Context, id int64, opts ...func(*Call
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists article: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists article: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -3061,7 +3073,7 @@ func (c *articleClient) ExistsWhere(ctx context.Context, filter *ArticleFilter, 
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return false, fmt.Errorf("exists article where: resolve tenant: %w", err)
+				return false, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -3072,12 +3084,12 @@ func (c *articleClient) ExistsWhere(ctx context.Context, filter *ArticleFilter, 
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists article where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists articles where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -3108,7 +3120,7 @@ func (c *articleClient) Count(ctx context.Context, filter *ArticleFilter, opts .
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return int64(0), fmt.Errorf("count articles: resolve tenant: %w", err)
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -3119,12 +3131,12 @@ func (c *articleClient) Count(ctx context.Context, filter *ArticleFilter, opts .
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count articles: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count articles: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -3163,7 +3175,7 @@ func (c *articleClient) Paginate(ctx context.Context, input PaginateInput[Articl
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate articles count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -3174,7 +3186,7 @@ func (c *articleClient) Paginate(ctx context.Context, input PaginateInput[Articl
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate articles: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[Article]{
@@ -3186,7 +3198,7 @@ func (c *articleClient) Paginate(ctx context.Context, input PaginateInput[Articl
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate articles: %w", err)
 	}
 	return result.(*PaginateResult[Article]), nil
 }
@@ -3231,7 +3243,7 @@ func (c *articleClient) Connection(ctx context.Context, input ConnectionInput[Ar
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection articles count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -3275,7 +3287,7 @@ func (c *articleClient) Connection(ctx context.Context, input ConnectionInput[Ar
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection articles: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -3314,7 +3326,7 @@ func (c *articleClient) Connection(ctx context.Context, input ConnectionInput[Ar
 		return &Connection[Article]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection articles: %w", err)
 	}
 	return result.(*Connection[Article]), nil
 }
@@ -3510,9 +3522,13 @@ func (c *articleClient) Stream(ctx context.Context, input *StreamArticlesInput, 
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *Article, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream articles: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -3550,7 +3566,7 @@ func (c *articleClient) Stream(ctx context.Context, input *StreamArticlesInput, 
 			if !options.SkipTenancy {
 				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 				if err != nil {
-					emit(nil, fmt.Errorf("stream articles: resolve tenant: %w", err))
+					emit(nil, fmt.Errorf("resolve tenant: %w", err))
 					return nil, nil
 				}
 				if apply {
@@ -3566,7 +3582,7 @@ func (c *articleClient) Stream(ctx context.Context, input *StreamArticlesInput, 
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream articles: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -3589,7 +3605,7 @@ func (c *articleClient) Stream(ctx context.Context, input *StreamArticlesInput, 
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream articles: %w", err))
 		}
 	}
 }
@@ -4177,7 +4193,7 @@ func (c *documentClient) Get(ctx context.Context, id string, opts ...func(*CallO
 		return documents[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get document: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -4197,16 +4213,16 @@ func (c *documentClient) GetMany(ctx context.Context, input *GetDocumentsInput, 
 
 	if options.LockMode != sql.LockNone {
 		if !database.InTransaction(ctx) {
-			return nil, fmt.Errorf("get documents: LockMode requires an active transaction")
+			return nil, fmt.Errorf("get many documents: LockMode requires an active transaction")
 		}
 		options.SkipCache = true
 		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
 			version, err := c.mysqlVersion.get(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("get documents: %w", err)
+				return nil, fmt.Errorf("get many documents: %w", err)
 			}
 			if version.Major < 8 {
-				return nil, fmt.Errorf("get documents: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+				return nil, fmt.Errorf("get many documents: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -4247,7 +4263,7 @@ func (c *documentClient) GetMany(ctx context.Context, input *GetDocumentsInput, 
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("get documents: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -4286,7 +4302,7 @@ func (c *documentClient) GetMany(ctx context.Context, input *GetDocumentsInput, 
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get documents: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -4298,7 +4314,7 @@ func (c *documentClient) GetMany(ctx context.Context, input *GetDocumentsInput, 
 		return documents, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many documents: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -4314,7 +4330,7 @@ func (c *documentClient) Create(ctx context.Context, input *CreateDocumentInput,
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create document: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -4341,7 +4357,7 @@ func (c *documentClient) Create(ctx context.Context, input *CreateDocumentInput,
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("create document: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal read (Get, or GetMany
 			// on a soft-delete table) reuses this value instead of
@@ -4386,7 +4402,7 @@ func (c *documentClient) Create(ctx context.Context, input *CreateDocumentInput,
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("create document: %w", err)
+			return nil, err
 		}
 
 		m.AffectedPKs = []any{input.DocKey}
@@ -4404,7 +4420,7 @@ func (c *documentClient) Create(ctx context.Context, input *CreateDocumentInput,
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create document: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -4420,7 +4436,7 @@ func (c *documentClient) CreateMany(ctx context.Context, inputs []*CreateDocumen
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many documents: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -4449,7 +4465,7 @@ func (c *documentClient) CreateMany(ctx context.Context, inputs []*CreateDocumen
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("create documents: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value
 			// (and the per-input verify-match short-circuits via the cache)
@@ -4497,7 +4513,7 @@ func (c *documentClient) CreateMany(ctx context.Context, inputs []*CreateDocumen
 				} else if v, ok := input.WorkspaceID.Get(); ok {
 					workspaceID = v
 				} else {
-					return nil, fmt.Errorf("create documents: tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+					return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
 				}
 				allTenants = append(allTenants, workspaceID)
 
@@ -4514,7 +4530,7 @@ func (c *documentClient) CreateMany(ctx context.Context, inputs []*CreateDocumen
 			})
 			_, err := conn.Exec(ctx, query, queryArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("create documents batch: %w", err)
+				return nil, err
 			}
 			for _, input := range batch {
 				allIDs = append(allIDs, input.DocKey)
@@ -4545,7 +4561,7 @@ func (c *documentClient) CreateMany(ctx context.Context, inputs []*CreateDocumen
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many documents: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -4562,7 +4578,7 @@ func (c *documentClient) Update(ctx context.Context, id string, input *UpdateDoc
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update document: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -4581,7 +4597,7 @@ func (c *documentClient) Update(ctx context.Context, id string, input *UpdateDoc
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("update document: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal read reuses this value
 			// — single-resolve.
@@ -4640,7 +4656,7 @@ func (c *documentClient) Update(ctx context.Context, id string, input *UpdateDoc
 		// was resolved.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, updateConds)
 		if err != nil {
-			return nil, fmt.Errorf("update document: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		// The key conditions match at most one row. Its tenant is read
 		// without a lookup by key: the database matched the row under its
@@ -4658,11 +4674,11 @@ func (c *documentClient) Update(ctx context.Context, id string, input *UpdateDoc
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update document: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update document rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// MySQL counts the rows a statement changed, not the rows it
 		// matched, so a row the write leaves as it was reports none. Only
@@ -4671,7 +4687,7 @@ func (c *documentClient) Update(ctx context.Context, id string, input *UpdateDoc
 		if matched == 0 {
 			found, err := c.rowMatches(ctx, conn, updateConds)
 			if err != nil {
-				return nil, fmt.Errorf("update document: match row: %w", err)
+				return nil, fmt.Errorf("match row: %w", err)
 			}
 			if found {
 				matched = 1
@@ -4695,7 +4711,7 @@ func (c *documentClient) Update(ctx context.Context, id string, input *UpdateDoc
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update document: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -4720,7 +4736,7 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many documents: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -4747,7 +4763,7 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("update documents: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the per-item verify-match short-circuits via the
 			// cache and the chained terminal GetMany reuses this value
@@ -4802,7 +4818,7 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 				}
 				batchTenants, err := c.captureAffectedTenants(ctx, conn, preConds)
 				if err != nil {
-					return fmt.Errorf("update documents: capture tenants: %w", err)
+					return fmt.Errorf("capture tenants: %w", err)
 				}
 				for pk, tenant := range batchTenants {
 					// Keep the first capture: a key repeated in a later
@@ -4839,11 +4855,11 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update document %v: %w", item.DocKey, err)
+						return fmt.Errorf("item %v: %w", item.DocKey, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update document %v rows affected: %w", item.DocKey, err)
+						return fmt.Errorf("item %v rows affected: %w", item.DocKey, err)
 					}
 					// MySQL counts the rows a statement changed, not the rows it
 					// matched, so an item that leaves its row as it was reports
@@ -4852,7 +4868,7 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 					if matched == 0 {
 						found, err := c.rowMatches(ctx, conn, itemConds)
 						if err != nil {
-							return fmt.Errorf("update document %v: match row: %w", item.DocKey, err)
+							return fmt.Errorf("item %v: match row: %w", item.DocKey, err)
 						}
 						if found {
 							matched = 1
@@ -4903,7 +4919,7 @@ func (c *documentClient) UpdateMany(ctx context.Context, items []UpdateDocumentI
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many documents: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -4921,7 +4937,7 @@ func (c *documentClient) UpdateWhere(ctx context.Context, filter *DocumentFilter
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update documents where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -4944,7 +4960,7 @@ func (c *documentClient) UpdateWhere(ctx context.Context, filter *DocumentFilter
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("update documents where: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value
 			// — single-resolve.
@@ -4994,7 +5010,7 @@ func (c *documentClient) UpdateWhere(ctx context.Context, filter *DocumentFilter
 		// cache keys — before the UPDATE (no RETURNING)
 		ids, affectedTenants, err := c.collectAffectedIDs(ctx, conn, conds)
 		if err != nil {
-			return nil, fmt.Errorf("update documents where: %w", err)
+			return nil, err
 		}
 		if len(ids) == 0 {
 			return nil, nil
@@ -5006,7 +5022,7 @@ func (c *documentClient) UpdateWhere(ctx context.Context, filter *DocumentFilter
 		})
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update documents where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(ids)
 		m.AffectedTenants = affectedTenants
@@ -5028,7 +5044,7 @@ func (c *documentClient) UpdateWhere(ctx context.Context, filter *DocumentFilter
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update documents where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -5079,7 +5095,7 @@ func (c *documentClient) HardDelete(ctx context.Context, id string, opts ...func
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete document: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -5093,7 +5109,7 @@ func (c *documentClient) HardDelete(ctx context.Context, id string, opts ...func
 		// key from the row itself.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, hardConds)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete document: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		// The key conditions match at most one row. Its tenant is read
 		// without a lookup by key: the database matched the row under its
@@ -5109,11 +5125,11 @@ func (c *documentClient) HardDelete(ctx context.Context, id string, opts ...func
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete document: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete document rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -5123,7 +5139,10 @@ func (c *documentClient) HardDelete(ctx context.Context, id string, opts ...func
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete document: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple documents from the database.
@@ -5139,7 +5158,7 @@ func (c *documentClient) HardDeleteMany(ctx context.Context, ids []string, opts 
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete documents: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -5163,7 +5182,7 @@ func (c *documentClient) HardDeleteMany(ctx context.Context, ids []string, opts 
 			// MySQL has no RETURNING, so a pre-read captures the tenants first.
 			batchTenants, err := c.captureAffectedTenants(ctx, conn, hardConds)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete documents: capture tenants: %w", err)
+				return nil, fmt.Errorf("capture tenants: %w", err)
 			}
 			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
 
@@ -5171,7 +5190,7 @@ func (c *documentClient) HardDeleteMany(ctx context.Context, ids []string, opts 
 				Conditions: hardConds,
 			})
 			if _, err := conn.Exec(ctx, query, args...); err != nil {
-				return nil, fmt.Errorf("hard delete documents: %w", err)
+				return nil, err
 			}
 		}
 
@@ -5191,7 +5210,10 @@ func (c *documentClient) HardDeleteMany(ctx context.Context, ids []string, opts 
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many documents: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all documents matching the filter.
@@ -5212,7 +5234,7 @@ func (c *documentClient) HardDeleteWhere(ctx context.Context, filter *DocumentFi
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete documents where: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -5223,7 +5245,7 @@ func (c *documentClient) HardDeleteWhere(ctx context.Context, filter *DocumentFi
 		// cache keys — before the DELETE (no RETURNING)
 		ids, affectedTenants, err := c.collectAffectedIDs(ctx, conn, conds)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete documents where: %w", err)
+			return nil, err
 		}
 		if len(ids) == 0 {
 			return nil, nil
@@ -5235,13 +5257,16 @@ func (c *documentClient) HardDeleteWhere(ctx context.Context, filter *DocumentFi
 
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete documents where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(ids)
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete documents where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
@@ -5316,7 +5341,7 @@ func (c *documentClient) Upsert(ctx context.Context, input *CreateDocumentInput,
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert document: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -5333,7 +5358,7 @@ func (c *documentClient) Upsert(ctx context.Context, input *CreateDocumentInput,
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("upsert document: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve). The resolver's answer is cached, not
@@ -5377,7 +5402,7 @@ func (c *documentClient) Upsert(ctx context.Context, input *CreateDocumentInput,
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("upsert document: %w", err)
+			return nil, err
 		}
 
 		// MySQL has no RETURNING — read the upserted row's tenant after the
@@ -5385,7 +5410,7 @@ func (c *documentClient) Upsert(ctx context.Context, input *CreateDocumentInput,
 		// tenant-scoped key from the row itself.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("doc_key")).Eq(input.DocKey)})
 		if err != nil {
-			return nil, fmt.Errorf("upsert document: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		capturedTenant := tenantByPK[input.DocKey]
 
@@ -5404,7 +5429,7 @@ func (c *documentClient) Upsert(ctx context.Context, input *CreateDocumentInput,
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert document: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -5437,7 +5462,7 @@ func (c *documentClient) UpsertMany(ctx context.Context, inputs []*CreateDocumen
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many documents: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -5465,7 +5490,7 @@ func (c *documentClient) UpsertMany(ctx context.Context, inputs []*CreateDocumen
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("upsert documents: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value
 			// instead of re-invoking the user resolver.
@@ -5524,7 +5549,7 @@ func (c *documentClient) UpsertMany(ctx context.Context, inputs []*CreateDocumen
 			} else if v, ok := input.WorkspaceID.Get(); ok {
 				workspaceID = v
 			} else {
-				return nil, fmt.Errorf("upsert documents: tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+				return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
 			}
 
 			valueRows = append(valueRows, []any{
@@ -5578,7 +5603,7 @@ func (c *documentClient) UpsertMany(ctx context.Context, inputs []*CreateDocumen
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert documents batch: %w", err)
+				return nil, err
 			}
 
 			// The conflicting row keeps its own tenant, and no dialect can
@@ -5587,7 +5612,7 @@ func (c *documentClient) UpsertMany(ctx context.Context, inputs []*CreateDocumen
 			batchIDs := rowIDs[start:end]
 			tenantByPK, err := c.captureAffectedTenants(ctx, conn, []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("doc_key")).In(toAnySlice(batchIDs)...)})
 			if err != nil {
-				return nil, fmt.Errorf("upsert documents batch: capture tenants: %w", err)
+				return nil, fmt.Errorf("capture tenants: %w", err)
 			}
 			for _, id := range batchIDs {
 				rowTenants = append(rowTenants, tenantByPK[id])
@@ -5625,12 +5650,12 @@ func (c *documentClient) UpsertMany(ctx context.Context, inputs []*CreateDocumen
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowIDs); len(written) != want {
-			return nil, fmt.Errorf("upsert documents: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many documents: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -5653,7 +5678,7 @@ func (c *documentClient) Exists(ctx context.Context, id string, opts ...func(*Ca
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return false, fmt.Errorf("exists document: resolve tenant: %w", err)
+				return false, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -5664,12 +5689,12 @@ func (c *documentClient) Exists(ctx context.Context, id string, opts ...func(*Ca
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists document: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists document: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -5693,7 +5718,7 @@ func (c *documentClient) ExistsWhere(ctx context.Context, filter *DocumentFilter
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return false, fmt.Errorf("exists document where: resolve tenant: %w", err)
+				return false, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -5704,12 +5729,12 @@ func (c *documentClient) ExistsWhere(ctx context.Context, filter *DocumentFilter
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists document where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists documents where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -5734,7 +5759,7 @@ func (c *documentClient) Count(ctx context.Context, filter *DocumentFilter, opts
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return int64(0), fmt.Errorf("count documents: resolve tenant: %w", err)
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -5745,12 +5770,12 @@ func (c *documentClient) Count(ctx context.Context, filter *DocumentFilter, opts
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count documents: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count documents: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -5788,7 +5813,7 @@ func (c *documentClient) Paginate(ctx context.Context, input PaginateInput[Docum
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate documents count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -5799,7 +5824,7 @@ func (c *documentClient) Paginate(ctx context.Context, input PaginateInput[Docum
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate documents: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[Document]{
@@ -5811,7 +5836,7 @@ func (c *documentClient) Paginate(ctx context.Context, input PaginateInput[Docum
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate documents: %w", err)
 	}
 	return result.(*PaginateResult[Document]), nil
 }
@@ -5855,7 +5880,7 @@ func (c *documentClient) Connection(ctx context.Context, input ConnectionInput[D
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection documents count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -5899,7 +5924,7 @@ func (c *documentClient) Connection(ctx context.Context, input ConnectionInput[D
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection documents: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -5938,7 +5963,7 @@ func (c *documentClient) Connection(ctx context.Context, input ConnectionInput[D
 		return &Connection[Document]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection documents: %w", err)
 	}
 	return result.(*Connection[Document]), nil
 }
@@ -6100,9 +6125,13 @@ func (c *documentClient) Stream(ctx context.Context, input *StreamDocumentsInput
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *Document, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream documents: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -6136,7 +6165,7 @@ func (c *documentClient) Stream(ctx context.Context, input *StreamDocumentsInput
 			if !options.SkipTenancy {
 				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 				if err != nil {
-					emit(nil, fmt.Errorf("stream documents: resolve tenant: %w", err))
+					emit(nil, fmt.Errorf("resolve tenant: %w", err))
 					return nil, nil
 				}
 				if apply {
@@ -6152,7 +6181,7 @@ func (c *documentClient) Stream(ctx context.Context, input *StreamDocumentsInput
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream documents: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -6175,7 +6204,7 @@ func (c *documentClient) Stream(ctx context.Context, input *StreamDocumentsInput
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream documents: %w", err))
 		}
 	}
 }
@@ -6734,7 +6763,7 @@ func (c *lineItemClient) Get(ctx context.Context, pk LineItemPK, opts ...func(*C
 		return lineItems[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get line_item: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -6754,16 +6783,16 @@ func (c *lineItemClient) GetMany(ctx context.Context, input *GetLineItemsInput, 
 
 	if options.LockMode != sql.LockNone {
 		if !database.InTransaction(ctx) {
-			return nil, fmt.Errorf("get line_items: LockMode requires an active transaction")
+			return nil, fmt.Errorf("get many line_items: LockMode requires an active transaction")
 		}
 		options.SkipCache = true
 		if options.LockMode == sql.LockForUpdateNoWait || options.LockMode == sql.LockForUpdateSkipLocked {
 			version, err := c.mysqlVersion.get(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("get line_items: %w", err)
+				return nil, fmt.Errorf("get many line_items: %w", err)
 			}
 			if version.Major < 8 {
-				return nil, fmt.Errorf("get line_items: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
+				return nil, fmt.Errorf("get many line_items: LockMode %s requires MySQL 8.0+ (server reports %s)", options.LockMode, version.Raw)
 			}
 		}
 	}
@@ -6804,7 +6833,7 @@ func (c *lineItemClient) GetMany(ctx context.Context, input *GetLineItemsInput, 
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("get line_items: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -6843,7 +6872,7 @@ func (c *lineItemClient) GetMany(ctx context.Context, input *GetLineItemsInput, 
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get line_items: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -6855,7 +6884,7 @@ func (c *lineItemClient) GetMany(ctx context.Context, input *GetLineItemsInput, 
 		return lineItems, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many line_items: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -6871,7 +6900,7 @@ func (c *lineItemClient) Create(ctx context.Context, input *CreateLineItemInput,
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create line_item: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -6898,7 +6927,7 @@ func (c *lineItemClient) Create(ctx context.Context, input *CreateLineItemInput,
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("create line_item: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal read (Get, or GetMany
 			// on a soft-delete table) reuses this value instead of
@@ -6943,7 +6972,7 @@ func (c *lineItemClient) Create(ctx context.Context, input *CreateLineItemInput,
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("create line_item: %w", err)
+			return nil, err
 		}
 
 		m.AffectedPKs = []any{LineItemPK{OrderID: input.OrderID, ProductID: input.ProductID}}
@@ -6961,7 +6990,7 @@ func (c *lineItemClient) Create(ctx context.Context, input *CreateLineItemInput,
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create line_item: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -6977,7 +7006,7 @@ func (c *lineItemClient) CreateMany(ctx context.Context, inputs []*CreateLineIte
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many line_items: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -7006,7 +7035,7 @@ func (c *lineItemClient) CreateMany(ctx context.Context, inputs []*CreateLineIte
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("create line_items: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value
 			// (and the per-input verify-match short-circuits via the cache)
@@ -7054,7 +7083,7 @@ func (c *lineItemClient) CreateMany(ctx context.Context, inputs []*CreateLineIte
 				} else if v, ok := input.WorkspaceID.Get(); ok {
 					workspaceID = v
 				} else {
-					return nil, fmt.Errorf("create line_items: tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+					return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
 				}
 				allTenants = append(allTenants, workspaceID)
 
@@ -7072,7 +7101,7 @@ func (c *lineItemClient) CreateMany(ctx context.Context, inputs []*CreateLineIte
 			})
 			_, err := conn.Exec(ctx, query, queryArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("create line_items batch: %w", err)
+				return nil, err
 			}
 			for _, input := range batch {
 				allPKs = append(allPKs, LineItemPK{OrderID: input.OrderID, ProductID: input.ProductID})
@@ -7098,7 +7127,7 @@ func (c *lineItemClient) CreateMany(ctx context.Context, inputs []*CreateLineIte
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many line_items: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -7115,7 +7144,7 @@ func (c *lineItemClient) Update(ctx context.Context, pk LineItemPK, input *Updat
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update line_item: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -7134,7 +7163,7 @@ func (c *lineItemClient) Update(ctx context.Context, pk LineItemPK, input *Updat
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("update line_item: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal read reuses this value
 			// — single-resolve.
@@ -7195,7 +7224,7 @@ func (c *lineItemClient) Update(ctx context.Context, pk LineItemPK, input *Updat
 		// was resolved.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, updateConds)
 		if err != nil {
-			return nil, fmt.Errorf("update line_item: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		// The key conditions match at most one row. Its tenant is read
 		// without a lookup by key: the database matched the row under its
@@ -7213,11 +7242,11 @@ func (c *lineItemClient) Update(ctx context.Context, pk LineItemPK, input *Updat
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update line_item: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update line_item rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// MySQL counts the rows a statement changed, not the rows it
 		// matched, so a row the write leaves as it was reports none. Only
@@ -7226,7 +7255,7 @@ func (c *lineItemClient) Update(ctx context.Context, pk LineItemPK, input *Updat
 		if matched == 0 {
 			found, err := c.rowMatches(ctx, conn, updateConds)
 			if err != nil {
-				return nil, fmt.Errorf("update line_item: match row: %w", err)
+				return nil, fmt.Errorf("match row: %w", err)
 			}
 			if found {
 				matched = 1
@@ -7250,7 +7279,7 @@ func (c *lineItemClient) Update(ctx context.Context, pk LineItemPK, input *Updat
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update line_item: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -7275,7 +7304,7 @@ func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemI
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many line_items: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -7302,7 +7331,7 @@ func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemI
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("update line_items: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the per-item verify-match short-circuits via the
 			// cache and the chained terminal GetMany reuses this value
@@ -7363,7 +7392,7 @@ func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemI
 				}
 				batchTenants, err := c.captureAffectedTenants(ctx, conn, preConds)
 				if err != nil {
-					return fmt.Errorf("update line_items: capture tenants: %w", err)
+					return fmt.Errorf("capture tenants: %w", err)
 				}
 				for pk, tenant := range batchTenants {
 					// Keep the first capture: a key repeated in a later
@@ -7402,11 +7431,11 @@ func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemI
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update line_item %v: %w", item.PK, err)
+						return fmt.Errorf("item %v: %w", item.PK, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update line_item %v rows affected: %w", item.PK, err)
+						return fmt.Errorf("item %v rows affected: %w", item.PK, err)
 					}
 					// MySQL counts the rows a statement changed, not the rows it
 					// matched, so an item that leaves its row as it was reports
@@ -7415,7 +7444,7 @@ func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemI
 					if matched == 0 {
 						found, err := c.rowMatches(ctx, conn, itemConds)
 						if err != nil {
-							return fmt.Errorf("update line_item %v: match row: %w", item.PK, err)
+							return fmt.Errorf("item %v: match row: %w", item.PK, err)
 						}
 						if found {
 							matched = 1
@@ -7460,7 +7489,7 @@ func (c *lineItemClient) UpdateMany(ctx context.Context, items []UpdateLineItemI
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many line_items: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -7478,7 +7507,7 @@ func (c *lineItemClient) UpdateWhere(ctx context.Context, filter *LineItemFilter
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update line_items where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -7501,7 +7530,7 @@ func (c *lineItemClient) UpdateWhere(ctx context.Context, filter *LineItemFilter
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("update line_items where: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value
 			// — single-resolve.
@@ -7551,7 +7580,7 @@ func (c *lineItemClient) UpdateWhere(ctx context.Context, filter *LineItemFilter
 		// tenant-scoped cache keys — before the UPDATE (no RETURNING)
 		pks, affectedTenants, err := c.collectAffectedPKs(ctx, conn, conds)
 		if err != nil {
-			return nil, fmt.Errorf("update line_items where: %w", err)
+			return nil, err
 		}
 		if len(pks) == 0 {
 			return nil, nil
@@ -7563,7 +7592,7 @@ func (c *lineItemClient) UpdateWhere(ctx context.Context, filter *LineItemFilter
 		})
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update line_items where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(pks)
 		m.AffectedTenants = affectedTenants
@@ -7583,7 +7612,7 @@ func (c *lineItemClient) UpdateWhere(ctx context.Context, filter *LineItemFilter
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update line_items where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -7637,7 +7666,7 @@ func (c *lineItemClient) HardDelete(ctx context.Context, pk LineItemPK, opts ...
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete line_item: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -7651,7 +7680,7 @@ func (c *lineItemClient) HardDelete(ctx context.Context, pk LineItemPK, opts ...
 		// key from the row itself.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, hardConds)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete line_item: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		// The key conditions match at most one row. Its tenant is read
 		// without a lookup by key: the database matched the row under its
@@ -7667,11 +7696,11 @@ func (c *lineItemClient) HardDelete(ctx context.Context, pk LineItemPK, opts ...
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete line_item: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete line_item rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -7681,7 +7710,10 @@ func (c *lineItemClient) HardDelete(ctx context.Context, pk LineItemPK, opts ...
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete line_item: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple line_items from the database.
@@ -7697,7 +7729,7 @@ func (c *lineItemClient) HardDeleteMany(ctx context.Context, pks []LineItemPK, o
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete line_items: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -7727,7 +7759,7 @@ func (c *lineItemClient) HardDeleteMany(ctx context.Context, pks []LineItemPK, o
 			// MySQL has no RETURNING, so a pre-read captures the tenants first.
 			batchTenants, err := c.captureAffectedTenants(ctx, conn, hardConds)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete line_items: capture tenants: %w", err)
+				return nil, fmt.Errorf("capture tenants: %w", err)
 			}
 			c.recordWrittenTenants(tenantByPK, pks[start:end], batchTenants)
 
@@ -7735,7 +7767,7 @@ func (c *lineItemClient) HardDeleteMany(ctx context.Context, pks []LineItemPK, o
 				Conditions: hardConds,
 			})
 			if _, err := conn.Exec(ctx, query, args...); err != nil {
-				return nil, fmt.Errorf("hard delete line_items: %w", err)
+				return nil, err
 			}
 		}
 
@@ -7755,7 +7787,10 @@ func (c *lineItemClient) HardDeleteMany(ctx context.Context, pks []LineItemPK, o
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many line_items: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all line_items matching the filter.
@@ -7776,7 +7811,7 @@ func (c *lineItemClient) HardDeleteWhere(ctx context.Context, filter *LineItemFi
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete line_items where: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -7787,7 +7822,7 @@ func (c *lineItemClient) HardDeleteWhere(ctx context.Context, filter *LineItemFi
 		// tenant-scoped cache keys — before the DELETE (no RETURNING)
 		pks, affectedTenants, err := c.collectAffectedPKs(ctx, conn, conds)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete line_items where: %w", err)
+			return nil, err
 		}
 		if len(pks) == 0 {
 			return nil, nil
@@ -7799,13 +7834,16 @@ func (c *lineItemClient) HardDeleteWhere(ctx context.Context, filter *LineItemFi
 
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete line_items where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(pks)
 		m.AffectedTenants = affectedTenants
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete line_items where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
@@ -7880,7 +7918,7 @@ func (c *lineItemClient) Upsert(ctx context.Context, input *CreateLineItemInput,
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert line_item: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -7897,7 +7935,7 @@ func (c *lineItemClient) Upsert(ctx context.Context, input *CreateLineItemInput,
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("upsert line_item: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal read reuses this value
 			// (single-resolve). The resolver's answer is cached, not
@@ -7941,7 +7979,7 @@ func (c *lineItemClient) Upsert(ctx context.Context, input *CreateLineItemInput,
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("upsert line_item: %w", err)
+			return nil, err
 		}
 
 		// MySQL has no RETURNING — read the upserted row's tenant after the
@@ -7951,7 +7989,7 @@ func (c *lineItemClient) Upsert(ctx context.Context, input *CreateLineItemInput,
 			[]string{"order_id", "product_id"},
 			[]any{input.OrderID, input.ProductID}))
 		if err != nil {
-			return nil, fmt.Errorf("upsert line_item: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		capturedTenant := tenantByPK[LineItemPK{OrderID: input.OrderID, ProductID: input.ProductID}]
 
@@ -7970,7 +8008,7 @@ func (c *lineItemClient) Upsert(ctx context.Context, input *CreateLineItemInput,
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert line_item: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -8003,7 +8041,7 @@ func (c *lineItemClient) UpsertMany(ctx context.Context, inputs []*CreateLineIte
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many line_items: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -8031,7 +8069,7 @@ func (c *lineItemClient) UpsertMany(ctx context.Context, inputs []*CreateLineIte
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("upsert line_items: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value
 			// instead of re-invoking the user resolver.
@@ -8090,7 +8128,7 @@ func (c *lineItemClient) UpsertMany(ctx context.Context, inputs []*CreateLineIte
 			} else if v, ok := input.WorkspaceID.Get(); ok {
 				workspaceID = v
 			} else {
-				return nil, fmt.Errorf("upsert line_items: tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+				return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
 			}
 
 			valueRows = append(valueRows, []any{
@@ -8145,7 +8183,7 @@ func (c *lineItemClient) UpsertMany(ctx context.Context, inputs []*CreateLineIte
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert line_items batch: %w", err)
+				return nil, err
 			}
 
 			// The conflicting row keeps its own tenant, and no dialect can
@@ -8160,7 +8198,7 @@ func (c *lineItemClient) UpsertMany(ctx context.Context, inputs []*CreateLineIte
 				sql.BuildCompositePKBatchCondition(c.dialect, []string{"order_id", "product_id"}, pkValueSets),
 			})
 			if err != nil {
-				return nil, fmt.Errorf("upsert line_items batch: capture tenants: %w", err)
+				return nil, fmt.Errorf("capture tenants: %w", err)
 			}
 			for _, pk := range batchPKs {
 				rowTenants = append(rowTenants, tenantByPK[pk])
@@ -8192,12 +8230,12 @@ func (c *lineItemClient) UpsertMany(ctx context.Context, inputs []*CreateLineIte
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowPKs); len(written) != want {
-			return nil, fmt.Errorf("upsert line_items: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many line_items: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -8228,7 +8266,7 @@ func (c *lineItemClient) Increment(ctx context.Context, pk LineItemPK, input Inc
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("increment line_item: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				incConds = append(incConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -8242,7 +8280,7 @@ func (c *lineItemClient) Increment(ctx context.Context, pk LineItemPK, input Inc
 		// key from the row itself.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, incConds)
 		if err != nil {
-			return nil, fmt.Errorf("increment line_item: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		// The key conditions match at most one row. Its tenant is read
 		// without a lookup by key: the database matched the row under its
@@ -8256,12 +8294,12 @@ func (c *lineItemClient) Increment(ctx context.Context, pk LineItemPK, input Inc
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("increment line_item %s: %w", input.Column, err)
+			return nil, err
 		}
 
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("increment line_item rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// MySQL counts the rows a statement changed, not the rows it
 		// matched, so an increment that leaves its row as it was (an amount
@@ -8270,7 +8308,7 @@ func (c *lineItemClient) Increment(ctx context.Context, pk LineItemPK, input Inc
 		if matched == 0 {
 			found, err := c.rowMatches(ctx, conn, incConds)
 			if err != nil {
-				return nil, fmt.Errorf("increment line_item: match row: %w", err)
+				return nil, fmt.Errorf("match row: %w", err)
 			}
 			if found {
 				matched = 1
@@ -8283,7 +8321,10 @@ func (c *lineItemClient) Increment(ctx context.Context, pk LineItemPK, input Inc
 		m.AffectedTenants = []any{capturedTenant}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("increment line_item: %w", err)
+	}
+	return nil
 }
 
 // Exists returns true if a line_item with the given primary key exists.
@@ -8303,7 +8344,7 @@ func (c *lineItemClient) Exists(ctx context.Context, pk LineItemPK, opts ...func
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return false, fmt.Errorf("exists line_item: resolve tenant: %w", err)
+				return false, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -8314,12 +8355,12 @@ func (c *lineItemClient) Exists(ctx context.Context, pk LineItemPK, opts ...func
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists line_item: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists line_item: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -8343,7 +8384,7 @@ func (c *lineItemClient) ExistsWhere(ctx context.Context, filter *LineItemFilter
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return false, fmt.Errorf("exists line_item where: resolve tenant: %w", err)
+				return false, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -8354,12 +8395,12 @@ func (c *lineItemClient) ExistsWhere(ctx context.Context, filter *LineItemFilter
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists line_item where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists line_items where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -8384,7 +8425,7 @@ func (c *lineItemClient) Count(ctx context.Context, filter *LineItemFilter, opts
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return int64(0), fmt.Errorf("count line_items: resolve tenant: %w", err)
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -8395,12 +8436,12 @@ func (c *lineItemClient) Count(ctx context.Context, filter *LineItemFilter, opts
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count line_items: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count line_items: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -8438,7 +8479,7 @@ func (c *lineItemClient) Paginate(ctx context.Context, input PaginateInput[LineI
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate line_items count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -8449,7 +8490,7 @@ func (c *lineItemClient) Paginate(ctx context.Context, input PaginateInput[LineI
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate line_items: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[LineItem]{
@@ -8461,7 +8502,7 @@ func (c *lineItemClient) Paginate(ctx context.Context, input PaginateInput[LineI
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate line_items: %w", err)
 	}
 	return result.(*PaginateResult[LineItem]), nil
 }
@@ -8505,7 +8546,7 @@ func (c *lineItemClient) Connection(ctx context.Context, input ConnectionInput[L
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection line_items count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -8549,7 +8590,7 @@ func (c *lineItemClient) Connection(ctx context.Context, input ConnectionInput[L
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection line_items: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -8588,7 +8629,7 @@ func (c *lineItemClient) Connection(ctx context.Context, input ConnectionInput[L
 		return &Connection[LineItem]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection line_items: %w", err)
 	}
 	return result.(*Connection[LineItem]), nil
 }
@@ -8764,9 +8805,13 @@ func (c *lineItemClient) Stream(ctx context.Context, input *StreamLineItemsInput
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *LineItem, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream line_items: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -8800,7 +8845,7 @@ func (c *lineItemClient) Stream(ctx context.Context, input *StreamLineItemsInput
 			if !options.SkipTenancy {
 				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 				if err != nil {
-					emit(nil, fmt.Errorf("stream line_items: resolve tenant: %w", err))
+					emit(nil, fmt.Errorf("resolve tenant: %w", err))
 					return nil, nil
 				}
 				if apply {
@@ -8816,7 +8861,7 @@ func (c *lineItemClient) Stream(ctx context.Context, input *StreamLineItemsInput
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream line_items: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -8839,7 +8884,7 @@ func (c *lineItemClient) Stream(ctx context.Context, input *StreamLineItemsInput
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream line_items: %w", err))
 		}
 	}
 }

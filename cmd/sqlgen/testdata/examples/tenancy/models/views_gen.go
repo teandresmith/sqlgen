@@ -202,7 +202,7 @@ func (c *productStatClient) Get(ctx context.Context, id int64, opts ...func(*Cal
 		return productStats[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get product_stat: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -258,7 +258,7 @@ func (c *productStatClient) GetMany(ctx context.Context, input *GetProductStatsI
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("get product_stats: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -295,7 +295,7 @@ func (c *productStatClient) GetMany(ctx context.Context, input *GetProductStatsI
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get product_stats: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -307,7 +307,7 @@ func (c *productStatClient) GetMany(ctx context.Context, input *GetProductStatsI
 		return productStats, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many product_stats: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -335,7 +335,7 @@ func (c *productStatClient) Count(ctx context.Context, filter *ProductStatFilter
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return int64(0), fmt.Errorf("count product_stats: resolve tenant: %w", err)
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
@@ -346,12 +346,12 @@ func (c *productStatClient) Count(ctx context.Context, filter *ProductStatFilter
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count product_stats: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count product_stats: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -378,7 +378,7 @@ func (c *productStatClient) Paginate(ctx context.Context, input PaginateInput[Pr
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate product_stats count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions)
@@ -389,7 +389,7 @@ func (c *productStatClient) Paginate(ctx context.Context, input PaginateInput[Pr
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate product_stats: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[ProductStat]{
@@ -401,7 +401,7 @@ func (c *productStatClient) Paginate(ctx context.Context, input PaginateInput[Pr
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate product_stats: %w", err)
 	}
 	return result.(*PaginateResult[ProductStat]), nil
 }
@@ -435,7 +435,7 @@ func (c *productStatClient) Connection(ctx context.Context, input ConnectionInpu
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection product_stats count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -479,7 +479,7 @@ func (c *productStatClient) Connection(ctx context.Context, input ConnectionInpu
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection product_stats: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -518,7 +518,7 @@ func (c *productStatClient) Connection(ctx context.Context, input ConnectionInpu
 		return &Connection[ProductStat]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection product_stats: %w", err)
 	}
 	return result.(*Connection[ProductStat]), nil
 }
@@ -887,7 +887,7 @@ func (c *workspaceSummaryClient) GetMany(ctx context.Context, input *GetWorkspac
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get workspace_summaries: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -899,7 +899,7 @@ func (c *workspaceSummaryClient) GetMany(ctx context.Context, input *GetWorkspac
 		return workspaceSummaries, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many workspace_summaries: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -926,12 +926,12 @@ func (c *workspaceSummaryClient) Count(ctx context.Context, filter *WorkspaceSum
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count workspace_summaries: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count workspace_summaries: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -953,7 +953,7 @@ func (c *workspaceSummaryClient) Paginate(ctx context.Context, input PaginateInp
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate workspace_summaries count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions)
@@ -964,7 +964,7 @@ func (c *workspaceSummaryClient) Paginate(ctx context.Context, input PaginateInp
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate workspace_summaries: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[WorkspaceSummary]{
@@ -976,7 +976,7 @@ func (c *workspaceSummaryClient) Paginate(ctx context.Context, input PaginateInp
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate workspace_summaries: %w", err)
 	}
 	return result.(*PaginateResult[WorkspaceSummary]), nil
 }

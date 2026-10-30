@@ -375,9 +375,9 @@ func stream(t *testing.T, h *Harness) {
 				return func(context.Context, *hook.QueryContext) (any, error) { panic("boom from hook") }
 			},
 			check: func(err error) bool {
-				return err.Error() == fmt.Sprintf("sqlgen: panic in stream %s: boom from hook", models.TableProducts)
+				return err.Error() == fmt.Sprintf("stream products: sqlgen: panic in stream %s: boom from hook", models.TableProducts)
 			},
-			want: fmt.Sprintf("sqlgen: panic in stream %s: boom from hook", models.TableProducts),
+			want: fmt.Sprintf("stream products: sqlgen: panic in stream %s: boom from hook", models.TableProducts),
 		},
 		{
 			name: "a hook's abort error is yielded once after no rows",

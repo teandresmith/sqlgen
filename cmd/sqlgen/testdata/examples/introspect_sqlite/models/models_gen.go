@@ -266,7 +266,7 @@ func (c *accountClient) Get(ctx context.Context, id int64, opts ...func(*CallOpt
 		return accounts[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get account: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -288,7 +288,7 @@ func (c *accountClient) GetMany(ctx context.Context, input *GetAccountsInput, op
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get accounts: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many accounts: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableAccounts, Schema: "",
@@ -357,7 +357,7 @@ func (c *accountClient) GetMany(ctx context.Context, input *GetAccountsInput, op
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get accounts: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -377,7 +377,7 @@ func (c *accountClient) GetMany(ctx context.Context, input *GetAccountsInput, op
 		return accounts, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many accounts: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -724,7 +724,7 @@ func (c *accountClient) Create(ctx context.Context, input *CreateAccountInput, o
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create account: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -753,7 +753,7 @@ func (c *accountClient) Create(ctx context.Context, input *CreateAccountInput, o
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create account: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -769,7 +769,7 @@ func (c *accountClient) Create(ctx context.Context, input *CreateAccountInput, o
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create account: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -785,7 +785,7 @@ func (c *accountClient) CreateMany(ctx context.Context, inputs []*CreateAccountI
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many accounts: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -834,7 +834,7 @@ func (c *accountClient) CreateMany(ctx context.Context, inputs []*CreateAccountI
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create accounts batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 		}
@@ -857,7 +857,7 @@ func (c *accountClient) CreateMany(ctx context.Context, inputs []*CreateAccountI
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many accounts: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -916,7 +916,7 @@ func (c *accountClient) Update(ctx context.Context, id int64, input *UpdateAccou
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update account: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -964,11 +964,11 @@ func (c *accountClient) Update(ctx context.Context, id int64, input *UpdateAccou
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update account: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update account rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -987,7 +987,7 @@ func (c *accountClient) Update(ctx context.Context, id int64, input *UpdateAccou
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update account: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1012,7 +1012,7 @@ func (c *accountClient) UpdateMany(ctx context.Context, items []UpdateAccountIte
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many accounts: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1076,11 +1076,11 @@ func (c *accountClient) UpdateMany(ctx context.Context, items []UpdateAccountIte
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update account %v: %w", item.ID, err)
+						return fmt.Errorf("item %v: %w", item.ID, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update account %v rows affected: %w", item.ID, err)
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
 					}
 					if matched > 0 {
 						writtenItems = append(writtenItems, item)
@@ -1119,7 +1119,7 @@ func (c *accountClient) UpdateMany(ctx context.Context, items []UpdateAccountIte
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many accounts: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1137,7 +1137,7 @@ func (c *accountClient) UpdateWhere(ctx context.Context, filter *AccountFilter, 
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update accounts where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1193,7 +1193,7 @@ func (c *accountClient) UpdateWhere(ctx context.Context, filter *AccountFilter, 
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update accounts where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -1230,7 +1230,7 @@ func (c *accountClient) UpdateWhere(ctx context.Context, filter *AccountFilter, 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update accounts where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1253,11 +1253,11 @@ func (c *accountClient) HardDelete(ctx context.Context, id int64, opts ...func(*
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete account: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete account rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -1266,7 +1266,10 @@ func (c *accountClient) HardDelete(ctx context.Context, id int64, opts ...func(*
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete account: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple accounts from the database.
@@ -1295,7 +1298,7 @@ func (c *accountClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete accounts: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[int64]struct{}, end-start)
 			for rows.Next() {
@@ -1325,7 +1328,10 @@ func (c *accountClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many accounts: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all accounts matching the filter.
@@ -1352,7 +1358,7 @@ func (c *accountClient) HardDeleteWhere(ctx context.Context, filter *AccountFilt
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete accounts where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -1369,7 +1375,10 @@ func (c *accountClient) HardDeleteWhere(ctx context.Context, filter *AccountFilt
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete accounts where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that
@@ -1424,7 +1433,7 @@ func (c *accountClient) Upsert(ctx context.Context, input *CreateAccountInput, t
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert account: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1459,7 +1468,7 @@ func (c *accountClient) Upsert(ctx context.Context, input *CreateAccountInput, t
 
 		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
 		if err != nil {
-			return nil, fmt.Errorf("upsert account: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -1475,7 +1484,7 @@ func (c *accountClient) Upsert(ctx context.Context, input *CreateAccountInput, t
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert account: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1611,7 +1620,7 @@ func (c *accountClient) UpsertMany(ctx context.Context, inputs []*CreateAccountI
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many accounts: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1642,7 +1651,7 @@ func (c *accountClient) UpsertMany(ctx context.Context, inputs []*CreateAccountI
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 		if !haveConflictKey {
-			return nil, fmt.Errorf("upsert accounts: conflict target names a column the input does not supply, so the written rows cannot be identified")
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
 
 		// One value row per input, built before any statement runs: the dedupe
@@ -1688,7 +1697,7 @@ func (c *accountClient) UpsertMany(ctx context.Context, inputs []*CreateAccountI
 					// its database-generated primary key would be unknowable.
 					// Refused before anything is written rather than returned
 					// short.
-					return nil, fmt.Errorf("upsert accounts: input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
 				}
 				if keyed {
 					if j, ok := seen[key]; ok {
@@ -1720,12 +1729,12 @@ func (c *accountClient) UpsertMany(ctx context.Context, inputs []*CreateAccountI
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert accounts batch: %w", err)
+				return nil, err
 			}
 
 			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
 			if err != nil {
-				return nil, fmt.Errorf("upsert accounts batch: %w", err)
+				return nil, err
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 		}
@@ -1755,12 +1764,12 @@ func (c *accountClient) UpsertMany(ctx context.Context, inputs []*CreateAccountI
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowIDs); len(written) != want {
-			return nil, fmt.Errorf("upsert accounts: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many accounts: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1907,12 +1916,12 @@ func (c *accountClient) Exists(ctx context.Context, id int64, opts ...func(*Call
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists account: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists account: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1935,12 +1944,12 @@ func (c *accountClient) ExistsWhere(ctx context.Context, filter *AccountFilter, 
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists account where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists accounts where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1964,12 +1973,12 @@ func (c *accountClient) Count(ctx context.Context, filter *AccountFilter, opts .
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count accounts: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count accounts: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -1995,7 +2004,7 @@ func (c *accountClient) Paginate(ctx context.Context, input PaginateInput[Accoun
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate accounts count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -2006,7 +2015,7 @@ func (c *accountClient) Paginate(ctx context.Context, input PaginateInput[Accoun
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate accounts: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[Account]{
@@ -2018,7 +2027,7 @@ func (c *accountClient) Paginate(ctx context.Context, input PaginateInput[Accoun
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate accounts: %w", err)
 	}
 	return result.(*PaginateResult[Account]), nil
 }
@@ -2050,7 +2059,7 @@ func (c *accountClient) Connection(ctx context.Context, input ConnectionInput[Ac
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection accounts count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -2094,7 +2103,7 @@ func (c *accountClient) Connection(ctx context.Context, input ConnectionInput[Ac
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection accounts: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -2133,7 +2142,7 @@ func (c *accountClient) Connection(ctx context.Context, input ConnectionInput[Ac
 		return &Connection[Account]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection accounts: %w", err)
 	}
 	return result.(*Connection[Account]), nil
 }
@@ -2328,9 +2337,13 @@ func (c *accountClient) Stream(ctx context.Context, input *StreamAccountsInput, 
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *Account, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream accounts: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -2369,7 +2382,7 @@ func (c *accountClient) Stream(ctx context.Context, input *StreamAccountsInput, 
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream accounts: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -2392,7 +2405,7 @@ func (c *accountClient) Stream(ctx context.Context, input *StreamAccountsInput, 
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream accounts: %w", err))
 		}
 	}
 }
@@ -2964,7 +2977,7 @@ func (c *projectMemberClient) Get(ctx context.Context, pk ProjectMemberPK, opts 
 		return projectMembers[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get project_member: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -2983,7 +2996,7 @@ func (c *projectMemberClient) GetMany(ctx context.Context, input *GetProjectMemb
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get project_members: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many project_members: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableProjectMembers, Schema: "",
@@ -3048,7 +3061,7 @@ func (c *projectMemberClient) GetMany(ctx context.Context, input *GetProjectMemb
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get project_members: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -3060,7 +3073,7 @@ func (c *projectMemberClient) GetMany(ctx context.Context, input *GetProjectMemb
 		return projectMembers, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many project_members: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -3076,7 +3089,7 @@ func (c *projectMemberClient) Create(ctx context.Context, input *CreateProjectMe
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create project_member: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -3094,7 +3107,7 @@ func (c *projectMemberClient) Create(ctx context.Context, input *CreateProjectMe
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("create project_member: %w", err)
+			return nil, err
 		}
 
 		m.AffectedPKs = []any{ProjectMemberPK{ProjectID: input.ProjectID, AccountID: input.AccountID}}
@@ -3111,7 +3124,7 @@ func (c *projectMemberClient) Create(ctx context.Context, input *CreateProjectMe
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create project_member: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -3127,7 +3140,7 @@ func (c *projectMemberClient) CreateMany(ctx context.Context, inputs []*CreatePr
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many project_members: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -3166,7 +3179,7 @@ func (c *projectMemberClient) CreateMany(ctx context.Context, inputs []*CreatePr
 			})
 			_, err := conn.Exec(ctx, query, queryArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("create project_members batch: %w", err)
+				return nil, err
 			}
 			for _, input := range batch {
 				allPKs = append(allPKs, ProjectMemberPK{ProjectID: input.ProjectID, AccountID: input.AccountID})
@@ -3191,7 +3204,7 @@ func (c *projectMemberClient) CreateMany(ctx context.Context, inputs []*CreatePr
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many project_members: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -3208,7 +3221,7 @@ func (c *projectMemberClient) Update(ctx context.Context, pk ProjectMemberPK, in
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update project_member: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -3246,11 +3259,11 @@ func (c *projectMemberClient) Update(ctx context.Context, pk ProjectMemberPK, in
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update project_member: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update project_member rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -3269,7 +3282,7 @@ func (c *projectMemberClient) Update(ctx context.Context, pk ProjectMemberPK, in
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update project_member: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -3294,7 +3307,7 @@ func (c *projectMemberClient) UpdateMany(ctx context.Context, items []UpdateProj
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many project_members: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -3348,11 +3361,11 @@ func (c *projectMemberClient) UpdateMany(ctx context.Context, items []UpdateProj
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update project_member %v: %w", item.PK, err)
+						return fmt.Errorf("item %v: %w", item.PK, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update project_member %v rows affected: %w", item.PK, err)
+						return fmt.Errorf("item %v rows affected: %w", item.PK, err)
 					}
 					if matched > 0 {
 						writtenItems = append(writtenItems, item)
@@ -3390,7 +3403,7 @@ func (c *projectMemberClient) UpdateMany(ctx context.Context, items []UpdateProj
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many project_members: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -3408,7 +3421,7 @@ func (c *projectMemberClient) UpdateWhere(ctx context.Context, filter *ProjectMe
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update project_members where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -3452,7 +3465,7 @@ func (c *projectMemberClient) UpdateWhere(ctx context.Context, filter *ProjectMe
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update project_members where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -3487,7 +3500,7 @@ func (c *projectMemberClient) UpdateWhere(ctx context.Context, filter *ProjectMe
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update project_members where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -3512,11 +3525,11 @@ func (c *projectMemberClient) HardDelete(ctx context.Context, pk ProjectMemberPK
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete project_member: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete project_member rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -3525,7 +3538,10 @@ func (c *projectMemberClient) HardDelete(ctx context.Context, pk ProjectMemberPK
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete project_member: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple project_members from the database.
@@ -3560,7 +3576,7 @@ func (c *projectMemberClient) HardDeleteMany(ctx context.Context, pks []ProjectM
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete project_members: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[ProjectMemberPK]struct{}, end-start)
 			for rows.Next() {
@@ -3590,7 +3606,10 @@ func (c *projectMemberClient) HardDeleteMany(ctx context.Context, pks []ProjectM
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many project_members: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all project_members matching the filter.
@@ -3617,7 +3636,7 @@ func (c *projectMemberClient) HardDeleteWhere(ctx context.Context, filter *Proje
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete project_members where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -3635,7 +3654,10 @@ func (c *projectMemberClient) HardDeleteWhere(ctx context.Context, filter *Proje
 		m.AffectedPKs = toAnySlice(pks)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete project_members where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that
@@ -3690,7 +3712,7 @@ func (c *projectMemberClient) Upsert(ctx context.Context, input *CreateProjectMe
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert project_member: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -3716,7 +3738,7 @@ func (c *projectMemberClient) Upsert(ctx context.Context, input *CreateProjectMe
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("upsert project_member: %w", err)
+			return nil, err
 		}
 
 		m.AffectedPKs = []any{ProjectMemberPK{ProjectID: input.ProjectID, AccountID: input.AccountID}}
@@ -3733,7 +3755,7 @@ func (c *projectMemberClient) Upsert(ctx context.Context, input *CreateProjectMe
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert project_member: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -3766,7 +3788,7 @@ func (c *projectMemberClient) UpsertMany(ctx context.Context, inputs []*CreatePr
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many project_members: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -3856,7 +3878,7 @@ func (c *projectMemberClient) UpsertMany(ctx context.Context, inputs []*CreatePr
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert project_members batch: %w", err)
+				return nil, err
 			}
 		}
 
@@ -3884,12 +3906,12 @@ func (c *projectMemberClient) UpsertMany(ctx context.Context, inputs []*CreatePr
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowPKs); len(written) != want {
-			return nil, fmt.Errorf("upsert project_members: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many project_members: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -3913,12 +3935,12 @@ func (c *projectMemberClient) Exists(ctx context.Context, pk ProjectMemberPK, op
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists project_member: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists project_member: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -3941,12 +3963,12 @@ func (c *projectMemberClient) ExistsWhere(ctx context.Context, filter *ProjectMe
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists project_member where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists project_members where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -3970,12 +3992,12 @@ func (c *projectMemberClient) Count(ctx context.Context, filter *ProjectMemberFi
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count project_members: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count project_members: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -4001,7 +4023,7 @@ func (c *projectMemberClient) Paginate(ctx context.Context, input PaginateInput[
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate project_members count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -4012,7 +4034,7 @@ func (c *projectMemberClient) Paginate(ctx context.Context, input PaginateInput[
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate project_members: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[ProjectMember]{
@@ -4024,7 +4046,7 @@ func (c *projectMemberClient) Paginate(ctx context.Context, input PaginateInput[
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate project_members: %w", err)
 	}
 	return result.(*PaginateResult[ProjectMember]), nil
 }
@@ -4056,7 +4078,7 @@ func (c *projectMemberClient) Connection(ctx context.Context, input ConnectionIn
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection project_members count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -4100,7 +4122,7 @@ func (c *projectMemberClient) Connection(ctx context.Context, input ConnectionIn
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection project_members: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -4139,7 +4161,7 @@ func (c *projectMemberClient) Connection(ctx context.Context, input ConnectionIn
 		return &Connection[ProjectMember]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection project_members: %w", err)
 	}
 	return result.(*Connection[ProjectMember]), nil
 }
@@ -4304,9 +4326,13 @@ func (c *projectMemberClient) Stream(ctx context.Context, input *StreamProjectMe
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *ProjectMember, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream project_members: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -4345,7 +4371,7 @@ func (c *projectMemberClient) Stream(ctx context.Context, input *StreamProjectMe
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream project_members: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -4368,7 +4394,7 @@ func (c *projectMemberClient) Stream(ctx context.Context, input *StreamProjectMe
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream project_members: %w", err))
 		}
 	}
 }
@@ -4773,7 +4799,7 @@ func (c *projectClient) Get(ctx context.Context, id int64, opts ...func(*CallOpt
 		return projects[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get project: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -4795,7 +4821,7 @@ func (c *projectClient) GetMany(ctx context.Context, input *GetProjectsInput, op
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get projects: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many projects: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableProjects, Schema: "",
@@ -4864,7 +4890,7 @@ func (c *projectClient) GetMany(ctx context.Context, input *GetProjectsInput, op
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get projects: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -4884,7 +4910,7 @@ func (c *projectClient) GetMany(ctx context.Context, input *GetProjectsInput, op
 		return projects, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many projects: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -5155,7 +5181,7 @@ func (c *projectClient) Create(ctx context.Context, input *CreateProjectInput, o
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create project: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -5174,7 +5200,7 @@ func (c *projectClient) Create(ctx context.Context, input *CreateProjectInput, o
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create project: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -5190,7 +5216,7 @@ func (c *projectClient) Create(ctx context.Context, input *CreateProjectInput, o
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create project: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -5206,7 +5232,7 @@ func (c *projectClient) CreateMany(ctx context.Context, inputs []*CreateProjectI
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many projects: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -5246,7 +5272,7 @@ func (c *projectClient) CreateMany(ctx context.Context, inputs []*CreateProjectI
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create projects batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 		}
@@ -5269,7 +5295,7 @@ func (c *projectClient) CreateMany(ctx context.Context, inputs []*CreateProjectI
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many projects: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -5328,7 +5354,7 @@ func (c *projectClient) Update(ctx context.Context, id int64, input *UpdateProje
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update project: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -5373,11 +5399,11 @@ func (c *projectClient) Update(ctx context.Context, id int64, input *UpdateProje
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update project: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update project rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -5396,7 +5422,7 @@ func (c *projectClient) Update(ctx context.Context, id int64, input *UpdateProje
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update project: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -5421,7 +5447,7 @@ func (c *projectClient) UpdateMany(ctx context.Context, items []UpdateProjectIte
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many projects: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -5482,11 +5508,11 @@ func (c *projectClient) UpdateMany(ctx context.Context, items []UpdateProjectIte
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update project %v: %w", item.ID, err)
+						return fmt.Errorf("item %v: %w", item.ID, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update project %v rows affected: %w", item.ID, err)
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
 					}
 					if matched > 0 {
 						writtenItems = append(writtenItems, item)
@@ -5525,7 +5551,7 @@ func (c *projectClient) UpdateMany(ctx context.Context, items []UpdateProjectIte
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many projects: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -5543,7 +5569,7 @@ func (c *projectClient) UpdateWhere(ctx context.Context, filter *ProjectFilter, 
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update projects where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -5596,7 +5622,7 @@ func (c *projectClient) UpdateWhere(ctx context.Context, filter *ProjectFilter, 
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update projects where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -5633,7 +5659,7 @@ func (c *projectClient) UpdateWhere(ctx context.Context, filter *ProjectFilter, 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update projects where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -5656,11 +5682,11 @@ func (c *projectClient) HardDelete(ctx context.Context, id int64, opts ...func(*
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete project: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete project rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -5669,7 +5695,10 @@ func (c *projectClient) HardDelete(ctx context.Context, id int64, opts ...func(*
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete project: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple projects from the database.
@@ -5698,7 +5727,7 @@ func (c *projectClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete projects: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[int64]struct{}, end-start)
 			for rows.Next() {
@@ -5728,7 +5757,10 @@ func (c *projectClient) HardDeleteMany(ctx context.Context, ids []int64, opts ..
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many projects: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all projects matching the filter.
@@ -5755,7 +5787,7 @@ func (c *projectClient) HardDeleteWhere(ctx context.Context, filter *ProjectFilt
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete projects where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -5772,7 +5804,10 @@ func (c *projectClient) HardDeleteWhere(ctx context.Context, filter *ProjectFilt
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete projects where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that
@@ -5829,7 +5864,7 @@ func (c *projectClient) Upsert(ctx context.Context, input *CreateProjectInput, t
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert project: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -5854,7 +5889,7 @@ func (c *projectClient) Upsert(ctx context.Context, input *CreateProjectInput, t
 
 		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
 		if err != nil {
-			return nil, fmt.Errorf("upsert project: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -5870,7 +5905,7 @@ func (c *projectClient) Upsert(ctx context.Context, input *CreateProjectInput, t
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert project: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -6006,7 +6041,7 @@ func (c *projectClient) UpsertMany(ctx context.Context, inputs []*CreateProjectI
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many projects: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -6037,7 +6072,7 @@ func (c *projectClient) UpsertMany(ctx context.Context, inputs []*CreateProjectI
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 		if !haveConflictKey {
-			return nil, fmt.Errorf("upsert projects: conflict target names a column the input does not supply, so the written rows cannot be identified")
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
 
 		// One value row per input, built before any statement runs: the dedupe
@@ -6074,7 +6109,7 @@ func (c *projectClient) UpsertMany(ctx context.Context, inputs []*CreateProjectI
 					// its database-generated primary key would be unknowable.
 					// Refused before anything is written rather than returned
 					// short.
-					return nil, fmt.Errorf("upsert projects: input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
 				}
 				if keyed {
 					if j, ok := seen[key]; ok {
@@ -6106,12 +6141,12 @@ func (c *projectClient) UpsertMany(ctx context.Context, inputs []*CreateProjectI
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert projects batch: %w", err)
+				return nil, err
 			}
 
 			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
 			if err != nil {
-				return nil, fmt.Errorf("upsert projects batch: %w", err)
+				return nil, err
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 		}
@@ -6141,12 +6176,12 @@ func (c *projectClient) UpsertMany(ctx context.Context, inputs []*CreateProjectI
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowIDs); len(written) != want {
-			return nil, fmt.Errorf("upsert projects: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many projects: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -6300,12 +6335,12 @@ func (c *projectClient) Increment(ctx context.Context, id int64, input Increment
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("increment project %s: %w", input.Column, err)
+			return nil, err
 		}
 
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("increment project rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -6313,7 +6348,10 @@ func (c *projectClient) Increment(ctx context.Context, id int64, input Increment
 		m.AffectedPKs = []any{id}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("increment project: %w", err)
+	}
+	return nil
 }
 
 // Exists returns true if a project with the given primary key exists.
@@ -6330,12 +6368,12 @@ func (c *projectClient) Exists(ctx context.Context, id int64, opts ...func(*Call
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists project: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists project: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -6358,12 +6396,12 @@ func (c *projectClient) ExistsWhere(ctx context.Context, filter *ProjectFilter, 
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists project where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists projects where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -6387,12 +6425,12 @@ func (c *projectClient) Count(ctx context.Context, filter *ProjectFilter, opts .
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count projects: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count projects: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -6418,7 +6456,7 @@ func (c *projectClient) Paginate(ctx context.Context, input PaginateInput[Projec
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate projects count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -6429,7 +6467,7 @@ func (c *projectClient) Paginate(ctx context.Context, input PaginateInput[Projec
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate projects: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[Project]{
@@ -6441,7 +6479,7 @@ func (c *projectClient) Paginate(ctx context.Context, input PaginateInput[Projec
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate projects: %w", err)
 	}
 	return result.(*PaginateResult[Project]), nil
 }
@@ -6473,7 +6511,7 @@ func (c *projectClient) Connection(ctx context.Context, input ConnectionInput[Pr
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection projects count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -6517,7 +6555,7 @@ func (c *projectClient) Connection(ctx context.Context, input ConnectionInput[Pr
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection projects: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -6556,7 +6594,7 @@ func (c *projectClient) Connection(ctx context.Context, input ConnectionInput[Pr
 		return &Connection[Project]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection projects: %w", err)
 	}
 	return result.(*Connection[Project]), nil
 }
@@ -6740,9 +6778,13 @@ func (c *projectClient) Stream(ctx context.Context, input *StreamProjectsInput, 
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *Project, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream projects: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -6781,7 +6823,7 @@ func (c *projectClient) Stream(ctx context.Context, input *StreamProjectsInput, 
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream projects: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -6804,7 +6846,7 @@ func (c *projectClient) Stream(ctx context.Context, input *StreamProjectsInput, 
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream projects: %w", err))
 		}
 	}
 }
@@ -7303,7 +7345,7 @@ func (c *taskLabelClient) Get(ctx context.Context, id int64, opts ...func(*CallO
 		return taskLabels[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get task_label: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -7322,7 +7364,7 @@ func (c *taskLabelClient) GetMany(ctx context.Context, input *GetTaskLabelsInput
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get task_labels: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many task_labels: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableTaskLabels, Schema: "",
@@ -7387,7 +7429,7 @@ func (c *taskLabelClient) GetMany(ctx context.Context, input *GetTaskLabelsInput
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get task_labels: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -7399,7 +7441,7 @@ func (c *taskLabelClient) GetMany(ctx context.Context, input *GetTaskLabelsInput
 		return taskLabels, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many task_labels: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -7415,7 +7457,7 @@ func (c *taskLabelClient) Create(ctx context.Context, input *CreateTaskLabelInpu
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create task_label: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -7429,7 +7471,7 @@ func (c *taskLabelClient) Create(ctx context.Context, input *CreateTaskLabelInpu
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create task_label: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -7445,7 +7487,7 @@ func (c *taskLabelClient) Create(ctx context.Context, input *CreateTaskLabelInpu
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create task_label: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -7461,7 +7503,7 @@ func (c *taskLabelClient) CreateMany(ctx context.Context, inputs []*CreateTaskLa
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many task_labels: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -7495,7 +7537,7 @@ func (c *taskLabelClient) CreateMany(ctx context.Context, inputs []*CreateTaskLa
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create task_labels batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 		}
@@ -7518,7 +7560,7 @@ func (c *taskLabelClient) CreateMany(ctx context.Context, inputs []*CreateTaskLa
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many task_labels: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -7577,7 +7619,7 @@ func (c *taskLabelClient) Update(ctx context.Context, id int64, input *UpdateTas
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update task_label: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -7616,11 +7658,11 @@ func (c *taskLabelClient) Update(ctx context.Context, id int64, input *UpdateTas
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update task_label: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update task_label rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -7639,7 +7681,7 @@ func (c *taskLabelClient) Update(ctx context.Context, id int64, input *UpdateTas
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update task_label: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -7664,7 +7706,7 @@ func (c *taskLabelClient) UpdateMany(ctx context.Context, items []UpdateTaskLabe
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many task_labels: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -7719,11 +7761,11 @@ func (c *taskLabelClient) UpdateMany(ctx context.Context, items []UpdateTaskLabe
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update task_label %v: %w", item.ID, err)
+						return fmt.Errorf("item %v: %w", item.ID, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update task_label %v rows affected: %w", item.ID, err)
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
 					}
 					if matched > 0 {
 						writtenItems = append(writtenItems, item)
@@ -7762,7 +7804,7 @@ func (c *taskLabelClient) UpdateMany(ctx context.Context, items []UpdateTaskLabe
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many task_labels: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -7780,7 +7822,7 @@ func (c *taskLabelClient) UpdateWhere(ctx context.Context, filter *TaskLabelFilt
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update task_labels where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -7827,7 +7869,7 @@ func (c *taskLabelClient) UpdateWhere(ctx context.Context, filter *TaskLabelFilt
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update task_labels where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -7864,7 +7906,7 @@ func (c *taskLabelClient) UpdateWhere(ctx context.Context, filter *TaskLabelFilt
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update task_labels where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -7887,11 +7929,11 @@ func (c *taskLabelClient) HardDelete(ctx context.Context, id int64, opts ...func
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete task_label: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete task_label rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -7900,7 +7942,10 @@ func (c *taskLabelClient) HardDelete(ctx context.Context, id int64, opts ...func
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete task_label: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple task_labels from the database.
@@ -7929,7 +7974,7 @@ func (c *taskLabelClient) HardDeleteMany(ctx context.Context, ids []int64, opts 
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete task_labels: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[int64]struct{}, end-start)
 			for rows.Next() {
@@ -7959,7 +8004,10 @@ func (c *taskLabelClient) HardDeleteMany(ctx context.Context, ids []int64, opts 
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many task_labels: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all task_labels matching the filter.
@@ -7986,7 +8034,7 @@ func (c *taskLabelClient) HardDeleteWhere(ctx context.Context, filter *TaskLabel
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete task_labels where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -8003,7 +8051,10 @@ func (c *taskLabelClient) HardDeleteWhere(ctx context.Context, filter *TaskLabel
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete task_labels where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that
@@ -8058,7 +8109,7 @@ func (c *taskLabelClient) Upsert(ctx context.Context, input *CreateTaskLabelInpu
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert task_label: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -8078,7 +8129,7 @@ func (c *taskLabelClient) Upsert(ctx context.Context, input *CreateTaskLabelInpu
 
 		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
 		if err != nil {
-			return nil, fmt.Errorf("upsert task_label: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -8094,7 +8145,7 @@ func (c *taskLabelClient) Upsert(ctx context.Context, input *CreateTaskLabelInpu
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert task_label: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -8230,7 +8281,7 @@ func (c *taskLabelClient) UpsertMany(ctx context.Context, inputs []*CreateTaskLa
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many task_labels: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -8261,7 +8312,7 @@ func (c *taskLabelClient) UpsertMany(ctx context.Context, inputs []*CreateTaskLa
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 		if !haveConflictKey {
-			return nil, fmt.Errorf("upsert task_labels: conflict target names a column the input does not supply, so the written rows cannot be identified")
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
 
 		// One value row per input, built before any statement runs: the dedupe
@@ -8292,7 +8343,7 @@ func (c *taskLabelClient) UpsertMany(ctx context.Context, inputs []*CreateTaskLa
 					// its database-generated primary key would be unknowable.
 					// Refused before anything is written rather than returned
 					// short.
-					return nil, fmt.Errorf("upsert task_labels: input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
 				}
 				if keyed {
 					if j, ok := seen[key]; ok {
@@ -8324,12 +8375,12 @@ func (c *taskLabelClient) UpsertMany(ctx context.Context, inputs []*CreateTaskLa
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert task_labels batch: %w", err)
+				return nil, err
 			}
 
 			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
 			if err != nil {
-				return nil, fmt.Errorf("upsert task_labels batch: %w", err)
+				return nil, err
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 		}
@@ -8359,12 +8410,12 @@ func (c *taskLabelClient) UpsertMany(ctx context.Context, inputs []*CreateTaskLa
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowIDs); len(written) != want {
-			return nil, fmt.Errorf("upsert task_labels: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many task_labels: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -8505,12 +8556,12 @@ func (c *taskLabelClient) Exists(ctx context.Context, id int64, opts ...func(*Ca
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists task_label: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists task_label: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -8533,12 +8584,12 @@ func (c *taskLabelClient) ExistsWhere(ctx context.Context, filter *TaskLabelFilt
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists task_label where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists task_labels where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -8562,12 +8613,12 @@ func (c *taskLabelClient) Count(ctx context.Context, filter *TaskLabelFilter, op
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count task_labels: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count task_labels: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -8593,7 +8644,7 @@ func (c *taskLabelClient) Paginate(ctx context.Context, input PaginateInput[Task
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate task_labels count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -8604,7 +8655,7 @@ func (c *taskLabelClient) Paginate(ctx context.Context, input PaginateInput[Task
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate task_labels: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[TaskLabel]{
@@ -8616,7 +8667,7 @@ func (c *taskLabelClient) Paginate(ctx context.Context, input PaginateInput[Task
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate task_labels: %w", err)
 	}
 	return result.(*PaginateResult[TaskLabel]), nil
 }
@@ -8648,7 +8699,7 @@ func (c *taskLabelClient) Connection(ctx context.Context, input ConnectionInput[
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection task_labels count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -8692,7 +8743,7 @@ func (c *taskLabelClient) Connection(ctx context.Context, input ConnectionInput[
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection task_labels: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -8731,7 +8782,7 @@ func (c *taskLabelClient) Connection(ctx context.Context, input ConnectionInput[
 		return &Connection[TaskLabel]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection task_labels: %w", err)
 	}
 	return result.(*Connection[TaskLabel]), nil
 }
@@ -8893,9 +8944,13 @@ func (c *taskLabelClient) Stream(ctx context.Context, input *StreamTaskLabelsInp
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *TaskLabel, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream task_labels: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -8934,7 +8989,7 @@ func (c *taskLabelClient) Stream(ctx context.Context, input *StreamTaskLabelsInp
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream task_labels: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -8957,7 +9012,7 @@ func (c *taskLabelClient) Stream(ctx context.Context, input *StreamTaskLabelsInp
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream task_labels: %w", err))
 		}
 	}
 }
@@ -9348,7 +9403,7 @@ func (c *taskClient) Get(ctx context.Context, id int64, opts ...func(*CallOption
 		return tasks[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get task: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -9370,7 +9425,7 @@ func (c *taskClient) GetMany(ctx context.Context, input *GetTasksInput, opts ...
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get tasks: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many tasks: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableTasks, Schema: "",
@@ -9439,7 +9494,7 @@ func (c *taskClient) GetMany(ctx context.Context, input *GetTasksInput, opts ...
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get tasks: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -9459,7 +9514,7 @@ func (c *taskClient) GetMany(ctx context.Context, input *GetTasksInput, opts ...
 		return tasks, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many tasks: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -9586,7 +9641,7 @@ func (c *taskClient) Create(ctx context.Context, input *CreateTaskInput, opts ..
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create task: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -9610,7 +9665,7 @@ func (c *taskClient) Create(ctx context.Context, input *CreateTaskInput, opts ..
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create task: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -9626,7 +9681,7 @@ func (c *taskClient) Create(ctx context.Context, input *CreateTaskInput, opts ..
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create task: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -9642,7 +9697,7 @@ func (c *taskClient) CreateMany(ctx context.Context, inputs []*CreateTaskInput, 
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many tasks: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -9686,7 +9741,7 @@ func (c *taskClient) CreateMany(ctx context.Context, inputs []*CreateTaskInput, 
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create tasks batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 		}
@@ -9709,7 +9764,7 @@ func (c *taskClient) CreateMany(ctx context.Context, inputs []*CreateTaskInput, 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many tasks: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -9768,7 +9823,7 @@ func (c *taskClient) Update(ctx context.Context, id int64, input *UpdateTaskInpu
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update task: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -9813,11 +9868,11 @@ func (c *taskClient) Update(ctx context.Context, id int64, input *UpdateTaskInpu
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update task: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update task rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -9836,7 +9891,7 @@ func (c *taskClient) Update(ctx context.Context, id int64, input *UpdateTaskInpu
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update task: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -9861,7 +9916,7 @@ func (c *taskClient) UpdateMany(ctx context.Context, items []UpdateTaskItem, opt
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many tasks: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -9922,11 +9977,11 @@ func (c *taskClient) UpdateMany(ctx context.Context, items []UpdateTaskItem, opt
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update task %v: %w", item.ID, err)
+						return fmt.Errorf("item %v: %w", item.ID, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update task %v rows affected: %w", item.ID, err)
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
 					}
 					if matched > 0 {
 						writtenItems = append(writtenItems, item)
@@ -9965,7 +10020,7 @@ func (c *taskClient) UpdateMany(ctx context.Context, items []UpdateTaskItem, opt
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many tasks: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -9983,7 +10038,7 @@ func (c *taskClient) UpdateWhere(ctx context.Context, filter *TaskFilter, input 
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update tasks where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -10036,7 +10091,7 @@ func (c *taskClient) UpdateWhere(ctx context.Context, filter *TaskFilter, input 
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update tasks where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -10073,7 +10128,7 @@ func (c *taskClient) UpdateWhere(ctx context.Context, filter *TaskFilter, input 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update tasks where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -10096,11 +10151,11 @@ func (c *taskClient) HardDelete(ctx context.Context, id int64, opts ...func(*Cal
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete task: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete task rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -10109,7 +10164,10 @@ func (c *taskClient) HardDelete(ctx context.Context, id int64, opts ...func(*Cal
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete task: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple tasks from the database.
@@ -10138,7 +10196,7 @@ func (c *taskClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fu
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete tasks: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[int64]struct{}, end-start)
 			for rows.Next() {
@@ -10168,7 +10226,10 @@ func (c *taskClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fu
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many tasks: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all tasks matching the filter.
@@ -10195,7 +10256,7 @@ func (c *taskClient) HardDeleteWhere(ctx context.Context, filter *TaskFilter, op
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete tasks where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -10212,7 +10273,10 @@ func (c *taskClient) HardDeleteWhere(ctx context.Context, filter *TaskFilter, op
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete tasks where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that
@@ -10267,7 +10331,7 @@ func (c *taskClient) Upsert(ctx context.Context, input *CreateTaskInput, target 
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert task: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -10297,7 +10361,7 @@ func (c *taskClient) Upsert(ctx context.Context, input *CreateTaskInput, target 
 
 		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
 		if err != nil {
-			return nil, fmt.Errorf("upsert task: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -10313,7 +10377,7 @@ func (c *taskClient) Upsert(ctx context.Context, input *CreateTaskInput, target 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert task: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -10449,7 +10513,7 @@ func (c *taskClient) UpsertMany(ctx context.Context, inputs []*CreateTaskInput, 
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many tasks: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -10480,7 +10544,7 @@ func (c *taskClient) UpsertMany(ctx context.Context, inputs []*CreateTaskInput, 
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 		if !haveConflictKey {
-			return nil, fmt.Errorf("upsert tasks: conflict target names a column the input does not supply, so the written rows cannot be identified")
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
 
 		// One value row per input, built before any statement runs: the dedupe
@@ -10521,7 +10585,7 @@ func (c *taskClient) UpsertMany(ctx context.Context, inputs []*CreateTaskInput, 
 					// its database-generated primary key would be unknowable.
 					// Refused before anything is written rather than returned
 					// short.
-					return nil, fmt.Errorf("upsert tasks: input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
 				}
 				if keyed {
 					if j, ok := seen[key]; ok {
@@ -10553,12 +10617,12 @@ func (c *taskClient) UpsertMany(ctx context.Context, inputs []*CreateTaskInput, 
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert tasks batch: %w", err)
+				return nil, err
 			}
 
 			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
 			if err != nil {
-				return nil, fmt.Errorf("upsert tasks batch: %w", err)
+				return nil, err
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 		}
@@ -10588,12 +10652,12 @@ func (c *taskClient) UpsertMany(ctx context.Context, inputs []*CreateTaskInput, 
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowIDs); len(written) != want {
-			return nil, fmt.Errorf("upsert tasks: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many tasks: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -10749,12 +10813,12 @@ func (c *taskClient) Increment(ctx context.Context, id int64, input IncrementInp
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("increment task %s: %w", input.Column, err)
+			return nil, err
 		}
 
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("increment task rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -10762,7 +10826,10 @@ func (c *taskClient) Increment(ctx context.Context, id int64, input IncrementInp
 		m.AffectedPKs = []any{id}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("increment task: %w", err)
+	}
+	return nil
 }
 
 // Exists returns true if a task with the given primary key exists.
@@ -10779,12 +10846,12 @@ func (c *taskClient) Exists(ctx context.Context, id int64, opts ...func(*CallOpt
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists task: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists task: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -10807,12 +10874,12 @@ func (c *taskClient) ExistsWhere(ctx context.Context, filter *TaskFilter, opts .
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists task where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists tasks where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -10836,12 +10903,12 @@ func (c *taskClient) Count(ctx context.Context, filter *TaskFilter, opts ...func
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count tasks: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count tasks: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -10867,7 +10934,7 @@ func (c *taskClient) Paginate(ctx context.Context, input PaginateInput[TaskFilte
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate tasks count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -10878,7 +10945,7 @@ func (c *taskClient) Paginate(ctx context.Context, input PaginateInput[TaskFilte
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate tasks: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[Task]{
@@ -10890,7 +10957,7 @@ func (c *taskClient) Paginate(ctx context.Context, input PaginateInput[TaskFilte
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate tasks: %w", err)
 	}
 	return result.(*PaginateResult[Task]), nil
 }
@@ -10922,7 +10989,7 @@ func (c *taskClient) Connection(ctx context.Context, input ConnectionInput[TaskF
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection tasks count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -10966,7 +11033,7 @@ func (c *taskClient) Connection(ctx context.Context, input ConnectionInput[TaskF
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection tasks: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -11005,7 +11072,7 @@ func (c *taskClient) Connection(ctx context.Context, input ConnectionInput[TaskF
 		return &Connection[Task]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection tasks: %w", err)
 	}
 	return result.(*Connection[Task]), nil
 }
@@ -11200,9 +11267,13 @@ func (c *taskClient) Stream(ctx context.Context, input *StreamTasksInput, opts .
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *Task, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream tasks: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -11241,7 +11312,7 @@ func (c *taskClient) Stream(ctx context.Context, input *StreamTasksInput, opts .
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream tasks: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -11264,7 +11335,7 @@ func (c *taskClient) Stream(ctx context.Context, input *StreamTasksInput, opts .
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream tasks: %w", err))
 		}
 	}
 }

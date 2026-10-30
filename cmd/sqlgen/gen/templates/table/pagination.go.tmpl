@@ -25,7 +25,7 @@ func (c *{{ $structCamel }}Client) Paginate(ctx context.Context, input PaginateI
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate {{ .TableName }} count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -36,7 +36,7 @@ func (c *{{ $structCamel }}Client) Paginate(ctx context.Context, input PaginateI
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate {{ .TableName }}: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[{{ .StructName }}]{
@@ -48,7 +48,7 @@ func (c *{{ $structCamel }}Client) Paginate(ctx context.Context, input PaginateI
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate {{ .TableName }}: %w", err)
 	}
 	return result.(*PaginateResult[{{ .StructName }}]), nil
 }
@@ -82,7 +82,7 @@ func (c *{{ $structCamel }}Client) Connection(ctx context.Context, input Connect
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection {{ .TableName }} count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -126,7 +126,7 @@ func (c *{{ $structCamel }}Client) Connection(ctx context.Context, input Connect
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection {{ .TableName }}: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -165,7 +165,7 @@ func (c *{{ $structCamel }}Client) Connection(ctx context.Context, input Connect
 		return &Connection[{{ .StructName }}]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection {{ .TableName }}: %w", err)
 	}
 	return result.(*Connection[{{ .StructName }}]), nil
 }

@@ -22,7 +22,7 @@ func (c *{{ $structCamel }}Client) Count(ctx context.Context, filter *{{ .Struct
 		// resolved before the conditions are built rather than appended after them.
 		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
 		if filterErr != nil {
-			return nil, fmt.Errorf("count {{ .TableName }}: %w", filterErr)
+			return nil, filterErr
 		}
 {{- end }}
 
@@ -44,7 +44,7 @@ func (c *{{ $structCamel }}Client) Count(ctx context.Context, filter *{{ .Struct
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return int64(0), fmt.Errorf("count {{ .TableName }}: resolve tenant: %w", err)
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
@@ -56,12 +56,12 @@ func (c *{{ $structCamel }}Client) Count(ctx context.Context, filter *{{ .Struct
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count {{ .TableName }}: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count {{ .TableName }}: %w", err)
 	}
 	return result.(int64), nil
 }

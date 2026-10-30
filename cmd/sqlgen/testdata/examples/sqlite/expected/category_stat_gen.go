@@ -183,7 +183,7 @@ func (c *categoryStatClient) GetMany(ctx context.Context, input *GetCategoryStat
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get category_stats: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -195,7 +195,7 @@ func (c *categoryStatClient) GetMany(ctx context.Context, input *GetCategoryStat
 		return categoryStats, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many category_stats: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -222,12 +222,12 @@ func (c *categoryStatClient) Count(ctx context.Context, filter *CategoryStatFilt
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count category_stats: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count category_stats: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -249,7 +249,7 @@ func (c *categoryStatClient) Paginate(ctx context.Context, input PaginateInput[C
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate category_stats count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions)
@@ -260,7 +260,7 @@ func (c *categoryStatClient) Paginate(ctx context.Context, input PaginateInput[C
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate category_stats: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[CategoryStat]{
@@ -272,7 +272,7 @@ func (c *categoryStatClient) Paginate(ctx context.Context, input PaginateInput[C
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate category_stats: %w", err)
 	}
 	return result.(*PaginateResult[CategoryStat]), nil
 }

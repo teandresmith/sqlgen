@@ -28,7 +28,7 @@ func (c *{{ $structCamel }}Client) SoftDelete(ctx context.Context, {{ if .Compos
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete {{ $singular }}: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value —
 			// the tenant resolves once per operation.
@@ -59,7 +59,7 @@ func (c *{{ $structCamel }}Client) SoftDelete(ctx context.Context, {{ if .Compos
 		// key from the row itself.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, delConds)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete {{ $singular }}: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		// The key conditions match at most one row. Its tenant is read
 		// without a lookup by key: the database matched the row under its
@@ -121,7 +121,7 @@ func (c *{{ $structCamel }}Client) SoftDelete(ctx context.Context, {{ if .Compos
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete {{ $singular }}: %w", err)
+			return nil, err
 		}
 		var capturedTenant any
 		var matched int
@@ -144,11 +144,11 @@ func (c *{{ $structCamel }}Client) SoftDelete(ctx context.Context, {{ if .Compos
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete {{ $singular }}: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("soft delete {{ $singular }} rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 {{- end }}
 {{- if not (supportsReturning) }}
@@ -159,7 +159,7 @@ func (c *{{ $structCamel }}Client) SoftDelete(ctx context.Context, {{ if .Compos
 		if matched == 0 {
 			found, err := c.rowMatches(ctx, conn, delConds)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete {{ $singular }}: match row: %w", err)
+				return nil, fmt.Errorf("match row: %w", err)
 			}
 			if found {
 				matched = 1
@@ -211,7 +211,7 @@ func (c *{{ $structCamel }}Client) SoftDelete(ctx context.Context, {{ if .Compos
 		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete {{ $singular }}: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -248,7 +248,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete {{ .TableName }}: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value —
 			// the tenant resolves once per operation.
@@ -312,7 +312,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 			// MySQL has no RETURNING, so a pre-read captures the tenants first.
 			batchTenants, err := c.captureAffectedTenants(ctx, conn, delConds)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete {{ .TableName }}: capture tenants: %w", err)
+				return nil, fmt.Errorf("capture tenants: %w", err)
 			}
 			c.recordWrittenTenants(tenantByPK, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchTenants)
 {{- end }}
@@ -326,7 +326,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete {{ .TableName }}: %w", err)
+				return nil, err
 			}
 			batchTenants := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, end-start)
 			for rows.Next() {
@@ -365,7 +365,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete {{ .TableName }}: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[{{ .KeySetType }}]struct{}, end-start)
 			for rows.Next() {
@@ -398,7 +398,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 			// sub-batch is about to write.
 			batchKeys, err := c.matchingKeys(ctx, conn, delConds)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete {{ .TableName }}: read keys: %w", err)
+				return nil, fmt.Errorf("read keys: %w", err)
 			}
 			c.recordWrittenKeys(written, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchKeys)
 {{- end }}
@@ -409,7 +409,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 				Conditions: delConds,
 			})
 			if _, err := conn.Exec(ctx, query, args...); err != nil {
-				return nil, fmt.Errorf("soft delete {{ .TableName }}: %w", err)
+				return nil, err
 			}
 {{- end }}
 		}
@@ -447,7 +447,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteMany(ctx context.Context, {{ if .Co
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete many {{ .TableName }}: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -479,7 +479,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 		// resolved before the conditions are built rather than appended after them.
 		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
 		if filterErr != nil {
-			return nil, fmt.Errorf("soft delete {{ .TableName }} where: %w", filterErr)
+			return nil, filterErr
 		}
 {{- end }}
 
@@ -494,7 +494,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete {{ .TableName }} where: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value —
 			// the tenant resolves once per operation.
@@ -528,7 +528,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -596,7 +596,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 		pks, err := c.collectAffectedPKs(ctx, conn, conds)
 {{- end }}
 		if err != nil {
-			return nil, fmt.Errorf("soft delete {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		if len(pks) == 0 {
 			return nil, nil
@@ -609,7 +609,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 		})
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(pks)
 {{- if $captureTenant }}
@@ -651,7 +651,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -775,7 +775,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 		ids, err := c.collectAffectedIDs(ctx, conn, conds)
 {{- end }}
 		if err != nil {
-			return nil, fmt.Errorf("soft delete {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		if len(ids) == 0 {
 			return nil, nil
@@ -788,7 +788,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 		})
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(ids)
 {{- if $captureTenant }}
@@ -817,7 +817,7 @@ func (c *{{ $structCamel }}Client) SoftDeleteWhere(ctx context.Context, filter *
 {{- end }}
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete {{ .TableName }} where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -849,7 +849,7 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("restore {{ $singular }}: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value —
 			// the tenant resolves once per operation.
@@ -879,7 +879,7 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 		// key from the row itself.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, restoreConds)
 		if err != nil {
-			return nil, fmt.Errorf("restore {{ $singular }}: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		// The key conditions match at most one row. Its tenant is read
 		// without a lookup by key: the database matched the row under its
@@ -935,7 +935,7 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore {{ $singular }}: %w", err)
+			return nil, err
 		}
 		var capturedTenant any
 		var matched int
@@ -958,11 +958,11 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore {{ $singular }}: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("restore {{ $singular }} rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 {{- end }}
 {{- if not (supportsReturning) }}
@@ -973,7 +973,7 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 		if matched == 0 {
 			found, err := c.rowMatches(ctx, conn, restoreConds)
 			if err != nil {
-				return nil, fmt.Errorf("restore {{ $singular }}: match row: %w", err)
+				return nil, fmt.Errorf("match row: %w", err)
 			}
 			if found {
 				matched = 1
@@ -1017,7 +1017,7 @@ func (c *{{ $structCamel }}Client) Restore(ctx context.Context, {{ if .Composite
 		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore {{ $singular }}: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1054,7 +1054,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("restore {{ .TableName }}: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value —
 			// the tenant resolves once per operation.
@@ -1118,7 +1118,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 			// MySQL has no RETURNING, so a pre-read captures the tenants first.
 			batchTenants, err := c.captureAffectedTenants(ctx, conn, restoreConds)
 			if err != nil {
-				return nil, fmt.Errorf("restore {{ .TableName }}: capture tenants: %w", err)
+				return nil, fmt.Errorf("capture tenants: %w", err)
 			}
 			c.recordWrittenTenants(tenantByPK, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchTenants)
 {{- end }}
@@ -1131,7 +1131,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("restore {{ .TableName }}: %w", err)
+				return nil, err
 			}
 			batchTenants := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, end-start)
 			for rows.Next() {
@@ -1169,7 +1169,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("restore {{ .TableName }}: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[{{ .KeySetType }}]struct{}, end-start)
 			for rows.Next() {
@@ -1202,7 +1202,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 			// sub-batch is about to write.
 			batchKeys, err := c.matchingKeys(ctx, conn, restoreConds)
 			if err != nil {
-				return nil, fmt.Errorf("restore {{ .TableName }}: read keys: %w", err)
+				return nil, fmt.Errorf("read keys: %w", err)
 			}
 			c.recordWrittenKeys(written, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchKeys)
 {{- end }}
@@ -1212,7 +1212,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 				Conditions: restoreConds,
 			})
 			if _, err := conn.Exec(ctx, query, args...); err != nil {
-				return nil, fmt.Errorf("restore {{ .TableName }}: %w", err)
+				return nil, err
 			}
 {{- end }}
 		}
@@ -1245,7 +1245,7 @@ func (c *{{ $structCamel }}Client) RestoreMany(ctx context.Context, {{ if .Compo
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore many {{ .TableName }}: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1277,7 +1277,7 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 		// resolved before the conditions are built rather than appended after them.
 		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
 		if filterErr != nil {
-			return nil, fmt.Errorf("restore {{ .TableName }} where: %w", filterErr)
+			return nil, filterErr
 		}
 {{- end }}
 
@@ -1292,7 +1292,7 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("restore {{ .TableName }} where: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value —
 			// the tenant resolves once per operation.
@@ -1325,7 +1325,7 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -1386,7 +1386,7 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 		pks, err := c.collectAffectedPKs(ctx, conn, conds)
 {{- end }}
 		if err != nil {
-			return nil, fmt.Errorf("restore {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		if len(pks) == 0 {
 			return nil, nil
@@ -1398,7 +1398,7 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 		})
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(pks)
 {{- if $captureTenant }}
@@ -1432,7 +1432,7 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -1544,7 +1544,7 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 		ids, err := c.collectAffectedIDs(ctx, conn, conds)
 {{- end }}
 		if err != nil {
-			return nil, fmt.Errorf("restore {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		if len(ids) == 0 {
 			return nil, nil
@@ -1556,7 +1556,7 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 		})
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(ids)
 {{- if $captureTenant }}
@@ -1580,7 +1580,7 @@ func (c *{{ $structCamel }}Client) RestoreWhere(ctx context.Context, filter *{{ 
 {{- end }}
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore {{ .TableName }} where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1611,7 +1611,7 @@ func (c *{{ $structCamel }}Client) HardDelete(ctx context.Context, {{ if .Compos
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete {{ $singular }}: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 {{- if and .Tenancy.InPrimaryKey .CompositePK }}
@@ -1632,7 +1632,7 @@ func (c *{{ $structCamel }}Client) HardDelete(ctx context.Context, {{ if .Compos
 		// key from the row itself.
 		tenantByPK, err := c.captureAffectedTenants(ctx, conn, hardConds)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete {{ $singular }}: capture tenant: %w", err)
+			return nil, fmt.Errorf("capture tenant: %w", err)
 		}
 		// The key conditions match at most one row. Its tenant is read
 		// without a lookup by key: the database matched the row under its
@@ -1674,7 +1674,7 @@ func (c *{{ $structCamel }}Client) HardDelete(ctx context.Context, {{ if .Compos
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete {{ $singular }}: %w", err)
+			return nil, err
 		}
 		var capturedTenant any
 		var matched int
@@ -1697,11 +1697,11 @@ func (c *{{ $structCamel }}Client) HardDelete(ctx context.Context, {{ if .Compos
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete {{ $singular }}: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete {{ $singular }} rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 {{- end }}
 		// A key that matched no row wrote nothing: it records no affected
@@ -1714,7 +1714,10 @@ func (c *{{ $structCamel }}Client) HardDelete(ctx context.Context, {{ if .Compos
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete {{ $singular }}: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple {{ .TableName }} from the database.
@@ -1731,7 +1734,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete {{ .TableName }}: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 {{- if and .Tenancy.InPrimaryKey .CompositePK }}
@@ -1784,7 +1787,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 			// MySQL has no RETURNING, so a pre-read captures the tenants first.
 			batchTenants, err := c.captureAffectedTenants(ctx, conn, hardConds)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete {{ .TableName }}: capture tenants: %w", err)
+				return nil, fmt.Errorf("capture tenants: %w", err)
 			}
 			c.recordWrittenTenants(tenantByPK, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchTenants)
 {{- end }}
@@ -1796,7 +1799,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete {{ .TableName }}: %w", err)
+				return nil, err
 			}
 			batchTenants := make(map[{{ if .CompositePK }}{{ .CompositePKStructName }}{{ else }}{{ $pkCol.GoType }}{{ end }}]any, end-start)
 			for rows.Next() {
@@ -1833,7 +1836,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete {{ .TableName }}: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[{{ .KeySetType }}]struct{}, end-start)
 			for rows.Next() {
@@ -1866,7 +1869,7 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 			// sub-batch is about to write.
 			batchKeys, err := c.matchingKeys(ctx, conn, hardConds)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete {{ .TableName }}: read keys: %w", err)
+				return nil, fmt.Errorf("read keys: %w", err)
 			}
 			c.recordWrittenKeys(written, {{ if .CompositePK }}pks{{ else }}ids{{ end }}[start:end], batchKeys)
 {{- end }}
@@ -1875,14 +1878,17 @@ func (c *{{ $structCamel }}Client) HardDeleteMany(ctx context.Context, {{ if .Co
 				Conditions: hardConds,
 			})
 			if _, err := conn.Exec(ctx, query, args...); err != nil {
-				return nil, fmt.Errorf("hard delete {{ .TableName }}: %w", err)
+				return nil, err
 			}
 {{- end }}
 		}
 {{- template "table/delete-many-affected" . }}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many {{ .TableName }}: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all {{ .TableName }} matching the filter.
@@ -1902,7 +1908,7 @@ func (c *{{ $structCamel }}Client) HardDeleteWhere(ctx context.Context, filter *
 		// resolved before the conditions are built rather than appended after them.
 		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
 		if filterErr != nil {
-			return nil, fmt.Errorf("hard delete {{ .TableName }} where: %w", filterErr)
+			return nil, filterErr
 		}
 {{- end }}
 
@@ -1914,7 +1920,7 @@ func (c *{{ $structCamel }}Client) HardDeleteWhere(ctx context.Context, filter *
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete {{ .TableName }} where: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
@@ -1935,7 +1941,7 @@ func (c *{{ $structCamel }}Client) HardDeleteWhere(ctx context.Context, filter *
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -1980,7 +1986,7 @@ func (c *{{ $structCamel }}Client) HardDeleteWhere(ctx context.Context, filter *
 		pks, err := c.collectAffectedPKs(ctx, conn, conds)
 {{- end }}
 		if err != nil {
-			return nil, fmt.Errorf("hard delete {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		if len(pks) == 0 {
 			return nil, nil
@@ -1992,7 +1998,7 @@ func (c *{{ $structCamel }}Client) HardDeleteWhere(ctx context.Context, filter *
 
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(pks)
 {{- if $captureTenant }}
@@ -2012,7 +2018,7 @@ func (c *{{ $structCamel }}Client) HardDeleteWhere(ctx context.Context, filter *
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -2081,7 +2087,7 @@ func (c *{{ $structCamel }}Client) HardDeleteWhere(ctx context.Context, filter *
 		ids, err := c.collectAffectedIDs(ctx, conn, conds)
 {{- end }}
 		if err != nil {
-			return nil, fmt.Errorf("hard delete {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		if len(ids) == 0 {
 			return nil, nil
@@ -2093,7 +2099,7 @@ func (c *{{ $structCamel }}Client) HardDeleteWhere(ctx context.Context, filter *
 
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete {{ .TableName }} where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(ids)
 {{- if $captureTenant }}
@@ -2102,7 +2108,10 @@ func (c *{{ $structCamel }}Client) HardDeleteWhere(ctx context.Context, filter *
 {{- end }}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete {{ .TableName }} where: %w", err)
+	}
+	return nil
 }
 {{- end }}
 {{- /* Generate collectAffectedIDs for non-composite PK when needed by delete ops and not already provided by update template.

@@ -239,7 +239,7 @@ func (c *assetDocumentLinkClient) Get(ctx context.Context, pk AssetDocumentLinkP
 		return assetDocumentLinks[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get asset_document_link: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -258,7 +258,7 @@ func (c *assetDocumentLinkClient) GetMany(ctx context.Context, input *GetAssetDo
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get asset_document_links: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many asset_document_links: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableAssetDocumentLinks, Schema: "",
@@ -323,7 +323,7 @@ func (c *assetDocumentLinkClient) GetMany(ctx context.Context, input *GetAssetDo
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get asset_document_links: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -335,7 +335,7 @@ func (c *assetDocumentLinkClient) GetMany(ctx context.Context, input *GetAssetDo
 		return assetDocumentLinks, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many asset_document_links: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -351,7 +351,7 @@ func (c *assetDocumentLinkClient) Create(ctx context.Context, input *CreateAsset
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create asset_document_link: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -369,7 +369,7 @@ func (c *assetDocumentLinkClient) Create(ctx context.Context, input *CreateAsset
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("create asset_document_link: %w", err)
+			return nil, err
 		}
 
 		m.AffectedPKs = []any{AssetDocumentLinkPK{AssetID: input.AssetID, DocumentID: input.DocumentID}}
@@ -386,7 +386,7 @@ func (c *assetDocumentLinkClient) Create(ctx context.Context, input *CreateAsset
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create asset_document_link: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -402,7 +402,7 @@ func (c *assetDocumentLinkClient) CreateMany(ctx context.Context, inputs []*Crea
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many asset_document_links: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -440,7 +440,7 @@ func (c *assetDocumentLinkClient) CreateMany(ctx context.Context, inputs []*Crea
 			})
 			_, err := conn.Exec(ctx, query, queryArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("create asset_document_links batch: %w", err)
+				return nil, err
 			}
 			for _, input := range batch {
 				allPKs = append(allPKs, AssetDocumentLinkPK{AssetID: input.AssetID, DocumentID: input.DocumentID})
@@ -465,7 +465,7 @@ func (c *assetDocumentLinkClient) CreateMany(ctx context.Context, inputs []*Crea
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many asset_document_links: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -482,7 +482,7 @@ func (c *assetDocumentLinkClient) Update(ctx context.Context, pk AssetDocumentLi
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update asset_document_link: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -517,11 +517,11 @@ func (c *assetDocumentLinkClient) Update(ctx context.Context, pk AssetDocumentLi
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update asset_document_link: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update asset_document_link rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -540,7 +540,7 @@ func (c *assetDocumentLinkClient) Update(ctx context.Context, pk AssetDocumentLi
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update asset_document_link: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -565,7 +565,7 @@ func (c *assetDocumentLinkClient) UpdateMany(ctx context.Context, items []Update
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many asset_document_links: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -616,11 +616,11 @@ func (c *assetDocumentLinkClient) UpdateMany(ctx context.Context, items []Update
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update asset_document_link %v: %w", item.PK, err)
+						return fmt.Errorf("item %v: %w", item.PK, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update asset_document_link %v rows affected: %w", item.PK, err)
+						return fmt.Errorf("item %v rows affected: %w", item.PK, err)
 					}
 					if matched > 0 {
 						writtenItems = append(writtenItems, item)
@@ -658,7 +658,7 @@ func (c *assetDocumentLinkClient) UpdateMany(ctx context.Context, items []Update
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many asset_document_links: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -676,7 +676,7 @@ func (c *assetDocumentLinkClient) UpdateWhere(ctx context.Context, filter *Asset
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update asset_document_links where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -717,7 +717,7 @@ func (c *assetDocumentLinkClient) UpdateWhere(ctx context.Context, filter *Asset
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update asset_document_links where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -752,7 +752,7 @@ func (c *assetDocumentLinkClient) UpdateWhere(ctx context.Context, filter *Asset
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update asset_document_links where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -777,11 +777,11 @@ func (c *assetDocumentLinkClient) HardDelete(ctx context.Context, pk AssetDocume
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete asset_document_link: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete asset_document_link rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -790,7 +790,10 @@ func (c *assetDocumentLinkClient) HardDelete(ctx context.Context, pk AssetDocume
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete asset_document_link: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple asset_document_links from the database.
@@ -825,7 +828,7 @@ func (c *assetDocumentLinkClient) HardDeleteMany(ctx context.Context, pks []Asse
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete asset_document_links: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[AssetDocumentLinkPK]struct{}, end-start)
 			for rows.Next() {
@@ -855,7 +858,10 @@ func (c *assetDocumentLinkClient) HardDeleteMany(ctx context.Context, pks []Asse
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many asset_document_links: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all asset_document_links matching the filter.
@@ -882,7 +888,7 @@ func (c *assetDocumentLinkClient) HardDeleteWhere(ctx context.Context, filter *A
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete asset_document_links where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -900,7 +906,10 @@ func (c *assetDocumentLinkClient) HardDeleteWhere(ctx context.Context, filter *A
 		m.AffectedPKs = toAnySlice(pks)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete asset_document_links where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that
@@ -955,7 +964,7 @@ func (c *assetDocumentLinkClient) Upsert(ctx context.Context, input *CreateAsset
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert asset_document_link: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -981,7 +990,7 @@ func (c *assetDocumentLinkClient) Upsert(ctx context.Context, input *CreateAsset
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("upsert asset_document_link: %w", err)
+			return nil, err
 		}
 
 		m.AffectedPKs = []any{AssetDocumentLinkPK{AssetID: input.AssetID, DocumentID: input.DocumentID}}
@@ -998,7 +1007,7 @@ func (c *assetDocumentLinkClient) Upsert(ctx context.Context, input *CreateAsset
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert asset_document_link: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1031,7 +1040,7 @@ func (c *assetDocumentLinkClient) UpsertMany(ctx context.Context, inputs []*Crea
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many asset_document_links: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1120,7 +1129,7 @@ func (c *assetDocumentLinkClient) UpsertMany(ctx context.Context, inputs []*Crea
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert asset_document_links batch: %w", err)
+				return nil, err
 			}
 		}
 
@@ -1148,12 +1157,12 @@ func (c *assetDocumentLinkClient) UpsertMany(ctx context.Context, inputs []*Crea
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowPKs); len(written) != want {
-			return nil, fmt.Errorf("upsert asset_document_links: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many asset_document_links: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1177,12 +1186,12 @@ func (c *assetDocumentLinkClient) Exists(ctx context.Context, pk AssetDocumentLi
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists asset_document_link: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists asset_document_link: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1205,12 +1214,12 @@ func (c *assetDocumentLinkClient) ExistsWhere(ctx context.Context, filter *Asset
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists asset_document_link where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists asset_document_links where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1234,12 +1243,12 @@ func (c *assetDocumentLinkClient) Count(ctx context.Context, filter *AssetDocume
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count asset_document_links: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count asset_document_links: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -1265,7 +1274,7 @@ func (c *assetDocumentLinkClient) Paginate(ctx context.Context, input PaginateIn
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate asset_document_links count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -1276,7 +1285,7 @@ func (c *assetDocumentLinkClient) Paginate(ctx context.Context, input PaginateIn
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate asset_document_links: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[AssetDocumentLink]{
@@ -1288,7 +1297,7 @@ func (c *assetDocumentLinkClient) Paginate(ctx context.Context, input PaginateIn
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate asset_document_links: %w", err)
 	}
 	return result.(*PaginateResult[AssetDocumentLink]), nil
 }
@@ -1320,7 +1329,7 @@ func (c *assetDocumentLinkClient) Connection(ctx context.Context, input Connecti
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection asset_document_links count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -1364,7 +1373,7 @@ func (c *assetDocumentLinkClient) Connection(ctx context.Context, input Connecti
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection asset_document_links: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -1403,7 +1412,7 @@ func (c *assetDocumentLinkClient) Connection(ctx context.Context, input Connecti
 		return &Connection[AssetDocumentLink]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection asset_document_links: %w", err)
 	}
 	return result.(*Connection[AssetDocumentLink]), nil
 }
@@ -1557,9 +1566,13 @@ func (c *assetDocumentLinkClient) Stream(ctx context.Context, input *StreamAsset
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *AssetDocumentLink, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream asset_document_links: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -1598,7 +1611,7 @@ func (c *assetDocumentLinkClient) Stream(ctx context.Context, input *StreamAsset
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream asset_document_links: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -1621,7 +1634,7 @@ func (c *assetDocumentLinkClient) Stream(ctx context.Context, input *StreamAsset
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream asset_document_links: %w", err))
 		}
 	}
 }

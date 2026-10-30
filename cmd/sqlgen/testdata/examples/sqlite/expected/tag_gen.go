@@ -274,7 +274,7 @@ func (c *tagClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions
 		return tags[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get tag: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -294,7 +294,7 @@ func (c *tagClient) GetMany(ctx context.Context, input *GetTagsInput, opts ...fu
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get tags: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many tags: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableTags, Schema: "",
@@ -364,7 +364,7 @@ func (c *tagClient) GetMany(ctx context.Context, input *GetTagsInput, opts ...fu
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get tags: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -376,7 +376,7 @@ func (c *tagClient) GetMany(ctx context.Context, input *GetTagsInput, opts ...fu
 		return tags, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many tags: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -392,7 +392,7 @@ func (c *tagClient) Create(ctx context.Context, input *CreateTagInput, opts ...f
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create tag: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -411,7 +411,7 @@ func (c *tagClient) Create(ctx context.Context, input *CreateTagInput, opts ...f
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create tag: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -443,7 +443,7 @@ func (c *tagClient) Create(ctx context.Context, input *CreateTagInput, opts ...f
 		return written[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create tag: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -459,7 +459,7 @@ func (c *tagClient) CreateMany(ctx context.Context, inputs []*CreateTagInput, op
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many tags: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -497,7 +497,7 @@ func (c *tagClient) CreateMany(ctx context.Context, inputs []*CreateTagInput, op
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create tags batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 		}
@@ -521,7 +521,7 @@ func (c *tagClient) CreateMany(ctx context.Context, inputs []*CreateTagInput, op
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many tags: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -580,7 +580,7 @@ func (c *tagClient) Update(ctx context.Context, id int64, input *UpdateTagInput,
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update tag: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -635,11 +635,11 @@ func (c *tagClient) Update(ctx context.Context, id int64, input *UpdateTagInput,
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update tag: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update tag rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -674,7 +674,7 @@ func (c *tagClient) Update(ctx context.Context, id int64, input *UpdateTagInput,
 		return written[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update tag: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -699,7 +699,7 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many tags: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -754,11 +754,11 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update tag %v: %w", item.ID, err)
+						return fmt.Errorf("item %v: %w", item.ID, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update tag %v rows affected: %w", item.ID, err)
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
 					}
 					if matched > 0 {
 						writtenItems = append(writtenItems, item)
@@ -798,7 +798,7 @@ func (c *tagClient) UpdateMany(ctx context.Context, items []UpdateTagItem, opts 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many tags: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -816,7 +816,7 @@ func (c *tagClient) UpdateWhere(ctx context.Context, filter *TagFilter, input *U
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update tags where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -872,7 +872,7 @@ func (c *tagClient) UpdateWhere(ctx context.Context, filter *TagFilter, input *U
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update tags where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -910,7 +910,7 @@ func (c *tagClient) UpdateWhere(ctx context.Context, filter *TagFilter, input *U
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update tags where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -937,11 +937,11 @@ func (c *tagClient) SoftDelete(ctx context.Context, id int64, opts ...func(*Call
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete tag: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("soft delete tag rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -976,7 +976,7 @@ func (c *tagClient) SoftDelete(ctx context.Context, id int64, opts ...func(*Call
 		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete tag: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1020,7 +1020,7 @@ func (c *tagClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ...fun
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete tags: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[int64]struct{}, end-start)
 			for rows.Next() {
@@ -1067,7 +1067,7 @@ func (c *tagClient) SoftDeleteMany(ctx context.Context, ids []int64, opts ...fun
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete many tags: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1113,7 +1113,7 @@ func (c *tagClient) SoftDeleteWhere(ctx context.Context, filter *TagFilter, opts
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete tags where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -1150,7 +1150,7 @@ func (c *tagClient) SoftDeleteWhere(ctx context.Context, filter *TagFilter, opts
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete tags where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1176,11 +1176,11 @@ func (c *tagClient) Restore(ctx context.Context, id int64, opts ...func(*CallOpt
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore tag: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("restore tag rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -1212,7 +1212,7 @@ func (c *tagClient) Restore(ctx context.Context, id int64, opts ...func(*CallOpt
 		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore tag: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1255,7 +1255,7 @@ func (c *tagClient) RestoreMany(ctx context.Context, ids []int64, opts ...func(*
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("restore tags: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[int64]struct{}, end-start)
 			for rows.Next() {
@@ -1301,7 +1301,7 @@ func (c *tagClient) RestoreMany(ctx context.Context, ids []int64, opts ...func(*
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore many tags: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1346,7 +1346,7 @@ func (c *tagClient) RestoreWhere(ctx context.Context, filter *TagFilter, opts ..
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore tags where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -1381,7 +1381,7 @@ func (c *tagClient) RestoreWhere(ctx context.Context, filter *TagFilter, opts ..
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore tags where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1404,11 +1404,11 @@ func (c *tagClient) HardDelete(ctx context.Context, id int64, opts ...func(*Call
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete tag: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete tag rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -1417,7 +1417,10 @@ func (c *tagClient) HardDelete(ctx context.Context, id int64, opts ...func(*Call
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete tag: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple tags from the database.
@@ -1446,7 +1449,7 @@ func (c *tagClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fun
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete tags: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[int64]struct{}, end-start)
 			for rows.Next() {
@@ -1476,7 +1479,10 @@ func (c *tagClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...fun
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many tags: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all tags matching the filter.
@@ -1503,7 +1509,7 @@ func (c *tagClient) HardDeleteWhere(ctx context.Context, filter *TagFilter, opts
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete tags where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -1520,7 +1526,10 @@ func (c *tagClient) HardDeleteWhere(ctx context.Context, filter *TagFilter, opts
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete tags where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that
@@ -1577,7 +1586,7 @@ func (c *tagClient) Upsert(ctx context.Context, input *CreateTagInput, target Ta
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert tag: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1602,7 +1611,7 @@ func (c *tagClient) Upsert(ctx context.Context, input *CreateTagInput, target Ta
 
 		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
 		if err != nil {
-			return nil, fmt.Errorf("upsert tag: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -1634,7 +1643,7 @@ func (c *tagClient) Upsert(ctx context.Context, input *CreateTagInput, target Ta
 		return written[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert tag: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1770,7 +1779,7 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many tags: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1801,7 +1810,7 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 		if !haveConflictKey {
-			return nil, fmt.Errorf("upsert tags: conflict target names a column the input does not supply, so the written rows cannot be identified")
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
 
 		// One value row per input, built before any statement runs: the dedupe
@@ -1836,7 +1845,7 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 					// its database-generated primary key would be unknowable.
 					// Refused before anything is written rather than returned
 					// short.
-					return nil, fmt.Errorf("upsert tags: input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
 				}
 				if keyed {
 					if j, ok := seen[key]; ok {
@@ -1868,12 +1877,12 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert tags batch: %w", err)
+				return nil, err
 			}
 
 			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
 			if err != nil {
-				return nil, fmt.Errorf("upsert tags batch: %w", err)
+				return nil, err
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 		}
@@ -1904,12 +1913,12 @@ func (c *tagClient) UpsertMany(ctx context.Context, inputs []*CreateTagInput, ta
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowIDs); len(written) != want {
-			return nil, fmt.Errorf("upsert tags: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many tags: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -2055,12 +2064,12 @@ func (c *tagClient) Exists(ctx context.Context, id int64, opts ...func(*CallOpti
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists tag: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists tag: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -2089,12 +2098,12 @@ func (c *tagClient) ExistsWhere(ctx context.Context, filter *TagFilter, opts ...
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists tag where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists tags where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -2124,12 +2133,12 @@ func (c *tagClient) Count(ctx context.Context, filter *TagFilter, opts ...func(*
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count tags: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count tags: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -2156,7 +2165,7 @@ func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter]
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate tags count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -2167,7 +2176,7 @@ func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter]
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate tags: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[Tag]{
@@ -2179,7 +2188,7 @@ func (c *tagClient) Paginate(ctx context.Context, input PaginateInput[TagFilter]
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate tags: %w", err)
 	}
 	return result.(*PaginateResult[Tag]), nil
 }
@@ -2212,7 +2221,7 @@ func (c *tagClient) Connection(ctx context.Context, input ConnectionInput[TagFil
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection tags count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -2256,7 +2265,7 @@ func (c *tagClient) Connection(ctx context.Context, input ConnectionInput[TagFil
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection tags: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -2295,7 +2304,7 @@ func (c *tagClient) Connection(ctx context.Context, input ConnectionInput[TagFil
 		return &Connection[Tag]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection tags: %w", err)
 	}
 	return result.(*Connection[Tag]), nil
 }
@@ -2458,9 +2467,13 @@ func (c *tagClient) Stream(ctx context.Context, input *StreamTagsInput, opts ...
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *Tag, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream tags: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -2503,7 +2516,7 @@ func (c *tagClient) Stream(ctx context.Context, input *StreamTagsInput, opts ...
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream tags: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -2526,7 +2539,7 @@ func (c *tagClient) Stream(ctx context.Context, input *StreamTagsInput, opts ...
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream tags: %w", err))
 		}
 	}
 }

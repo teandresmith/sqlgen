@@ -67,7 +67,7 @@ func (c *{{ .StructName | toCamelCase }}Client) Get(ctx context.Context, {{ if .
 			// {{ .CompositePKStructName }}; the runtime verifies it matches the resolved tenant
 			// before any DB round-trip. No auto-fill — mismatch returns ErrMismatch.
 			if pk.{{ .Tenancy.FieldName }} != resolvedTenant {
-				return nil, tenancy.ErrMismatch
+				return nil, fmt.Errorf("get {{ .TableName | toSingular }}: %w", tenancy.ErrMismatch)
 			}
 {{- end }}
 			qctx.Tenant = resolvedTenant
@@ -123,7 +123,7 @@ func (c *{{ .StructName | toCamelCase }}Client) Get(ctx context.Context, {{ if .
 		return {{ $resultVar }}[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get {{ .TableName | toSingular }}: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -149,7 +149,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 		input = &Get{{ .StructName | structNamePlural }}Input{}
 	}
 	options := resolveCallOptions(opts)
-{{ template "shared/lock-mode-guard" (lockGuardCtx . (printf "get %s" .TableName)) }}
+{{ template "shared/lock-mode-guard" (lockGuardCtx . (printf "get many %s" .TableName)) }}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: {{ .TableNameConstant }}, Schema: {{ printf "%q" .Schema }},
 		Input: input, CallOptions: options,
@@ -187,7 +187,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 		// resolved before the conditions are built rather than appended after them.
 		filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
 		if filterErr != nil {
-			return nil, fmt.Errorf("get {{ .TableName }}: %w", filterErr)
+			return nil, filterErr
 		}
 {{- end }}
 
@@ -211,7 +211,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("get {{ .TableName }}: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
@@ -263,7 +263,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 			if !options.SkipTenancy {
 				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 				if err != nil {
-					return nil, fmt.Errorf("get {{ .TableName }}: resolve tenant: %w", err)
+					return nil, fmt.Errorf("resolve tenant: %w", err)
 				}
 				if apply {
 					tenantedAliases := map[string]string{
@@ -301,14 +301,14 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 
 			rows, err := conn.Query(ctx, result, resultArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("get {{ .TableName }}: %w", err)
+				return nil, err
 			}
 			defer rows.Close()
 
 			// Use actual column names from the query result (includes alias prefixes like "u.id", "p.id")
 			joinColumns, err := rows.Columns()
 			if err != nil {
-				return nil, fmt.Errorf("get {{ .TableName }} columns: %w", err)
+				return nil, fmt.Errorf("columns: %w", err)
 			}
 			{{ $resultVar }}, err = scan{{ .StructName | structNamePlural }}WithOneToOneJoins(rows, joinColumns)
 			if err != nil {
@@ -327,7 +327,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("get {{ .TableName }}: %w", err)
+				return nil, err
 			}
 			defer rows.Close()
 
@@ -352,7 +352,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 		return {{ $resultVar }}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many {{ .TableName }}: %w", err)
 	}
 	if result == nil {
 		return nil, nil

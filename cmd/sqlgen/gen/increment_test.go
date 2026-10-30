@@ -157,7 +157,7 @@ func TestIncrementTemplate_positiveAmount(t *testing.T) {
 		"query, args := sql.BuildIncrement(c.dialect, c.table, string(input.Column), input.Amount, []sql.Condition{",
 		`sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)`,
 		"execResult, err := conn.Exec(ctx, query, args...)",
-		`fmt.Errorf("increment product %s: %w", input.Column, err)`,
+		`fmt.Errorf("increment product: %w", err)`,
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {
@@ -184,7 +184,7 @@ func TestIncrementTemplate_strictUpdatesMissingPK(t *testing.T) {
 
 	wantPatterns := []string{
 		"matched, err := execResult.RowsAffected()",
-		`fmt.Errorf("increment product rows affected: %w", err)`,
+		`fmt.Errorf("rows affected: %w", err)`,
 		"if matched == 0 {",
 		"return nil, ErrNotFound",
 	}

@@ -25,11 +25,11 @@ func (c *productClient) HardDelete(ctx context.Context, id uuid.UUID, opts ...fu
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete product: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete product rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -38,7 +38,10 @@ func (c *productClient) HardDelete(ctx context.Context, id uuid.UUID, opts ...fu
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete product: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple products from the database.
@@ -67,7 +70,7 @@ func (c *productClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete products: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[uuid.UUID]struct{}, end-start)
 			for rows.Next() {
@@ -97,7 +100,10 @@ func (c *productClient) HardDeleteMany(ctx context.Context, ids []uuid.UUID, opt
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many products: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all products matching the filter.
@@ -124,7 +130,7 @@ func (c *productClient) HardDeleteWhere(ctx context.Context, filter *ProductFilt
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete products where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []string
@@ -141,7 +147,10 @@ func (c *productClient) HardDeleteWhere(ctx context.Context, filter *ProductFilt
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete products where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that

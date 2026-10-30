@@ -21,7 +21,7 @@ func (c *orderItemClient) Update(ctx context.Context, pk OrderItemPK, input *Upd
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update order_item: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -65,11 +65,11 @@ func (c *orderItemClient) Update(ctx context.Context, pk OrderItemPK, input *Upd
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update order_item: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update order_item rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -88,7 +88,7 @@ func (c *orderItemClient) Update(ctx context.Context, pk OrderItemPK, input *Upd
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update order_item: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -114,7 +114,7 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many order_items: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -187,7 +187,7 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 						tag, err := br.Exec()
 						if err != nil {
 							br.Close()
-							return nil, fmt.Errorf("update order_items batch: %w", err)
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].PK, err)
 						}
 						matched := tag.RowsAffected()
 						if matched > 0 {
@@ -195,7 +195,7 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 						}
 					}
 					if err := br.Close(); err != nil {
-						return nil, fmt.Errorf("close update batch: %w", err)
+						return nil, fmt.Errorf("close batch: %w", err)
 					}
 				} else {
 					// No SendBatch — a wrapping querier, or a caller's
@@ -210,11 +210,11 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 						for i, q := range batchQueries {
 							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
 							if err != nil {
-								return fmt.Errorf("update order_items batch: %w", err)
+								return fmt.Errorf("item %v: %w", queuedItems[i].PK, err)
 							}
 							matched, err := execResult.RowsAffected()
 							if err != nil {
-								return fmt.Errorf("update order_items batch rows affected: %w", err)
+								return fmt.Errorf("item %v rows affected: %w", queuedItems[i].PK, err)
 							}
 							if matched > 0 {
 								writtenItems = append(writtenItems, queuedItems[i])
@@ -253,7 +253,7 @@ func (c *orderItemClient) UpdateMany(ctx context.Context, items []UpdateOrderIte
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many order_items: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -271,7 +271,7 @@ func (c *orderItemClient) UpdateWhere(ctx context.Context, filter *OrderItemFilt
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update order_items where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -321,7 +321,7 @@ func (c *orderItemClient) UpdateWhere(ctx context.Context, filter *OrderItemFilt
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update order_items where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -356,7 +356,7 @@ func (c *orderItemClient) UpdateWhere(ctx context.Context, filter *OrderItemFilt
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update order_items where: %w", err)
 	}
 	if result == nil {
 		return nil, nil

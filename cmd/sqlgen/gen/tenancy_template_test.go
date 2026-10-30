@@ -124,7 +124,8 @@ func TestTenancyTemplate_getMany_emitsTenantFilter(t *testing.T) {
 	wants := []string{
 		"if !options.SkipTenancy {",
 		"resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)",
-		`return nil, fmt.Errorf("get products: resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("get many products: %w", err)`,
 		`conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))`,
 	}
 	for _, want := range wants {
@@ -143,7 +144,8 @@ func TestTenancyTemplate_create_emitsMismatchAndAutoSet(t *testing.T) {
 	wants := []string{
 		"if !options.SkipTenancy {",
 		"resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)",
-		`return nil, fmt.Errorf("create product: resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("create product: %w", err)`,
 		`if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {`,
 		"return nil, tenancy.ErrMismatch",
 		`columns = append(columns, "workspace_id")`,
@@ -452,7 +454,8 @@ func TestTenancyTemplate_o2o_bothTenanted_emitsBothFilters(t *testing.T) {
 		// o2o branch resolves tenant again for the child filter.
 		"prefixedConds := sql.PrefixConditions(\"p\", conds)",
 		"if !options.SkipTenancy {",
-		`return nil, fmt.Errorf("get products: resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("get many products: %w", err)`,
 		// Static map from alias → tenant column (tenantedAliases literal).
 		"tenantedAliases := map[string]string{",
 		`"c": "workspace_id",`,
@@ -760,7 +763,8 @@ func TestTenancyTemplate_upsert_autoSetAcrossDialects(t *testing.T) {
 	wants := []string{
 		"if !options.SkipTenancy {",
 		"resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)",
-		`return nil, fmt.Errorf("upsert product: resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("resolve tenant: %w", err)`,
+		`return nil, fmt.Errorf("upsert product: %w", err)`,
 		`if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {`,
 		"return nil, tenancy.ErrMismatch",
 		`columns = append(columns, "workspace_id")`,
@@ -968,7 +972,7 @@ func TestTenancyTemplate_tenantInPK_getEmitsVerifyMatch(t *testing.T) {
 		"if !options.SkipTenancy {",
 		"resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)",
 		"if pk.WorkspaceID != resolvedTenant {",
-		"return nil, tenancy.ErrMismatch",
+		`return nil, fmt.Errorf("get order_item: %w", tenancy.ErrMismatch)`,
 	}
 	for _, want := range wants {
 		if !strings.Contains(out, want) {

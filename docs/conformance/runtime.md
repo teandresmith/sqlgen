@@ -36,7 +36,7 @@ No requirements yet. See [README.md](README.md) for the format.
 | hook.register-options | The unified client registers hooks through functional options `WithMutationHook(h hook.MutationHook) ClientOption` and `WithQueryHook(h hook.QueryHook) ClientOption` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_clientOption` | all |  |
 
 ## §21.6 Panic Recovery
-<!-- prd: 21.6 sha256: 7412f9d457ff824c -->
+<!-- prd: 21.6 sha256: c3ace23d53631bac -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

@@ -69,7 +69,7 @@ func TestViewTenancy_readMethodsEmitPredicate(t *testing.T) {
 	if !strings.Contains(getOut, `c.resolveTenant(ctx, options.Tenant)`) {
 		t.Errorf("GetMany does not pass CallOptions.Tenant to resolveTenant:\n%s", getOut)
 	}
-	if !strings.Contains(getOut, `fmt.Errorf("get product_summary: resolve tenant: %w", err)`) {
+	if !strings.Contains(getOut, `fmt.Errorf("resolve tenant: %w", err)`) || !strings.Contains(getOut, `fmt.Errorf("get many product_summary: %w", err)`) {
 		t.Errorf("GetMany resolver error is not wrapped with the view name:\n%s", getOut)
 	}
 	// Get delegates to GetMany with the caller's options copied verbatim, so
@@ -82,7 +82,7 @@ func TestViewTenancy_readMethodsEmitPredicate(t *testing.T) {
 	if !strings.Contains(countOut, tenantPredicate) {
 		t.Errorf("Count does not emit the tenant predicate:\n%s", countOut)
 	}
-	if !strings.Contains(countOut, `fmt.Errorf("count product_summary: resolve tenant: %w", err)`) {
+	if !strings.Contains(countOut, `fmt.Errorf("resolve tenant: %w", err)`) || !strings.Contains(countOut, `fmt.Errorf("count product_summary: %w", err)`) {
 		t.Errorf("Count resolver error is not wrapped with the view name:\n%s", countOut)
 	}
 

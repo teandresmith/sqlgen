@@ -258,7 +258,7 @@ func (c *orderClient) Get(ctx context.Context, id int64, opts ...func(*CallOptio
 		return orders[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get order: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -280,7 +280,7 @@ func (c *orderClient) GetMany(ctx context.Context, input *GetOrdersInput, opts .
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get orders: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many orders: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableOrders, Schema: "",
@@ -349,7 +349,7 @@ func (c *orderClient) GetMany(ctx context.Context, input *GetOrdersInput, opts .
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get orders: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -369,7 +369,7 @@ func (c *orderClient) GetMany(ctx context.Context, input *GetOrdersInput, opts .
 		return orders, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many orders: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -496,7 +496,7 @@ func (c *orderClient) Create(ctx context.Context, input *CreateOrderInput, opts 
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create order: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -530,7 +530,7 @@ func (c *orderClient) Create(ctx context.Context, input *CreateOrderInput, opts 
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create order: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -546,7 +546,7 @@ func (c *orderClient) Create(ctx context.Context, input *CreateOrderInput, opts 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create order: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -562,7 +562,7 @@ func (c *orderClient) CreateMany(ctx context.Context, inputs []*CreateOrderInput
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many orders: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -615,7 +615,7 @@ func (c *orderClient) CreateMany(ctx context.Context, inputs []*CreateOrderInput
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create orders batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 		}
@@ -638,7 +638,7 @@ func (c *orderClient) CreateMany(ctx context.Context, inputs []*CreateOrderInput
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many orders: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -697,7 +697,7 @@ func (c *orderClient) Update(ctx context.Context, id int64, input *UpdateOrderIn
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update order: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -753,11 +753,11 @@ func (c *orderClient) Update(ctx context.Context, id int64, input *UpdateOrderIn
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update order: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update order rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -782,7 +782,7 @@ func (c *orderClient) Update(ctx context.Context, id int64, input *UpdateOrderIn
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update order: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -807,7 +807,7 @@ func (c *orderClient) UpdateMany(ctx context.Context, items []UpdateOrderItem, o
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many orders: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -871,11 +871,11 @@ func (c *orderClient) UpdateMany(ctx context.Context, items []UpdateOrderItem, o
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update order %v: %w", item.ID, err)
+						return fmt.Errorf("item %v: %w", item.ID, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update order %v rows affected: %w", item.ID, err)
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
 					}
 					if matched > 0 {
 						writtenItems = append(writtenItems, item)
@@ -914,7 +914,7 @@ func (c *orderClient) UpdateMany(ctx context.Context, items []UpdateOrderItem, o
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many orders: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -932,7 +932,7 @@ func (c *orderClient) UpdateWhere(ctx context.Context, filter *OrderFilter, inpu
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update orders where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -988,7 +988,7 @@ func (c *orderClient) UpdateWhere(ctx context.Context, filter *OrderFilter, inpu
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update orders where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -1025,7 +1025,7 @@ func (c *orderClient) UpdateWhere(ctx context.Context, filter *OrderFilter, inpu
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update orders where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1048,11 +1048,11 @@ func (c *orderClient) HardDelete(ctx context.Context, id int64, opts ...func(*Ca
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete order: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete order rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -1061,7 +1061,10 @@ func (c *orderClient) HardDelete(ctx context.Context, id int64, opts ...func(*Ca
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete order: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple orders from the database.
@@ -1090,7 +1093,7 @@ func (c *orderClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...f
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete orders: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[int64]struct{}, end-start)
 			for rows.Next() {
@@ -1120,7 +1123,10 @@ func (c *orderClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...f
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many orders: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all orders matching the filter.
@@ -1147,7 +1153,7 @@ func (c *orderClient) HardDeleteWhere(ctx context.Context, filter *OrderFilter, 
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete orders where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []int64
@@ -1164,7 +1170,10 @@ func (c *orderClient) HardDeleteWhere(ctx context.Context, filter *OrderFilter, 
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete orders where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that
@@ -1219,7 +1228,7 @@ func (c *orderClient) Upsert(ctx context.Context, input *CreateOrderInput, targe
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert order: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1259,7 +1268,7 @@ func (c *orderClient) Upsert(ctx context.Context, input *CreateOrderInput, targe
 
 		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
 		if err != nil {
-			return nil, fmt.Errorf("upsert order: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -1275,7 +1284,7 @@ func (c *orderClient) Upsert(ctx context.Context, input *CreateOrderInput, targe
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert order: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1411,7 +1420,7 @@ func (c *orderClient) UpsertMany(ctx context.Context, inputs []*CreateOrderInput
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many orders: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1442,7 +1451,7 @@ func (c *orderClient) UpsertMany(ctx context.Context, inputs []*CreateOrderInput
 		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 		if !haveConflictKey {
-			return nil, fmt.Errorf("upsert orders: conflict target names a column the input does not supply, so the written rows cannot be identified")
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
 		}
 
 		// One value row per input, built before any statement runs: the dedupe
@@ -1492,7 +1501,7 @@ func (c *orderClient) UpsertMany(ctx context.Context, inputs []*CreateOrderInput
 					// its database-generated primary key would be unknowable.
 					// Refused before anything is written rather than returned
 					// short.
-					return nil, fmt.Errorf("upsert orders: input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
 				}
 				if keyed {
 					if j, ok := seen[key]; ok {
@@ -1524,12 +1533,12 @@ func (c *orderClient) UpsertMany(ctx context.Context, inputs []*CreateOrderInput
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert orders batch: %w", err)
+				return nil, err
 			}
 
 			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
 			if err != nil {
-				return nil, fmt.Errorf("upsert orders batch: %w", err)
+				return nil, err
 			}
 			rowIDs = append(rowIDs, batchIDs...)
 		}
@@ -1559,12 +1568,12 @@ func (c *orderClient) UpsertMany(ctx context.Context, inputs []*CreateOrderInput
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowIDs); len(written) != want {
-			return nil, fmt.Errorf("upsert orders: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many orders: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1719,12 +1728,12 @@ func (c *orderClient) Increment(ctx context.Context, id int64, input IncrementIn
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("increment order %s: %w", input.Column, err)
+			return nil, err
 		}
 
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("increment order rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -1733,7 +1742,10 @@ func (c *orderClient) Increment(ctx context.Context, id int64, input IncrementIn
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("increment order: %w", err)
+	}
+	return nil
 }
 
 // Exists returns true if a order with the given primary key exists.
@@ -1750,12 +1762,12 @@ func (c *orderClient) Exists(ctx context.Context, id int64, opts ...func(*CallOp
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists order: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists order: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1778,12 +1790,12 @@ func (c *orderClient) ExistsWhere(ctx context.Context, filter *OrderFilter, opts
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists order where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists orders where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1807,12 +1819,12 @@ func (c *orderClient) Count(ctx context.Context, filter *OrderFilter, opts ...fu
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count orders: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count orders: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -1838,7 +1850,7 @@ func (c *orderClient) Paginate(ctx context.Context, input PaginateInput[OrderFil
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate orders count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -1849,7 +1861,7 @@ func (c *orderClient) Paginate(ctx context.Context, input PaginateInput[OrderFil
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate orders: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[Order]{
@@ -1861,7 +1873,7 @@ func (c *orderClient) Paginate(ctx context.Context, input PaginateInput[OrderFil
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate orders: %w", err)
 	}
 	return result.(*PaginateResult[Order]), nil
 }
@@ -1893,7 +1905,7 @@ func (c *orderClient) Connection(ctx context.Context, input ConnectionInput[Orde
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection orders count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -1937,7 +1949,7 @@ func (c *orderClient) Connection(ctx context.Context, input ConnectionInput[Orde
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection orders: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -1976,7 +1988,7 @@ func (c *orderClient) Connection(ctx context.Context, input ConnectionInput[Orde
 		return &Connection[Order]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection orders: %w", err)
 	}
 	return result.(*Connection[Order]), nil
 }
@@ -2171,9 +2183,13 @@ func (c *orderClient) Stream(ctx context.Context, input *StreamOrdersInput, opts
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *Order, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream orders: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -2212,7 +2228,7 @@ func (c *orderClient) Stream(ctx context.Context, input *StreamOrdersInput, opts
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream orders: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -2235,7 +2251,7 @@ func (c *orderClient) Stream(ctx context.Context, input *StreamOrdersInput, opts
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream orders: %w", err))
 		}
 	}
 }

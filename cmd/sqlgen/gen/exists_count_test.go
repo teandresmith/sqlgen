@@ -231,7 +231,7 @@ func TestExistsTemplate_existsWhereWithFilter(t *testing.T) {
 		"if filter == nil || filter.DeletedAt == nil {",
 		`conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("deleted_at")).IsNull())`,
 		"query, args := sql.BuildExists(c.dialect, c.table, conds)",
-		`fmt.Errorf("exists product where: %w", err)`,
+		`fmt.Errorf("exists products where: %w", err)`,
 	}
 	for _, want := range wantPatterns {
 		if !strings.Contains(output, want) {

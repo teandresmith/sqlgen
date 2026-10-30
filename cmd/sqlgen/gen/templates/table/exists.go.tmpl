@@ -36,7 +36,7 @@ func (c *{{ $structCamel }}Client) Exists(ctx context.Context, {{ if .CompositeP
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return false, fmt.Errorf("exists {{ $singular }}: resolve tenant: %w", err)
+				return false, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 {{- if and .Tenancy.InPrimaryKey .CompositePK }}
@@ -54,12 +54,12 @@ func (c *{{ $structCamel }}Client) Exists(ctx context.Context, {{ if .CompositeP
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists {{ $singular }}: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists {{ $singular }}: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -82,7 +82,7 @@ func (c *{{ $structCamel }}Client) ExistsWhere(ctx context.Context, filter *{{ .
 		// resolved before the conditions are built rather than appended after them.
 		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
 		if filterErr != nil {
-			return nil, fmt.Errorf("exists {{ .TableName }}: %w", filterErr)
+			return nil, filterErr
 		}
 {{- end }}
 
@@ -104,7 +104,7 @@ func (c *{{ $structCamel }}Client) ExistsWhere(ctx context.Context, filter *{{ .
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return false, fmt.Errorf("exists {{ $singular }} where: resolve tenant: %w", err)
+				return false, fmt.Errorf("resolve tenant: %w", err)
 			}
 			if apply {
 				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .Tenancy.Column }})).Eq(resolvedTenant))
@@ -116,12 +116,12 @@ func (c *{{ $structCamel }}Client) ExistsWhere(ctx context.Context, filter *{{ .
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists {{ $singular }} where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists {{ .TableName }} where: %w", err)
 	}
 	return result.(bool), nil
 }

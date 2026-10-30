@@ -21,7 +21,7 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update product: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -78,11 +78,11 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update product: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update product rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// MySQL counts the rows a statement changed, not the rows it
 		// matched, so a row the write leaves as it was reports none. Only
@@ -91,7 +91,7 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 		if matched == 0 {
 			found, err := c.rowMatches(ctx, conn, updateConds)
 			if err != nil {
-				return nil, fmt.Errorf("update product: match row: %w", err)
+				return nil, fmt.Errorf("match row: %w", err)
 			}
 			if found {
 				matched = 1
@@ -114,7 +114,7 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update product: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -139,7 +139,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many products: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -212,11 +212,11 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update product %v: %w", item.ID, err)
+						return fmt.Errorf("item %v: %w", item.ID, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update product %v rows affected: %w", item.ID, err)
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
 					}
 					// MySQL counts the rows a statement changed, not the rows it
 					// matched, so an item that leaves its row as it was reports
@@ -225,7 +225,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 					if matched == 0 {
 						found, err := c.rowMatches(ctx, conn, itemConds)
 						if err != nil {
-							return fmt.Errorf("update product %v: match row: %w", item.ID, err)
+							return fmt.Errorf("item %v: match row: %w", item.ID, err)
 						}
 						if found {
 							matched = 1
@@ -273,7 +273,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many products: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -291,7 +291,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update products where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -349,7 +349,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 		// MySQL: must collect IDs before the UPDATE (no RETURNING)
 		ids, err := c.collectAffectedIDs(ctx, conn, conds)
 		if err != nil {
-			return nil, fmt.Errorf("update products where: %w", err)
+			return nil, err
 		}
 		if len(ids) == 0 {
 			return nil, nil
@@ -361,7 +361,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 		})
 		_, err = conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update products where: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = toAnySlice(ids)
 
@@ -382,7 +382,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update products where: %w", err)
 	}
 	if result == nil {
 		return nil, nil

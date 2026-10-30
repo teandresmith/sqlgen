@@ -39,7 +39,7 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate products count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -50,7 +50,7 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate products: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[Product]{
@@ -62,7 +62,7 @@ func (c *productClient) Paginate(ctx context.Context, input PaginateInput[Produc
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate products: %w", err)
 	}
 	return result.(*PaginateResult[Product]), nil
 }
@@ -98,7 +98,7 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection products count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -142,7 +142,7 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection products: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -181,7 +181,7 @@ func (c *productClient) Connection(ctx context.Context, input ConnectionInput[Pr
 		return &Connection[Product]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection products: %w", err)
 	}
 	return result.(*Connection[Product]), nil
 }

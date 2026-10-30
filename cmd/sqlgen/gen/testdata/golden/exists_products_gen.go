@@ -29,12 +29,12 @@ func (c *productClient) Exists(ctx context.Context, id uuid.UUID, opts ...func(*
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists product: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists product: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -63,12 +63,12 @@ func (c *productClient) ExistsWhere(ctx context.Context, filter *ProductFilter, 
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists product where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists products where: %w", err)
 	}
 	return result.(bool), nil
 }

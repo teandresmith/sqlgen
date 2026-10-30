@@ -107,7 +107,7 @@ func (c *productClient) Get(ctx context.Context, id uuid.UUID, opts ...func(*Cal
 		return products[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get product: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -131,7 +131,7 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
 
 	if options.LockMode != sql.LockNone {
 		if !database.InTransaction(ctx) {
-			return nil, fmt.Errorf("get products: LockMode requires an active transaction")
+			return nil, fmt.Errorf("get many products: LockMode requires an active transaction")
 		}
 		options.SkipCache = true
 	}
@@ -207,7 +207,7 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get products: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -227,7 +227,7 @@ func (c *productClient) GetMany(ctx context.Context, input *GetProductsInput, op
 		return products, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many products: %w", err)
 	}
 	if result == nil {
 		return nil, nil

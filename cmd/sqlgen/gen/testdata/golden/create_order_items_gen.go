@@ -19,7 +19,7 @@ func (c *orderItemClient) Create(ctx context.Context, input *CreateOrderItemInpu
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create order_item: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -47,7 +47,7 @@ func (c *orderItemClient) Create(ctx context.Context, input *CreateOrderItemInpu
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("create order_item: %w", err)
+			return nil, err
 		}
 
 		m.AffectedPKs = []any{OrderItemPK{OrderID: input.OrderID, ProductID: input.ProductID}}
@@ -64,7 +64,7 @@ func (c *orderItemClient) Create(ctx context.Context, input *CreateOrderItemInpu
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create order_item: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -80,7 +80,7 @@ func (c *orderItemClient) CreateMany(ctx context.Context, inputs []*CreateOrderI
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many order_items: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -129,7 +129,7 @@ func (c *orderItemClient) CreateMany(ctx context.Context, inputs []*CreateOrderI
 			})
 			_, err := conn.Exec(ctx, query, queryArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("create order_items batch: %w", err)
+				return nil, err
 			}
 			for _, input := range batch {
 				allPKs = append(allPKs, OrderItemPK{OrderID: input.OrderID, ProductID: input.ProductID})
@@ -154,7 +154,7 @@ func (c *orderItemClient) CreateMany(ctx context.Context, inputs []*CreateOrderI
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many order_items: %w", err)
 	}
 	if result == nil {
 		return nil, nil

@@ -96,7 +96,7 @@ func (c *orderItemClient) Get(ctx context.Context, pk OrderItemPK, opts ...func(
 		return orderItems[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get order_item: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -116,7 +116,7 @@ func (c *orderItemClient) GetMany(ctx context.Context, input *GetOrderItemsInput
 
 	if options.LockMode != sql.LockNone {
 		if !database.InTransaction(ctx) {
-			return nil, fmt.Errorf("get order_items: LockMode requires an active transaction")
+			return nil, fmt.Errorf("get many order_items: LockMode requires an active transaction")
 		}
 		options.SkipCache = true
 	}
@@ -183,7 +183,7 @@ func (c *orderItemClient) GetMany(ctx context.Context, input *GetOrderItemsInput
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get order_items: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -195,7 +195,7 @@ func (c *orderItemClient) GetMany(ctx context.Context, input *GetOrderItemsInput
 		return orderItems, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many order_items: %w", err)
 	}
 	if result == nil {
 		return nil, nil

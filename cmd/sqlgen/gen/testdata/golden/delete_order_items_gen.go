@@ -32,11 +32,11 @@ func (c *orderItemClient) SoftDelete(ctx context.Context, pk OrderItemPK, opts .
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete order_item: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("soft delete order_item rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -71,7 +71,7 @@ func (c *orderItemClient) SoftDelete(ctx context.Context, pk OrderItemPK, opts .
 		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete order_item: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -121,7 +121,7 @@ func (c *orderItemClient) SoftDeleteMany(ctx context.Context, pks []OrderItemPK,
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("soft delete order_items: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[OrderItemPK]struct{}, end-start)
 			for rows.Next() {
@@ -168,7 +168,7 @@ func (c *orderItemClient) SoftDeleteMany(ctx context.Context, pks []OrderItemPK,
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete many order_items: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -214,7 +214,7 @@ func (c *orderItemClient) SoftDeleteWhere(ctx context.Context, filter *OrderItem
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("soft delete order_items where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -251,7 +251,7 @@ func (c *orderItemClient) SoftDeleteWhere(ctx context.Context, filter *OrderItem
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("soft delete order_items where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -279,11 +279,11 @@ func (c *orderItemClient) Restore(ctx context.Context, pk OrderItemPK, opts ...f
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore order_item: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("restore order_item rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -315,7 +315,7 @@ func (c *orderItemClient) Restore(ctx context.Context, pk OrderItemPK, opts ...f
 		return results[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore order_item: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -364,7 +364,7 @@ func (c *orderItemClient) RestoreMany(ctx context.Context, pks []OrderItemPK, op
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("restore order_items: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[OrderItemPK]struct{}, end-start)
 			for rows.Next() {
@@ -408,7 +408,7 @@ func (c *orderItemClient) RestoreMany(ctx context.Context, pks []OrderItemPK, op
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore many order_items: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -453,7 +453,7 @@ func (c *orderItemClient) RestoreWhere(ctx context.Context, filter *OrderItemFil
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("restore order_items where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -487,7 +487,7 @@ func (c *orderItemClient) RestoreWhere(ctx context.Context, filter *OrderItemFil
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("restore order_items where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -512,11 +512,11 @@ func (c *orderItemClient) HardDelete(ctx context.Context, pk OrderItemPK, opts .
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete order_item: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete order_item rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -525,7 +525,10 @@ func (c *orderItemClient) HardDelete(ctx context.Context, pk OrderItemPK, opts .
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete order_item: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple order_items from the database.
@@ -560,7 +563,7 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete order_items: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[OrderItemPK]struct{}, end-start)
 			for rows.Next() {
@@ -590,7 +593,10 @@ func (c *orderItemClient) HardDeleteMany(ctx context.Context, pks []OrderItemPK,
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many order_items: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all order_items matching the filter.
@@ -617,7 +623,7 @@ func (c *orderItemClient) HardDeleteWhere(ctx context.Context, filter *OrderItem
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete order_items where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -635,7 +641,10 @@ func (c *orderItemClient) HardDeleteWhere(ctx context.Context, filter *OrderItem
 		m.AffectedPKs = toAnySlice(pks)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete order_items where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that

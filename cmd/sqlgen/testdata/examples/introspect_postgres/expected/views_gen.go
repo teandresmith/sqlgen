@@ -140,7 +140,7 @@ func (c *projectSummaryClient) Get(ctx context.Context, id int64, opts ...func(*
 		return projectSummaries[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get project_summary: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -218,7 +218,7 @@ func (c *projectSummaryClient) GetMany(ctx context.Context, input *GetProjectSum
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get project_summaries: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -230,7 +230,7 @@ func (c *projectSummaryClient) GetMany(ctx context.Context, input *GetProjectSum
 		return projectSummaries, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many project_summaries: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -257,12 +257,12 @@ func (c *projectSummaryClient) Count(ctx context.Context, filter *ProjectSummary
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count project_summaries: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count project_summaries: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -284,7 +284,7 @@ func (c *projectSummaryClient) Paginate(ctx context.Context, input PaginateInput
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate project_summaries count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions)
@@ -295,7 +295,7 @@ func (c *projectSummaryClient) Paginate(ctx context.Context, input PaginateInput
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate project_summaries: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[ProjectSummary]{
@@ -307,7 +307,7 @@ func (c *projectSummaryClient) Paginate(ctx context.Context, input PaginateInput
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate project_summaries: %w", err)
 	}
 	return result.(*PaginateResult[ProjectSummary]), nil
 }
@@ -335,7 +335,7 @@ func (c *projectSummaryClient) Connection(ctx context.Context, input ConnectionI
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection project_summaries count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -379,7 +379,7 @@ func (c *projectSummaryClient) Connection(ctx context.Context, input ConnectionI
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection project_summaries: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -418,7 +418,7 @@ func (c *projectSummaryClient) Connection(ctx context.Context, input ConnectionI
 		return &Connection[ProjectSummary]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection project_summaries: %w", err)
 	}
 	return result.(*Connection[ProjectSummary]), nil
 }
@@ -724,7 +724,7 @@ func (c *projectTaskCountClient) Get(ctx context.Context, id int64, opts ...func
 		return projectTaskCounts[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get project_task_count: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -802,7 +802,7 @@ func (c *projectTaskCountClient) GetMany(ctx context.Context, input *GetProjectT
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get project_task_counts: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -814,7 +814,7 @@ func (c *projectTaskCountClient) GetMany(ctx context.Context, input *GetProjectT
 		return projectTaskCounts, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many project_task_counts: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -841,12 +841,12 @@ func (c *projectTaskCountClient) Count(ctx context.Context, filter *ProjectTaskC
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count project_task_counts: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count project_task_counts: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -868,7 +868,7 @@ func (c *projectTaskCountClient) Paginate(ctx context.Context, input PaginateInp
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate project_task_counts count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions)
@@ -879,7 +879,7 @@ func (c *projectTaskCountClient) Paginate(ctx context.Context, input PaginateInp
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate project_task_counts: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[ProjectTaskCount]{
@@ -891,7 +891,7 @@ func (c *projectTaskCountClient) Paginate(ctx context.Context, input PaginateInp
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate project_task_counts: %w", err)
 	}
 	return result.(*PaginateResult[ProjectTaskCount]), nil
 }
@@ -906,11 +906,14 @@ func (c *projectTaskCountClient) Refresh(ctx context.Context) error {
 		conn := database.Conn(ctx, c.querier)
 		query := sql.BuildRefreshMaterializedView(c.dialect, c.table, false)
 		if _, err := conn.Exec(ctx, query); err != nil {
-			return nil, fmt.Errorf("refresh project_task_counts: %w", err)
+			return nil, err
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("refresh project_task_counts: %w", err)
+	}
+	return nil
 }
 
 // RefreshConcurrently recomputes the project_task_counts materialized view without
@@ -920,7 +923,7 @@ func (c *projectTaskCountClient) Refresh(ctx context.Context) error {
 // database.ErrRefreshConcurrentlyInTx before issuing any SQL.
 func (c *projectTaskCountClient) RefreshConcurrently(ctx context.Context) error {
 	if database.InTransaction(ctx) {
-		return fmt.Errorf("refresh project_task_counts: %w", database.ErrRefreshConcurrentlyInTx)
+		return fmt.Errorf("refresh concurrently project_task_counts: %w", database.ErrRefreshConcurrentlyInTx)
 	}
 	_, err := c.executeQuery(ctx, false, &hook.QueryContext{
 		Op: hook.OpRefresh, Table: TableProjectTaskCounts, Schema: "public",
@@ -928,11 +931,14 @@ func (c *projectTaskCountClient) RefreshConcurrently(ctx context.Context) error 
 		conn := database.Conn(ctx, c.querier)
 		query := sql.BuildRefreshMaterializedView(c.dialect, c.table, true)
 		if _, err := conn.Exec(ctx, query); err != nil {
-			return nil, fmt.Errorf("refresh project_task_counts: %w", err)
+			return nil, err
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("refresh concurrently project_task_counts: %w", err)
+	}
+	return nil
 }
 
 // ProjectTaskCountFilter provides type-safe filtering for the project_task_counts table.

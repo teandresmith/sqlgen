@@ -250,7 +250,7 @@ func (c *badgeClient) Get(ctx context.Context, id string, opts ...func(*CallOpti
 		return badges[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get badge: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -272,7 +272,7 @@ func (c *badgeClient) GetMany(ctx context.Context, input *GetBadgesInput, opts .
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get badges: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many badges: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableBadges, Schema: "",
@@ -341,7 +341,7 @@ func (c *badgeClient) GetMany(ctx context.Context, input *GetBadgesInput, opts .
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get badges: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -361,7 +361,7 @@ func (c *badgeClient) GetMany(ctx context.Context, input *GetBadgesInput, opts .
 		return badges, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many badges: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -703,7 +703,7 @@ func (c *badgeClient) Create(ctx context.Context, input *CreateBadgeInput, opts 
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create badge: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -717,7 +717,7 @@ func (c *badgeClient) Create(ctx context.Context, input *CreateBadgeInput, opts 
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create badge: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -733,7 +733,7 @@ func (c *badgeClient) Create(ctx context.Context, input *CreateBadgeInput, opts 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create badge: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -749,7 +749,7 @@ func (c *badgeClient) CreateMany(ctx context.Context, inputs []*CreateBadgeInput
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many badges: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -783,7 +783,7 @@ func (c *badgeClient) CreateMany(ctx context.Context, inputs []*CreateBadgeInput
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create badges batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 		}
@@ -811,7 +811,7 @@ func (c *badgeClient) CreateMany(ctx context.Context, inputs []*CreateBadgeInput
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many badges: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -870,7 +870,7 @@ func (c *badgeClient) Update(ctx context.Context, id string, input *UpdateBadgeI
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update badge: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -906,11 +906,11 @@ func (c *badgeClient) Update(ctx context.Context, id string, input *UpdateBadgeI
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update badge: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update badge rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -929,7 +929,7 @@ func (c *badgeClient) Update(ctx context.Context, id string, input *UpdateBadgeI
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update badge: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -954,7 +954,7 @@ func (c *badgeClient) UpdateMany(ctx context.Context, items []UpdateBadgeItem, o
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many badges: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1006,11 +1006,11 @@ func (c *badgeClient) UpdateMany(ctx context.Context, items []UpdateBadgeItem, o
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update badge %v: %w", item.Code, err)
+						return fmt.Errorf("item %v: %w", item.Code, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update badge %v rows affected: %w", item.Code, err)
+						return fmt.Errorf("item %v rows affected: %w", item.Code, err)
 					}
 					if matched > 0 {
 						writtenItems = append(writtenItems, item)
@@ -1054,7 +1054,7 @@ func (c *badgeClient) UpdateMany(ctx context.Context, items []UpdateBadgeItem, o
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many badges: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1072,7 +1072,7 @@ func (c *badgeClient) UpdateWhere(ctx context.Context, filter *BadgeFilter, inpu
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update badges where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1116,7 +1116,7 @@ func (c *badgeClient) UpdateWhere(ctx context.Context, filter *BadgeFilter, inpu
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update badges where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []string
@@ -1153,7 +1153,7 @@ func (c *badgeClient) UpdateWhere(ctx context.Context, filter *BadgeFilter, inpu
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update badges where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1176,11 +1176,11 @@ func (c *badgeClient) HardDelete(ctx context.Context, id string, opts ...func(*C
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete badge: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete badge rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -1189,7 +1189,10 @@ func (c *badgeClient) HardDelete(ctx context.Context, id string, opts ...func(*C
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete badge: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple badges from the database.
@@ -1218,7 +1221,7 @@ func (c *badgeClient) HardDeleteMany(ctx context.Context, ids []string, opts ...
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete badges: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[string]struct{}, end-start)
 			for rows.Next() {
@@ -1248,7 +1251,10 @@ func (c *badgeClient) HardDeleteMany(ctx context.Context, ids []string, opts ...
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many badges: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all badges matching the filter.
@@ -1275,7 +1281,7 @@ func (c *badgeClient) HardDeleteWhere(ctx context.Context, filter *BadgeFilter, 
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete badges where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []string
@@ -1292,7 +1298,10 @@ func (c *badgeClient) HardDeleteWhere(ctx context.Context, filter *BadgeFilter, 
 		m.AffectedPKs = toAnySlice(ids)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete badges where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that
@@ -1347,7 +1356,7 @@ func (c *badgeClient) Upsert(ctx context.Context, input *CreateBadgeInput, targe
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert badge: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -1367,7 +1376,7 @@ func (c *badgeClient) Upsert(ctx context.Context, input *CreateBadgeInput, targe
 
 		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
 		if err != nil {
-			return nil, fmt.Errorf("upsert badge: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 
@@ -1383,7 +1392,7 @@ func (c *badgeClient) Upsert(ctx context.Context, input *CreateBadgeInput, targe
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert badge: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1510,7 +1519,7 @@ func (c *badgeClient) UpsertMany(ctx context.Context, inputs []*CreateBadgeInput
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many badges: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1599,7 +1608,7 @@ func (c *badgeClient) UpsertMany(ctx context.Context, inputs []*CreateBadgeInput
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert badges batch: %w", err)
+				return nil, err
 			}
 		}
 
@@ -1633,12 +1642,12 @@ func (c *badgeClient) UpsertMany(ctx context.Context, inputs []*CreateBadgeInput
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowIDs); len(written) != want {
-			return nil, fmt.Errorf("upsert badges: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many badges: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1660,12 +1669,12 @@ func (c *badgeClient) Exists(ctx context.Context, id string, opts ...func(*CallO
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists badge: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists badge: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1688,12 +1697,12 @@ func (c *badgeClient) ExistsWhere(ctx context.Context, filter *BadgeFilter, opts
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists badge where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists badges where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1717,12 +1726,12 @@ func (c *badgeClient) Count(ctx context.Context, filter *BadgeFilter, opts ...fu
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count badges: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count badges: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -1748,7 +1757,7 @@ func (c *badgeClient) Paginate(ctx context.Context, input PaginateInput[BadgeFil
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate badges count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -1759,7 +1768,7 @@ func (c *badgeClient) Paginate(ctx context.Context, input PaginateInput[BadgeFil
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate badges: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[Badge]{
@@ -1771,7 +1780,7 @@ func (c *badgeClient) Paginate(ctx context.Context, input PaginateInput[BadgeFil
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate badges: %w", err)
 	}
 	return result.(*PaginateResult[Badge]), nil
 }
@@ -1803,7 +1812,7 @@ func (c *badgeClient) Connection(ctx context.Context, input ConnectionInput[Badg
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection badges count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -1847,7 +1856,7 @@ func (c *badgeClient) Connection(ctx context.Context, input ConnectionInput[Badg
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection badges: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -1886,7 +1895,7 @@ func (c *badgeClient) Connection(ctx context.Context, input ConnectionInput[Badg
 		return &Connection[Badge]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection badges: %w", err)
 	}
 	return result.(*Connection[Badge]), nil
 }
@@ -2037,9 +2046,13 @@ func (c *badgeClient) Stream(ctx context.Context, input *StreamBadgesInput, opts
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *Badge, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream badges: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -2078,7 +2091,7 @@ func (c *badgeClient) Stream(ctx context.Context, input *StreamBadgesInput, opts
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream badges: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -2101,7 +2114,7 @@ func (c *badgeClient) Stream(ctx context.Context, input *StreamBadgesInput, opts
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream badges: %w", err))
 		}
 	}
 }

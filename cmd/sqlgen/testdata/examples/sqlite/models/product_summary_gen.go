@@ -146,7 +146,7 @@ func (c *productSummaryClient) Get(ctx context.Context, id int64, opts ...func(*
 		return productSummaries[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get product_summary: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -224,7 +224,7 @@ func (c *productSummaryClient) GetMany(ctx context.Context, input *GetProductSum
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get product_summary: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -236,7 +236,7 @@ func (c *productSummaryClient) GetMany(ctx context.Context, input *GetProductSum
 		return productSummaries, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many product_summary: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -263,12 +263,12 @@ func (c *productSummaryClient) Count(ctx context.Context, filter *ProductSummary
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count product_summary: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count product_summary: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -290,7 +290,7 @@ func (c *productSummaryClient) Paginate(ctx context.Context, input PaginateInput
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate product_summary count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions)
@@ -301,7 +301,7 @@ func (c *productSummaryClient) Paginate(ctx context.Context, input PaginateInput
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate product_summary: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[ProductSummary]{
@@ -313,7 +313,7 @@ func (c *productSummaryClient) Paginate(ctx context.Context, input PaginateInput
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate product_summary: %w", err)
 	}
 	return result.(*PaginateResult[ProductSummary]), nil
 }
@@ -341,7 +341,7 @@ func (c *productSummaryClient) Connection(ctx context.Context, input ConnectionI
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection product_summary count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -385,7 +385,7 @@ func (c *productSummaryClient) Connection(ctx context.Context, input ConnectionI
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection product_summary: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -424,7 +424,7 @@ func (c *productSummaryClient) Connection(ctx context.Context, input ConnectionI
 		return &Connection[ProductSummary]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection product_summary: %w", err)
 	}
 	return result.(*Connection[ProductSummary]), nil
 }

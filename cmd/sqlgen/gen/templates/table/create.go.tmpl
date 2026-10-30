@@ -19,7 +19,7 @@ func (c *{{ $structCamel }}Client) Create(ctx context.Context, input *Create{{ .
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create {{ $singular }}: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -43,7 +43,7 @@ func (c *{{ $structCamel }}Client) Create(ctx context.Context, input *Create{{ .
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("create {{ $singular }}: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal Get/GetMany (and any nested
 			// resolveTenant inside the chain) reuses this value instead of
@@ -82,7 +82,7 @@ func (c *{{ $structCamel }}Client) Create(ctx context.Context, input *Create{{ .
 		if !options.SkipTenancy {
 			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("create {{ $singular }}: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal read (Get, or GetMany
 			// on a soft-delete table) reuses this value instead of
@@ -151,7 +151,7 @@ func (c *{{ $structCamel }}Client) Create(ctx context.Context, input *Create{{ .
 
 		id, err := c.insertAndResolveID(ctx, conn, columns, args)
 		if err != nil {
-			return nil, fmt.Errorf("create {{ $singular }}: %w", err)
+			return nil, err
 		}
 		m.AffectedPKs = []any{id}
 {{- if $captureTenant }}
@@ -171,7 +171,7 @@ func (c *{{ $structCamel }}Client) Create(ctx context.Context, input *Create{{ .
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("create {{ $singular }}: %w", err)
+			return nil, err
 		}
 {{- if .CompositePK }}
 
@@ -201,7 +201,7 @@ func (c *{{ $structCamel }}Client) Create(ctx context.Context, input *Create{{ .
 {{- end }}
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create {{ $singular }}: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -219,7 +219,7 @@ func (c *{{ $structCamel }}Client) CreateMany(ctx context.Context, inputs []*Cre
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many {{ .TableName }}: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -249,7 +249,7 @@ func (c *{{ $structCamel }}Client) CreateMany(ctx context.Context, inputs []*Cre
 			var apply bool
 			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
 			if err != nil {
-				return nil, fmt.Errorf("create {{ .TableName }}: resolve tenant: %w", err)
+				return nil, fmt.Errorf("resolve tenant: %w", err)
 			}
 			// Stash on ctx so the chained terminal GetMany reuses this value
 			// (and the per-input verify-match short-circuits via the cache)
@@ -358,7 +358,7 @@ func (c *{{ $structCamel }}Client) CreateMany(ctx context.Context, inputs []*Cre
 				} else if v, ok := input.{{ .FieldName }}.Get(); ok {
 					{{ .FieldName | toCamelCase | safeGoIdent }} = v
 				} else {
-					return nil, fmt.Errorf("create {{ $.TableName }}: tenant column {{ .ColumnName }} required when SkipTenancy is set or resolver is absent")
+					return nil, fmt.Errorf("tenant column {{ .ColumnName }} required when SkipTenancy is set or resolver is absent")
 				}
 				allTenants = append(allTenants, {{ .FieldName | toCamelCase | safeGoIdent }})
 {{- else if eq $.Dialect "sqlite" }}
@@ -397,7 +397,7 @@ func (c *{{ $structCamel }}Client) CreateMany(ctx context.Context, inputs []*Cre
 
 			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
 			if err != nil {
-				return nil, fmt.Errorf("create {{ .TableName }} batch: %w", err)
+				return nil, err
 			}
 			allIDs = append(allIDs, ids...)
 {{- else }}
@@ -408,7 +408,7 @@ func (c *{{ $structCamel }}Client) CreateMany(ctx context.Context, inputs []*Cre
 			})
 			_, err := conn.Exec(ctx, query, queryArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("create {{ .TableName }} batch: %w", err)
+				return nil, err
 			}
 {{- if .CompositePK }}
 			for _, input := range batch {
@@ -488,7 +488,7 @@ func (c *{{ $structCamel }}Client) CreateMany(ctx context.Context, inputs []*Cre
 {{- end }}
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many {{ .TableName }}: %w", err)
 	}
 	if result == nil {
 		return nil, nil

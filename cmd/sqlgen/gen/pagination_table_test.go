@@ -204,7 +204,6 @@ func TestPaginationTableTemplate_paginateWithLimitAndOffset(t *testing.T) {
 	wantPatterns := []string{
 		"func (c *productClient) Paginate(ctx context.Context, input PaginateInput[ProductFilter], opts ...func(*CallOptions[ProductFieldOptions])) (*PaginateResult[Product], error)",
 		"totalCount, err := c.Count(ctx, input.Filter, internalOpts)",
-		`fmt.Errorf("paginate products count: %w", err)`,
 		"c.GetMany(ctx, &GetProductsInput{",
 		"Filter: input.Filter,",
 		"Sorts:  input.Sort,",
@@ -298,7 +297,7 @@ func TestPaginationTableTemplate_connectionForward(t *testing.T) {
 		"return nil, ErrInvalidCursor",
 		// Total count before cursor conditions
 		"totalCount, err := c.Count(ctx, input.Filter, internalOpts)",
-		`fmt.Errorf("connection products count: %w", err)`,
+		`fmt.Errorf("connection products: %w", err)`,
 		// Cursor decode
 		"if input.After != nil {",
 		"cursor, err := decodeProductCursor(*input.After, c.cursorKeys)",

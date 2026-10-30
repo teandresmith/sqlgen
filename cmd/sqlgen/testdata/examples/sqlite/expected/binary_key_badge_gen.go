@@ -239,7 +239,7 @@ func (c *binaryKeyBadgeClient) Get(ctx context.Context, pk BinaryKeyBadgePK, opt
 		return binaryKeyBadges[0], nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get binary_key_badge: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -258,7 +258,7 @@ func (c *binaryKeyBadgeClient) GetMany(ctx context.Context, input *GetBinaryKeyB
 	options := resolveCallOptions(opts)
 
 	if options.LockMode != sql.LockNone {
-		return nil, fmt.Errorf("get binary_key_badges: LockMode is unsupported on sqlite dialect")
+		return nil, fmt.Errorf("get many binary_key_badges: LockMode is unsupported on sqlite dialect")
 	}
 	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
 		Op: hook.OpGetMany, Table: TableBinaryKeyBadges, Schema: "",
@@ -323,7 +323,7 @@ func (c *binaryKeyBadgeClient) GetMany(ctx context.Context, input *GetBinaryKeyB
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("get binary_key_badges: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -335,7 +335,7 @@ func (c *binaryKeyBadgeClient) GetMany(ctx context.Context, input *GetBinaryKeyB
 		return binaryKeyBadges, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get many binary_key_badges: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -351,7 +351,7 @@ func (c *binaryKeyBadgeClient) Create(ctx context.Context, input *CreateBinaryKe
 	// that would turn a caller's mistake into a silently written one. Guarded
 	// before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("create binary_key_badge: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -369,7 +369,7 @@ func (c *binaryKeyBadgeClient) Create(ctx context.Context, input *CreateBinaryKe
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("create binary_key_badge: %w", err)
+			return nil, err
 		}
 
 		m.AffectedPKs = []any{BinaryKeyBadgePK{BinaryKeyID: input.BinaryKeyID, BadgeCode: input.BadgeCode}}
@@ -386,7 +386,7 @@ func (c *binaryKeyBadgeClient) Create(ctx context.Context, input *CreateBinaryKe
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create binary_key_badge: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -402,7 +402,7 @@ func (c *binaryKeyBadgeClient) CreateMany(ctx context.Context, inputs []*CreateB
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("create many binary_key_badges: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -440,7 +440,7 @@ func (c *binaryKeyBadgeClient) CreateMany(ctx context.Context, inputs []*CreateB
 			})
 			_, err := conn.Exec(ctx, query, queryArgs...)
 			if err != nil {
-				return nil, fmt.Errorf("create binary_key_badges batch: %w", err)
+				return nil, err
 			}
 			for _, input := range batch {
 				allPKs = append(allPKs, BinaryKeyBadgePK{BinaryKeyID: input.BinaryKeyID, BadgeCode: input.BadgeCode})
@@ -465,7 +465,7 @@ func (c *binaryKeyBadgeClient) CreateMany(ctx context.Context, inputs []*CreateB
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create many binary_key_badges: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -482,7 +482,7 @@ func (c *binaryKeyBadgeClient) Update(ctx context.Context, pk BinaryKeyBadgePK, 
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update binary_key_badge: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -517,11 +517,11 @@ func (c *binaryKeyBadgeClient) Update(ctx context.Context, pk BinaryKeyBadgePK, 
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update binary_key_badge: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update binary_key_badge rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -540,7 +540,7 @@ func (c *binaryKeyBadgeClient) Update(ctx context.Context, pk BinaryKeyBadgePK, 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update binary_key_badge: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -565,7 +565,7 @@ func (c *binaryKeyBadgeClient) UpdateMany(ctx context.Context, items []UpdateBin
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many binary_key_badges: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -616,11 +616,11 @@ func (c *binaryKeyBadgeClient) UpdateMany(ctx context.Context, items []UpdateBin
 
 					execResult, err := conn.Exec(ctx, query, args...)
 					if err != nil {
-						return fmt.Errorf("update binary_key_badge %v: %w", item.PK, err)
+						return fmt.Errorf("item %v: %w", item.PK, err)
 					}
 					matched, err := execResult.RowsAffected()
 					if err != nil {
-						return fmt.Errorf("update binary_key_badge %v rows affected: %w", item.PK, err)
+						return fmt.Errorf("item %v rows affected: %w", item.PK, err)
 					}
 					if matched > 0 {
 						writtenItems = append(writtenItems, item)
@@ -658,7 +658,7 @@ func (c *binaryKeyBadgeClient) UpdateMany(ctx context.Context, items []UpdateBin
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many binary_key_badges: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -676,7 +676,7 @@ func (c *binaryKeyBadgeClient) UpdateWhere(ctx context.Context, filter *BinaryKe
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update binary_key_badges where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -717,7 +717,7 @@ func (c *binaryKeyBadgeClient) UpdateWhere(ctx context.Context, filter *BinaryKe
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update binary_key_badges where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -752,7 +752,7 @@ func (c *binaryKeyBadgeClient) UpdateWhere(ctx context.Context, filter *BinaryKe
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update binary_key_badges where: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -777,11 +777,11 @@ func (c *binaryKeyBadgeClient) HardDelete(ctx context.Context, pk BinaryKeyBadge
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete binary_key_badge: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("hard delete binary_key_badge rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		// A key that matched no row wrote nothing: it records no affected
 		// key, so no cache entry is invalidated and no event is published.
@@ -790,7 +790,10 @@ func (c *binaryKeyBadgeClient) HardDelete(ctx context.Context, pk BinaryKeyBadge
 		}
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete binary_key_badge: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteMany permanently removes multiple binary_key_badges from the database.
@@ -825,7 +828,7 @@ func (c *binaryKeyBadgeClient) HardDeleteMany(ctx context.Context, pks []BinaryK
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				return nil, fmt.Errorf("hard delete binary_key_badges: %w", err)
+				return nil, err
 			}
 			batchKeys := make(map[string]struct{}, end-start)
 			for rows.Next() {
@@ -855,7 +858,10 @@ func (c *binaryKeyBadgeClient) HardDeleteMany(ctx context.Context, pks []BinaryK
 		m.AffectedPKs = affectedPKs
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete many binary_key_badges: %w", err)
+	}
+	return nil
 }
 
 // HardDeleteWhere permanently removes all binary_key_badges matching the filter.
@@ -882,7 +888,7 @@ func (c *binaryKeyBadgeClient) HardDeleteWhere(ctx context.Context, filter *Bina
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("hard delete binary_key_badges where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 
@@ -900,7 +906,10 @@ func (c *binaryKeyBadgeClient) HardDeleteWhere(ctx context.Context, filter *Bina
 		m.AffectedPKs = toAnySlice(pks)
 		return nil, nil
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("hard delete binary_key_badges where: %w", err)
+	}
+	return nil
 }
 
 // recordWrittenKeys adds to written the keys of listed, one sub-batch, that
@@ -955,7 +964,7 @@ func (c *binaryKeyBadgeClient) Upsert(ctx context.Context, input *CreateBinaryKe
 	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
 	// UPDATE would have returned the existing row.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("upsert binary_key_badge: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -981,7 +990,7 @@ func (c *binaryKeyBadgeClient) Upsert(ctx context.Context, input *CreateBinaryKe
 		})
 		_, err := conn.Exec(ctx, query, queryArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("upsert binary_key_badge: %w", err)
+			return nil, err
 		}
 
 		m.AffectedPKs = []any{BinaryKeyBadgePK{BinaryKeyID: input.BinaryKeyID, BadgeCode: input.BadgeCode}}
@@ -998,7 +1007,7 @@ func (c *binaryKeyBadgeClient) Upsert(ctx context.Context, input *CreateBinaryKe
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert binary_key_badge: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1031,7 +1040,7 @@ func (c *binaryKeyBadgeClient) UpsertMany(ctx context.Context, inputs []*CreateB
 	// would drop a row the caller asked for. Rejected before the executor.
 	for _, in := range inputs {
 		if in == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("upsert many binary_key_badges: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -1120,7 +1129,7 @@ func (c *binaryKeyBadgeClient) UpsertMany(ctx context.Context, inputs []*CreateB
 				UpsertUpdateColumns: updateColumns,
 			})
 			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
-				return nil, fmt.Errorf("upsert binary_key_badges batch: %w", err)
+				return nil, err
 			}
 		}
 
@@ -1148,12 +1157,12 @@ func (c *binaryKeyBadgeClient) UpsertMany(ctx context.Context, inputs []*CreateB
 		// case-insensitive collation, say), or a written row is not visible
 		// to this call, so the call fails rather than return short.
 		if want := len(rowPKs); len(written) != want {
-			return nil, fmt.Errorf("upsert binary_key_badges: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
 		}
 		return written, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upsert many binary_key_badges: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -1177,12 +1186,12 @@ func (c *binaryKeyBadgeClient) Exists(ctx context.Context, pk BinaryKeyBadgePK, 
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists binary_key_badge: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists binary_key_badge: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1205,12 +1214,12 @@ func (c *binaryKeyBadgeClient) ExistsWhere(ctx context.Context, filter *BinaryKe
 
 		var exists bool
 		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
-			return false, fmt.Errorf("exists binary_key_badge where: %w", err)
+			return false, err
 		}
 		return exists, nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("exists binary_key_badges where: %w", err)
 	}
 	return result.(bool), nil
 }
@@ -1234,12 +1243,12 @@ func (c *binaryKeyBadgeClient) Count(ctx context.Context, filter *BinaryKeyBadge
 
 		var count int64
 		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-			return int64(0), fmt.Errorf("count binary_key_badges: %w", err)
+			return int64(0), err
 		}
 		return count, nil
 	})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("count binary_key_badges: %w", err)
 	}
 	return result.(int64), nil
 }
@@ -1265,7 +1274,7 @@ func (c *binaryKeyBadgeClient) Paginate(ctx context.Context, input PaginateInput
 		// Total count (delegates to Count — both are always generated)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate binary_key_badges count: %w", err)
+			return nil, err
 		}
 
 		// Page data via GetMany (handles FieldOptions and relationships)
@@ -1276,7 +1285,7 @@ func (c *binaryKeyBadgeClient) Paginate(ctx context.Context, input PaginateInput
 			Offset: &input.Offset,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("paginate binary_key_badges: %w", err)
+			return nil, err
 		}
 
 		return &PaginateResult[BinaryKeyBadge]{
@@ -1288,7 +1297,7 @@ func (c *binaryKeyBadgeClient) Paginate(ctx context.Context, input PaginateInput
 		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("paginate binary_key_badges: %w", err)
 	}
 	return result.(*PaginateResult[BinaryKeyBadge]), nil
 }
@@ -1320,7 +1329,7 @@ func (c *binaryKeyBadgeClient) Connection(ctx context.Context, input ConnectionI
 		// Total count (separate COUNT query — no cursor conditions)
 		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection binary_key_badges count: %w", err)
+			return nil, err
 		}
 
 		// Decode cursors and build keyset conditions
@@ -1364,7 +1373,7 @@ func (c *binaryKeyBadgeClient) Connection(ctx context.Context, input ConnectionI
 			requiredColumns: c.cursorKeys,
 		}, internalOpts)
 		if err != nil {
-			return nil, fmt.Errorf("connection binary_key_badges: %w", err)
+			return nil, err
 		}
 
 		// Trim extra row and determine page boundaries
@@ -1403,7 +1412,7 @@ func (c *binaryKeyBadgeClient) Connection(ctx context.Context, input ConnectionI
 		return &Connection[BinaryKeyBadge]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connection binary_key_badges: %w", err)
 	}
 	return result.(*Connection[BinaryKeyBadge]), nil
 }
@@ -1557,9 +1566,13 @@ func (c *binaryKeyBadgeClient) Stream(ctx context.Context, input *StreamBinaryKe
 		// stopped is true while the consumer's loop body runs, and stays true
 		// once the body breaks (yield returned false) or panics out of yield.
 		// Calling yield again after either makes the Go runtime panic, so the
-		// chain's error below is yielded only while stopped is false.
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
 		var stopped bool
 		emit := func(row *BinaryKeyBadge, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream binary_key_badges: %w", err)
+			}
 			stopped = true
 			if !yield(row, err) {
 				return false
@@ -1598,7 +1611,7 @@ func (c *binaryKeyBadgeClient) Stream(ctx context.Context, input *StreamBinaryKe
 
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
-				emit(nil, fmt.Errorf("stream binary_key_badges: %w", err))
+				emit(nil, err)
 				return nil, nil
 			}
 			defer rows.Close()
@@ -1621,7 +1634,7 @@ func (c *binaryKeyBadgeClient) Stream(ctx context.Context, input *StreamBinaryKe
 			return nil, nil
 		})
 		if err != nil && !stopped {
-			yield(nil, err)
+			yield(nil, fmt.Errorf("stream binary_key_badges: %w", err))
 		}
 	}
 }

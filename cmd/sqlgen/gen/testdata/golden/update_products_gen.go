@@ -22,7 +22,7 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 	// input — that one is the documented no-op returning the entity unchanged.
 	// Guarded before the executor, so nil fires no hook and publishes no event.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update product: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -78,11 +78,11 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 
 		execResult, err := conn.Exec(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update product: %w", err)
+			return nil, err
 		}
 		matched, err := execResult.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("update product rows affected: %w", err)
+			return nil, fmt.Errorf("rows affected: %w", err)
 		}
 		if matched == 0 {
 			return nil, ErrNotFound
@@ -101,7 +101,7 @@ func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateP
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update product: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -127,7 +127,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 	// executor, like every other nil write input.
 	for _, item := range items {
 		if item.Input == nil {
-			return nil, ErrNilInput
+			return nil, fmt.Errorf("update many products: %w", ErrNilInput)
 		}
 	}
 	options := resolveCallOptions(opts)
@@ -212,7 +212,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 						tag, err := br.Exec()
 						if err != nil {
 							br.Close()
-							return nil, fmt.Errorf("update products batch: %w", err)
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
 						}
 						matched := tag.RowsAffected()
 						if matched > 0 {
@@ -220,7 +220,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 						}
 					}
 					if err := br.Close(); err != nil {
-						return nil, fmt.Errorf("close update batch: %w", err)
+						return nil, fmt.Errorf("close batch: %w", err)
 					}
 				} else {
 					// No SendBatch — a wrapping querier, or a caller's
@@ -235,11 +235,11 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 						for i, q := range batchQueries {
 							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
 							if err != nil {
-								return fmt.Errorf("update products batch: %w", err)
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
 							}
 							matched, err := execResult.RowsAffected()
 							if err != nil {
-								return fmt.Errorf("update products batch rows affected: %w", err)
+								return fmt.Errorf("item %v rows affected: %w", queuedItems[i].ID, err)
 							}
 							if matched > 0 {
 								writtenItems = append(writtenItems, queuedItems[i])
@@ -284,7 +284,7 @@ func (c *productClient) UpdateMany(ctx context.Context, items []UpdateProductIte
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update many products: %w", err)
 	}
 	if result == nil {
 		return nil, nil
@@ -302,7 +302,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
 	// empty filter.
 	if input == nil {
-		return nil, ErrNilInput
+		return nil, fmt.Errorf("update products where: %w", ErrNilInput)
 	}
 	options := resolveCallOptions(opts)
 	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
@@ -366,7 +366,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 
 		rows, err := conn.Query(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("update products where: %w", err)
+			return nil, err
 		}
 		defer rows.Close()
 		var ids []string
@@ -403,7 +403,7 @@ func (c *productClient) UpdateWhere(ctx context.Context, filter *ProductFilter, 
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update products where: %w", err)
 	}
 	if result == nil {
 		return nil, nil

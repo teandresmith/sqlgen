@@ -308,8 +308,9 @@ fmt.Errorf("parsing column custom_id: %w", err)
 1. **One wrap per layer.** Generated code wraps once with operation + table. The driver adapter wraps once when mapping to `ConstraintError`. Do not double-wrap.
 2. **Always use `%w`.** Consumers need `errors.Is()` and `errors.As()` to work through the chain. Use `%v` only at true system boundaries where the underlying error should not be part of the API.
 3. **Operation names are lowercase.** `"create product"`, not `"Create Product"` or `"CREATE product"`.
-4. **Table names are singular.** `"create product"`, not `"create products"`. The table name matches the Go struct name convention.
-5. **The `wrapcheck` linter enforces this.** Errors from external packages (pgx, database/sql) must be wrapped with context before returning.
+4. **Singular for single-row methods, the table name as written for the rest.** Methods that address one row (`Get`, `Exists`, `Create`, `Update`, `Upsert`, `Increment`, `SoftDelete`, `Restore`, `HardDelete`, and the `*WithRelated` methods) use the singularized table name: `"create product"`, `"create order_item"`. Every other method uses the SQL table or view name as written: `"get many products"`, `"update order_items where"`. The full prefix table is in PRD §22.3.
+5. **One prefix per exported method, sentinels included.** Each exported client method wraps every error it returns, `ErrNotFound`, `ErrNilInput`, `ErrEmptyFilter` and `ErrInvalidCursor` among them, with its own prefix exactly once, at its return points, whichever step failed (beginning its transaction, a statement, a scan, or reading the result set). Inner steps return their cause unprefixed, or with a step label (`scan product:`), so no method's prefix is doubled. A cause may begin with the prefix of another client method called internally: `get product: get many products: …`.
+6. **The `wrapcheck` linter enforces this.** Errors from external packages (pgx, database/sql) must be wrapped with context before returning.
 
 ---
 
