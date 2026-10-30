@@ -278,8 +278,8 @@ another file also cites is still owned once.
 | §20 Unified Client | client.md |
 | §20.1 Purpose | informative |
 | §20.2 Generated Structure | client.md |
-| §20.3 Usage Examples | client.md |
-| §20.4 Configuration | client.md |
+| §20.3 Usage Examples | informative |
+| §20.4 Configuration | informative |
 | §20.5 Concurrency Safety | client.md |
 | §21 Hooks & Middleware | runtime.md |
 | §21.1 Design Principles | runtime.md |

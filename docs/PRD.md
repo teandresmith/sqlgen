@@ -3218,17 +3218,17 @@ type OrderItem struct {
 
 #### Method Signatures
 
-All client methods that accept a PK adapt their signature:
+All client methods that accept a PK adapt their signature (the trailing `opts ...func(*CallOptions[FO])` parameter is omitted below):
 
 **Single PK:**
 
 ```go
 func (c *productClient) Get(ctx context.Context, id uuid.UUID) (*Product, error)
 func (c *productClient) Update(ctx context.Context, id uuid.UUID, input *UpdateProductInput) (*Product, error)
-func (c *productClient) SoftDelete(ctx context.Context, id uuid.UUID) error
+func (c *productClient) SoftDelete(ctx context.Context, id uuid.UUID) (*Product, error)
 func (c *productClient) HardDelete(ctx context.Context, id uuid.UUID) error
 func (c *productClient) Exists(ctx context.Context, id uuid.UUID) (bool, error)
-func (c *productClient) Increment(ctx context.Context, id uuid.UUID, column ProductIncrementColumn, amount int) error
+func (c *productClient) Increment(ctx context.Context, id uuid.UUID, input IncrementInput[ProductIncrementColumn]) error
 ```
 
 **Composite PK:**
@@ -3236,10 +3236,10 @@ func (c *productClient) Increment(ctx context.Context, id uuid.UUID, column Prod
 ```go
 func (c *orderItemClient) Get(ctx context.Context, pk OrderItemPK) (*OrderItem, error)
 func (c *orderItemClient) Update(ctx context.Context, pk OrderItemPK, input *UpdateOrderItemInput) (*OrderItem, error)
-func (c *orderItemClient) SoftDelete(ctx context.Context, pk OrderItemPK) error
+func (c *orderItemClient) SoftDelete(ctx context.Context, pk OrderItemPK) (*OrderItem, error)
 func (c *orderItemClient) HardDelete(ctx context.Context, pk OrderItemPK) error
 func (c *orderItemClient) Exists(ctx context.Context, pk OrderItemPK) (bool, error)
-func (c *orderItemClient) Increment(ctx context.Context, pk OrderItemPK, column OrderItemIncrementColumn, amount int) error
+func (c *orderItemClient) Increment(ctx context.Context, pk OrderItemPK, input IncrementInput[OrderItemIncrementColumn]) error
 ```
 
 **Batch operations** accept slices of the PK type:
@@ -10753,7 +10753,7 @@ products, err := client.Products().GetMany(ctx, &<pkg>.GetProductsInput{
     Filter: &<pkg>.ProductFilter{
         Price: &comparator.Numeric[float64]{Gte: 100.00},
     },
-    Limit: intPtr(10),
+    Limit: new(10),
 })
 
 user, err := client.Users().Create(ctx, &<pkg>.CreateUserInput{
@@ -10761,7 +10761,7 @@ user, err := client.Users().Create(ctx, &<pkg>.CreateUserInput{
     Email: "alice@example.com",
 })
 
-err = client.Reviews().SoftDelete(ctx, reviewID)
+_, err = client.Reviews().SoftDelete(ctx, reviewID)
 
 // Transactions — all entity clients share the transaction automatically
 err = database.WithTransaction(ctx, db, "checkout", func(txCtx context.Context) error {

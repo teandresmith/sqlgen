@@ -154,7 +154,7 @@
 | gen.pk-strategy.columns-override-equivalent | Every downstream path (`Get` / `Update` / `Exists` signatures, `<Table>PK` emission, cache keys, event PKs) reads only the resolved PK set, so an override behaves exactly like a schema `PRIMARY KEY` | `unit: cmd/sqlgen/gen: TestBuildTableContexts_NoPK_WithOverride_NotSkipped` | all | |
 
 ## §8.7 Composite Primary Keys
-<!-- prd: 8.7 sha256: dc244e8091a8bad5 -->
+<!-- prd: 8.7 sha256: 6a1d8b07c2f8a88c -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

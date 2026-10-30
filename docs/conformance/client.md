@@ -8,7 +8,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 `client-methods` cells are seeded together; a row may cite a section another registry file owns.
 
 ## §8.7 Composite Primary Keys
-<!-- prd: 8.7 sha256: dc244e8091a8bad5 -->
+<!-- prd: 8.7 sha256: 6a1d8b07c2f8a88c -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
