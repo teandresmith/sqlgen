@@ -1575,6 +1575,110 @@ database versions it ran against.
      suite when the deletions are known up front; reviewing them first moved this slice's deletions
      to a commit of their own.
 
+   **Twelfth slice, `client.md` writes, recorded 2026-10-30:**
+   - **Scope.** `Create`, `CreateMany`, `Update`, `UpdateMany`, `UpdateWhere`, `Upsert`, `UpsertMany`
+     and `Increment` brought to the reads standard. Measured first on all four targets: 272 example
+     tests had a write as their subject (131 portable, 66 once copies across modules count once; 26
+     dialect-specific; 114 tied to cache, events, tenancy or introspection), and only 24 were cited
+     in `client.md`. 74 of the 80 cells are real. No capability was needed: MySQL's affected-key
+     lookup and `LAST_INSERT_ID` against `RETURNING` differ only in mechanism. No cell needs
+     statement counts inside a transaction, so sub-batch splitting is shown by outcome (a later
+     sub-batch fails and the earlier ones stay). Known blind spot: `CountingQuerier.Begin` records
+     nothing, so stdlib `UpdateMany`'s implicit `BEGIN` is invisible.
+   - **Rulings before writing (8):** a `counters` table on every dialect (`UNIQUE` name, `CHECK
+     (hits >= 0)`, `NOT NULL updated_at` with no DEFAULT, `strict_updates: false`), so unique,
+     check and not-null are reachable on one table; three harness changes (`CountingQuerier`
+     pins a session, the pgx module builds clients on a wrapper that forwards `SendBatch`, and
+     `Harness.Base` names the querier clients are built on); three defects fixed in code (MySQL
+     1364, write read-backs, the pgx `UpdateMany` fallback); `UpsertMany`'s SET clause on conflict
+     stated in §9.5; §9.6a's `LockMode` list and an unmatched `UpdateMany` key stated; and one
+     `error-mapping` column, filled by one subtest per constraint kind the method can reach, with
+     the row saying why the others cannot occur. Ten more came during the slice: `SendBatch`
+     errors mapped in the pgx adapter; `UpsertMany`, the three `*WithRelated` terminal reads and
+     the GraphQL update resolvers' re-reads folded into the read-back fix; `UpdateWhere`'s empty
+     path kept; the PRD's "then call `Get`" wording amended to the read-back; a case-insensitive
+     `UpsertMany` that the database merges errors on its short read; §9.8.5 states the `RETURNING`
+     order `CreateMany` relies on; `UpsertMany` joins §9.5's batch-failure list; `CreateMany`'s
+     return order left a PRD gap. The Go build cache filled the disk once (186 GB) and was cleared
+     with the owner's approval.
+   - **Suite.** Four writers, one per method pair (`cr`, `up`, `uw`, `us`), each with its own file,
+     helper prefix and worktree pinned at the post-fix commit. The suite went from 225 to 375
+     subtests per dialect, all passing on the four targets. Each concern was mutated once, on
+     MySQL too where its generated body differs: about 48 mutations for `Create`/`CreateMany`, 70
+     for `Update`/`UpdateMany`, 58 for `UpdateWhere`/`Increment` and 57 for `Upsert`/`UpsertMany`.
+     Equivalent mutants, reported and claiming no cell: the empty-`FieldOptions` early return in
+     `CreateMany`, `UpdateMany`, `UpdateWhere` (twice) and `UpsertMany`, whose terminal `GetMany`
+     has the same guard; the MySQL session pin at `auto_increment_increment=1`; and `UpsertMany`'s
+     per-row "no definite conflict value" refusal, which the target refusal always precedes.
+   - **Claim check before porting.** Two read-only checkers found 11 defects, all fixed:
+     single-item batches a first-item-only check would pass, three §17.5 subtests that checked
+     only that `updated_at` moved (one "explicit value" half passed the stored value), an
+     `Increment` happy path a read-then-write would pass, two composite targets created before
+     their crossing tuples, a hook recorder still holding the previous call's keys, two rows citing
+     only subtests a known mutant passes (they gained the refs that catch it), and a row stating a
+     narrowed hook `Input` the PRD does not promise (now a PRD gap).
+   - **Rows.** `client.md` 329 → 433 rows (5466 → 5572 in all, with `runtime.md`'s two new mapping rows):
+     conformance refs on template-seeded rows, 6 `n/a` cells each citing the PRD (`Create`,
+     `CreateMany`, `Upsert`, `UpsertMany` × not-found under §9.2; `Increment` × field-selection
+     under §9.8.9a and × nil-empty-input under §9.4c), and 4 PRD gaps:
+     `gap.create-many.return-order`, `gap.update-many.empty-item`,
+     `gap.update-many.hook-input-narrowed`, `gap.upsert.hook-pk-nil`. The subtest pinning
+     `gap.update-many.empty-item` left the suite, since every conformance subtest must be claimed
+     by a requirement. All 80 write cells are filled (74) or `n/a` (6). No golden was newly
+     claimed: the template goldens these rows cite were seeded before the slice, so none needed a
+     mutation run.
+   - **Ported:** 60 per-dialect example tests, in the porting commit itself (`8a6a7bcc`), as the
+     eleventh slice advised; five files left empty were removed. A review of the deletions
+     restored four whose shape the conformance schema cannot reproduce: MySQL
+     `TestAffectedKeys_UpdateRecordsOnlyWrittenKeys` and
+     `TestAffectedKeys_UpdateWhereRecordsCompositeKeysByColumn`, and PostgreSQL
+     `TestUpsertMany_CallerKnownKey_CoveringTargetIssuesNoReadBack` and
+     `TestUpsertMany_LinkTableStatementCount`.
+   - **Defects: 5, each fixed with a fail-first test.** MySQL 1364 (a NOT NULL column with no
+     DEFAULT left out of an INSERT) maps to `ConstraintNotNull` (`8a9f5782`). Without `SendBatch`
+     (a wrapping middleware, or any call inside a caller's transaction) pgx `UpdateMany` ran a
+     sub-batch's statements with no transaction; each sub-batch now runs in `WithTransaction`, a
+     savepoint inside a caller's transaction (`fd10834e`). The pgx adapter's `SendBatch` returned
+     unmapped driver errors (`6d662a3d`). A write's read-back applied the not-deleted default, so a
+     write that left its row soft-deleted committed and then returned `ErrNotFound` or a short
+     slice; the 7 flat writes, `UpsertMany`, the three `*WithRelated` terminal reads and the
+     GraphQL `update<T>`, `update<T>s` and `update<T>WithRelated` re-reads now return it, and the
+     backlog's `UpdateWhere` return-set item is closed (`426914a3`). `UpsertMany` deduped by Go
+     value while MySQL and SQLite merged case-only duplicates under a case-insensitive key, so it
+     returned fewer rows with no error; its terminal read now errors on the shortfall
+     (`5ae35e2a`). `/verify` did not run, because the fixes have no FIX ID.
+   - **PRD amendments**, each with its fill test: §8.1.7, §22.2 and §22.5 (1048 / 1364); §9.8.6a,
+     §19.4 and §25.3 (the fallback and per-sub-batch atomicity on every driver); §22.2 (`SendBatch`
+     mapping); §9.2, §9.7, §9.8, §9.8.4, §9.8.6, §9.8.7 and §9.9 (the read-back); §9.2 and §9.5 (the
+     short read); §9.6a (every write method, `Restore*` included, ignores `LockMode`); §9.5 (an
+     unmatched `UpdateMany` key, `UpsertMany`'s SET clause on conflict, `UpsertMany` in the
+     batch-failure list); and §9.8.5 (`RETURNING` in VALUES order, with §9.5 and §9.7's "promises
+     nothing" narrowed to `DO NOTHING`). One finding went to `backlog.md`: an error a write returns
+     after its statement committed skips cache invalidation and events.
+   - **Review.** sqlgen-reviewer passes on the prep, each fix, the suite and registry, and the
+     deletions. Among their findings: a `SendBatch` test case named for the rows' `Err` path that
+     never reached it (pgx's pipeline mode fails `Query` first; the case and row were narrowed),
+     a resolver import gap on composite keys and a PK named `key`, §9.5's "every non-key,
+     non-target column" contradicting its own exclusions, and the four deletions above. One
+     process slip: the first read-back fix (`eb99d518`) was committed while `check-examples` was
+     failing, because the wrapper's `echo` masked the gate's exit code. It was amended to
+     `426914a3` after the gate passed, and gate exit codes now go to their own file.
+   - **Completion sweep.** The 8 writes have no empty cell, no untested row and no unsigned `n/a`.
+     With `client.md` set to `complete`, `req-check` fails only on the 27 empty cells of the 3
+     nested-write methods and on the 7 owned sections with no rows (§20.3, §20.4, §20.5, §22.3,
+     §25.4, §29.7, §29.9). Not flipped.
+   - **Report.** `make conformance` at `8a6a7bcc`: 5572 rows, 5461 pass, 0 fail, 0 skip, 0 not run,
+     111 untested; `client.md` 432 pass, 1 untested (`edge.batch-db-matched-superset-tenanted`, as
+     before), and `runtime.md` 61 pass.
+   - **For the next slice (nested writes: `CreateWithRelated`, `UpdateWithRelated`,
+     `UpsertWithRelated`):** it fills the last 27 cells, then the 7 empty owned sections stand
+     between `client.md` and `complete`. The schema's one relationship (`products` →
+     `order_items`, one-to-many) will not do: one-to-one and many-to-many were left to this slice.
+     The three `*WithRelated × soft-delete` cells are already filled by the read-back fix. A
+     subtest that pins a PRD gap cannot live in the suite, so measure a behavior against the PRD
+     before writing its subtest. And read a gate's exit code from its own file, never from the
+     tail of a wrapper.
+
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
