@@ -32,7 +32,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | stream.happy-path | `Stream` yields each row its `Filter` matches once, in `Sorts` order, as the full entity with its relationship fields nil | `conformance: Stream/yields only the matching rows, each once, in the requested sort order` | all | client-methods: Stream × happy-path |
 
 ## §9.2 Write Operations
-<!-- prd: 9.2 sha256: f685337cae26f63b -->
+<!-- prd: 9.2 sha256: 823d1b19468bcc74 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -115,7 +115,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | paginate.zero-input | A zero `PaginateInput` pages everything: it returns every row, and `HasMore` is false | `conformance: Paginate/a zero input returns every row and reports no more pages` | all | client-methods: Paginate × nil-empty-input |
 
 ## §9.5 Edge Case Behaviors
-<!-- prd: 9.5 sha256: fe61992772c53378 -->
+<!-- prd: 9.5 sha256: b6cd2b7311490cf7 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -144,7 +144,8 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | edge.upsert-many.dedupe-last-wins | `UpsertMany` dedupes its inputs by conflict target across the whole call, before splitting into sub-batches; a duplicate overwrites the earlier row's slot, so the last occurrence's values win in first-appearance order | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_dedupesLastWins` | all |  |
 | edge.upsert-many.covering-target-input-keys | On a caller-known key whose every declared conflict target covers the primary key, `UpsertMany` takes `AffectedPKs` from the inputs and emits no read-back and no runtime branch | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_pkFromInput/composite-pk-every-target-covers-key` | postgres |  |
 | edge.upsert-many.non-covering-target-reads-back | When a table declares a conflict target that does not cover every PK column, `UpsertMany` chooses per call from a generated coverage table: a covering target takes the input keys, a non-covering one reads the written keys back (composite keys as `[]{Table}PK`), whatever the PK strategy | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_pkFromInput/caller-strategy-with-a-non-covering-target`; `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_conflictCoversPKTable`; `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_compositePKReadBack` | postgres |  |
-| edge.upsert-many.db-key-reads-back | On a database-generated key, `UpsertMany` reads each sub-batch's keys back by the conflict target's columns before it records `AffectedPKs` | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_dbPKReadsBackByConflictTarget` | all |  |
+| edge.upsert-many.db-key-reads-back | On a database-generated key, `UpsertMany` reads each sub-batch's keys back by the conflict target's columns before it records `AffectedPKs` | `unit: cmd/sqlgen/gen: TestUpsertManyTemplate_dbPKReadsBackByConflictTarget`; `conformance: UpsertMany/conflict values the database matches as one return one entity per deduped input or fail loudly` | all |  |
+| edge.upsert-many.collation-merge-loud | Where the database matches as one key two `UpsertMany` inputs the Go-side dedupe kept apart (a case-insensitive collation), the call is not silent: PostgreSQL rejects the statement, and MySQL and SQLite return an error after the write when the terminal read finds fewer rows than deduped inputs | `conformance: UpsertMany/keys the database matches as one fail the call rather than return short` | all | |
 | hard-delete.not-found | `HardDelete` returns `nil` (idempotent) when the key does not exist | `conformance: HardDelete/a missing key is not an error` | all | client-methods: HardDelete × not-found |
 | soft-delete-many.not-found | Delete operations are always idempotent: a listed key with no row is not an error, and `SoftDeleteMany` returns only the affected entities | `conformance: SoftDeleteMany/missing keys are not an error and are not returned` | all | client-methods: SoftDeleteMany × not-found |
 | restore-many.not-found | Delete operations are always idempotent: a listed key with no row is not an error, and `RestoreMany` returns only the restored entities | `conformance: RestoreMany/missing keys are not an error and are not returned` | all | client-methods: RestoreMany × not-found |

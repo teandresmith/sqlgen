@@ -1395,7 +1395,7 @@ func (c *profileClient) UpsertMany(ctx context.Context, inputs []*CreateProfileI
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetProfilesInput{
+		written, err := c.GetMany(ctx, &GetProfilesInput{
 			Filter: &ProfileFilter{
 				ID: &comparator.Number[int64]{In: rowIDs},
 			},
@@ -1405,6 +1405,17 @@ func (c *profileClient) UpsertMany(ctx context.Context, inputs []*CreateProfileI
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert profiles: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err

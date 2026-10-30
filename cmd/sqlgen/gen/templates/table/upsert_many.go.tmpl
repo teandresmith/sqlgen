@@ -447,7 +447,7 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 {{- if .CompositePK }}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+		written, err := c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 			Filter: &{{ .StructName }}Filter{PKs: rowPKs{{ with softDeleteFilterAny . }}, {{ $.SoftDelete.FieldName }}: {{ . }}{{ end }}},
 			Limit:  new(0),
 		}, func(o *CallOptions[{{ .StructName }}FieldOptions]) {
@@ -462,7 +462,7 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 		for i, id := range rowIDs {
 			idStrings[i] = {{ fkToString $pkCol "id" }}
 		}
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+		written, err := c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 			Filter: &{{ .StructName }}Filter{
 				{{ $pkCol.FieldName }}: &comparator.ID{In: idStrings},
 {{- with softDeleteFilterAny . }}
@@ -477,7 +477,7 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 		})
 {{- else }}
 
-		return c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
+		written, err := c.GetMany(ctx, &Get{{ .StructName | structNamePlural }}Input{
 			Filter: &{{ .StructName }}Filter{
 				{{ $pkCol.FieldName }}: {{ pkFilterInExpr $pkCol "rowIDs" false }},
 {{- with softDeleteFilterAny . }}
@@ -491,6 +491,17 @@ func (c *{{ $structCamel }}Client) UpsertMany(ctx context.Context, inputs []*Cre
 			o.LockMode = sql.LockNone
 		})
 {{- end }}
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(row{{ if .CompositePK }}PKs{{ else }}IDs{{ end }}); len(written) != want {
+			return nil, fmt.Errorf("upsert {{ .TableName }}: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err

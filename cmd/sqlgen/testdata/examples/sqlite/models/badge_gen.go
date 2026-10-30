@@ -1615,7 +1615,7 @@ func (c *badgeClient) UpsertMany(ctx context.Context, inputs []*CreateBadgeInput
 		for i, id := range rowIDs {
 			idStrings[i] = id
 		}
-		return c.GetMany(ctx, &GetBadgesInput{
+		written, err := c.GetMany(ctx, &GetBadgesInput{
 			Filter: &BadgeFilter{
 				Code: &comparator.ID{In: idStrings},
 			},
@@ -1625,6 +1625,17 @@ func (c *badgeClient) UpsertMany(ctx context.Context, inputs []*CreateBadgeInput
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert badges: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err

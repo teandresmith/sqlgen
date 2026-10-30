@@ -1132,7 +1132,7 @@ func (c *binaryKeyBadgeClient) UpsertMany(ctx context.Context, inputs []*CreateB
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetBinaryKeyBadgesInput{
+		written, err := c.GetMany(ctx, &GetBinaryKeyBadgesInput{
 			Filter: &BinaryKeyBadgeFilter{PKs: rowPKs},
 			Limit:  new(0),
 		}, func(o *CallOptions[BinaryKeyBadgeFieldOptions]) {
@@ -1140,6 +1140,17 @@ func (c *binaryKeyBadgeClient) UpsertMany(ctx context.Context, inputs []*CreateB
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowPKs); len(written) != want {
+			return nil, fmt.Errorf("upsert binary_key_badges: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err

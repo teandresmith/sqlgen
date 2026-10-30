@@ -1189,7 +1189,7 @@ func (c *assetDocumentLinkClient) UpsertMany(ctx context.Context, inputs []*Crea
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetAssetDocumentLinksInput{
+		written, err := c.GetMany(ctx, &GetAssetDocumentLinksInput{
 			Filter: &AssetDocumentLinkFilter{PKs: rowPKs},
 			Limit:  new(0),
 		}, func(o *CallOptions[AssetDocumentLinkFieldOptions]) {
@@ -1197,6 +1197,17 @@ func (c *assetDocumentLinkClient) UpsertMany(ctx context.Context, inputs []*Crea
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowPKs); len(written) != want {
+			return nil, fmt.Errorf("upsert asset_document_links: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -3894,7 +3905,7 @@ func (c *assetClient) UpsertMany(ctx context.Context, inputs []*CreateAssetInput
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetAssetsInput{
+		written, err := c.GetMany(ctx, &GetAssetsInput{
 			Filter: &AssetFilter{
 				ID: &comparator.ID{In: idStrings},
 			},
@@ -3904,6 +3915,17 @@ func (c *assetClient) UpsertMany(ctx context.Context, inputs []*CreateAssetInput
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert assets: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -7616,7 +7638,7 @@ func (c *categoryClient) UpsertMany(ctx context.Context, inputs []*CreateCategor
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetCategoriesInput{
+		written, err := c.GetMany(ctx, &GetCategoriesInput{
 			Filter: &CategoryFilter{
 				ID: &comparator.Number[int64]{In: rowIDs},
 			},
@@ -7626,6 +7648,17 @@ func (c *categoryClient) UpsertMany(ctx context.Context, inputs []*CreateCategor
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert categories: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -10746,7 +10779,7 @@ func (c *documentClient) UpsertMany(ctx context.Context, inputs []*CreateDocumen
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetDocumentsInput{
+		written, err := c.GetMany(ctx, &GetDocumentsInput{
 			Filter: &DocumentFilter{
 				ID: &comparator.ID{In: idStrings},
 			},
@@ -10756,6 +10789,17 @@ func (c *documentClient) UpsertMany(ctx context.Context, inputs []*CreateDocumen
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert documents: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -14020,7 +14064,7 @@ func (c *eventClient) UpsertMany(ctx context.Context, inputs []*CreateEventInput
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetEventsInput{
+		written, err := c.GetMany(ctx, &GetEventsInput{
 			Filter: &EventFilter{
 				ID: &comparator.ID{In: idStrings},
 			},
@@ -14030,6 +14074,17 @@ func (c *eventClient) UpsertMany(ctx context.Context, inputs []*CreateEventInput
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert events: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -16828,7 +16883,7 @@ func (c *filterProbeClient) UpsertMany(ctx context.Context, inputs []*CreateFilt
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetFilterProbesInput{
+		written, err := c.GetMany(ctx, &GetFilterProbesInput{
 			Filter: &FilterProbeFilter{
 				ID: &comparator.ID{In: idStrings},
 			},
@@ -16838,6 +16893,17 @@ func (c *filterProbeClient) UpsertMany(ctx context.Context, inputs []*CreateFilt
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert filter_probes: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -19038,7 +19104,7 @@ func (c *keyedCodeEntryClient) UpsertMany(ctx context.Context, inputs []*CreateK
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetKeyedCodeEntriesInput{
+		written, err := c.GetMany(ctx, &GetKeyedCodeEntriesInput{
 			Filter: &KeyedCodeEntryFilter{
 				ID: &comparator.ID{In: idStrings},
 			},
@@ -19048,6 +19114,17 @@ func (c *keyedCodeEntryClient) UpsertMany(ctx context.Context, inputs []*CreateK
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert keyed_code_entries: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -21345,7 +21422,7 @@ func (c *keyedCodeClient) UpsertMany(ctx context.Context, inputs []*CreateKeyedC
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetKeyedCodesInput{
+		written, err := c.GetMany(ctx, &GetKeyedCodesInput{
 			Filter: &KeyedCodeFilter{
 				ID: &comparator.ID{In: idStrings},
 			},
@@ -21355,6 +21432,17 @@ func (c *keyedCodeClient) UpsertMany(ctx context.Context, inputs []*CreateKeyedC
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert keyed_codes: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -23803,7 +23891,7 @@ func (c *maskedLabelClient) UpsertMany(ctx context.Context, inputs []*CreateMask
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetMaskedLabelsInput{
+		written, err := c.GetMany(ctx, &GetMaskedLabelsInput{
 			Filter: &MaskedLabelFilter{
 				ID: &comparator.ID{In: idStrings},
 			},
@@ -23813,6 +23901,17 @@ func (c *maskedLabelClient) UpsertMany(ctx context.Context, inputs []*CreateMask
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert masked_labels: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -26133,7 +26232,7 @@ func (c *numericWidthClient) UpsertMany(ctx context.Context, inputs []*CreateNum
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetNumericWidthsInput{
+		written, err := c.GetMany(ctx, &GetNumericWidthsInput{
 			Filter: &NumericWidthFilter{
 				ID: &comparator.ID{In: idStrings},
 			},
@@ -26143,6 +26242,17 @@ func (c *numericWidthClient) UpsertMany(ctx context.Context, inputs []*CreateNum
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert numeric_widths: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -28645,7 +28755,7 @@ func (c *orderItemClient) UpsertMany(ctx context.Context, inputs []*CreateOrderI
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetOrderItemsInput{
+		written, err := c.GetMany(ctx, &GetOrderItemsInput{
 			Filter: &OrderItemFilter{
 				ID: &comparator.ID{In: idStrings},
 			},
@@ -28655,6 +28765,17 @@ func (c *orderItemClient) UpsertMany(ctx context.Context, inputs []*CreateOrderI
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert order_items: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -31848,7 +31969,7 @@ func (c *orderClient) UpsertMany(ctx context.Context, inputs []*CreateOrderInput
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetOrdersInput{
+		written, err := c.GetMany(ctx, &GetOrdersInput{
 			Filter: &OrderFilter{
 				ID:        &comparator.ID{In: idStrings},
 				DeletedAt: &comparator.NullableTime{},
@@ -31859,6 +31980,17 @@ func (c *orderClient) UpsertMany(ctx context.Context, inputs []*CreateOrderInput
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert orders: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -35488,7 +35620,7 @@ func (c *productClient) UpsertMany(ctx context.Context, inputs []*CreateProductI
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetProductsInput{
+		written, err := c.GetMany(ctx, &GetProductsInput{
 			Filter: &ProductFilter{
 				ID:        &comparator.ID{In: idStrings},
 				DeletedAt: &comparator.NullableTime{},
@@ -35499,6 +35631,17 @@ func (c *productClient) UpsertMany(ctx context.Context, inputs []*CreateProductI
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert products: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -38381,7 +38524,7 @@ func (c *profileClient) UpsertMany(ctx context.Context, inputs []*CreateProfileI
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetProfilesInput{
+		written, err := c.GetMany(ctx, &GetProfilesInput{
 			Filter: &ProfileFilter{
 				ID: &comparator.ID{In: idStrings},
 			},
@@ -38391,6 +38534,17 @@ func (c *profileClient) UpsertMany(ctx context.Context, inputs []*CreateProfileI
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert profiles: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -41315,7 +41469,7 @@ func (c *scalarProbeClient) UpsertMany(ctx context.Context, inputs []*CreateScal
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetScalarProbesInput{
+		written, err := c.GetMany(ctx, &GetScalarProbesInput{
 			Filter: &ScalarProbeFilter{
 				ID: &comparator.ID{In: idStrings},
 			},
@@ -41325,6 +41479,17 @@ func (c *scalarProbeClient) UpsertMany(ctx context.Context, inputs []*CreateScal
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert scalar_probes: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -43952,7 +44117,7 @@ func (c *userBadgeClient) UpsertMany(ctx context.Context, inputs []*CreateUserBa
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetUserBadgesInput{
+		written, err := c.GetMany(ctx, &GetUserBadgesInput{
 			Filter: &UserBadgeFilter{
 				ID: &comparator.Number[int64]{In: rowIDs},
 			},
@@ -43962,6 +44127,17 @@ func (c *userBadgeClient) UpsertMany(ctx context.Context, inputs []*CreateUserBa
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert user_badges: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -46142,7 +46318,7 @@ func (c *userCategoryClient) UpsertMany(ctx context.Context, inputs []*CreateUse
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetUserCategoriesInput{
+		written, err := c.GetMany(ctx, &GetUserCategoriesInput{
 			Filter: &UserCategoryFilter{PKs: rowPKs},
 			Limit:  new(0),
 		}, func(o *CallOptions[UserCategoryFieldOptions]) {
@@ -46150,6 +46326,17 @@ func (c *userCategoryClient) UpsertMany(ctx context.Context, inputs []*CreateUse
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowPKs); len(written) != want {
+			return nil, fmt.Errorf("upsert user_categories: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -48171,7 +48358,7 @@ func (c *userCredentialClient) UpsertMany(ctx context.Context, inputs []*CreateU
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetUserCredentialsInput{
+		written, err := c.GetMany(ctx, &GetUserCredentialsInput{
 			Filter: &UserCredentialFilter{
 				UserID: &comparator.ID{In: idStrings},
 			},
@@ -48181,6 +48368,17 @@ func (c *userCredentialClient) UpsertMany(ctx context.Context, inputs []*CreateU
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert user_credentials: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -50508,7 +50706,7 @@ func (c *userSessionClient) UpsertMany(ctx context.Context, inputs []*CreateUser
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetUserSessionsInput{
+		written, err := c.GetMany(ctx, &GetUserSessionsInput{
 			Filter: &UserSessionFilter{
 				ID: &comparator.ID{In: idStrings},
 			},
@@ -50518,6 +50716,17 @@ func (c *userSessionClient) UpsertMany(ctx context.Context, inputs []*CreateUser
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert user_sessions: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -54069,7 +54278,7 @@ func (c *userClient) UpsertMany(ctx context.Context, inputs []*CreateUserInput, 
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetUsersInput{
+		written, err := c.GetMany(ctx, &GetUsersInput{
 			Filter: &UserFilter{
 				ID:        &comparator.ID{In: idStrings},
 				DeletedAt: &comparator.NullableTime{},
@@ -54080,6 +54289,17 @@ func (c *userClient) UpsertMany(ctx context.Context, inputs []*CreateUserInput, 
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert users: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -59513,7 +59733,7 @@ func (c *workspaceNoteClient) UpsertMany(ctx context.Context, inputs []*CreateWo
 		for i, id := range rowIDs {
 			idStrings[i] = id.String()
 		}
-		return c.GetMany(ctx, &GetWorkspaceNotesInput{
+		written, err := c.GetMany(ctx, &GetWorkspaceNotesInput{
 			Filter: &WorkspaceNoteFilter{
 				ID: &comparator.ID{In: idStrings},
 			},
@@ -59523,6 +59743,17 @@ func (c *workspaceNoteClient) UpsertMany(ctx context.Context, inputs []*CreateWo
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert workspace_notes: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -63311,7 +63542,7 @@ func (c *workspaceSettingClient) UpsertMany(ctx context.Context, inputs []*Creat
 		}
 
 		// Re-fetch via composite PK filter
-		return c.GetMany(ctx, &GetWorkspaceSettingsInput{
+		written, err := c.GetMany(ctx, &GetWorkspaceSettingsInput{
 			Filter: &WorkspaceSettingFilter{PKs: rowPKs},
 			Limit:  new(0),
 		}, func(o *CallOptions[WorkspaceSettingFieldOptions]) {
@@ -63319,6 +63550,17 @@ func (c *workspaceSettingClient) UpsertMany(ctx context.Context, inputs []*Creat
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowPKs); len(written) != want {
+			return nil, fmt.Errorf("upsert workspace_settings: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err

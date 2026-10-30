@@ -97,6 +97,28 @@ func usSeedDeletedCounter(t *testing.T, h *Harness, name string) {
 func upsertMany(t *testing.T, h *Harness) {
 	ctx := context.Background()
 
+	t.Run("keys the database matches as one fail the call rather than return short", func(t *testing.T) {
+		h.Reset(t)
+		createLabel(t, h, "red")
+		client, affected := affectedPKsRecorder(h)
+		got, err := client.Labels().UpsertMany(ctx, []*models.CreateLabelInput{{Name: "RED"}, {Name: "Red"}, {Name: "blue"}}, models.LabelConflictPK)
+		if err == nil {
+			t.Errorf("UpsertMany([RED, Red, blue]) over stored red = %d entities and no error (AffectedPKs %v), want an error: the database matches RED and Red as one key", len(got), affected())
+		}
+	})
+
+	t.Run("conflict values the database matches as one return one entity per deduped input or fail loudly", func(t *testing.T) {
+		h.Reset(t)
+		now := models.Now()
+		got, err := h.Client.Counters().UpsertMany(ctx, []*models.CreateCounterInput{
+			{Name: "visits", UpdatedAt: omittable.Set(now)},
+			{Name: "VISITS", UpdatedAt: omittable.Set(now)},
+		}, models.CounterConflictName)
+		if err == nil && len(got) != 2 {
+			t.Errorf("UpsertMany([visits, VISITS]) by name = %d entities and no error, want 2 entities or an error", len(got))
+		}
+	})
+
 	t.Run("returns every row it writes, soft-deleted ones included", func(t *testing.T) {
 		h.Reset(t)
 		got, err := h.Client.Counters().UpsertMany(ctx, []*models.CreateCounterInput{

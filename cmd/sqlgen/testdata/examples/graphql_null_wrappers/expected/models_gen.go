@@ -2508,7 +2508,7 @@ func (c *accountClient) UpsertMany(ctx context.Context, inputs []*CreateAccountI
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetAccountsInput{
+		written, err := c.GetMany(ctx, &GetAccountsInput{
 			Filter: &AccountFilter{
 				ID:        &comparator.Number[int64]{In: rowIDs},
 				DeletedAt: &comparator.NullableTime{},
@@ -2519,6 +2519,17 @@ func (c *accountClient) UpsertMany(ctx context.Context, inputs []*CreateAccountI
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert accounts: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
@@ -5187,7 +5198,7 @@ func (c *entryClient) UpsertMany(ctx context.Context, inputs []*CreateEntryInput
 			return nil, nil
 		}
 
-		return c.GetMany(ctx, &GetEntriesInput{
+		written, err := c.GetMany(ctx, &GetEntriesInput{
 			Filter: &EntryFilter{
 				ID: &comparator.Number[int64]{In: rowIDs},
 			},
@@ -5197,6 +5208,17 @@ func (c *entryClient) UpsertMany(ctx context.Context, inputs []*CreateEntryInput
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
 		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("upsert entries: %d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
 	})
 	if err != nil {
 		return nil, err
