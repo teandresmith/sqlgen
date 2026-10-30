@@ -9,6 +9,7 @@ import (
 
 	"github.com/teandresmith/sqlgen/database"
 	"github.com/teandresmith/sqlgen/hook"
+	"github.com/teandresmith/sqlgen/omittable"
 	"github.com/teandresmith/sqlgen/sql"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/conformance/models"
@@ -253,4 +254,109 @@ func createDeletedDocument(t *testing.T, h *Harness, title string) *models.Docum
 		t.Fatalf("SoftDelete document %q: %v", title, err)
 	}
 	return deleted
+}
+
+func createAuthor(t *testing.T, h *Harness, name string) *models.Author {
+	t.Helper()
+	a, err := h.Client.Authors().Create(context.Background(), &models.CreateAuthorInput{Name: name})
+	if err != nil {
+		t.Fatalf("Create author %q: %v", name, err)
+	}
+	return a
+}
+
+// createPost creates a post under authorID, or unparented when authorID is nil.
+func createPost(t *testing.T, h *Harness, title string, authorID *int64) *models.Post {
+	t.Helper()
+	p, err := h.Client.Posts().Create(context.Background(), &models.CreatePostInput{Title: title, AuthorID: omittable.Set(authorID)})
+	if err != nil {
+		t.Fatalf("Create post %q: %v", title, err)
+	}
+	return p
+}
+
+// createProfile creates an author profile under authorID, or unparented when
+// authorID is nil.
+func createProfile(t *testing.T, h *Harness, bio string, authorID *int64) *models.AuthorProfile {
+	t.Helper()
+	p, err := h.Client.AuthorProfiles().Create(context.Background(), &models.CreateAuthorProfileInput{Bio: bio, AuthorID: omittable.Set(authorID)})
+	if err != nil {
+		t.Fatalf("Create author profile %q: %v", bio, err)
+	}
+	return p
+}
+
+func createTag(t *testing.T, h *Harness, name string) *models.Tag {
+	t.Helper()
+	tag, err := h.Client.Tags().Create(context.Background(), &models.CreateTagInput{Name: name})
+	if err != nil {
+		t.Fatalf("Create tag %q: %v", name, err)
+	}
+	return tag
+}
+
+func linkAuthorTag(t *testing.T, h *Harness, authorID, tagID int64) {
+	t.Helper()
+	if _, err := h.Client.AuthorTags().Create(context.Background(), &models.CreateAuthorTagInput{AuthorID: authorID, TagID: tagID}); err != nil {
+		t.Fatalf("Create author tag (%d, %d): %v", authorID, tagID, err)
+	}
+}
+
+// postParents returns every post's author_id by post id, soft-deleted posts
+// included, read with a statement the counting querier does not record. A
+// nil value is an unparented post.
+func postParents(t *testing.T, h *Harness) map[int64]*int64 {
+	t.Helper()
+	return parentsOf(t, h, "posts")
+}
+
+// profileParents is postParents for author_profiles.
+func profileParents(t *testing.T, h *Harness) map[int64]*int64 {
+	t.Helper()
+	return parentsOf(t, h, "author_profiles")
+}
+
+func parentsOf(t *testing.T, h *Harness, table string) map[int64]*int64 {
+	t.Helper()
+	rows, err := h.Querier.Inner.Query(context.Background(), "SELECT id, author_id FROM "+table)
+	if err != nil {
+		t.Fatalf("read %s parents: %v", table, err)
+	}
+	defer rows.Close()
+	got := map[int64]*int64{}
+	for rows.Next() {
+		var id int64
+		var parent *int64
+		if err := rows.Scan(&id, &parent); err != nil {
+			t.Fatalf("scan %s parent: %v", table, err)
+		}
+		got[id] = parent
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read %s parents: %v", table, err)
+	}
+	return got
+}
+
+// authorTagPairs returns every author_tags row as an (author, tag) pair,
+// sorted, read with a statement the counting querier does not record.
+func authorTagPairs(t *testing.T, h *Harness) [][2]int64 {
+	t.Helper()
+	rows, err := h.Querier.Inner.Query(context.Background(), "SELECT author_id, tag_id FROM author_tags ORDER BY author_id, tag_id")
+	if err != nil {
+		t.Fatalf("read author tags: %v", err)
+	}
+	defer rows.Close()
+	var got [][2]int64
+	for rows.Next() {
+		var p [2]int64
+		if err := rows.Scan(&p[0], &p[1]); err != nil {
+			t.Fatalf("scan author tag: %v", err)
+		}
+		got = append(got, p)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read author tags: %v", err)
+	}
+	return got
 }

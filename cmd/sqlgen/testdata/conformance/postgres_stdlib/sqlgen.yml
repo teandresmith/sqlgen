@@ -8,6 +8,10 @@ output:
   driver: stdlib
   dir: ./models
   package: models
+generation:
+  # The three WithRelated methods, on every table with an eligible edge.
+  nested_mutations:
+    enabled: true
 tables:
   products:
     # Small enough that a handful of keys spans several sub-batches.
@@ -23,6 +27,27 @@ tables:
     # Smaller than the rows a zero-input Connection subtest seeds, so the
     # default page size is observable.
     page_size: 2
+  authors:
+    # A nested verb chunks its id lists at the parent's batch size, so a connect
+    # or disconnect list spans several chunks.
+    batch_size: 2
+    # A has-one edge is declared in config; the edges are listed by name, so
+    # one that turns ineligible fails generation instead of disappearing.
+    relationships:
+      - name: Profile
+        type: one_to_one
+        table: author_profiles
+        fk: author_id
+    nested_mutations:
+      relationships:
+        - name: Posts
+        - name: Profile
+        - name: Tags
+  posts:
+    # A nested create spans several CreateMany chunks.
+    batch_size: 2
+  author_tags:
+    batch_size: 2
   counters:
     # Update and Increment on a missing key return nil rather than ErrNotFound.
     strict_updates: false

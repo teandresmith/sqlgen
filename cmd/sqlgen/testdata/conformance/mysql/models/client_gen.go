@@ -118,15 +118,20 @@ func (c *mysqlVersionCache) get(ctx context.Context) (mysqlVersion, error) {
 // All entity clients share the same querier and configuration.
 // The Client is safe for concurrent use after construction.
 type Client struct {
-	querier      database.Querier
-	opts         clientOptions
-	mysqlVersion *mysqlVersionCache
-	counter      *counterClient
-	document     *documentClient
-	label        *labelClient
-	orderItem    *orderItemClient
-	product      *productClient
-	revision     *revisionClient
+	querier       database.Querier
+	opts          clientOptions
+	mysqlVersion  *mysqlVersionCache
+	author        *authorClient
+	authorProfile *authorProfileClient
+	authorTag     *authorTagClient
+	counter       *counterClient
+	document      *documentClient
+	label         *labelClient
+	orderItem     *orderItemClient
+	post          *postClient
+	product       *productClient
+	revision      *revisionClient
+	tag           *tagClient
 }
 
 // New creates a new Client with the given querier and options.
@@ -141,15 +146,20 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 
 	mysqlVersion := newMySQLVersionCache(querier)
 	c := &Client{
-		querier:      querier,
-		opts:         options,
-		mysqlVersion: mysqlVersion,
-		counter:      newCounterClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		document:     newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		label:        newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		orderItem:    newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		product:      newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		revision:     newRevisionClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		querier:       querier,
+		opts:          options,
+		mysqlVersion:  mysqlVersion,
+		author:        newAuthorClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		authorProfile: newAuthorProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		authorTag:     newAuthorTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		counter:       newCounterClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		document:      newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		label:         newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		orderItem:     newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		post:          newPostClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		product:       newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		revision:      newRevisionClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		tag:           newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 	}
 
 	// Push the configured CallbackMode down to every entity client that can
@@ -157,13 +167,36 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// the whole nested write runs in and pass this mode to it, so
 	// deferred events and cache invalidation flush the way the client was
 	// configured rather than on NewTransaction's default.
+	c.author.callbackMode = options.callbackMode
 	c.product.callbackMode = options.callbackMode
+	c.tag.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
 	// the nested-mutation executors write through
+	c.author.postClient = c.post
+	c.author.tagClient = c.tag
+	c.author.authorProfileClient = c.authorProfile
+	c.author.authorTagClient = c.authorTag
 	c.product.orderItemClient = c.orderItem
+	c.tag.authorClient = c.author
+	c.tag.authorTagClient = c.authorTag
 
 	return c
+}
+
+// Authors returns the AuthorClient for Author operations.
+func (c *Client) Authors() AuthorClient {
+	return c.author
+}
+
+// AuthorProfiles returns the AuthorProfileClient for AuthorProfile operations.
+func (c *Client) AuthorProfiles() AuthorProfileClient {
+	return c.authorProfile
+}
+
+// AuthorTags returns the AuthorTagClient for AuthorTag operations.
+func (c *Client) AuthorTags() AuthorTagClient {
+	return c.authorTag
 }
 
 // Counters returns the CounterClient for Counter operations.
@@ -186,6 +219,11 @@ func (c *Client) OrderItems() OrderItemClient {
 	return c.orderItem
 }
 
+// Posts returns the PostClient for Post operations.
+func (c *Client) Posts() PostClient {
+	return c.post
+}
+
 // Products returns the ProductClient for Product operations.
 func (c *Client) Products() ProductClient {
 	return c.product
@@ -194,6 +232,11 @@ func (c *Client) Products() ProductClient {
 // Revisions returns the RevisionClient for Revision operations.
 func (c *Client) Revisions() RevisionClient {
 	return c.revision
+}
+
+// Tags returns the TagClient for Tag operations.
+func (c *Client) Tags() TagClient {
+	return c.tag
 }
 
 // Begin starts a new transaction with the given name.

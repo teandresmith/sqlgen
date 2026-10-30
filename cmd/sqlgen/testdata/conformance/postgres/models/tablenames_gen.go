@@ -6,10 +6,15 @@ import (
 )
 
 const (
-	TableCounters   hook.TableName = "public.counters"
-	TableDocuments  hook.TableName = "public.documents"
-	TableLabels     hook.TableName = "public.labels"
-	TableOrderItems hook.TableName = "public.order_items"
-	TableProducts   hook.TableName = "public.products"
-	TableRevisions  hook.TableName = "public.revisions"
+	TableAuthorProfiles hook.TableName = "public.author_profiles"
+	TableAuthorTags     hook.TableName = "public.author_tags"
+	TableAuthors        hook.TableName = "public.authors"
+	TableCounters       hook.TableName = "public.counters"
+	TableDocuments      hook.TableName = "public.documents"
+	TableLabels         hook.TableName = "public.labels"
+	TableOrderItems     hook.TableName = "public.order_items"
+	TablePosts          hook.TableName = "public.posts"
+	TableProducts       hook.TableName = "public.products"
+	TableRevisions      hook.TableName = "public.revisions"
+	TableTags           hook.TableName = "public.tags"
 )

@@ -5,6 +5,67 @@ import (
 	"github.com/teandresmith/sqlgen/sql"
 )
 
+// AuthorSorter provides type-safe sort helpers for the Author entity.
+// Each method returns a sql.Sort for the corresponding column.
+type AuthorSorter struct{}
+
+// NewAuthorSorter returns a new AuthorSorter.
+func NewAuthorSorter() AuthorSorter { return AuthorSorter{} }
+
+// DeletedAt returns a sort for the deleted_at column in the given direction.
+func (s AuthorSorter) DeletedAt(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "deleted_at", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s AuthorSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s AuthorSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// AuthorProfileSorter provides type-safe sort helpers for the AuthorProfile entity.
+// Each method returns a sql.Sort for the corresponding column.
+type AuthorProfileSorter struct{}
+
+// NewAuthorProfileSorter returns a new AuthorProfileSorter.
+func NewAuthorProfileSorter() AuthorProfileSorter { return AuthorProfileSorter{} }
+
+// AuthorID returns a sort for the author_id column in the given direction.
+func (s AuthorProfileSorter) AuthorID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "author_id", Direction: direction}
+}
+
+// Bio returns a sort for the bio column in the given direction.
+func (s AuthorProfileSorter) Bio(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "bio", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s AuthorProfileSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// AuthorTagSorter provides type-safe sort helpers for the AuthorTag entity.
+// Each method returns a sql.Sort for the corresponding column.
+type AuthorTagSorter struct{}
+
+// NewAuthorTagSorter returns a new AuthorTagSorter.
+func NewAuthorTagSorter() AuthorTagSorter { return AuthorTagSorter{} }
+
+// AuthorID returns a sort for the author_id column in the given direction.
+func (s AuthorTagSorter) AuthorID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "author_id", Direction: direction}
+}
+
+// TagID returns a sort for the tag_id column in the given direction.
+func (s AuthorTagSorter) TagID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "tag_id", Direction: direction}
+}
+
 // CounterSorter provides type-safe sort helpers for the Counter entity.
 // Each method returns a sql.Sort for the corresponding column.
 type CounterSorter struct{}
@@ -98,6 +159,33 @@ func (s OrderItemSorter) Quantity(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "quantity", Direction: direction}
 }
 
+// PostSorter provides type-safe sort helpers for the Post entity.
+// Each method returns a sql.Sort for the corresponding column.
+type PostSorter struct{}
+
+// NewPostSorter returns a new PostSorter.
+func NewPostSorter() PostSorter { return PostSorter{} }
+
+// AuthorID returns a sort for the author_id column in the given direction.
+func (s PostSorter) AuthorID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "author_id", Direction: direction}
+}
+
+// DeletedAt returns a sort for the deleted_at column in the given direction.
+func (s PostSorter) DeletedAt(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "deleted_at", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s PostSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Title returns a sort for the title column in the given direction.
+func (s PostSorter) Title(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "title", Direction: direction}
+}
+
 // ProductSorter provides type-safe sort helpers for the Product entity.
 // Each method returns a sql.Sort for the corresponding column.
 type ProductSorter struct{}
@@ -150,4 +238,21 @@ func (s RevisionSorter) DocumentID(direction sql.SortDirection) sql.Sort {
 // Number returns a sort for the number column in the given direction.
 func (s RevisionSorter) Number(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "number", Direction: direction}
+}
+
+// TagSorter provides type-safe sort helpers for the Tag entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TagSorter struct{}
+
+// NewTagSorter returns a new TagSorter.
+func NewTagSorter() TagSorter { return TagSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s TagSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s TagSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
 }

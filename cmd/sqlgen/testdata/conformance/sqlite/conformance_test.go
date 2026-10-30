@@ -41,7 +41,7 @@ func TestConformance(t *testing.T) {
 		Base:     q,
 		Caps:     suite.Capabilities{RowLocks: false},
 		Reset: func(t *testing.T) {
-			if _, err := db.Exec("DELETE FROM order_items; DELETE FROM products; DELETE FROM documents; DELETE FROM revisions; DELETE FROM labels; DELETE FROM counters"); err != nil {
+			if _, err := db.Exec("DELETE FROM order_items; DELETE FROM products; DELETE FROM documents; DELETE FROM revisions; DELETE FROM labels; DELETE FROM counters; DELETE FROM author_tags; DELETE FROM posts; DELETE FROM author_profiles; DELETE FROM tags; DELETE FROM authors"); err != nil {
 				t.Fatal(err)
 			}
 		},

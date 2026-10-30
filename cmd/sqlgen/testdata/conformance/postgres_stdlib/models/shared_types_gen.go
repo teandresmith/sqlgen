@@ -43,6 +43,23 @@ func excludeColumns(columns, exclude []string) []string {
 	return result
 }
 
+// nestedChildOptions copies the option fields that cross a table boundary
+// on a nested mutation. FieldOptions, LockMode and AllowInTransaction
+// deliberately do not propagate: the inner calls select nothing, take no row
+// lock, and issue no Stream.
+func nestedChildOptions[FO, PFO any](o *CallOptions[FO], parent CallOptions[PFO]) {
+	o.SkipCache, o.SkipEvents = parent.SkipCache, parent.SkipEvents
+	o.SkipHooks = parent.SkipHooks
+}
+
+// nestedError attributes a nested-mutation failure to its edge and verb.
+// The wrapped error is untouched, so errors.Is against the
+// sentinels and the *ConstraintError dispatch keep working through it; id is
+// nil when the failure is not id-scoped.
+func nestedError(edge, verb string, id any, err error) error {
+	return &NestedMutationError{Edge: edge, Verb: verb, ID: id, Err: err}
+}
+
 // resolveCallOptions applies option functions and returns the resolved struct. SkipHooks implies SkipCache and SkipEvents because cache and events are implemented as hooks.
 func resolveCallOptions[FO any](opts []func(*CallOptions[FO])) CallOptions[FO] {
 	var options CallOptions[FO]

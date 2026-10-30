@@ -112,6 +112,9 @@ func Run(t *testing.T, h *Harness) {
 	t.Run("Increment", func(t *testing.T) { increment(t, h) })
 	t.Run("Upsert", func(t *testing.T) { upsert(t, h) })
 	t.Run("UpsertMany", func(t *testing.T) { upsertMany(t, h) })
+	t.Run("CreateWithRelated", func(t *testing.T) { createWithRelated(t, h) })
+	t.Run("UpdateWithRelated", func(t *testing.T) { updateWithRelated(t, h) })
+	t.Run("UpsertWithRelated", func(t *testing.T) { upsertWithRelated(t, h) })
 }
 
 // CountingQuerier records every statement sent through it.

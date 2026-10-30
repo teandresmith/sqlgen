@@ -63,7 +63,7 @@ func TestConformance(t *testing.T) {
 		Base:     q,
 		Caps:     suite.Capabilities{RowLocks: true},
 		Reset: func(t *testing.T) {
-			if _, err := db.ExecContext(ctx, "TRUNCATE order_items, products, documents, revisions, labels, counters RESTART IDENTITY"); err != nil {
+			if _, err := db.ExecContext(ctx, "TRUNCATE order_items, products, documents, revisions, labels, counters, author_tags, posts, author_profiles, tags, authors RESTART IDENTITY"); err != nil {
 				t.Fatal(err)
 			}
 		},

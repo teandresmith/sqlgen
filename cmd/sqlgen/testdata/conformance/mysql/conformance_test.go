@@ -73,7 +73,9 @@ func TestConformance(t *testing.T) {
 		Reset: func(t *testing.T) {
 			// TRUNCATE refuses a table another table's foreign key references.
 			exec(t, "DELETE FROM order_items", "DELETE FROM products", "DELETE FROM documents",
-				"DELETE FROM revisions", "DELETE FROM labels", "DELETE FROM counters")
+				"DELETE FROM revisions", "DELETE FROM labels", "DELETE FROM counters",
+				"DELETE FROM author_tags", "DELETE FROM posts", "DELETE FROM author_profiles",
+				"DELETE FROM tags", "DELETE FROM authors")
 		},
 	})
 }

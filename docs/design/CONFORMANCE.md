@@ -213,7 +213,7 @@ of key or feature:
 | `flags` | Soft delete (bool) |
 | `audit_rows` | No PK: no PK methods generated (§9.4b) |
 | `counters` | `Increment`; `strict_updates: false`; a UNIQUE `name`, a CHECK on `hits`, and a NOT NULL `updated_at` with no DEFAULT that an insert can leave out |
-| `authors` / `posts` / `post_tags` / `tags` | o2m, m2o, m2m, nested mutations |
+| `authors` / `posts` / `author_profiles` / `tags` / `author_tags` | Nested mutations: one parent with an edge of each nestable shape, O2M on a nullable FK (every verb), a config-declared has-one on a UNIQUE nullable FK, and M2M through a pure junction; a UNIQUE `authors.name` conflict target, CHECK and UNIQUE constraints on the children, and soft delete on the parent and on `posts` |
 
 One `sqlgen.yml` per dialect, kept as close to identical as each dialect allows, so the generated
 Go API is the same everywhere apart from §7.2 type differences. Variants that change the API
