@@ -409,3 +409,92 @@ func failingPostsReads(h *Harness) (*models.Client, error) {
 	}
 	return models.New(h.Base, models.WithQueryHook(fail)), errLoad
 }
+
+// renameProductsOutOfBand renames every product "after" with a statement that
+// goes around the client, its hooks and the counting querier.
+func renameProductsOutOfBand(t *testing.T, h *Harness) {
+	t.Helper()
+	if _, err := h.Querier.Inner.Exec(context.Background(), "UPDATE products SET name = 'after'"); err != nil {
+		t.Fatalf("rename products out of band: %v", err)
+	}
+}
+
+// queryBarrier returns a query hook that holds each read that match selects until n
+// of them are in flight at once, and a func that reports whether they were.
+// A barrier that never fills releases its reads after lockWait.
+func queryBarrier(n int, match func(*hook.QueryContext) bool) (hook.QueryHook, func() bool) {
+	var arrived atomic.Int32
+	full := make(chan struct{})
+	barrier := func(next hook.QueryHandler) hook.QueryHandler {
+		return func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			if match(q) {
+				if arrived.Add(1) == int32(n) {
+					close(full)
+				}
+				select {
+				case <-full:
+				case <-time.After(lockWait):
+				}
+			}
+			return next(ctx, q)
+		}
+	}
+	return barrier, func() bool {
+		select {
+		case <-full:
+			return true
+		default:
+			return false
+		}
+	}
+}
+
+// seedAuthorEdges creates an author with one post and one tag.
+func seedAuthorEdges(t *testing.T, h *Harness) *models.Author {
+	t.Helper()
+	a := createAuthor(t, h, "author")
+	createPost(t, h, "post", new(a.ID))
+	linkAuthorTag(t, h, a.ID, createTag(t, h, "tag").ID)
+	return a
+}
+
+// readOf matches the query hook reads of op on table.
+func readOf(op hook.QueryOp, table hook.TableName) func(*hook.QueryContext) bool {
+	return func(q *hook.QueryContext) bool { return q.Op == op && q.Table == table }
+}
+
+// withPostsAndTags selects the author's two fanned-out relationships.
+func withPostsAndTags(o *models.CallOptions[models.AuthorFieldOptions]) {
+	o.FieldOptions = &models.AuthorFieldOptions{ID: true, Name: true, Posts: &models.PostRelationshipOptions{}, Tags: &models.TagRelationshipOptions{}}
+}
+
+// failingTagsLoad returns a client on h's querier whose tags read fails with
+// err once the posts read is in flight, and whose posts read then waits for its
+// context to end. The func reports whether that context was canceled.
+func failingTagsLoad(h *Harness, err error) (*models.Client, func() bool) {
+	postsWaiting := make(chan struct{})
+	var once sync.Once
+	var canceled atomic.Bool
+	fail := func(next hook.QueryHandler) hook.QueryHandler {
+		return func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			switch q.Table {
+			case models.TableTags:
+				select {
+				case <-postsWaiting:
+				case <-time.After(lockWait):
+				}
+				return nil, err
+			case models.TablePosts:
+				once.Do(func() { close(postsWaiting) })
+				select {
+				case <-ctx.Done():
+					canceled.Store(true)
+					return nil, ctx.Err()
+				case <-time.After(lockWait):
+				}
+			}
+			return next(ctx, q)
+		}
+	}
+	return models.New(h.Base, models.WithQueryHook(fail)), canceled.Load
+}

@@ -80,10 +80,10 @@ func eventIDs(t *testing.T, user uuid.UUID) map[uuid.UUID]bool {
 // rows in the database rather than about what the method chose to hand back.
 // Selecting the edges on the nested call itself is now a supported spelling too
 // — §18.5's connection reservation serializes §9.9.6's terminal re-read against
-// the transaction's single connection, so it may fan out freely — and
-// relationship_tx_fanout_test.go covers that surface. This test stays with the
-// outside read for its own reason: it asserts sets of rows, not a returned
-// object.
+// the transaction's single connection, so it may fan out freely — and the
+// conformance suite covers a multi-edge read inside a transaction. This test
+// stays with the outside read for its own reason: it asserts sets of rows, not
+// a returned object.
 func TestUpdateWithRelated_EveryMatrixCell(t *testing.T) {
 	truncateAll(t)
 	ctx := nestedCtx()

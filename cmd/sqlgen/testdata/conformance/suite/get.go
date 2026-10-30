@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -300,6 +301,74 @@ func get(t *testing.T, h *Harness) {
 		}
 		if diff := gocmp.Diff(&models.OrderItem{OrderID: 1, ProductID: p1, Quantity: 11}, got); diff != "" {
 			t.Errorf("Get(1, p1) (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("a repeated read queries the database again and sees a write made outside the client", func(t *testing.T) {
+		h.Reset(t)
+		p := createProduct(t, h, "before")
+		if _, err := h.Client.Products().Get(ctx, p.ID); err != nil {
+			t.Fatalf("first Get error = %v", err)
+		}
+		renameProductsOutOfBand(t, h)
+		h.Querier.ResetCount()
+		got, err := h.Client.Products().Get(ctx, p.ID)
+		if err != nil {
+			t.Fatalf("second Get error = %v", err)
+		}
+		if got.Name != "after" {
+			t.Errorf("second Get name = %q, want %q", got.Name, "after")
+		}
+		if n := len(statementsWithPrefix(h, "SELECT")); n != 1 {
+			t.Errorf("second Get sent %d SELECT statements, want 1", n)
+		}
+	})
+
+	t.Run("overlapping identical reads each query the database", func(t *testing.T) {
+		h.Reset(t)
+		p := createProduct(t, h, "p")
+		const n = 4
+		barrier, overlapped := queryBarrier(n, readOf(hook.OpGet, models.TableProducts))
+		c := models.New(h.Base, models.WithQueryHook(barrier))
+		h.Querier.ResetCount()
+		errs := make([]error, n)
+		var wg sync.WaitGroup
+		for i := range n {
+			wg.Go(func() { _, errs[i] = c.Products().Get(ctx, p.ID) })
+		}
+		wg.Wait()
+		if !overlapped() {
+			t.Fatalf("the %d reads never overlapped", n)
+		}
+		if err := errors.Join(errs...); err != nil {
+			t.Fatalf("overlapping Gets: %v", err)
+		}
+		if got := len(statementsWithPrefix(h, "SELECT")); got != n {
+			t.Errorf("%d overlapping Gets sent %d SELECT statements, want %d", n, got, n)
+		}
+	})
+
+	t.Run("selecting two fanned-out relationships inside a transaction loads both", func(t *testing.T) {
+		h.Reset(t)
+		a := seedAuthorEdges(t, h)
+		// The barrier holds the posts and tags loads until both are in flight, so
+		// their statements contend for the one connection. On SQLite the driver
+		// serializes them as well, so there the subtest passes without the
+		// transaction's reservation.
+		barrier, overlapped := queryBarrier(2, func(q *hook.QueryContext) bool {
+			return q.Op == hook.OpGetMany && (q.Table == models.TablePosts || q.Table == models.TableTags)
+		})
+		c := models.New(h.Base, models.WithQueryHook(barrier))
+		txCtx := beginBoundedTx(t, h)
+		got, err := c.Authors().Get(txCtx, a.ID, withPostsAndTags)
+		if !overlapped() {
+			t.Fatal("the posts and tags loads never overlapped")
+		}
+		if err != nil {
+			t.Fatalf("Get inside a transaction error = %v", err)
+		}
+		if len(got.Posts) != 1 || len(got.Tags) != 1 {
+			t.Errorf("Get inside a transaction loaded %d posts and %d tags, want 1 and 1", len(got.Posts), len(got.Tags))
 		}
 	})
 }
@@ -869,6 +938,67 @@ func getMany(t *testing.T, h *Harness) {
 		want := []models.OrderItem{{OrderID: 1, ProductID: p1, Quantity: 11}, {OrderID: 1, ProductID: p2, Quantity: 12}}
 		if diff := gocmp.Diff(want, getSortItems(got)); diff != "" {
 			t.Errorf("GetMany(order_id = 1) (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("a repeated read queries the database again and sees a write made outside the client", func(t *testing.T) {
+		h.Reset(t)
+		createProduct(t, h, "before")
+		if _, err := h.Client.Products().GetMany(ctx, nil); err != nil {
+			t.Fatalf("first GetMany error = %v", err)
+		}
+		renameProductsOutOfBand(t, h)
+		h.Querier.ResetCount()
+		got, err := h.Client.Products().GetMany(ctx, nil)
+		if err != nil {
+			t.Fatalf("second GetMany error = %v", err)
+		}
+		if len(got) != 1 || got[0].Name != "after" {
+			t.Errorf("second GetMany = %+v, want the one row renamed %q", got, "after")
+		}
+		if n := len(statementsWithPrefix(h, "SELECT")); n != 1 {
+			t.Errorf("second GetMany sent %d SELECT statements, want 1", n)
+		}
+	})
+
+	t.Run("overlapping identical reads each query the database", func(t *testing.T) {
+		h.Reset(t)
+		createProduct(t, h, "p")
+		const n = 4
+		barrier, overlapped := queryBarrier(n, readOf(hook.OpGetMany, models.TableProducts))
+		c := models.New(h.Base, models.WithQueryHook(barrier))
+		h.Querier.ResetCount()
+		errs := make([]error, n)
+		var wg sync.WaitGroup
+		for i := range n {
+			wg.Go(func() { _, errs[i] = c.Products().GetMany(ctx, nil) })
+		}
+		wg.Wait()
+		if !overlapped() {
+			t.Fatalf("the %d reads never overlapped", n)
+		}
+		if err := errors.Join(errs...); err != nil {
+			t.Fatalf("overlapping GetManys: %v", err)
+		}
+		if got := len(statementsWithPrefix(h, "SELECT")); got != n {
+			t.Errorf("%d overlapping GetManys sent %d SELECT statements, want %d", n, got, n)
+		}
+	})
+
+	t.Run("a failed relationship load returns that error and no rows", func(t *testing.T) {
+		h.Reset(t)
+		seedAuthorEdges(t, h)
+		boom := errors.New("tags load failed")
+		c, postsCanceled := failingTagsLoad(h, boom)
+		got, err := c.Authors().GetMany(ctx, nil, withPostsAndTags)
+		if got != nil {
+			t.Errorf("GetMany = %+v, want nil", got)
+		}
+		if !errors.Is(err, boom) || errors.Is(err, context.Canceled) {
+			t.Errorf("GetMany error = %v, want the tags load's error and not the canceled posts load's", err)
+		}
+		if !postsCanceled() {
+			t.Error("the posts load was not canceled when the tags load failed")
 		}
 	})
 }

@@ -567,6 +567,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | load.o2o-target-soft-delete | An O2O join to a soft-delete target carries the target's not-deleted condition in its `ON` clause | `unit: cmd/sqlgen/gen: TestRelationshipsTemplate_softDeleteOnRelated`; `unit: sql: TestBuildSelectJoin/join with soft delete timestamp` | postgres |  |
 | load.m2m-target-key | The M2M target fetch matches the target's own referenced key column against the junction rows, and maps targets to parents on that key | `unit: cmd/sqlgen/gen: TestGetTemplate_m2mTargetFilterUsesTargetPKField/string key`; `unit: cmd/sqlgen/gen: TestGetTemplate_m2mTargetFilterUsesTargetPKField/integer key` | all |  |
 | load.fanout-no-tx-bound | The O2M/M2M loader fan-out sets no concurrency bound of its own, inside a transaction or out | `unit: cmd/sqlgen/gen: TestGetTemplate_relationshipFanOutIsUnbounded` | all |  |
+| load.fanout-in-tx-serializes | Inside a transaction the O2M/M2M loads of one read are dispatched in parallel and the transaction's connection reservation serializes their statements, so a read whose two such loads overlap still loads both | `conformance: Get/selecting two fanned-out relationships inside a transaction loads both` | all |  |
 
 ## §14.1 Offset-Based
 <!-- prd: 14.1 sha256: 49980305eb959c7f -->
@@ -732,6 +733,15 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | client.close-querier | `Close()` calls `Close()` on the querier when it implements `io.Closer`, skips it otherwise, and returns the collected errors joined with `errors.Join` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_closeWithIOCloser`; `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_closeJoinsMultipleErrors` | postgres, sqlite |  |
 | client.close-cache-publisher | `Close()` also calls `Close()` on the configured cache and event publisher when each is set and implements `io.Closer` | `example: cache: TestClientClose_ClosesCacheAndEventPublisher`; `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_closeClosesConfiguredCacheAndPublisher` | sqlite |  |
 
+## §20.5 Concurrency Safety
+<!-- prd: 20.5 sha256: 15a679cf7a1814fc -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| concurrency.shared-client | The unified client and its entity clients are safe to share across goroutines without synchronization: overlapping calls from many goroutines on one client all succeed, each with its own correct result | `conformance: Concurrency/one client serves overlapping calls from many goroutines` | all |  |
+| concurrency.load-failure-first-error | When a `GetMany` relationship load fails, the errgroup cancels the remaining loads and `GetMany` returns that first error and no partial result | `conformance: GetMany/a failed relationship load returns that error and no rows` | all |  |
+| concurrency.tx-fanout | A `txCtx` is safe to use from several goroutines: overlapping client calls fanned out over one transaction's context all succeed, and the transaction commits every write | `conformance: Concurrency/overlapping calls on one transaction's context all run and commit` | all |  |
+
 ## §21.2 Hook Types
 <!-- prd: 21.2 sha256: 9d8fd1b0bd0ec4e4 -->
 
@@ -847,8 +857,16 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | hard-delete-many.batch-split | `HardDeleteMany` is bounded by `generation.batch_size`: each sub-batch is one write statement, and M keys take `ceil(M / batch_size)` statements | `conformance: HardDeleteMany/splits the keys into sub-batches of the table's batch size` | all | |
 | upsert-many.batch-split | `UpsertMany` is bounded by `generation.batch_size`. Each sub-batch of the deduped input is one write statement, so M distinct inputs take `ceil(M / batch_size)` writes | `conformance: UpsertMany/dedupes across the whole call before splitting it into sub-batches`; `conformance: UpsertMany/a target covering a caller-known key sends one statement per sub-batch and no key read-back`; `conformance: UpsertMany/a database-generated key is read back by the conflict target after each sub-batch` | all | |
 
+## §25.4 No Implicit Caching
+<!-- prd: 25.4 sha256: cf98e0efc0caae76 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| no-cache.get | Without the cache layer every `Get` call hits the database: a repeated `Get` sends its own `SELECT` and sees a write made outside the client, and overlapping identical `Get` calls are not deduplicated | `conformance: Get/a repeated read queries the database again and sees a write made outside the client`; `conformance: Get/overlapping identical reads each query the database` | all |  |
+| no-cache.get-many | Without the cache layer every `GetMany` call hits the database: a repeated `GetMany` sends its own `SELECT` and sees a write made outside the client, and overlapping identical `GetMany` calls are not deduplicated | `conformance: GetMany/a repeated read queries the database again and sees a write made outside the client`; `conformance: GetMany/overlapping identical reads each query the database` | all |  |
+
 ## §29.4.2 Mutations
-<!-- prd: 29.4.2 sha256: 4c499242556ed130 -->
+<!-- prd: 29.4.2 sha256: 9c7740ee93691b77 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -876,6 +894,17 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 |---|---|---|---|---|
 | tenancy.upsert-skip-tenancy-caller-tenant | Under `SkipTenancy`, `Upsert` does not auto-set the tenant from the resolver and inserts the caller's tenant field when it is set | `unit: cmd/sqlgen/gen: TestTenancyTemplate_upsert_skipTenancyUsesExplicitTenant` | postgres |  |
 
+## §29.7 Composite Primary Keys
+<!-- prd: 29.7 sha256: e64916d685aa78d0 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| tenancy-pk.match-proceeds | When the tenant column is in the PK, a `{Table}PK` whose tenant matches the resolver is accepted and `Get`, `Update`, `HardDelete`, `Increment` and `Exists` act on that row | `example: tenancy: TestCompositePK_Get_MatchSucceeds`; `example: tenancy: TestCompositePK_MatchingTenantProceeds` | sqlite |  |
+| tenancy-pk.mismatch | A `{Table}PK` whose tenant differs from the resolver makes `Get`, `Update`, `HardDelete`, `Increment` and `Exists` return `tenancy.ErrMismatch` before any statement | `example: tenancy: TestCompositePK_Get_MismatchReturnsErrMismatch`; `example: tenancy: TestCompositePK_Update_MismatchReturnsErrMismatch`; `example: tenancy: TestCompositePK_HardDelete_MismatchReturnsErrMismatch`; `example: tenancy: TestCompositePK_Increment_MismatchReturnsErrMismatch`; `example: tenancy: TestCompositePK_Exists_MismatchReturnsErrMismatch` | sqlite |  |
+| tenancy-pk.zero-tenant | A `{Table}PK` whose tenant is the zero value makes `Get`, `Update`, `HardDelete`, `Increment` and `Exists` return `tenancy.ErrMismatch` before any statement | `example: tenancy: TestCompositePK_Get_ZeroTenantOnPKReturnsErrMismatch`; `example: tenancy: TestCompositePK_Update_ZeroTenantOnPKReturnsErrMismatch`; `example: tenancy: TestCompositePK_HardDelete_ZeroTenantOnPKReturnsErrMismatch`; `example: tenancy: TestCompositePK_Increment_ZeroTenantOnPKReturnsErrMismatch`; `example: tenancy: TestCompositePK_Exists_ZeroTenantOnPKReturnsErrMismatch` | sqlite |  |
+| tenancy-pk.skip-tenancy | Under `SkipTenancy` the resolver is not consulted and the caller's `pk.Tenant` is used as-is, so `Get`, `Update`, `HardDelete`, `Increment` and `Exists` reach another tenant's row by PK | `example: tenancy: TestCompositePK_SkipTenancy_AdminCrossTenantGet`; `example: tenancy: TestCompositePK_SkipTenancyWritesAnotherTenantsRowByPK`; `example: tenancy: TestIncrement_CompositePK_SkipTenancy_Succeeds`; `example: tenancy: TestExists_CompositePK_SkipTenancy_Succeeds` | sqlite |  |
+| tenancy-pk.update-input-omits-tenant | When the tenant column is in the PK, the `{Table}PK` struct carries it and `Update{Table}Input` has no field for it | `example: tenancy: TestCompositePK_UpdateInputOmitsTheTenantColumn` | sqlite |  |
+
 ## §29.8 Soft Delete Composition
 <!-- prd: 29.8 sha256: f12ba7d857282f01 -->
 
@@ -884,6 +913,15 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | tenancy-soft-delete.anded | On a tenanted soft-delete table the tenant and soft-delete filters are AND'd: default reads return only the caller's live rows | `example: tenancy: TestSoftDelete_AndTenancyAreANDed`; `example: tenancy: TestSoftDelete_TenantedGetANDsTenantAndSoftDeleteFilters` | all |  |
 | tenancy-soft-delete.comparator-keeps-tenant | Setting the soft-delete comparator on the filter brings back soft-deleted rows only within the caller's tenant | `example: tenancy: TestSoftDelete_IncludeDeletedScopedToTenant` | all |  |
 | tenancy-soft-delete.orthogonal | `SkipTenancy` and the soft-delete comparator compose orthogonally: together they read every row, soft-deleted ones included, across all tenants | `example: tenancy: TestSoftDelete_SkipTenancyAndIncludeDeletedAreOrthogonal` | all |  |
+
+## §29.9 Hooks Orthogonality
+<!-- prd: 29.9 sha256: ba43cba310405cbc -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| tenancy-hooks.filter-not-a-hook | The tenancy filter is applied by the SQL builders, not by a hook: a call with `SkipHooks` is still scoped to the resolver's tenant | `example: tenancy: TestHooks_SkippingHooksKeepsTheTenantFilter` | sqlite |  |
+| tenancy-hooks.input-unchanged | A query hook's `Input` is the caller's struct unchanged: the tenant condition is added in SQL, not to the filter | `example: tenancy: TestHooks_QueryInputCarriesNoTenantCondition` | sqlite |  |
+| tenancy-hooks.affected-pks-tenant | On a table with the tenant column in its PK, `MutationContext.AffectedPKs` holds full `{Table}PK` values, tenant component included | `example: tenancy: TestHooks_AffectedPKsCarryTheTenantComponent` | sqlite |  |
 
 ## §29.10 Relationship Propagation
 <!-- prd: 29.10 sha256: 46e732fe5b40a130 -->

@@ -624,7 +624,7 @@
 | artifacts.filter-struct.tenanted | The filter spells the tenant column through the same resolution as the row struct, CreateInput and PK struct | `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantFilter` | all | generated-artifacts: filter-struct × tenanted |
 
 ## §29.4 Generated Behavior
-<!-- prd: 29.4 sha256: 7c35d41d4d647856 -->
+<!-- prd: 29.4 sha256: 735749f4011b7aa2 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -639,7 +639,7 @@
 | artifacts.count.tenanted | A tenanted table's `Count` appends the tenant predicate, as `GetMany` does | `unit: cmd/sqlgen/gen: TestGenerate_TenantedCountAppendsTenantPredicate/rendered methods/postgres`; `unit: cmd/sqlgen/gen: TestGenerate_TenantedCountAppendsTenantPredicate/rendered methods/mysql`; `unit: cmd/sqlgen/gen: TestGenerate_TenantedCountAppendsTenantPredicate/rendered methods/sqlite`; `unit: cmd/sqlgen/gen: TestGenerate_TenantedCountAppendsTenantPredicate/generated counts` | all | generated-artifacts: count × tenanted |
 
 ## §29.7 Composite Primary Keys
-<!-- prd: 29.7 sha256: c81ef90d6b6ef33a -->
+<!-- prd: 29.7 sha256: e64916d685aa78d0 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
