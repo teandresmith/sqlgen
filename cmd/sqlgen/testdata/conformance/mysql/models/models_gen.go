@@ -7003,6 +7003,12 @@ func (c *authorClient) CreateWithRelated(ctx context.Context, input *CreateAutho
 	if err != nil {
 		return nil, fmt.Errorf("create author with related: %w", err)
 	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -7075,6 +7081,9 @@ func (c *authorClient) UpdateWithRelated(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, fmt.Errorf("update author with related: %w", err)
 	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -7142,6 +7151,9 @@ func (c *authorClient) UpsertWithRelated(ctx context.Context, input *UpsertAutho
 	}, database.TxOptions{CallbackMode: c.callbackMode})
 	if err != nil {
 		return nil, fmt.Errorf("upsert author with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
 	}
 	return result, nil
 }
@@ -28635,6 +28647,12 @@ func (c *tagClient) CreateWithRelated(ctx context.Context, input *CreateTagWithR
 	if err != nil {
 		return nil, fmt.Errorf("create tag with related: %w", err)
 	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -28688,6 +28706,9 @@ func (c *tagClient) UpdateWithRelated(ctx context.Context, id int64, input *Upda
 	if err != nil {
 		return nil, fmt.Errorf("update tag with related: %w", err)
 	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -28736,6 +28757,9 @@ func (c *tagClient) UpsertWithRelated(ctx context.Context, input *UpsertTagWithR
 	}, database.TxOptions{CallbackMode: c.callbackMode})
 	if err != nil {
 		return nil, fmt.Errorf("upsert tag with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
 	}
 	return result, nil
 }

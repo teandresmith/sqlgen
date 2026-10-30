@@ -1232,6 +1232,20 @@ func TestNestedTemplate_ParentWriteStripsEveryRelationship(t *testing.T) {
 	}
 }
 
+// TestNestedTemplate_EmptyFieldOptionsReturnsNil pins the empty-selection
+// short-circuit on all three nested methods: the parent write keeps its key
+// forced on, because every nested write keys on it, but a caller whose
+// FieldOptions selects nothing gets nil back, as from any other write.
+func TestNestedTemplate_EmptyFieldOptionsReturnsNil(t *testing.T) {
+	const guard = "\tif options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {\n\t\treturn nil, nil\n\t}\n\treturn result, nil\n"
+	out := renderNested(t, buildNestedContexts(t, nil)["users"])
+	for _, method := range []string{"CreateWithRelated", "UpdateWithRelated", "UpsertWithRelated"} {
+		if excerpt := nestedExcerpt(out, method); !strings.Contains(excerpt, guard) {
+			t.Errorf("%s does not return nil for a FieldOptions that selects nothing:\n%s", method, excerpt)
+		}
+	}
+}
+
 // TestNestedTemplate_UpdateWithRelatedNonStrictNilParent pins the §4.6
 // strict_updates: false branch of UpdateWithRelated: the parent Update returns
 // a nil entity for a key that matches no row, and the transaction returns

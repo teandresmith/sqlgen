@@ -297,6 +297,12 @@ func (c *{{ $client }}) CreateWithRelated(ctx context.Context, input *{{ .Nested
 	if err != nil {
 		return nil, fmt.Errorf("create {{ $singular }} with related: %w", err)
 	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 {{- end }}
@@ -361,6 +367,9 @@ func (c *{{ $client }}) UpdateWithRelated(ctx context.Context, id {{ (index .PKC
 	if err != nil {
 		return nil, fmt.Errorf("update {{ $singular }} with related: %w", err)
 	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 {{- end }}
@@ -412,6 +421,9 @@ func (c *{{ $client }}) UpsertWithRelated(ctx context.Context, input *{{ .Nested
 	}, database.TxOptions{CallbackMode: c.callbackMode})
 	if err != nil {
 		return nil, fmt.Errorf("upsert {{ $singular }} with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
 	}
 	return result, nil
 }

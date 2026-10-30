@@ -4416,6 +4416,12 @@ func (c *assetClient) CreateWithRelated(ctx context.Context, input *CreateAssetW
 	if err != nil {
 		return nil, fmt.Errorf("create asset with related: %w", err)
 	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -4481,6 +4487,9 @@ func (c *assetClient) UpdateWithRelated(ctx context.Context, id uuid.UUID, input
 	if err != nil {
 		return nil, fmt.Errorf("update asset with related: %w", err)
 	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -4541,6 +4550,9 @@ func (c *assetClient) UpsertWithRelated(ctx context.Context, input *UpsertAssetW
 	}, database.TxOptions{CallbackMode: c.callbackMode})
 	if err != nil {
 		return nil, fmt.Errorf("upsert asset with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
 	}
 	return result, nil
 }
@@ -8029,6 +8041,12 @@ func (c *categoryClient) CreateWithRelated(ctx context.Context, input *CreateCat
 	if err != nil {
 		return nil, fmt.Errorf("create category with related: %w", err)
 	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -8086,6 +8104,9 @@ func (c *categoryClient) UpdateWithRelated(ctx context.Context, id int64, input 
 	if err != nil {
 		return nil, fmt.Errorf("update category with related: %w", err)
 	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -8138,6 +8159,9 @@ func (c *categoryClient) UpsertWithRelated(ctx context.Context, input *UpsertCat
 	}, database.TxOptions{CallbackMode: c.callbackMode})
 	if err != nil {
 		return nil, fmt.Errorf("upsert category with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
 	}
 	return result, nil
 }
@@ -11110,6 +11134,12 @@ func (c *documentClient) CreateWithRelated(ctx context.Context, input *CreateDoc
 	if err != nil {
 		return nil, fmt.Errorf("create document with related: %w", err)
 	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -11163,6 +11193,9 @@ func (c *documentClient) UpdateWithRelated(ctx context.Context, id uuid.UUID, in
 	if err != nil {
 		return nil, fmt.Errorf("update document with related: %w", err)
 	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -11211,6 +11244,9 @@ func (c *documentClient) UpsertWithRelated(ctx context.Context, input *UpsertDoc
 	}, database.TxOptions{CallbackMode: c.callbackMode})
 	if err != nil {
 		return nil, fmt.Errorf("upsert document with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
 	}
 	return result, nil
 }
@@ -21749,6 +21785,12 @@ func (c *keyedCodeClient) CreateWithRelated(ctx context.Context, input *CreateKe
 	if err != nil {
 		return nil, fmt.Errorf("create keyed_code with related: %w", err)
 	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -21802,6 +21844,9 @@ func (c *keyedCodeClient) UpdateWithRelated(ctx context.Context, id uuid.UUID, i
 	if err != nil {
 		return nil, fmt.Errorf("update keyed_code with related: %w", err)
 	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -21850,6 +21895,9 @@ func (c *keyedCodeClient) UpsertWithRelated(ctx context.Context, input *UpsertKe
 	}, database.TxOptions{CallbackMode: c.callbackMode})
 	if err != nil {
 		return nil, fmt.Errorf("upsert keyed_code with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
 	}
 	return result, nil
 }
@@ -32321,6 +32369,12 @@ func (c *orderClient) CreateWithRelated(ctx context.Context, input *CreateOrderW
 	if err != nil {
 		return nil, fmt.Errorf("create order with related: %w", err)
 	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -32385,6 +32439,9 @@ func (c *orderClient) UpdateWithRelated(ctx context.Context, id uuid.UUID, input
 	if err != nil {
 		return nil, fmt.Errorf("update order with related: %w", err)
 	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -32444,6 +32501,9 @@ func (c *orderClient) UpsertWithRelated(ctx context.Context, input *UpsertOrderW
 	}, database.TxOptions{CallbackMode: c.callbackMode})
 	if err != nil {
 		return nil, fmt.Errorf("upsert order with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
 	}
 	return result, nil
 }
@@ -35976,6 +36036,12 @@ func (c *productClient) CreateWithRelated(ctx context.Context, input *CreateProd
 	if err != nil {
 		return nil, fmt.Errorf("create product with related: %w", err)
 	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -36040,6 +36106,9 @@ func (c *productClient) UpdateWithRelated(ctx context.Context, id uuid.UUID, inp
 	if err != nil {
 		return nil, fmt.Errorf("update product with related: %w", err)
 	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -36099,6 +36168,9 @@ func (c *productClient) UpsertWithRelated(ctx context.Context, input *UpsertProd
 	}, database.TxOptions{CallbackMode: c.callbackMode})
 	if err != nil {
 		return nil, fmt.Errorf("upsert product with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
 	}
 	return result, nil
 }
@@ -54905,6 +54977,12 @@ func (c *userClient) CreateWithRelated(ctx context.Context, input *CreateUserWit
 	if err != nil {
 		return nil, fmt.Errorf("create user with related: %w", err)
 	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -54985,6 +55063,9 @@ func (c *userClient) UpdateWithRelated(ctx context.Context, id uuid.UUID, input 
 	if err != nil {
 		return nil, fmt.Errorf("update user with related: %w", err)
 	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -55060,6 +55141,9 @@ func (c *userClient) UpsertWithRelated(ctx context.Context, input *UpsertUserWit
 	}, database.TxOptions{CallbackMode: c.callbackMode})
 	if err != nil {
 		return nil, fmt.Errorf("upsert user with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
 	}
 	return result, nil
 }
@@ -60196,6 +60280,12 @@ func (c *workspaceNoteClient) CreateWithRelated(ctx context.Context, input *Crea
 	if err != nil {
 		return nil, fmt.Errorf("create workspace_note with related: %w", err)
 	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -60258,6 +60348,9 @@ func (c *workspaceNoteClient) UpdateWithRelated(ctx context.Context, id uuid.UUI
 	if err != nil {
 		return nil, fmt.Errorf("update workspace_note with related: %w", err)
 	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
 	return result, nil
 }
 
@@ -60315,6 +60408,9 @@ func (c *workspaceNoteClient) UpsertWithRelated(ctx context.Context, input *Upse
 	}, database.TxOptions{CallbackMode: c.callbackMode})
 	if err != nil {
 		return nil, fmt.Errorf("upsert workspace_note with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
 	}
 	return result, nil
 }
