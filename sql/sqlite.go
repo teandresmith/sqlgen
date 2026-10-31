@@ -110,4 +110,4 @@ func (d SQLiteDialect) NoLimitClause() string { return "LIMIT -1" }
 // runtime guard before reaching the SQL builder (see PRD §9.6a). This method
 // returning empty preserves the [Dialect] contract for [LockNone] callers and
 // is unreachable in well-formed generated code for other modes.
-func (d SQLiteDialect) LockClause(_ LockMode) string { return "" }
+func (d SQLiteDialect) LockClause(_ LockMode, _ string) string { return "" }

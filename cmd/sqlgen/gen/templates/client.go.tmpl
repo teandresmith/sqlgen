@@ -78,17 +78,20 @@ func WithTenantResolver(r tenancy.TenantResolver[{{ .TenancyGoType }}]) {{ .Clie
 
 {{ if eq .Dialect "mysql" -}}
 // mysqlVersion holds the parsed MySQL server version reported by SELECT VERSION().
-// Used by the LockMode runtime guard to reject NoWait / SkipLocked on MySQL < 8.0
-// before any SQL round-trip.
+// Used by the LockMode runtime guard to reject NoWait / SkipLocked on MySQL < 8.0,
+// and a locked read that joins a one-to-one relationship on MySQL < 8.0 or
+// MariaDB, before any SQL round-trip.
 type mysqlVersion struct {
-	Raw   string // full version string as returned by the server, e.g. "8.0.34" or "5.7.40-log"
-	Major int    // major version parsed from Raw, e.g. 8 or 5
+	Raw     string // full version string as returned by the server, e.g. "8.0.34" or "5.7.40-log"
+	Major   int    // major version parsed from Raw, e.g. 8 or 5
+	MariaDB bool   // Raw names a MariaDB server, e.g. "10.11.6-MariaDB"
 }
 
 // mysqlVersionCache lazily probes and caches the MySQL server version for the
 // lifetime of the client. The probe runs at most once (sync.Once) on the first
-// call to a Get / GetMany / Connection method that requests a version-gated
-// LockMode (NoWait / SkipLocked), always on the pool rather than on a caller's
+// call to a Get / GetMany / Paginate / Connection method that requests a version-gated
+// LockMode (NoWait / SkipLocked, or any mode on a read that joins a one-to-one
+// relationship), always on the pool rather than on a caller's
 // transaction connection. Cached errors are returned to every caller so a
 // transient probe failure surfaces immediately to the application instead of
 // silently retrying.
@@ -128,7 +131,7 @@ func (c *mysqlVersionCache) get(ctx context.Context) (mysqlVersion, error) {
 			c.err = fmt.Errorf("parse mysql version %q: %w", raw, err)
 			return
 		}
-		c.version = mysqlVersion{Raw: raw, Major: major}
+		c.version = mysqlVersion{Raw: raw, Major: major, MariaDB: strings.Contains(raw, "MariaDB")}
 	})
 	return c.version, c.err
 }

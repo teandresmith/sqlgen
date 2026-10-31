@@ -139,20 +139,9 @@ func (d PostgresDialect) DefaultValuesClause() string { return "DEFAULT VALUES" 
 // no LIMIT.
 func (d PostgresDialect) NoLimitClause() string { return "" }
 
-// LockClause returns the row-level lock SQL fragment for the given mode.
+// LockClause returns the row-level lock SQL fragment for the given mode,
+// restricted to the table aliased of when of is not empty.
 // Returns the empty string for [LockNone] or any unrecognised mode.
-func (d PostgresDialect) LockClause(mode LockMode) string {
-	switch mode {
-	case LockNone:
-		return ""
-	case LockForUpdate:
-		return "FOR UPDATE"
-	case LockForShare:
-		return "FOR SHARE"
-	case LockForUpdateNoWait:
-		return "FOR UPDATE NOWAIT"
-	case LockForUpdateSkipLocked:
-		return "FOR UPDATE SKIP LOCKED"
-	}
-	return ""
+func (d PostgresDialect) LockClause(mode LockMode, of string) string {
+	return lockClauseOf(mode, "FOR SHARE", of)
 }

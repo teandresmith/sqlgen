@@ -56,7 +56,7 @@ type Dialect interface {
     SupportsArrayParams() bool
     BackslashEscapes() bool
     DefaultValuesClause() string
-    LockClause(mode LockMode) string
+    LockClause(mode LockMode, of string) string
 }
 ```
 

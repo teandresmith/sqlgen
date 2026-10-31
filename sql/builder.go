@@ -33,7 +33,7 @@ type SelectOptions struct {
 	Limit      *int        // LIMIT value
 	Offset     *int        // OFFSET value
 	Alias      string      // primary table alias for JOIN queries; empty for non-JOIN
-	LockMode   LockMode    // row-level lock clause appended after LIMIT/OFFSET (see [LockMode])
+	LockMode   LockMode    // row-level lock clause appended after LIMIT/OFFSET; BuildSelectJoin restricts it to Alias (see [LockMode])
 }
 
 // InsertOptions configures an INSERT statement.
@@ -129,7 +129,7 @@ func BuildSelect(d Dialect, t Table, opts SelectOptions) (string, []any) {
 	args := appendWhere(&b, d, opts.Conditions, pos, table)
 	writeOrderBy(&b, d, opts.OrderBy, "")
 	writeLimitOffset(&b, d, opts.Limit, opts.Offset)
-	writeLockClause(&b, d, opts.LockMode)
+	writeLockClause(&b, d, opts.LockMode, "")
 
 	return b.String(), bindArgs(d, args)
 }
@@ -169,7 +169,10 @@ func BuildSelectJoin(d Dialect, t Table, joins []JoinClause, opts SelectOptions)
 	args := appendWhere(&b, d, opts.Conditions, pos, qualifier)
 	writeOrderBy(&b, d, opts.OrderBy, qualifier)
 	writeLimitOffset(&b, d, opts.Limit, opts.Offset)
-	writeLockClause(&b, d, opts.LockMode)
+	// The lock names the primary alias so the LEFT-JOINed rows stay unlocked:
+	// LockMode locks the rows the caller read, not the relationships loaded
+	// alongside them.
+	writeLockClause(&b, d, opts.LockMode, opts.Alias)
 
 	return b.String(), bindArgs(d, args)
 }
@@ -966,13 +969,14 @@ func writeLimitOffset(b *strings.Builder, d Dialect, limit, offset *int) {
 }
 
 // writeLockClause appends the dialect-specific row-level lock clause when the
-// mode is not [LockNone]. Dialects that do not support a given mode return an
-// empty fragment, in which case nothing is appended.
-func writeLockClause(b *strings.Builder, d Dialect, mode LockMode) {
+// mode is not [LockNone], restricted to the table aliased of when of is not
+// empty. Dialects that do not support a given mode return an empty fragment,
+// in which case nothing is appended.
+func writeLockClause(b *strings.Builder, d Dialect, mode LockMode, of string) {
 	if mode == LockNone {
 		return
 	}
-	clause := d.LockClause(mode)
+	clause := d.LockClause(mode, of)
 	if clause == "" {
 		return
 	}

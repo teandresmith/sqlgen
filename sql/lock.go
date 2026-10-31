@@ -56,3 +56,27 @@ func (m LockMode) String() string {
 		return "unknown"
 	}
 }
+
+// lockClauseOf renders the FOR UPDATE / FOR SHARE family shared by PostgreSQL
+// and MySQL. share is the dialect's spelling of the shared lock. A non-empty
+// of goes between the strength and the NOWAIT / SKIP LOCKED modifier, where
+// both dialects' grammars place the OF list.
+func lockClauseOf(mode LockMode, share, of string) string {
+	var strength, modifier string
+	switch mode {
+	case LockForUpdate:
+		strength = "FOR UPDATE"
+	case LockForShare:
+		strength = share
+	case LockForUpdateNoWait:
+		strength, modifier = "FOR UPDATE", " NOWAIT"
+	case LockForUpdateSkipLocked:
+		strength, modifier = "FOR UPDATE", " SKIP LOCKED"
+	default:
+		return ""
+	}
+	if of != "" {
+		strength += " OF " + of
+	}
+	return strength + modifier
+}

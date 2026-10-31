@@ -194,6 +194,55 @@ func get(t *testing.T, h *Harness) {
 		}
 	})
 
+	t.Run("a locked read through a one-to-one join locks only the parent", func(t *testing.T) {
+		h.Require(t, CapRowLocks)
+		h.Reset(t)
+		a := createAuthor(t, h, "a")
+		prof := createProfile(t, h, "bio", new(a.ID))
+		withProfile := func(mode sql.LockMode) func(*models.CallOptions[models.AuthorFieldOptions]) {
+			return func(o *models.CallOptions[models.AuthorFieldOptions]) {
+				o.LockMode = mode
+				o.FieldOptions = &models.AuthorFieldOptions{ID: true, Name: true, Profile: &models.AuthorProfileFieldOptions{ID: true, AuthorID: true, Bio: true}}
+			}
+		}
+		check := func(t *testing.T, txCtx context.Context, mode sql.LockMode, label string) {
+			t.Helper()
+			got, err := h.Client.Authors().Get(txCtx, a.ID, withProfile(mode))
+			if err != nil || got == nil {
+				t.Errorf("Authors().Get(a, %s, {Profile}) %s = %+v, %v, want a with its profile", mode, label, got, err)
+				return
+			}
+			if diff := gocmp.Diff(prof, got.Profile); diff != "" {
+				t.Errorf("Authors().Get(a, %s) %s Profile (-want +got):\n%s", mode, label, diff)
+			}
+			if err := authorProbeLock(t, h, a.ID); err == nil {
+				t.Errorf("after Authors().Get(a, %s) %s another transaction's NOWAIT read of a succeeded, want a locked", mode, label)
+			}
+		}
+		for _, mode := range lockModes {
+			txCtx := beginBoundedTx(t, h)
+			check(t, txCtx, mode, "")
+			if err := profileProbeLock(t, h, prof.ID); err != nil {
+				t.Errorf("after Authors().Get(a, %s, {Profile}) another transaction's NOWAIT read of the profile = %v, want it unlocked", mode, err)
+			}
+			if err := database.Rollback(txCtx); err != nil {
+				t.Fatalf("roll back: %v", err)
+			}
+		}
+		// NOWAIT would fail on a locked joined row; SKIP LOCKED would drop it.
+		contender := otherTx(t, h)
+		if _, err := h.Client.AuthorProfiles().Get(contender, prof.ID, withLock[models.AuthorProfileFieldOptions](sql.LockForUpdate)); err != nil {
+			t.Fatalf("the contender's AuthorProfiles().Get(LockForUpdate) error = %v", err)
+		}
+		for _, mode := range []sql.LockMode{sql.LockForUpdateNoWait, sql.LockForUpdateSkipLocked} {
+			txCtx := beginBoundedTx(t, h)
+			check(t, txCtx, mode, "with the profile locked elsewhere")
+			if err := database.Rollback(txCtx); err != nil {
+				t.Fatalf("roll back: %v", err)
+			}
+		}
+	})
+
 	t.Run("a locked row makes another transaction's locking read wait until commit", func(t *testing.T) {
 		h.Require(t, CapRowLocks)
 		h.Reset(t)
@@ -1115,6 +1164,34 @@ func getProbeLock(t *testing.T, h *Harness, id int64) error {
 	}
 	defer func() { _ = database.Rollback(txCtx) }()
 	_, err = h.Client.Products().Get(txCtx, id, withLock[models.ProductFieldOptions](sql.LockForUpdateNoWait))
+	return err
+}
+
+// authorProbeLock is getProbeLock for an author row.
+func authorProbeLock(t *testing.T, h *Harness, id int64) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), lockWait)
+	defer cancel()
+	txCtx, err := database.NewTransaction(ctx, h.Querier, "probe")
+	if err != nil {
+		t.Fatalf("begin the probe transaction: %v", err)
+	}
+	defer func() { _ = database.Rollback(txCtx) }()
+	_, err = h.Client.Authors().Get(txCtx, id, withLock[models.AuthorFieldOptions](sql.LockForUpdateNoWait))
+	return err
+}
+
+// profileProbeLock is getProbeLock for an author profile row.
+func profileProbeLock(t *testing.T, h *Harness, id int64) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), lockWait)
+	defer cancel()
+	txCtx, err := database.NewTransaction(ctx, h.Querier, "probe")
+	if err != nil {
+		t.Fatalf("begin the probe transaction: %v", err)
+	}
+	defer func() { _ = database.Rollback(txCtx) }()
+	_, err = h.Client.AuthorProfiles().Get(txCtx, id, withLock[models.AuthorProfileFieldOptions](sql.LockForUpdateNoWait))
 	return err
 }
 

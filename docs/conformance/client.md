@@ -227,7 +227,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | nested.empty-field-options-returns-nil | An empty `&FieldOptions{}` makes `CreateWithRelated`, `UpdateWithRelated` and `UpsertWithRelated` perform their writes, nested ones included, and return `nil` | `unit: cmd/sqlgen/gen: TestNestedTemplate_EmptyFieldOptionsReturnsNil`; `conformance: CreateWithRelated/an empty FieldOptions writes every edge and returns nil`; `conformance: UpdateWithRelated/an empty FieldOptions performs every write and returns nil`; `conformance: UpsertWithRelated/an empty FieldOptions writes, nested rows included, and returns nil` | all |  |
 
 ## §9.6a Lock Modes
-<!-- prd: 9.6a sha256: 107442e7a05a46e0 -->
+<!-- prd: 9.6a sha256: 35c89472430124e1 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -270,6 +270,8 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | update-with-related.lock-mode-ignored | `UpdateWithRelated` ignores `LockMode`: with `LockForUpdate` outside a transaction it succeeds and writes, with or without a relationship selected, on every dialect including SQLite | `conformance: UpdateWithRelated/ignores LockMode outside a transaction, with or without a relationship selected` | all | client-methods: UpdateWithRelated × lock-mode |
 | update-with-related.lock-mode-no-row-lock | Inside a transaction, `UpdateWithRelated` with `LockForUpdate` takes no row lock on the parent it reads back, so another transaction can lock that row with `NOWAIT` | `conformance: UpdateWithRelated/inside a transaction LockMode takes no row lock on the parent it reads back` | postgres, mysql |  |
 | upsert-with-related.lock-mode-ignored | `UpsertWithRelated` ignores `LockMode`: with `LockForUpdate` outside a transaction it succeeds and writes on every dialect, SQLite included, both without a relationship selected and with one, when the terminal read runs | `conformance: UpsertWithRelated/ignores LockMode outside a transaction`; `conformance: UpsertWithRelated/ignores LockMode outside a transaction with a relationship selected` | all | client-methods: UpsertWithRelated × lock-mode |
+| lock.o2o-join-locks-parent | A locked `Get` that selects an O2O relationship locks only the parent row: in every mode it returns the parent with its related row and leaves the related row unlocked, and with the related row held by another transaction `LockForUpdateNoWait` and `LockForUpdateSkipLocked` still return the parent with its related row | `conformance: Get/a locked read through a one-to-one join locks only the parent` | postgres, mysql | |
+| lock.o2o-join-mysql-version-guard | On MySQL, a locked `Get`, `GetMany`, `Paginate` or `Connection` that selects an O2O relationship returns an error before any SQL when the server is older than 8.0 or reports `MariaDB`; a locked read that selects none needs no probe for `LockForUpdate` or `LockForShare`, and MariaDB still passes the `NOWAIT` / `SKIP LOCKED` check | `unit: cmd/sqlgen/gen: TestLockModeGuard_OneToOneJoin` | mysql | |
 
 ## §9.7 PK Resolution and Entity Return Path
 <!-- prd: 9.7 sha256: d9e9085ba6903297 -->

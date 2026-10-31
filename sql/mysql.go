@@ -112,22 +112,18 @@ func (d MySQLDialect) DefaultValuesClause() string { return "() VALUES ()" }
 // ask for every remaining row.
 func (d MySQLDialect) NoLimitClause() string { return "LIMIT 18446744073709551615" }
 
-// LockClause returns the row-level lock SQL fragment for the given mode.
-// MySQL uses "LOCK IN SHARE MODE" for [LockForShare]. NoWait and SkipLocked
-// require MySQL 8.0+; the version guard lives in the codegen runtime layer.
-// Returns the empty string for [LockNone] or any unrecognised mode.
-func (d MySQLDialect) LockClause(mode LockMode) string {
-	switch mode {
-	case LockNone:
-		return ""
-	case LockForUpdate:
-		return "FOR UPDATE"
-	case LockForShare:
-		return "LOCK IN SHARE MODE"
-	case LockForUpdateNoWait:
-		return "FOR UPDATE NOWAIT"
-	case LockForUpdateSkipLocked:
-		return "FOR UPDATE SKIP LOCKED"
+// LockClause returns the row-level lock SQL fragment for the given mode,
+// restricted to the table aliased of when of is not empty.
+// Unqualified, MySQL uses "LOCK IN SHARE MODE" for [LockForShare]; that
+// spelling has no OF form, so the qualified share lock is "FOR SHARE OF".
+// NoWait and SkipLocked require MySQL 8.0+, and so does every OF form, which
+// MariaDB does not accept at all; the version guard lives in the codegen
+// runtime layer. Returns the empty string for [LockNone] or any unrecognised
+// mode.
+func (d MySQLDialect) LockClause(mode LockMode, of string) string {
+	share := "LOCK IN SHARE MODE"
+	if of != "" {
+		share = "FOR SHARE"
 	}
-	return ""
+	return lockClauseOf(mode, share, of)
 }

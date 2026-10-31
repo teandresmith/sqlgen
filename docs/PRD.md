@@ -3992,9 +3992,13 @@ const (
 
 The clause is appended to the `SELECT` statement after the `ORDER BY`/`LIMIT`/`OFFSET` clauses by the dialect-specific `BuildSelect` implementation.
 
+**A read that joins O2O edges locks only the parent rows.** When `FieldOptions` selects an O2O relationship, the read is one `BuildSelectJoin` statement that LEFT JOINs the related tables ([13.2](#132-loading-strategy)). Its lock clause names the parent alias, so only the primary rows are locked: `FOR UPDATE OF u`, `FOR SHARE OF u`, `FOR UPDATE OF u NOWAIT`, `FOR UPDATE OF u SKIP LOCKED`. MySQL takes the same forms, with `FOR SHARE OF u` for `LockForShare`, since `LOCK IN SHARE MODE` has no `OF` form. An unqualified clause would be wrong on both servers. PostgreSQL rejects it on the nullable side of an outer join. MySQL would lock the joined rows too, so `LockForUpdateNoWait` would fail on a child another transaction holds, and `LockForUpdateSkipLocked` would return the parent with the O2O field nil. `BuildSelect`, which reads one table, keeps the unqualified clause.
+
 **SQLite limitation.** SQLite has no per-row locking — its concurrency model uses whole-database write locks via `BEGIN IMMEDIATE` / `BEGIN EXCLUSIVE`. Setting any `LockMode` other than `LockNone` against the SQLite dialect returns a sqlgen error at the runtime guard (see "Transaction precondition" below); no SQL is issued. Cross-dialect codebases must branch their concurrency design at the application layer for SQLite.
 
-**MySQL version requirement.** `NOWAIT` and `SKIP LOCKED` modifiers require MySQL 8.0+. On older MySQL versions, the runtime rejects these modes — the generator emits a version-aware guard that returns an error at call time. The MySQL client probes the server with `SELECT VERSION()` lazily on the first `LockForUpdateNoWait`/`LockForUpdateSkipLocked` call, gated by `sync.Once` so the probe runs at most once per client lifetime; the probe result (success or error) is cached so a transient probe failure surfaces immediately to every caller. PostgreSQL and SQLite client structs do not carry the version cache. MariaDB (`10.x-MariaDB` version strings) parses to major version 10 and trivially clears the `< 8` check — MariaDB 10.6+ supports `NOWAIT` / `SKIP LOCKED`.
+**MySQL version requirement.** `NOWAIT` and `SKIP LOCKED` modifiers require MySQL 8.0+. On older MySQL versions, the runtime rejects these modes — the generator emits a version-aware guard that returns an error at call time. The MySQL client probes the server with `SELECT VERSION()` lazily on the first call that needs it (`LockForUpdateNoWait`/`LockForUpdateSkipLocked`, or a locked read that selects an O2O edge, below), gated by `sync.Once` so the probe runs at most once per client lifetime; the probe result (success or error) is cached so a transient probe failure surfaces immediately to every caller. PostgreSQL and SQLite client structs do not carry the version cache. MariaDB (`10.x-MariaDB` version strings) parses to major version 10 and trivially clears the `< 8` check — MariaDB 10.6+ supports `NOWAIT` / `SKIP LOCKED`.
+
+The `OF` form a read that joins O2O edges uses also requires MySQL 8.0+, in every mode, and MariaDB does not accept it. On a table with O2O relationships, a locked read that selects one probes the same cached version first. On MySQL before 8.0, or on a server whose version string contains `MariaDB`, it returns a sqlgen error before SQL. A read that selects no O2O relationship is unaffected: it needs no probe for `LockForUpdate` or `LockForShare`, and MariaDB still clears the `NOWAIT` / `SKIP LOCKED` check.
 
 #### Transaction precondition
 
@@ -4128,6 +4132,7 @@ The runtime guard added to read-method bodies enforces:
 | `LockMode != LockNone` outside a transaction | Returns sqlgen error before SQL roundtrip |
 | `LockMode != LockNone` on SQLite dialect | Returns sqlgen error before SQL roundtrip |
 | `LockNoWait` / `LockSkipLocked` on MySQL < 8.0 | Returns sqlgen error before SQL roundtrip |
+| `LockMode != LockNone` selecting an O2O relationship on MySQL < 8.0 or MariaDB | Returns sqlgen error before SQL roundtrip |
 | `LockMode != LockNone` with active tx on PG / MySQL 8.0+ | Forces `SkipCache = true`; emits lock clause; executes |
 
 #### Codegen surface
@@ -16313,8 +16318,9 @@ type Dialect interface {
     // Single-row INSERT that supplies no column (9.4c)
     DefaultValuesClause() string                  // PostgreSQL/SQLite: DEFAULT VALUES, MySQL: () VALUES ()
 
-    // Row-level lock fragment (9.6a); "" for LockNone and on SQLite
-    LockClause(mode LockMode) string
+    // Row-level lock fragment (9.6a); "" for LockNone and on SQLite.
+    // A non-empty of restricts it to that table alias: FOR UPDATE OF p.
+    LockClause(mode LockMode, of string) string
 
     // "No limit" before an OFFSET with no LIMIT; MySQL and SQLite reject a bare OFFSET
     NoLimitClause() string                        // PostgreSQL: "", MySQL: LIMIT 18446744073709551615, SQLite: LIMIT -1
@@ -16342,7 +16348,7 @@ The `ANY`/`ALL` approach is preferred for PostgreSQL+pgx because:
 | Function | SQL Statement | Dialect Variations |
 |----------|--------------|-------------------|
 | `BuildSelect` | `SELECT ... FROM {table} WHERE ... ORDER BY ... LIMIT ... OFFSET` | Placeholder style, identifier quoting, schema formatting. An `OFFSET` with no `LIMIT` is preceded by `NoLimitClause()` |
-| `BuildSelectJoin` | `SELECT {alias}.{col} AS "{alias}.{col}", ... FROM {table} {alias} LEFT JOIN {related} {alias} ON ... WHERE ...` | O2O relationship loading via LEFT JOIN. Produces aliased columns with `"."` separator for prefix-based scanning. Supports chained O2O JOINs, soft delete conditions on joined tables, and polymorphic filters in JOIN conditions. |
+| `BuildSelectJoin` | `SELECT {alias}.{col} AS "{alias}.{col}", ... FROM {table} {alias} LEFT JOIN {related} {alias} ON ... WHERE ...` | O2O relationship loading via LEFT JOIN. Produces aliased columns with `"."` separator for prefix-based scanning. Supports chained O2O JOINs, soft delete conditions on joined tables, and polymorphic filters in JOIN conditions. A lock clause names the primary alias (`FOR UPDATE OF {alias}`), so only the primary rows are locked (9.6a). |
 | `BuildInsert` | `INSERT INTO {table} ... VALUES ...` + optional `RETURNING` | MySQL: no RETURNING; upsert syntax varies. With no column supplied it emits `INSERT INTO {table} DEFAULT VALUES` (PostgreSQL/SQLite) or `INSERT INTO {table} () VALUES ()` (MySQL) via `DefaultValuesClause()`, and no conflict clause — SQLite accepts none after `DEFAULT VALUES` ([Upsert Conflict Keys](#upsert-conflict-keys)) |
 | `BuildMultiInsert` | `INSERT INTO {table} ... VALUES (...), (...), ...` | Same as BuildInsert |
 | `BuildUpdate` | `UPDATE {table} SET ... WHERE ...` + optional `RETURNING` | MySQL: no RETURNING. Writes every column in the SET map; the caller passes only the fields to change (generated code checks each `omittable.Value[T]`'s `IsSet()`, [10.3](#103-usage-in-generated-code)). |

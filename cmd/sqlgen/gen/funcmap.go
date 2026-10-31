@@ -407,9 +407,13 @@ func flatMutationSurface(t APITableContext) bool {
 // template fragment. Dialect determines which guard variant is emitted; OpName
 // is interpolated into error messages so each call site reports the table-
 // scoped operation that failed (e.g. "get product", "connection products").
+// JoinsO2O reports whether the table has one-to-one relationships, whose
+// selection routes the read through a LEFT JOIN whose lock names the parent
+// alias.
 type LockGuardContext struct {
-	Dialect string
-	OpName  string
+	Dialect  string
+	OpName   string
+	JoinsO2O bool
 }
 
 // funcLockGuardCtx is the template helper that constructs a LockGuardContext
@@ -417,8 +421,9 @@ type LockGuardContext struct {
 // shared/_lock_mode_guard.tmpl.
 func funcLockGuardCtx(tc TableContext, opName string) LockGuardContext {
 	return LockGuardContext{
-		Dialect: string(tc.Dialect),
-		OpName:  opName,
+		Dialect:  string(tc.Dialect),
+		OpName:   opName,
+		JoinsO2O: tc.HasO2ORelationships,
 	}
 }
 
