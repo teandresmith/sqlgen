@@ -18,3 +18,10 @@ The SQL builders and dialects (Appendix A, Appendix B), the comparators and cond
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | omittable.json-omitzero | A generated input field of type `omittable.Value[T]` carries the `omitzero` option in its `json` tag | `unit: cmd/sqlgen/gen: TestCreateInputTemplate_dbStrategyUUIDPK_omittable`; `unit: cmd/sqlgen/gen: TestInputTemplate_goldenFile_products`; `unit: cmd/sqlgen/gen: TestInputTemplate_goldenFile_orderItems` | all |  |
+
+## §11.2 Comparator Types
+<!-- prd: 11.2 sha256: cfdcc0e3a93d5e56 -->
+
+| ID | Requirement | Tests | Applies to | Matrix cell |
+|---|---|---|---|---|
+| comparator.pg-only.never-selected | The generator never selects the `JSONB` or `Slice` comparators for a MySQL or SQLite column: a `jsonb` column takes `JSON` on MySQL and is non-filterable on SQLite, and no array type, `type_map` entry or type override to a Go slice makes a column a slice | `unit: cmd/sqlgen/gen: TestComparatorTypeSelection/mysql jsonb (types.JSON) → JSON, never JSONB`; `unit: cmd/sqlgen/gen: TestJSONComparator_sqliteModelSideNonFilterable`; `unit: cmd/sqlgen/gotype: TestArrayTypesAreSlicesOnlyOnPostgres` | mysql, sqlite |  |

@@ -461,6 +461,39 @@ func TestNullableSQLNullTypes(t *testing.T) {
 	}
 }
 
+// TestArrayTypesAreSlicesOnlyOnPostgres pins that nothing outside PostgreSQL
+// resolves to a slice column, which is what keeps the Slice comparator
+// PostgreSQL-only: neither an array-suffixed type nor an override to a Go
+// slice type marks the column as a slice on MySQL or SQLite.
+func TestArrayTypesAreSlicesOnlyOnPostgres(t *testing.T) {
+	tests := []struct {
+		name      string
+		dialect   config.Dialect
+		overrides map[string]config.TypeOverride
+		typeMap   map[string]string
+		tableOver map[string]config.TypeOverride
+		sqlType   string
+		wantSlice bool
+	}{
+		{name: "postgres text[]", dialect: "postgres", sqlType: "text[]", wantSlice: true},
+		{name: "mysql text[]", dialect: "mysql", sqlType: "text[]"},
+		{name: "sqlite text[]", dialect: "sqlite", sqlType: "text[]"},
+		{name: "mysql override to []string", dialect: "mysql", overrides: map[string]config.TypeOverride{"json": {Type: "[]string"}}, sqlType: "json"},
+		{name: "sqlite override to []string", dialect: "sqlite", overrides: map[string]config.TypeOverride{"text": {Type: "[]string"}}, sqlType: "text"},
+		{name: "mysql type_map to []string", dialect: "mysql", typeMap: map[string]string{"c": "[]string"}, sqlType: "json"},
+		{name: "sqlite table override to []string", dialect: "sqlite", tableOver: map[string]config.TypeOverride{"text": {Type: "[]string"}}, sqlType: "text"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gotype.NewResolver(tt.dialect, true, tt.overrides)
+			got := r.Resolve(tt.sqlType, false, "c", tt.typeMap, tt.tableOver)
+			if got.IsSlice != tt.wantSlice {
+				t.Errorf("Resolve(%q) on %s IsSlice = %v, want %v (resolved %+v)", tt.sqlType, tt.dialect, got.IsSlice, tt.wantSlice, got)
+			}
+		})
+	}
+}
+
 func TestPostgresArrayTypes(t *testing.T) {
 	t.Run("built-in array types", func(t *testing.T) {
 		r := gotype.NewResolver("postgres", true, nil)

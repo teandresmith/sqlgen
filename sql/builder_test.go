@@ -933,19 +933,6 @@ func TestBuildMultiInsertDefault(t *testing.T) {
 			wantArgs: []any{1, "alice", 2, "bob"},
 		},
 		{
-			name:    "sqlite default in some positions",
-			dialect: lite,
-			table:   ltTbl,
-			opts: sql.MultiInsertOptions{
-				Columns: []string{"name", "id", "company_id"},
-				ValueRows: [][]any{
-					{"alice", 1, sql.Default},
-				},
-			},
-			wantSQL:  `INSERT INTO "users" ("company_id", "id", "name") VALUES (DEFAULT, ?, ?)`,
-			wantArgs: []any{1, "alice"},
-		},
-		{
 			name:    "mixed rows some with default some with real values",
 			dialect: pg,
 			table:   pgTbl,

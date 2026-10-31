@@ -8313,6 +8313,8 @@ Two things travel in the option set, and both must reach an arbitrarily nested m
 | `Opaque[T]` | any `T` — no constraint | `Eq`, `Neq`, `In`, `Nin`, `Gt`, `Gte`, `Lt`, `Lte`, `Custom` |
 | `NullableOpaque[T]` | nullable opaque | All of Opaque + `Null` |
 
+**`Enum[T]`'s `In` and `Nin` always expand**, to `IN ($1, $2, ...)` / `NOT IN ($1, $2, ...)`, PostgreSQL+pgx included, where every other family takes the array form ([11.3](#113-comparator-interface)). A generated enum is a named string type, and pgx has no encode plan for a slice of one against the enum column's array type: `= ANY($1)` fails the query (`cannot find encode plan`), while each scalar bound alone converts as a string. An enum column's values are its declared members, so the expanded list stays bounded by the type.
+
 **`Opaque[T]` — the family for columns whose Go type is neither text nor a Go
 numeric.** `bytea` / `blob`, `inet`, `cidr` and `macaddr` resolve to `[]byte`,
 `net.IP`, `net.IPNet` and `net.HardwareAddr`. Each is equality- and
@@ -8371,7 +8373,7 @@ Two limits follow from the cast and are accepted rather than worked around:
 
 #### PostgreSQL-Only Comparators
 
-These comparators are only generated when `input.dialect` is `postgres`. Using them with other dialects is a configuration error caught at generation time.
+These comparators are only generated when `input.dialect` is `postgres`. Comparator selection follows the column type ([Comparator Selection by Column Type](#comparator-selection-by-column-type)), so the generator never selects them for a MySQL or SQLite column, and no configuration can ask it to.
 
 | Comparator | Operators | SQL Operators |
 |------------|-----------|---------------|
@@ -8454,13 +8456,13 @@ Each `sql.Condition` contains a `Clause` (SQL fragment with `$` placeholder), a 
 The distinction is load-bearing rather than cosmetic: `comparator.JSON`'s MySQL arms emit `JSON_CONTAINS(col, $)`, which leads with a function name, so blind prepending yields `u.JSON_CONTAINS(col, ?)` — MySQL resolves that as a stored routine in schema `u` and fails at request time. Dropping qualification instead is not an alternative: an unqualified column is ambiguous whenever a joined table carries the same name.
 
 The `dialect` parameter is used by:
-- `In`/`Nin` operators — produce `= ANY($1)` / `!= ALL($1)` on PostgreSQL+pgx, expanded `IN ($1, $2, ...)` / `NOT IN ($1, $2, ...)` on others
+- `In`/`Nin` operators — produce `= ANY($1)` / `!= ALL($1)` on PostgreSQL+pgx, expanded `IN ($1, $2, ...)` / `NOT IN ($1, $2, ...)` on others. `Enum[T]` expands on every dialect ([11.2](#112-comparator-types))
 - `JSON`/`JSONB` comparators — produce dialect-specific JSON operators
-- Universal comparators use the dialect for placeholder style but produce standard SQL otherwise
+- Universal comparators use it only for `In`/`Nin`; their other operators produce the same clause on every dialect, with `$` tokens the builder renders as the dialect's placeholders ([11.5](#115-condition-composition))
 
 ### 11.4 Custom Conditions
 
-All comparators support a `Custom` field: raw `sql.Condition` for arbitrary SQL injection when built-in operators are insufficient.
+All comparators support a `Custom []sql.Condition` field: raw conditions for arbitrary SQL when built-in operators are insufficient.
 
 ### 11.5 Condition Composition
 
@@ -16328,6 +16330,8 @@ type Dialect interface {
 | MySQL | `stdlib` | `` `col` IN (?, ?, ...) `` | `` `col` NOT IN (?, ?, ...) `` | Expanded |
 | SQLite | `stdlib` | `"col" IN (?, ?, ...)` | `"col" NOT IN (?, ?, ...)` | Expanded |
 
+`comparator.Enum` is the exception: its `In` / `Nin` take the expanded rows on PostgreSQL+pgx too ([11.2](#112-comparator-types)).
+
 The `ANY`/`ALL` approach is preferred for PostgreSQL+pgx because:
 - Single placeholder regardless of list size (no parameter count limit concerns)
 - pgx handles Go slice → PostgreSQL array conversion natively
@@ -16341,7 +16345,7 @@ The `ANY`/`ALL` approach is preferred for PostgreSQL+pgx because:
 | `BuildSelectJoin` | `SELECT {alias}.{col} AS "{alias}.{col}", ... FROM {table} {alias} LEFT JOIN {related} {alias} ON ... WHERE ...` | O2O relationship loading via LEFT JOIN. Produces aliased columns with `"."` separator for prefix-based scanning. Supports chained O2O JOINs, soft delete conditions on joined tables, and polymorphic filters in JOIN conditions. |
 | `BuildInsert` | `INSERT INTO {table} ... VALUES ...` + optional `RETURNING` | MySQL: no RETURNING; upsert syntax varies. With no column supplied it emits `INSERT INTO {table} DEFAULT VALUES` (PostgreSQL/SQLite) or `INSERT INTO {table} () VALUES ()` (MySQL) via `DefaultValuesClause()`, and no conflict clause — SQLite accepts none after `DEFAULT VALUES` ([Upsert Conflict Keys](#upsert-conflict-keys)) |
 | `BuildMultiInsert` | `INSERT INTO {table} ... VALUES (...), (...), ...` | Same as BuildInsert |
-| `BuildUpdate` | `UPDATE {table} SET ... WHERE ...` + optional `RETURNING` | MySQL: no RETURNING. Handles `omittable.Value[T]` natively. |
+| `BuildUpdate` | `UPDATE {table} SET ... WHERE ...` + optional `RETURNING` | MySQL: no RETURNING. Writes every column in the SET map; the caller passes only the fields to change (generated code checks each `omittable.Value[T]`'s `IsSet()`, [10.3](#103-usage-in-generated-code)). |
 | `BuildCount` | `SELECT COUNT(*) FROM {table} WHERE ...` | Placeholder style |
 | `BuildExists` | `SELECT EXISTS(SELECT 1 FROM {table} WHERE ...)` | Placeholder style |
 | `BuildIncrement` | `UPDATE {table} SET col = col + $ WHERE ...` | Placeholder style |

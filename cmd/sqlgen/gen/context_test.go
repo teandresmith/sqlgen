@@ -973,6 +973,12 @@ func TestComparatorTypeSelection(t *testing.T) {
 			want:    "*comparator.JSON",
 		},
 		{
+			name:    "mysql jsonb (types.JSON) → JSON, never JSONB",
+			col:     gen.ColumnContext{GoType: "types.JSON", SQLType: "jsonb"},
+			dialect: "mysql",
+			want:    "*comparator.JSON",
+		},
+		{
 			name:    "mysql nullable json (types.JSON) → NullableJSON",
 			col:     gen.ColumnContext{GoType: "types.JSON", SQLType: "json", Nullable: true},
 			dialect: "mysql",
