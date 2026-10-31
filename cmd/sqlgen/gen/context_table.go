@@ -2402,6 +2402,18 @@ func resolveSimpleComparator(col ColumnContext, baseGoType string, dialect confi
 	switch {
 	case (col.PrimaryKey || col.FKReference != nil) && (baseGoType == "string" || col.FKConvert != gotype.FKStringNone):
 		return "ID"
+	case strings.EqualFold(col.SQLType, "uuid"):
+		// A bare `uuid` column that is neither PK nor FK (e.g. a polymorphic
+		// soft-reference like activity.entity_id, or a uuid carried through a
+		// view) still filters as an identifier, whether bound to uuid.UUID,
+		// uuid.NullUUID, or a `string` override. GraphQL maps uuid
+		// to the ID scalar → IDComparator; without this arm the runtime would
+		// emit comparator.String, so the generated filter translator would try
+		// to pass an *IDComparator into translateStringComparator and fail to
+		// compile. Keyed on the SQL type (not FKConvert, which is also set for
+		// decimal/time and would misclassify them), and ahead of the string
+		// arm so a `string` override does not turn it into a String.
+		return "ID"
 	case baseGoType == "string":
 		return "String"
 	case baseGoType == "bool":
@@ -2415,17 +2427,6 @@ func resolveSimpleComparator(col ColumnContext, baseGoType string, dialect confi
 			return "JSONB"
 		}
 		return "JSON"
-	case strings.EqualFold(col.SQLType, "uuid"):
-		// A bare `uuid` column that is neither PK nor FK (e.g. a polymorphic
-		// soft-reference like activity.entity_id, or a uuid carried through a
-		// view) still filters as an identifier. GraphQL maps uuid to the ID
-		// scalar → IDComparator; without this arm the runtime would emit
-		// comparator.String, so the generated filter translator would try to
-		// pass an *IDComparator into translateStringComparator and fail to
-		// compile. Keyed on the SQL type (not FKConvert, which is also set for
-		// decimal/time and would misclassify them) and placed after the
-		// concrete Go-type arms.
-		return "ID"
 	case col.Tenant && baseGoType == "uuid.UUID":
 		// The tenant column's Go type comes from `tenancy.type` (or an
 		// `overrides.types` entry) as often as from its SQL type: a SQLite

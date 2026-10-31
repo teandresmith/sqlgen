@@ -907,6 +907,18 @@ func TestComparatorTypeSelection(t *testing.T) {
 			want:    "*comparator.ID",
 		},
 		{
+			name:    "uuid column overridden to string → ID",
+			col:     gen.ColumnContext{GoType: "string", SQLType: "uuid"},
+			dialect: "postgres",
+			want:    "*comparator.ID",
+		},
+		{
+			name:    "nullable uuid column overridden to string → NullableID",
+			col:     gen.ColumnContext{GoType: "*string", SQLType: "uuid", Nullable: true},
+			dialect: "postgres",
+			want:    "*comparator.NullableID",
+		},
+		{
 			name:    "regular string → String",
 			col:     gen.ColumnContext{GoType: "string"},
 			dialect: "postgres",

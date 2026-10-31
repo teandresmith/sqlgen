@@ -431,7 +431,8 @@ CREATE TABLE contacts (
 
 // TestGraphQLSchema_uuidRetypedToStringIsString pins the §26.4 mapping row
 // "UUID column (non-PK) — Go string → String (or String! if NOT NULL)",
-// reached through either retyping mechanism.
+// reached through either retyping mechanism. The column still filters as an
+// identifier: its filter input field is an IDComparator, keyed on the SQL type.
 func TestGraphQLSchema_uuidRetypedToStringIsString(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -459,6 +460,12 @@ func TestGraphQLSchema_uuidRetypedToStringIsString(t *testing.T) {
 			}
 			if strings.Contains(block, "UUID") {
 				t.Errorf("a column retyped to string still advertises UUID:\n%s", block)
+			}
+			filter := tscBlock(tscSchemaText(t, root), "input ContactFilter {")
+			for _, want := range []string{"ref: IDComparator\n", "altRef: NullableIDComparator\n"} {
+				if !strings.Contains(filter, want) {
+					t.Errorf("input ContactFilter lacks %q:\n%s", strings.TrimSpace(want), filter)
+				}
 			}
 		})
 	}
