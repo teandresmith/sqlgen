@@ -8318,6 +8318,8 @@ Two things travel in the option set, and both must reach an arbitrarily nested m
 | `Opaque[T]` | any `T` — no constraint | `Eq`, `Neq`, `In`, `Nin`, `Gt`, `Gte`, `Lt`, `Lte`, `Custom` |
 | `NullableOpaque[T]` | nullable opaque | All of Opaque + `Null` |
 
+**A universal operator named like a `ConditionBuilder` method produces that method's clause** ([11.5](#115-condition-composition)): `Eq`, `Neq`, `Gt`, `Gte`, `Lt`, `Lte`, `Like`, `NLike` and `Between` render as the builder table gives them, and `In` / `Nin` as its expanded rows, or, for every family but `Enum`, as the array form on PostgreSQL+pgx ([11.3](#113-comparator-interface)).
+
 **`Enum[T]`'s `In` and `Nin` always expand**, to `IN ($1, $2, ...)` / `NOT IN ($1, $2, ...)`, PostgreSQL+pgx included, where every other family takes the array form ([11.3](#113-comparator-interface)). A generated enum is a named string type, and pgx has no encode plan for a slice of one against the enum column's array type: `= ANY($1)` fails the query (`cannot find encode plan`), while each scalar bound alone converts as a string. An enum column's values are its declared members, so the expanded list stays bounded by the type.
 
 **`Opaque[T]` — the family for columns whose Go type is neither text nor a Go

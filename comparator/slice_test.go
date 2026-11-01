@@ -79,16 +79,21 @@ func TestSlice_Parse_MultipleOperators(t *testing.T) {
 }
 
 func TestNullableSlice_Parse(t *testing.T) {
-	t.Run("Null true", func(t *testing.T) {
-		comp := comparator.NullableSlice[string]{Null: new(true)}
-		got := comp.Parse("tags", pgDialect)
-		if len(got) != 1 {
-			t.Fatalf("got %d conditions, want 1", len(got))
-		}
-		if got[0].Clause != "tags IS NULL" {
-			t.Errorf("clause = %q, want %q", got[0].Clause, "tags IS NULL")
-		}
-	})
+	for _, tt := range []struct {
+		name string
+		null bool
+		want sql.Condition
+	}{
+		{"Null true", true, sql.Condition{Clause: "tags IS NULL", Column: "tags"}},
+		{"Null false", false, sql.Condition{Clause: "tags IS NOT NULL", Column: "tags"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := comparator.NullableSlice[string]{Null: new(tt.null)}.Parse("tags", pgDialect)
+			if diff := cmp.Diff([]sql.Condition{tt.want}, got); diff != "" {
+				t.Errorf("NullableSlice[string]{Null: %t}.Parse() mismatch (-want +got):\n%s", tt.null, diff)
+			}
+		})
+	}
 
 	t.Run("inherits Slice operators", func(t *testing.T) {
 		comp := comparator.NullableSlice[string]{

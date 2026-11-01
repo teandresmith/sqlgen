@@ -76,6 +76,20 @@ func TestBuildSelect(t *testing.T) {
 			wantSQL: `SELECT "id" FROM "public"."users"`,
 		},
 		{
+			name:    "mysql empty conditions no WHERE",
+			dialect: my,
+			table:   myTbl,
+			opts:    sql.SelectOptions{Columns: []string{"id"}},
+			wantSQL: "SELECT `id` FROM `users`",
+		},
+		{
+			name:    "sqlite empty conditions no WHERE",
+			dialect: lite,
+			table:   ltTbl,
+			opts:    sql.SelectOptions{Columns: []string{"id"}},
+			wantSQL: `SELECT "id" FROM "users"`,
+		},
+		{
 			name:    "no columns SELECT star",
 			dialect: pg,
 			table:   pgTbl,
@@ -172,6 +186,24 @@ func TestBuildSelectJoin(t *testing.T) {
 				Columns: []string{"name", "id"},
 			},
 			wantSQL: "SELECT p.`id` AS `p.id`, p.`name` AS `p.name`, c.`id` AS `c.id`, c.`name` AS `c.name` FROM `products` p LEFT JOIN `companies` c ON c.`id` = p.`company_id`",
+		},
+		{
+			name:    "sqlite single O2O join",
+			dialect: lite,
+			table:   sql.Table{Name: "products"},
+			joins: []sql.JoinClause{
+				{
+					Table:   sql.Table{Name: "companies"},
+					Alias:   "c",
+					On:      `c."id" = p."company_id"`,
+					Columns: []string{"name", "id"},
+				},
+			},
+			opts: sql.SelectOptions{
+				Alias:   "p",
+				Columns: []string{"name", "id"},
+			},
+			wantSQL: `SELECT p."id" AS "p.id", p."name" AS "p.name", c."id" AS "c.id", c."name" AS "c.name" FROM "products" p LEFT JOIN "companies" c ON c."id" = p."company_id"`,
 		},
 		{
 			name:    "sqlite offset with no limit takes a negative limit",
@@ -384,6 +416,31 @@ func TestBuildInsert(t *testing.T) {
 			wantSQL:  "INSERT INTO `users` (`email`, `name`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `name` = VALUES(`name`)",
 			wantArgs: []any{"a@b.com", "alice"},
 		},
+		{
+			name:    "sqlite with RETURNING",
+			dialect: lite,
+			table:   ltTbl,
+			opts: sql.InsertOptions{
+				Columns:          []string{"name"},
+				Values:           []any{"carol"},
+				ReturningColumns: []string{"id", "created_at"},
+			},
+			wantSQL:  `INSERT INTO "users" ("name") VALUES (?) RETURNING "id", "created_at"`,
+			wantArgs: []any{"carol"},
+		},
+		{
+			name:    "sqlite with upsert",
+			dialect: lite,
+			table:   ltTbl,
+			opts: sql.InsertOptions{
+				Columns:             []string{"email", "name"},
+				Values:              []any{"a@b.com", "alice"},
+				UpsertConflictKeys:  []string{"email"},
+				UpsertUpdateColumns: []string{"name"},
+			},
+			wantSQL:  `INSERT INTO "users" ("email", "name") VALUES (?, ?) ON CONFLICT ("email") DO UPDATE SET "name" = excluded."name"`,
+			wantArgs: []any{"a@b.com", "alice"},
+		},
 		// A Create that supplies no column. PostgreSQL and SQLite
 		// reject `() VALUES ()`; MySQL rejects DEFAULT VALUES.
 		{
@@ -561,6 +618,30 @@ func TestBuildMultiInsert(t *testing.T) {
 				ReturningColumns: []string{"id"},
 			},
 			wantSQL:  `INSERT INTO "public"."users" ("name") VALUES ($1), ($2) RETURNING "id"`,
+			wantArgs: []any{"alice", "bob"},
+		},
+		{
+			name:    "mysql multi-row with RETURNING ignored",
+			dialect: my,
+			table:   myTbl,
+			opts: sql.MultiInsertOptions{
+				Columns:          []string{"name"},
+				ValueRows:        [][]any{{"alice"}, {"bob"}},
+				ReturningColumns: []string{"id"},
+			},
+			wantSQL:  "INSERT INTO `users` (`name`) VALUES (?), (?)",
+			wantArgs: []any{"alice", "bob"},
+		},
+		{
+			name:    "sqlite multi-row with RETURNING",
+			dialect: lite,
+			table:   ltTbl,
+			opts: sql.MultiInsertOptions{
+				Columns:          []string{"name"},
+				ValueRows:        [][]any{{"alice"}, {"bob"}},
+				ReturningColumns: []string{"id", "name"},
+			},
+			wantSQL:  `INSERT INTO "users" ("name") VALUES (?), (?) RETURNING "id", "name"`,
 			wantArgs: []any{"alice", "bob"},
 		},
 		{
@@ -793,6 +874,13 @@ func TestBuildMultiInsertUpsertMatchesSingleRow(t *testing.T) {
 			row:           []any{"a@b.com", "alice"},
 			conflictKeys:  []string{"email"},
 			updateColumns: []string{"name"},
+		},
+		{
+			name:          "two update columns",
+			columns:       []string{"id", "name", "email"},
+			row:           []any{1, "alice", "a@b.com"},
+			conflictKeys:  []string{"id"},
+			updateColumns: []string{"name", "email"},
 		},
 		{
 			name:         "composite key with nothing to update",
@@ -1139,6 +1227,30 @@ func TestBuildUpdate(t *testing.T) {
 			wantArgs: []any{"alice", 1},
 		},
 		{
+			name:    "mysql update with RETURNING ignored",
+			dialect: my,
+			table:   myTbl,
+			opts: sql.UpdateOptions{
+				SetClauses:       map[string]any{"name": "bob"},
+				Conditions:       []sql.Condition{{Clause: "`id` = $", Value: 2}},
+				ReturningColumns: []string{"id"},
+			},
+			wantSQL:  "UPDATE `users` SET `name` = ? WHERE `id` = ?",
+			wantArgs: []any{"bob", 2},
+		},
+		{
+			name:    "sqlite update with RETURNING",
+			dialect: lite,
+			table:   ltTbl,
+			opts: sql.UpdateOptions{
+				SetClauses:       map[string]any{"name": "charlie"},
+				Conditions:       []sql.Condition{{Clause: `"id" = $`, Value: 3}},
+				ReturningColumns: []string{"id", "name"},
+			},
+			wantSQL:  `UPDATE "users" SET "name" = ? WHERE "id" = ? RETURNING "id", "name"`,
+			wantArgs: []any{"charlie", 3},
+		},
+		{
 			name:    "sorted column order in SET",
 			dialect: pg,
 			table:   pgTbl,
@@ -1194,10 +1306,30 @@ func TestBuildCount(t *testing.T) {
 			wantArgs: []any{"admin"},
 		},
 		{
+			name:       "sqlite with conditions",
+			dialect:    lite,
+			table:      ltTbl,
+			conditions: []sql.Condition{{Clause: `"age" > $`, Value: 18}},
+			wantSQL:    `SELECT COUNT(*) FROM "users" WHERE "age" > ?`,
+			wantArgs:   []any{18},
+		},
+		{
 			name:    "empty conditions count all",
 			dialect: pg,
 			table:   pgTbl,
 			wantSQL: `SELECT COUNT(*) FROM "public"."users"`,
+		},
+		{
+			name:    "mysql empty conditions count all",
+			dialect: my,
+			table:   myTbl,
+			wantSQL: "SELECT COUNT(*) FROM `users`",
+		},
+		{
+			name:    "sqlite empty conditions count all",
+			dialect: lite,
+			table:   ltTbl,
+			wantSQL: `SELECT COUNT(*) FROM "users"`,
 		},
 	}
 
@@ -1248,6 +1380,24 @@ func TestBuildExists(t *testing.T) {
 			conditions: []sql.Condition{{Clause: `"id" = $`, Value: 42}},
 			wantSQL:    `SELECT EXISTS(SELECT 1 FROM "users" WHERE "id" = ?)`,
 			wantArgs:   []any{42},
+		},
+		{
+			name:    "empty conditions exists over every row",
+			dialect: pg,
+			table:   pgTbl,
+			wantSQL: `SELECT EXISTS(SELECT 1 FROM "public"."users")`,
+		},
+		{
+			name:    "mysql empty conditions exists over every row",
+			dialect: my,
+			table:   myTbl,
+			wantSQL: "SELECT EXISTS(SELECT 1 FROM `users`)",
+		},
+		{
+			name:    "sqlite empty conditions exists over every row",
+			dialect: lite,
+			table:   ltTbl,
+			wantSQL: `SELECT EXISTS(SELECT 1 FROM "users")`,
 		},
 	}
 
@@ -1439,6 +1589,79 @@ func TestBuildSoftDelete(t *testing.T) {
 			wantSQL:  `UPDATE "users" SET "deleted" = 1 WHERE "id" = ?`,
 			wantArgs: []any{3},
 		},
+		// Each deleted value is the same on every dialect.
+		{
+			name:    "timestamp mysql",
+			dialect: my,
+			table:   myTbl,
+			opts: sql.SoftDeleteOptions{
+				Column:     "deleted_at",
+				Type:       sql.SoftDeleteTimestamp,
+				Conditions: []sql.Condition{{Clause: "`id` = $", Value: 1}},
+			},
+			wantSQL:  "UPDATE `users` SET `deleted_at` = CURRENT_TIMESTAMP WHERE `id` = ?",
+			wantArgs: []any{1},
+		},
+		{
+			name:    "timestamp sqlite",
+			dialect: lite,
+			table:   ltTbl,
+			opts: sql.SoftDeleteOptions{
+				Column:     "deleted_at",
+				Type:       sql.SoftDeleteTimestamp,
+				Conditions: []sql.Condition{{Clause: `"id" = $`, Value: 1}},
+			},
+			wantSQL:  `UPDATE "users" SET "deleted_at" = CURRENT_TIMESTAMP WHERE "id" = ?`,
+			wantArgs: []any{1},
+		},
+		{
+			name:    "bool postgres",
+			dialect: pg,
+			table:   pgTbl,
+			opts: sql.SoftDeleteOptions{
+				Column:     "is_deleted",
+				Type:       sql.SoftDeleteBool,
+				Conditions: []sql.Condition{{Clause: `"id" = $`, Value: 2}},
+			},
+			wantSQL:  `UPDATE "public"."users" SET "is_deleted" = TRUE WHERE "id" = $1`,
+			wantArgs: []any{2},
+		},
+		{
+			name:    "bool sqlite",
+			dialect: lite,
+			table:   ltTbl,
+			opts: sql.SoftDeleteOptions{
+				Column:     "is_deleted",
+				Type:       sql.SoftDeleteBool,
+				Conditions: []sql.Condition{{Clause: `"id" = $`, Value: 2}},
+			},
+			wantSQL:  `UPDATE "users" SET "is_deleted" = TRUE WHERE "id" = ?`,
+			wantArgs: []any{2},
+		},
+		{
+			name:    "integer postgres",
+			dialect: pg,
+			table:   pgTbl,
+			opts: sql.SoftDeleteOptions{
+				Column:     "deleted",
+				Type:       sql.SoftDeleteInteger,
+				Conditions: []sql.Condition{{Clause: `"id" = $`, Value: 3}},
+			},
+			wantSQL:  `UPDATE "public"."users" SET "deleted" = 1 WHERE "id" = $1`,
+			wantArgs: []any{3},
+		},
+		{
+			name:    "integer mysql",
+			dialect: my,
+			table:   myTbl,
+			opts: sql.SoftDeleteOptions{
+				Column:     "deleted",
+				Type:       sql.SoftDeleteInteger,
+				Conditions: []sql.Condition{{Clause: "`id` = $", Value: 3}},
+			},
+			wantSQL:  "UPDATE `users` SET `deleted` = 1 WHERE `id` = ?",
+			wantArgs: []any{3},
+		},
 		{
 			name:    "timestamp with returning",
 			dialect: pg,
@@ -1464,6 +1687,19 @@ func TestBuildSoftDelete(t *testing.T) {
 			},
 			wantSQL:  `UPDATE "public"."users" SET "deleted_at" = CURRENT_TIMESTAMP WHERE "active" = $1 RETURNING "id", "name"`,
 			wantArgs: []any{true},
+		},
+		{
+			name:    "sqlite timestamp with returning",
+			dialect: lite,
+			table:   ltTbl,
+			opts: sql.SoftDeleteOptions{
+				Column:           "deleted_at",
+				Type:             sql.SoftDeleteTimestamp,
+				Conditions:       []sql.Condition{{Clause: `"name" = $`, Value: "alice"}},
+				ReturningColumns: []string{"id", "name"},
+			},
+			wantSQL:  `UPDATE "users" SET "deleted_at" = CURRENT_TIMESTAMP WHERE "name" = ? RETURNING "id", "name"`,
+			wantArgs: []any{"alice"},
 		},
 		{
 			name:    "returning ignored on mysql",
@@ -1544,6 +1780,28 @@ func TestBuildHardDelete(t *testing.T) {
 			},
 			wantSQL:  `DELETE FROM "public"."users" WHERE "id" = $1 RETURNING "id"`,
 			wantArgs: []any{1},
+		},
+		{
+			name:    "sqlite with returning",
+			dialect: lite,
+			table:   ltTbl,
+			opts: sql.HardDeleteOptions{
+				Conditions:       []sql.Condition{{Clause: `"id" = $`, Value: 3}},
+				ReturningColumns: []string{"id", "workspace_id"},
+			},
+			wantSQL:  `DELETE FROM "users" WHERE "id" = ? RETURNING "id", "workspace_id"`,
+			wantArgs: []any{3},
+		},
+		{
+			name:    "mysql with returning ignored",
+			dialect: my,
+			table:   myTbl,
+			opts: sql.HardDeleteOptions{
+				Conditions:       []sql.Condition{{Clause: "`id` = $", Value: 2}},
+				ReturningColumns: []string{"id"},
+			},
+			wantSQL:  "DELETE FROM `users` WHERE `id` = ?",
+			wantArgs: []any{2},
 		},
 	}
 
@@ -3344,13 +3602,17 @@ func TestSubqueryWhere_QualifiesEveryColumn(t *testing.T) {
 			sql.Condition{Clause: `"total" > $`, Column: `"total"`, Value: 10},
 			sql.Condition{Clause: `"notes" IS NULL`, Column: `"notes"`},
 		),
+		sql.And(
+			sql.Condition{Clause: `"qty" >= $`, Column: `"qty"`, Value: 2},
+			sql.Condition{Clause: `"sku" = $`, Column: `"sku"`, Value: "abc"},
+		),
 	}
 	got, gotArgs := sql.SubqueryWhere(pg, "tgt", conds)
-	want := `tgt."status" = $ AND (tgt."total" > $ OR tgt."notes" IS NULL)`
+	want := `tgt."status" = $ AND (tgt."total" > $ OR tgt."notes" IS NULL) AND (tgt."qty" >= $ AND tgt."sku" = $)`
 	if got != want {
 		t.Errorf("SubqueryWhere() =\n  %q\nwant\n  %q", got, want)
 	}
-	if diff := cmp.Diff([]any{"paid", 10}, gotArgs); diff != "" {
+	if diff := cmp.Diff([]any{"paid", 10, 2, "abc"}, gotArgs); diff != "" {
 		t.Errorf("args mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -3494,6 +3756,42 @@ func TestBuildSelect_RawConditionParenthesised(t *testing.T) {
 			}
 			if diff := cmp.Diff([]any{1, "leak"}, gotArgs); diff != "" {
 				t.Errorf("args mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestBuildSelect_HandBuiltRawConditionParenthesised: the mark sql.Raw sets is
+// the exported Raw field, so a condition built by hand with Raw set renders
+// parenthesised too, and one without it renders bare.
+func TestBuildSelect_HandBuiltRawConditionParenthesised(t *testing.T) {
+	tests := []struct {
+		name string
+		cond sql.Condition
+		want string
+	}{
+		{
+			name: "Raw set",
+			cond: sql.Condition{Clause: "kind = 'x' OR name = $", Value: "leak", Raw: true},
+			want: `SELECT "id" FROM "public"."users" WHERE "entity_id" = $1 AND (kind = 'x' OR name = $2)`,
+		},
+		{
+			name: "Raw unset",
+			cond: sql.Condition{Clause: "kind = 'x' OR name = $", Value: "leak"},
+			want: `SELECT "id" FROM "public"."users" WHERE "entity_id" = $1 AND kind = 'x' OR name = $2`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, gotArgs := sql.BuildSelect(pg, pgTbl, sql.SelectOptions{
+				Columns:    []string{"id"},
+				Conditions: []sql.Condition{sql.Where(`"entity_id"`).Eq(1), tt.cond},
+			})
+			if got != tt.want {
+				t.Errorf("BuildSelect(%+v) =\n  %q\nwant\n  %q", tt.cond, got, tt.want)
+			}
+			if diff := cmp.Diff([]any{1, "leak"}, gotArgs); diff != "" {
+				t.Errorf("BuildSelect(%+v) args mismatch (-want +got):\n%s", tt.cond, diff)
 			}
 		})
 	}

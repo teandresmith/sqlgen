@@ -112,6 +112,13 @@ func TestSQLiteDialect_SupportsReturning(t *testing.T) {
 	}
 }
 
+func TestSQLiteDialect_SupportsArrayParams(t *testing.T) {
+	d := sql.NewSQLiteDialect()
+	if got := d.SupportsArrayParams(); got != false {
+		t.Errorf("SupportsArrayParams() = %v, want false", got)
+	}
+}
+
 func TestSQLiteDialect_BackslashEscapes(t *testing.T) {
 	d := sql.NewSQLiteDialect()
 	if got := d.BackslashEscapes(); got != false {

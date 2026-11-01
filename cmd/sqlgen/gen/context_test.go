@@ -1014,6 +1014,104 @@ func TestComparatorTypeSelection(t *testing.T) {
 			dialect: "postgres",
 			want:    "*comparator.NullableString",
 		},
+		// PRD §11.2 "Comparator Selection by Column Type": the remaining table
+		// rows, plus the uuid-by-SQL-type and fallback-to-String rules.
+		{
+			name:    "uint32 → Number[uint32]",
+			col:     gen.ColumnContext{GoType: "uint32", SQLType: "integer"},
+			dialect: "mysql",
+			want:    "*comparator.Number[uint32]",
+		},
+		{
+			name:    "float64 → Number[float64]",
+			col:     gen.ColumnContext{GoType: "float64", SQLType: "double precision"},
+			dialect: "postgres",
+			want:    "*comparator.Number[float64]",
+		},
+		{
+			name:    "time.Duration → Number[time.Duration]",
+			col:     gen.ColumnContext{GoType: "time.Duration", SQLType: "interval"},
+			dialect: "postgres",
+			want:    "*comparator.Number[time.Duration]",
+		},
+		{
+			name:    "nullable *time.Duration → NullableNumber[time.Duration]",
+			col:     gen.ColumnContext{GoType: "*time.Duration", SQLType: "interval", Nullable: true},
+			dialect: "postgres",
+			want:    "*comparator.NullableNumber[time.Duration]",
+		},
+		{
+			name:    "postgres []byte → Opaque[[]byte]",
+			col:     gen.ColumnContext{GoType: "[]byte", SQLType: "bytea"},
+			dialect: "postgres",
+			want:    "*comparator.Opaque[[]byte]",
+		},
+		{
+			name:    "mysql []byte → Opaque[[]byte]",
+			col:     gen.ColumnContext{GoType: "[]byte", SQLType: "blob"},
+			dialect: "mysql",
+			want:    "*comparator.Opaque[[]byte]",
+		},
+		{
+			name:    "sqlite []byte → Opaque[[]byte]",
+			col:     gen.ColumnContext{GoType: "[]byte", SQLType: "blob"},
+			dialect: "sqlite",
+			want:    "*comparator.Opaque[[]byte]",
+		},
+		{
+			name:    "net.IP → Opaque[net.IP]",
+			col:     gen.ColumnContext{GoType: "net.IP", SQLType: "inet"},
+			dialect: "postgres",
+			want:    "*comparator.Opaque[net.IP]",
+		},
+		{
+			name:    "net.IPNet → Opaque[net.IPNet]",
+			col:     gen.ColumnContext{GoType: "net.IPNet", SQLType: "cidr"},
+			dialect: "postgres",
+			want:    "*comparator.Opaque[net.IPNet]",
+		},
+		{
+			name:    "net.HardwareAddr → Opaque[net.HardwareAddr]",
+			col:     gen.ColumnContext{GoType: "net.HardwareAddr", SQLType: "macaddr"},
+			dialect: "postgres",
+			want:    "*comparator.Opaque[net.HardwareAddr]",
+		},
+		{
+			name:    "enum type → Enum[T]",
+			col:     gen.ColumnContext{GoType: "OrderStatus", SQLType: "order_status"},
+			dialect: "postgres",
+			want:    "*comparator.Enum[OrderStatus]",
+		},
+		{
+			name:    "nullable enum type → NullableEnum[T]",
+			col:     gen.ColumnContext{GoType: "*OrderStatus", SQLType: "order_status", Nullable: true},
+			dialect: "postgres",
+			want:    "*comparator.NullableEnum[OrderStatus]",
+		},
+		{
+			name:    "uuid column, not a key (uuid.UUID) → ID",
+			col:     gen.ColumnContext{GoType: "uuid.UUID", SQLType: "uuid"},
+			dialect: "postgres",
+			want:    "*comparator.ID",
+		},
+		{
+			name:    "nullable uuid column (*uuid.UUID) → NullableID",
+			col:     gen.ColumnContext{GoType: "*uuid.UUID", SQLType: "uuid", Nullable: true},
+			dialect: "postgres",
+			want:    "*comparator.NullableID",
+		},
+		{
+			name:    "nullable uuid column (uuid.NullUUID) → NullableID",
+			col:     gen.ColumnContext{GoType: "uuid.NullUUID", SQLType: "uuid", Nullable: true},
+			dialect: "postgres",
+			want:    "*comparator.NullableID",
+		},
+		{
+			name:    "override type with no built-in mapping → String",
+			col:     gen.ColumnContext{GoType: "ksuid.KSUID", SQLType: "text"},
+			dialect: "postgres",
+			want:    "*comparator.String",
+		},
 	}
 
 	for _, tt := range tests {

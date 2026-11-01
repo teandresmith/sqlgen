@@ -8,7 +8,7 @@ in [`docs/design/CONFORMANCE.md`](../design/CONFORMANCE.md) §3 and §5. `make r
 
 | File | Module | Test homes |
 |---|---|---|
-| [`runtime/sql.md`](runtime/sql.md) | Runtime: `sql`, `comparator`, `omittable` (§10, §11.2–§11.5, §15.1, Appendix A, Appendix B) | unit |
+| [`runtime/sql.md`](runtime/sql.md) | Runtime: `sql`, `comparator`, `omittable` (§10.2, §10.4, §11.2–§11.5, §15.1, Appendix A, Appendix B) | unit |
 | [`runtime/database.md`](runtime/database.md) | Runtime: `database`, `database/mock`, `database/pgx`, `database/stdlib` (§18, §19, §22, §22.2) | unit, integration |
 | [`runtime/hooks.md`](runtime/hooks.md) | Runtime: `hook` (§21, §24, §24.2) | unit |
 | [`runtime/cache.md`](runtime/cache.md) | Runtime: `cache`, `cache/memory`, `cache/redis`, `cache/msgpack`, `metrics/otel` (§27, §29.5) | unit, integration |
@@ -227,9 +227,9 @@ another file also cites is still owned once.
 | §9.8 Generated Method Patterns | client.md |
 | §9.9 Nested Mutations | client.md |
 | §10 Omittable Package | runtime/sql.md |
-| §10.1 The Problem | runtime/sql.md |
+| §10.1 The Problem | informative |
 | §10.2 API | runtime/sql.md |
-| §10.3 Usage in Generated Code | runtime/sql.md |
+| §10.3 Usage in Generated Code | cli/gen.md |
 | §10.4 JSON Serialization | runtime/sql.md |
 | §11 Filtering & Comparators | runtime/sql.md |
 | §11.1 Generated Filter Struct | cli/gen.md |
