@@ -317,6 +317,31 @@ func TestJSONUnmarshalNull(t *testing.T) {
 		}
 	})
 
+	t.Run("null overwrites a previous value", func(t *testing.T) {
+		v := omittable.Set(5)
+		if err := json.Unmarshal([]byte(`null`), &v); err != nil {
+			t.Fatalf("json.Unmarshal() error: %v", err)
+		}
+		if got, ok := v.Get(); got != 0 || !ok {
+			t.Errorf("Get() after null = %d, %t, want 0, true", got, ok)
+		}
+		s := "old"
+		p := omittable.Set(&s)
+		if err := json.Unmarshal([]byte(`null`), &p); err != nil {
+			t.Fatalf("json.Unmarshal() error: %v", err)
+		}
+		if got, ok := p.Get(); got != nil || !ok {
+			t.Errorf("pointer Get() after null = %v, %t, want nil, true", got, ok)
+		}
+		r := omittable.Set(json.RawMessage(`{"a":1}`))
+		if err := json.Unmarshal([]byte(`null`), &r); err != nil {
+			t.Fatalf("json.Unmarshal() error: %v", err)
+		}
+		if got, ok := r.Get(); got != nil || !ok {
+			t.Errorf("json.RawMessage Get() after null = %q, %t, want nil, true", got, ok)
+		}
+	})
+
 	t.Run("absent field is unset", func(t *testing.T) {
 		var got wrapper
 		if err := json.Unmarshal([]byte(`{}`), &got); err != nil {
