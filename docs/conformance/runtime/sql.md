@@ -1,6 +1,6 @@
 # Runtime Requirements: SQL Builders, Comparators and Omittable
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: sql comparator omittable -->
 <!-- matrix: sql-builders rows=builder:BuildSelect,BuildSelectJoin,BuildInsert,BuildMultiInsert,BuildUpdate,BuildCount,BuildExists,BuildIncrement,BuildSoftDelete,BuildHardDelete cols=basic,returning -->
 <!-- matrix: comparators rows=operator cols=postgres-pgx,postgres-stdlib,mysql,sqlite -->
