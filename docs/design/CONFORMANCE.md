@@ -1844,6 +1844,90 @@ database versions it ran against.
        fields included.
      - A barrier only proves overlap for the reads it gates.
 
+   **Fifteenth slice, the `runtime.md` split and `runtime/sql.md`, recorded 2026-11-01:**
+   - **Scope.** `runtime.md` was the last `in-progress` file. As `complete` it failed on 567
+     things: 37 owned sections with no rows, 8 empty matrices, 3 empty `error-mapping` cells and
+     516 orphan tests. Claiming the orphans would take it past ruling 7's ~500 rows, so it was split
+     first, and `runtime/sql.md` (`sql`, `comparator`, `omittable`; 168 orphans) was seeded.
+   - **Split (`73619393`).** Six files under `runtime/`, each `in-progress`:
+     - `sql.md`: `sql`, `comparator`, `omittable`; §10, §11.2–§11.5, §15.1, Appendix A and B.
+     - `database.md`: `database` and its drivers; §18, §19, §22, §22.2.
+     - `hooks.md`: `hook`; §21, §24, §24.2.
+     - `cache.md`: the `cache` packages and `metrics/otel`, which records §27.13's cache metrics;
+       §27, §29.5.
+     - `events.md`: the `event` packages; §28, §29.6.
+     - `support.md`: `types`, `manifest` and `tenancy`; §29.3, §30.6. `types` backs §7, whose rows
+       are `cli/gotype.md`'s.
+     - The 64 rows, 3 gaps and 9 matrix declarations moved unchanged. `lock-modes` went to `sql.md`,
+       where the lock clauses are built.
+   - **Rulings (15):**
+     - The six-file split, and `sql.md` first.
+     - §10.1 re-owned as `informative`, and §10.3 as `cli/gen.md`, which already held its rows.
+     - Four matrices redeclared to the axes the PRD states:
+       - `sql-builders`: the ten Appendix A builders × `basic`, `returning`.
+       - `comparators`: by dialect and driver, with rows only for operators whose SQL varies.
+       - `condition-composition`: six shapes × `placeholder-numbering`, `nested-in-and-or`, since
+         no `Not` exists and no depth is stated.
+       - `omittable`: `unset`, `set`, `set-zero` × `value`, `json-round-trip`.
+     - Three PRD amendments with no code change:
+       - Enum `In`/`Nin` expand on pgx too (§11.2, §11.3, Appendix A).
+       - The PostgreSQL-only comparators are never selected elsewhere, rather than being a
+         generation-time error (§11.2).
+       - `BuildUpdate` writes the SET map it is given (Appendix A).
+     - One §11.2 sentence: a universal operator named like a `ConditionBuilder` method produces
+       that method's clause.
+     - A drop-pin: the subtest asserting `DEFAULT` in a SQLite `VALUES` list.
+     - Three code fixes (below), and two follow-up rulings on them: MySQL before 8.0 and MariaDB
+       reject `OF`, so the client rejects the locked join read there before SQL; and a JSON null is
+       the zero `T` even for a `T` with its own `UnmarshalJSON`, so a `types.JSON` null is SQL NULL.
+   - **Defects: 3, each fixed with a fail-first test:**
+     - `0e488fff`: a locked read that selected an O2O edge appended a bare lock clause after the
+       `LEFT JOIN`. PostgreSQL rejected it, and MySQL locked the child too, so `NOWAIT` failed on a
+       child held elsewhere and `SKIP LOCKED` returned the parent with the edge nil. The clause now
+       names the parent alias (`FOR UPDATE OF a`). Fill test: a new `Get` suite subtest, failing on
+       pgx, PostgreSQL stdlib and MySQL before the fix.
+     - `321fbf0c`: a non-key `uuid` column overridden to `string` filtered as `String`, against
+       §11.2. The uuid arm now runs before the string arm, on the model and GraphQL sides.
+     - `5713b954`: decoding `null` into a `Value[int]` holding 5 left `5, true`, against §10.2.
+     - `/verify` did not run, because the fixes have no FIX ID.
+   - **Measurement.** Two read-only agents mapped the 168 orphans and every behavior sentence of
+     the owned sections. Two writers then seeded `sql` and `comparator` in worktrees pinned to
+     `0e488fff`; `omittable` was seeded inline. The writers ran about 175 mutants. Equivalent
+     mutants: the no-column upsert path on MySQL, which drops the clause either way, and a doubled
+     quote closing a literal, which no token scan can tell from closing and reopening one.
+   - **Claim check.** Two checkers found 16 defects, all fixed:
+     - `Column` dropped from `NullableJSONB.Null` and `NullableSlice.Null`, which no test caught;
+     - an Exists-qualifier test on a schema-less table, where the table name and the formatted table
+       read the same;
+     - a JSON `HasKey` operand never given the other dialect's form;
+     - `Eq(nil)` compared to `IsNull()` by rendered SQL only;
+     - a soft-delete row duplicating `parser/schema.md`'s rows, with each value type on one dialect;
+     - a multi-insert upsert shape with at most one update column, which let reversed columns pass;
+     - a SQLite join row citing an `OFFSET` subtest;
+     - and nine narrower wording, citation and gap-text fixes.
+   - **Rows.** `runtime/sql.md` 1 → 248 rows (5660 → 5909 in all), with 24 `n/a` cells citing the
+     PRD, 3 unclaimed tests and 29 open gaps, 6 of them measured by a probe with no pinning test.
+     Refs were added to rows in `client.md`, `cli/gen.md`, `cli/api-schema.md` and
+     `parser/schema.md`; `client.md` gained 2 §9.6a rows for the lock fix. One finding went to
+     `backlog.md`: a tenanted O2O read puts the child's tenant filter in the outer `WHERE`, which
+     drops a parent with no child (`gap.sql.join-tenant-outer-where` pins it).
+   - **Completion sweep.** With `runtime/sql.md` set to `complete`, `req-check` passes. Flipped on
+     the user's sign-off (`8a901c01`), after the report was generated.
+   - **Report.** `make conformance` at `7c30ea3c`: 5909 rows, 5798 pass, 0 fail, 0 skip, 0 not
+     run, 111 untested. `runtime/sql.md` has 248 pass.
+   - **For the next slice (`runtime/database.md`):**
+     - It holds the 130 `database` orphans, the `transactions` and `error-mapping` matrices (the
+       latter with 3 empty `not-null` cells), and §18 and §19, most of whose tests need Docker.
+       After it, `cache.md` (98), `hooks.md` (35), `events.md` (54) and `support.md` (31).
+     - Subtest names computed by `t.Run(string(x))` cannot be cited; cite the top-level test or give
+       the case a literal name.
+     - An example test under `models/` is not an `example:` ref, which resolves under `tests/`.
+     - `gofumpt` rewrites two single quotes in a comment into a typographic quote, so spell the
+       sequence out.
+     - When a fix comes from a ruling, check its effect on every `T` or caller it reaches before
+       committing: the null fix first looked like a one-type change, and its `types.JSON` effect
+       needed a second ruling.
+
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
