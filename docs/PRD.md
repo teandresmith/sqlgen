@@ -10043,7 +10043,7 @@ err := database.WithTransaction(ctx, db, "checkout", func(txCtx context.Context)
 
 - **The caller waits** for all callbacks to complete before `WithTransaction` returns.
 - **Callback failures propagate** as the return error from `WithTransaction`. The first callback failure stops execution of remaining callbacks and returns the error.
-- **Context cancellation applies.** Callbacks receive the caller's context — if it is cancelled, remaining callbacks are skipped.
+- **Context cancellation applies.** Callbacks receive the caller's context — if it is cancelled, remaining callbacks are skipped and `WithTransaction` returns the context's error. The commit has already succeeded, so the error reports dropped side effects, not a rolled-back transaction.
 - Provides **fail-fast behavior** for consumers who need to know immediately if side effects failed.
 
 **Critical caveat for sync mode:** The DB commit has already succeeded before callbacks run. A callback failure (e.g., event publish fails) does **not** roll back the committed transaction — that is impossible. The caller receives an error, but the data is already durable. This means sync mode gives the caller **visibility** into callback failures, not transactional guarantees across DB + side effects. The caller must handle the inconsistency (e.g., retry the side effect, log for reconciliation).

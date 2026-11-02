@@ -9,7 +9,7 @@ The database abstraction layer and its drivers (§19), transactions (§18), and 
 mapping (§22.2). See [README.md](../README.md) for the format.
 
 ## §18.6 Deferred Side Effects
-<!-- prd: 18.6 sha256: 8c6ba66b441da9ef -->
+<!-- prd: 18.6 sha256: 015391b1d84f058a -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

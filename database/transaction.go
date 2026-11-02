@@ -200,7 +200,8 @@ func (tx *Tx) stateErrLocked() error {
 // fresh context.Background(), so request-scoped metadata (tracing spans,
 // deadlines, auth identity) must not be read from the ctx parameter — close
 // over any needed data at registration time. CallbackSync propagates the
-// original commit ctx at the cost of blocking the commit return.
+// original commit ctx at the cost of blocking the commit return; once that ctx
+// is done, the callbacks not yet run are skipped and Commit returns its error.
 //
 // Failure handling: a failed callback is retried once before the mode-specific
 // fallback (sync returns the error; async logs and continues to the next
@@ -719,8 +720,14 @@ func fireCallbacksAsync(callbacks []func(ctx context.Context) error) {
 	}()
 }
 
+// fireCallbacksSync runs the callbacks in order on the caller's ctx. A
+// cancelled ctx skips the callbacks not yet run and is returned, so the caller
+// learns that side effects of a committed transaction were dropped.
 func fireCallbacksSync(ctx context.Context, callbacks []func(ctx context.Context) error) error {
 	for _, fn := range callbacks {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("skipping commit callbacks: %w", err)
+		}
 		if err := fn(ctx); err != nil {
 			// Retry once
 			if retryErr := fn(ctx); retryErr != nil {

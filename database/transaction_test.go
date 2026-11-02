@@ -653,6 +653,56 @@ func TestSyncCallbackMode(t *testing.T) {
 	}
 }
 
+func TestSyncCallbacksSkipTheRestOnceTheContextIsCancelled(t *testing.T) {
+	t.Run("a callback cancelling the context skips the callbacks after it", func(t *testing.T) {
+		ctx, q := newTestSetup(database.CallbackSync)
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		txCtx, err := database.NewTransaction(ctx, q, "test")
+		if err != nil {
+			t.Fatalf("NewTransaction() error = %v", err)
+		}
+		tx := database.FromContext(txCtx)
+		var ran []string
+		tx.OnCommit(func(_ context.Context) error { ran = append(ran, "first"); cancel(); return nil })
+		tx.OnCommit(func(_ context.Context) error { ran = append(ran, "second"); return nil })
+
+		err = database.Commit(txCtx)
+		if diff := cmp.Diff([]string{"first"}, ran); diff != "" {
+			t.Errorf("callbacks run (-want +got):\n%s", diff)
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Commit() error = %v, want context.Canceled", err)
+		}
+	})
+
+	t.Run("a context cancelled during the COMMIT skips every callback", func(t *testing.T) {
+		ctx, q := newTestSetup(database.CallbackSync)
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		q.conn.commitFn = func(context.Context) error { cancel(); return nil }
+
+		txCtx, err := database.NewTransaction(ctx, q, "test")
+		if err != nil {
+			t.Fatalf("NewTransaction() error = %v", err)
+		}
+		var ran bool
+		database.FromContext(txCtx).OnCommit(func(_ context.Context) error { ran = true; return nil })
+
+		err = database.Commit(txCtx)
+		if ran {
+			t.Error("callback ran on a cancelled context")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Commit() error = %v, want context.Canceled", err)
+		}
+		if !database.FromContext(txCtx).IsClosed() {
+			t.Error("IsClosed() = false; the COMMIT itself succeeded")
+		}
+	})
+}
+
 func TestCallbackRetryOnFailure(t *testing.T) {
 	t.Run("retry succeeds", func(t *testing.T) {
 		ctx, q := newTestSetup(database.CallbackSync)
