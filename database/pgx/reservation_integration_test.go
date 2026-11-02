@@ -69,9 +69,7 @@ func drain(t *testing.T, rows database.Rows) int {
 // connection either, the whole transaction was lost with it. Run
 // under -race: the failure was a data race first and an error second.
 func TestReservationSerializesAFanOutInsideATransaction(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	requireDocker(t)
 
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
@@ -131,9 +129,7 @@ func TestReservationSerializesAFanOutInsideATransaction(t *testing.T) {
 // connection for the life of the process — strictly worse than the loud driver
 // error callers already get today.
 func TestLeakedResultSetDoesNotStrandTheConnection(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	requireDocker(t)
 
 	tests := []struct {
 		name     string
@@ -192,9 +188,7 @@ func TestLeakedResultSetDoesNotStrandTheConnection(t *testing.T) {
 // another statement is waiting for itself, so it must get the reservation's own
 // bounded error and never the driver's `conn busy`.
 func TestLeakedResultSetBoundsTheNextStatement(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	requireDocker(t)
 
 	tests := []struct {
 		name string

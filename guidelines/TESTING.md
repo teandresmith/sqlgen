@@ -63,17 +63,26 @@ func TestCreateUser(t *testing.T) {
 }
 ```
 
-For integration test files that use `TestMain` to start containers, guard the container setup:
+For integration test files that use `TestMain` to start containers, skip the container setup under `-short` but still run the package's unit tests, and have each integration test skip itself:
 
 ```go
 func TestMain(m *testing.M) {
     flag.Parse()
     if testing.Short() {
-        os.Exit(0)
+        os.Exit(m.Run()) // unit tests still run; no containers
     }
     // ... container setup
 }
+
+func requireDocker(t *testing.T) {
+    t.Helper()
+    if testing.Short() {
+        t.Skip("integration test: needs Docker")
+    }
+}
 ```
+
+An `os.Exit(0)` under `-short` would also skip every unit test in the package, since they share the test binary.
 
 **No build tags.** Module boundaries handle dependency isolation. Do not use `//go:build` tags to gate tests.
 
@@ -194,7 +203,7 @@ var testPool *pgxpool.Pool
 func TestMain(m *testing.M) {
     flag.Parse()
     if testing.Short() {
-        os.Exit(0)
+        os.Exit(m.Run())
     }
 
     ctx := context.Background()

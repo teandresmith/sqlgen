@@ -43,9 +43,7 @@ const teardownBound = 5 * time.Second
 // without the reservation. The assertion here is that the reservation did not
 // change a shape that already passed.
 func TestReservationSerializesAFanOutInsideATransaction(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	requireDocker(t)
 
 	// Row counts differ per edge so a read cannot pass by returning another
 	// one's result set. The seeded rows are what each read counts.
@@ -123,9 +121,7 @@ func TestReservationSerializesAFanOutInsideATransaction(t *testing.T) {
 // The pooled connection would otherwise be stranded for the life of the
 // process.
 func TestLeakedResultSetDoesNotStrandTheConnection(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	requireDocker(t)
 
 	tests := []struct {
 		name     string

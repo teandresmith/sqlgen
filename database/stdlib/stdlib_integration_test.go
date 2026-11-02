@@ -45,10 +45,19 @@ func cleanTable(t *testing.T, db *sql.DB) {
 	}
 }
 
+// requireDocker skips an integration test under -short, where TestMain starts
+// no containers and only the unit tests run.
+func requireDocker(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("integration test: needs Docker")
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	if testing.Short() {
-		os.Exit(0)
+		os.Exit(m.Run())
 	}
 
 	ctx := context.Background()
@@ -119,6 +128,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestExec(t *testing.T) {
+	requireDocker(t)
 	for _, b := range backends() {
 		t.Run(b.name, func(t *testing.T) {
 			cleanTable(t, b.db)
@@ -142,6 +152,7 @@ func TestExec(t *testing.T) {
 }
 
 func TestQuery(t *testing.T) {
+	requireDocker(t)
 	for _, b := range backends() {
 		t.Run(b.name, func(t *testing.T) {
 			cleanTable(t, b.db)
@@ -195,6 +206,7 @@ func TestQuery(t *testing.T) {
 }
 
 func TestQueryRow(t *testing.T) {
+	requireDocker(t)
 	for _, b := range backends() {
 		t.Run(b.name, func(t *testing.T) {
 			cleanTable(t, b.db)
@@ -219,6 +231,7 @@ func TestQueryRow(t *testing.T) {
 }
 
 func TestBeginCommitMySQL(t *testing.T) {
+	requireDocker(t)
 	cleanTable(t, mysqlDB)
 	q := stdlibadapter.New(mysqlDB)
 	ctx := context.Background()
@@ -254,6 +267,7 @@ func TestBeginCommitMySQL(t *testing.T) {
 }
 
 func TestBeginCommitSQLite(t *testing.T) {
+	requireDocker(t)
 	cleanTable(t, sqliteDB)
 	q := stdlibadapter.New(sqliteDB)
 	ctx := context.Background()
@@ -289,6 +303,7 @@ func TestBeginCommitSQLite(t *testing.T) {
 }
 
 func TestSavepointRollback(t *testing.T) {
+	requireDocker(t)
 	for _, b := range backends() {
 		t.Run(b.name, func(t *testing.T) {
 			cleanTable(t, b.db)
@@ -356,6 +371,7 @@ func TestSavepointRollback(t *testing.T) {
 }
 
 func TestResultLastInsertId(t *testing.T) {
+	requireDocker(t)
 	for _, b := range backends() {
 		t.Run(b.name, func(t *testing.T) {
 			cleanTable(t, b.db)
@@ -387,6 +403,7 @@ func TestResultLastInsertId(t *testing.T) {
 }
 
 func TestQuerierMethodsImplemented(t *testing.T) {
+	requireDocker(t)
 	// Compile-time check is in stdlib.go: var _ database.Querier = (*stdlibAdapter)(nil)
 	// This test verifies New() returns a non-nil value at runtime.
 	q := stdlibadapter.New(sqliteDB)
@@ -404,6 +421,7 @@ func cleanTables(t *testing.T, db *sql.DB) {
 }
 
 func TestConstraintUniqueViolation(t *testing.T) {
+	requireDocker(t)
 	for _, b := range backends() {
 		t.Run(b.name, func(t *testing.T) {
 			cleanTables(t, b.db)
@@ -432,6 +450,7 @@ func TestConstraintUniqueViolation(t *testing.T) {
 }
 
 func TestConstraintFKViolation(t *testing.T) {
+	requireDocker(t)
 	for _, b := range backends() {
 		t.Run(b.name, func(t *testing.T) {
 			cleanTables(t, b.db)
@@ -465,6 +484,7 @@ func TestConstraintFKViolation(t *testing.T) {
 }
 
 func TestConstraintNotNullViolation(t *testing.T) {
+	requireDocker(t)
 	for _, b := range backends() {
 		t.Run(b.name, func(t *testing.T) {
 			cleanTables(t, b.db)
@@ -491,6 +511,7 @@ func TestConstraintNotNullViolation(t *testing.T) {
 }
 
 func TestConstraintCheckViolation(t *testing.T) {
+	requireDocker(t)
 	for _, b := range backends() {
 		t.Run(b.name, func(t *testing.T) {
 			cleanTables(t, b.db)
@@ -515,6 +536,7 @@ func TestConstraintCheckViolation(t *testing.T) {
 }
 
 func TestDeadlockMySQL(t *testing.T) {
+	requireDocker(t)
 	cleanTables(t, mysqlDB)
 	ctx := context.Background()
 
@@ -597,6 +619,7 @@ func TestDeadlockMySQL(t *testing.T) {
 // fails with "busy buffer" and destroys the connection, taking the rollback
 // with it. MySQL only — neither SQLite nor pgx has a next-result-set path here.
 func TestRowsNextReleasesConnectionOnDrainMySQL(t *testing.T) {
+	requireDocker(t)
 	tests := []struct {
 		name  string
 		query string
@@ -678,6 +701,7 @@ func sessionPinner(t *testing.T, db *sql.DB) database.SessionPinner {
 // A pool INSERT runs between the session's INSERT and its LAST_INSERT_ID read:
 // on the pinned session that read still names the session's own INSERT.
 func TestWithSessionRunsOnOneSessionMySQL(t *testing.T) {
+	requireDocker(t)
 	cleanTable(t, mysqlDB)
 	ctx := context.Background()
 	db, err := sql.Open("mysql", mysqlDSN)
@@ -736,6 +760,7 @@ func TestWithSessionRunsOnOneSessionMySQL(t *testing.T) {
 // pool however fn ends. On SQLite, whose pool holds one connection, a leaked
 // pin would hang every later test.
 func TestWithSessionReleasesTheConnection(t *testing.T) {
+	requireDocker(t)
 	errFn := errors.New("fn failed")
 	tests := []struct {
 		name    string
@@ -773,6 +798,7 @@ func TestWithSessionReleasesTheConnection(t *testing.T) {
 // TestWithSessionMapsErrors maps a statement's error on the pinned session
 // exactly as the pool does.
 func TestWithSessionMapsErrors(t *testing.T) {
+	requireDocker(t)
 	for _, b := range backends() {
 		t.Run(b.name, func(t *testing.T) {
 			cleanTables(t, b.db)
@@ -798,6 +824,7 @@ func TestWithSessionMapsErrors(t *testing.T) {
 // TestWithSessionBeginsOnThePinnedSessionMySQL opens a transaction on the
 // session through its Begin, as a caller of the pinned Querier would.
 func TestWithSessionBeginsOnThePinnedSessionMySQL(t *testing.T) {
+	requireDocker(t)
 	cleanTable(t, mysqlDB)
 	ctx := context.Background()
 	err := sessionPinner(t, mysqlDB).WithSession(ctx, func(session database.Querier) error {

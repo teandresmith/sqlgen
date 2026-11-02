@@ -19,10 +19,19 @@ import (
 
 var testPool *pgxpool.Pool
 
+// requireDocker skips an integration test under -short, where TestMain starts
+// no containers and only the unit tests run.
+func requireDocker(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("integration test: needs Docker")
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	if testing.Short() {
-		os.Exit(0)
+		os.Exit(m.Run())
 	}
 
 	ctx := context.Background()
@@ -68,6 +77,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestExec(t *testing.T) {
+	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
 
@@ -95,6 +105,7 @@ func TestExec(t *testing.T) {
 }
 
 func TestQuery(t *testing.T) {
+	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
 
@@ -145,6 +156,7 @@ func TestQuery(t *testing.T) {
 }
 
 func TestQueryRow(t *testing.T) {
+	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
 
@@ -166,6 +178,7 @@ func TestQueryRow(t *testing.T) {
 }
 
 func TestBeginCommit(t *testing.T) {
+	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
 
@@ -204,6 +217,7 @@ func TestBeginCommit(t *testing.T) {
 }
 
 func TestBeginRollback(t *testing.T) {
+	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
 
@@ -238,6 +252,7 @@ func TestBeginRollback(t *testing.T) {
 }
 
 func TestSendBatch(t *testing.T) {
+	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
 
@@ -285,6 +300,7 @@ func TestSendBatch(t *testing.T) {
 }
 
 func TestSendBatchMapsConstraintErrors(t *testing.T) {
+	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
 	adapter := q.(interface {
@@ -339,6 +355,7 @@ func TestSendBatchMapsConstraintErrors(t *testing.T) {
 }
 
 func TestQuerierMethodsImplemented(t *testing.T) {
+	requireDocker(t)
 	// Compile-time check is in pgx.go: var _ database.Querier = (*pgxAdapter)(nil)
 	// This test verifies New() returns a non-nil value at runtime.
 	q := pgxadapter.New(testPool)
@@ -350,6 +367,7 @@ func TestQuerierMethodsImplemented(t *testing.T) {
 // --- Error mapping integration tests ---
 
 func TestConstraintUniqueViolation(t *testing.T) {
+	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
 
@@ -375,6 +393,7 @@ func TestConstraintUniqueViolation(t *testing.T) {
 }
 
 func TestConstraintFKViolation(t *testing.T) {
+	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
 
@@ -397,6 +416,7 @@ func TestConstraintFKViolation(t *testing.T) {
 }
 
 func TestConstraintNotNullViolation(t *testing.T) {
+	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
 
@@ -418,6 +438,7 @@ func TestConstraintNotNullViolation(t *testing.T) {
 }
 
 func TestConstraintCheckViolation(t *testing.T) {
+	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
 
@@ -440,6 +461,7 @@ func TestConstraintCheckViolation(t *testing.T) {
 }
 
 func TestDeadlock(t *testing.T) {
+	requireDocker(t)
 	ctx := context.Background()
 
 	// Setup: create two rows for the deadlock scenario
@@ -511,6 +533,7 @@ func TestDeadlock(t *testing.T) {
 // A DEFERRABLE INITIALLY DEFERRED unique constraint is checked at commit, so
 // the duplicate INSERT succeeds and COMMIT fails with 23505.
 func TestCommitMapsDeferredConstraint(t *testing.T) {
+	requireDocker(t)
 	ctx := context.Background()
 	if _, err := testPool.Exec(ctx, `CREATE TABLE test_deferred (
 		id INT PRIMARY KEY,
