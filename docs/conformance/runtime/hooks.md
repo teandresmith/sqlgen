@@ -8,14 +8,14 @@ Hooks and middleware (§21) and operation-level tracing through hooks (§24.2). 
 [README.md](../README.md) for the format.
 
 ## §21.3 Registration
-<!-- prd: 21.3 sha256: 194161143ad28aaf -->
+<!-- prd: 21.3 sha256: f38531a0ea87324e -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | hook.register-options | The unified client registers hooks through functional options `WithMutationHook(h hook.MutationHook) ClientOption` and `WithQueryHook(h hook.QueryHook) ClientOption` | `unit: cmd/sqlgen/gen: TestUnifiedClientTemplate_clientOption` | all |  |
 
 ## §21.6 Panic Recovery
-<!-- prd: 21.6 sha256: c3ace23d53631bac -->
+<!-- prd: 21.6 sha256: 5352bfd541d8b41b -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

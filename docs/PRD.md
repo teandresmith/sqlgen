@@ -10924,11 +10924,12 @@ type QueryHandler func(ctx context.Context, q *QueryContext) (any, error)
 
 // QueryContext provides metadata and access to the query being performed.
 type QueryContext struct {
-    Op     QueryOp   // Get, GetMany, Exists, Count, Paginate, Connection
-    Table  TableName // table name constant (e.g., TableProducts)
-    Schema string    // schema name (e.g., "public", "" for MySQL/SQLite)
-    PK     any       // primary key value (for Get/Exists; nil for GetMany/Count)
-    Input  any       // *GetInput, *Filter, etc.
+    Op          QueryOp   // Get, GetMany, Exists, Count, Paginate, Connection, Stream, Refresh
+    Table       TableName // table name constant (e.g., TableProducts)
+    Schema      string    // schema name (e.g., "public", "" for MySQL/SQLite)
+    PK          any       // primary key value (for Get/Exists; nil for GetMany/Count)
+    Input       any       // *GetInput, *Filter, etc.
+    CallOptions any       // resolved CallOptions[FO]; hooks can type-assert for table-specific access
 }
 ```
 
@@ -10966,8 +10967,12 @@ const (
     OpCount      QueryOp = "count"
     OpPaginate   QueryOp = "paginate"
     OpConnection QueryOp = "connection"
+    OpStream     QueryOp = "stream"
+    OpRefresh    QueryOp = "refresh"
 )
 ```
+
+`OpStream` is the op `Stream` runs the query chain under ([9.4a](#94a-streaming-operations)). `OpRefresh` is the op of a materialized view's `Refresh` and `RefreshConcurrently` ([16.5](#165-materialized-views-postgresql)): a refresh flows through the query chain like a read, with no `Input` and no rows returned.
 
 **`OpUpsertMany` maps to the existing `event.Upsert` action**, not to a new wire value, so every subscriber already filtering on `event.Upsert` keeps working unchanged ([28.3](#283-event-structure)). It is a genuine new write path — it reaches the database directly — so it needs its own op, and every consumer switch keyed on `MutationOp` must name it explicitly: cache invalidation ([27.7](#277-cache-behavior-by-operation)), the op-to-action mapping, and the [32.3](#323-per-surface-behavior) event-redaction switch. None of those fails to compile when an arm is missing, so each needs its own behavioral check.
 
@@ -11025,7 +11030,17 @@ func ForQuery[Input any, Result any](
 ) QueryHook
 ```
 
-The generic helpers accept `TableName` (not a raw string), so the table reference is always a generated constant. Internally they match the table name and assert the input/result types. If the table doesn't match, the hook passes through to `next` without executing — so entity-specific hooks are safe to register globally.
+The generic helpers accept `TableName` (not a raw string), so the table reference is always a generated constant. Internally they match the table name and assert the input/result types. If the table doesn't match, the hook passes through to `next` without executing, so an entity hook never touches another table's operations.
+
+On a matching table the helper fires for **every** operation on that table, and its types must hold for each one:
+
+- When `Input` is not the declared type — another operation's input, or nil for an operation that carries none (`Get`, `Exists`, a delete by key) — the hook returns an error without calling `fn` or `next`, e.g. `hook: type assertion failed for update public.products: expected *<pkg>.CreateProductInput, got *<pkg>.UpdateProductInput` (the types print package-qualified).
+- When `next` succeeds with a non-nil result that is not the declared `Result`, the typed `next` returns an error, e.g. `hook: result type assertion failed for get_many public.products: expected *<pkg>.Product, got []*<pkg>.Product`. The operation has already run when this error is returned.
+- When `next` succeeds with a nil result, the typed `next` returns the zero `Result` and no error.
+
+`OpExists` is one op for two input shapes — `Exists` carries the key in `PK` and no `Input`, `ExistsWhere` carries the filter — so no typed helper serves both; like `Get`, a hook on `Exists` is an untyped `QueryHook`.
+
+A mismatch is an error rather than a silent pass-through, so a hook declared with the wrong types fails loudly instead of never running. Scope an entity hook to the operations whose types it declares with `OnMutation` / `OnQuery` ([21.4](#214-conditional-execution-helpers)).
 
 ### 21.3 Registration
 
@@ -11045,19 +11060,16 @@ client := <pkg>.New(db,
 )
 ```
 
-**Execution order:** Global hooks always run before entity-specific hooks, regardless of registration order. Within each group, hooks execute in registration order (outermost first).
+**Execution order:** Hooks execute in registration order: the first registered is the outermost. The chain does not tell global hooks from entity-specific ones — a hook built with `ForMutation` / `ForQuery` is an ordinary `MutationHook` / `QueryHook` — so an entity hook registered before a global hook runs outside it.
 
 ```
-Global hooks (outermost → innermost, registration order)
-    │
-    ▼
-Entity-specific hooks (outermost → innermost, registration order)
+Registered hooks (outermost → innermost, registration order)
     │
     ▼
 Actual DB operation
 ```
 
-If global hooks `f`, `g` and entity hook `h` are registered, execution is `f(g(h(operation)))`. Code before `next()` runs in order (f→g→h); code after `next()` runs in reverse (h→g→f). This ensures cross-cutting concerns (tracing, auth) always wrap entity-specific logic (validation, enrichment).
+If global hooks `f`, `g` and entity hook `h` are registered in that order, execution is `f(g(h(operation)))`. Code before `next()` runs in order (f→g→h); code after `next()` runs in reverse (h→g→f). Register cross-cutting hooks (tracing, auth) first so they wrap entity-specific logic (validation, enrichment).
 
 ### 21.4 Conditional Execution Helpers
 
@@ -11080,6 +11092,8 @@ hook.OnMutation(
 // Block operations entirely
 hook.RejectMutation(OpHardDelete)                    // returns error if HardDelete is attempted
 ```
+
+`RejectMutation` rejects a listed op on every table without calling `next`, with an error naming the op and the table, e.g. `hook: operation hard_delete is not allowed on public.products`. Other ops pass through.
 
 ### 21.5 Hook Lifecycle
 
@@ -11165,10 +11179,7 @@ client := <pkg>.New(db,
 Panic recovery (always outermost)
     │
     ▼
-Global hooks
-    │
-    ▼
-Entity-specific hooks
+Registered hooks (registration order)
     │
     ▼
 Actual DB operation
@@ -11264,7 +11275,7 @@ client := <pkg>.New(db,
 
 ### 21.8 Entity-Level Hooks (type-safe — specific tables)
 
-Entity-level hooks use the generic helpers `hook.ForMutation[Input, Result]` and `hook.ForQuery[Input, Result]`. They are scoped to a specific table and provide type-safe access to the input and result — no `any`, no type assertions.
+Entity-level hooks use the generic helpers `hook.ForMutation[Input, Result]` and `hook.ForQuery[Input, Result]`. They are scoped to a specific table and provide type-safe access to the input and result — no `any`, no type assertions. A helper fires for every operation on its table and returns an error when an operation's input or result is not the declared type ([21.2](#212-hook-types) "Generic Type-Safe Helpers"), so each example below is scoped with `OnMutation` / `OnQuery` to the operations whose types it declares.
 
 | Use Case | Hook Type | Why Entity-Level? |
 |----------|-----------|-------------------|
@@ -11276,7 +11287,7 @@ Entity-level hooks use the generic helpers `hook.ForMutation[Input, Result]` and
 #### Product Creation Validation
 
 ```go
-productValidateHook := hook.ForMutation[*<pkg>.CreateProductInput, *<pkg>.Product](
+productValidateHook := hook.OnMutation(hook.ForMutation[*<pkg>.CreateProductInput, *<pkg>.Product](
     <pkg>.TableProducts,
     func(ctx context.Context, m *hook.MutationContext, input *<pkg>.CreateProductInput, next func(context.Context) (*<pkg>.Product, error)) (*<pkg>.Product, error) {
         // input is *CreateProductInput — no type assertion needed
@@ -11286,13 +11297,13 @@ productValidateHook := hook.ForMutation[*<pkg>.CreateProductInput, *<pkg>.Produc
         input.Name = strings.TrimSpace(input.Name)
         return next(ctx)
     },
-)
+), hook.OpCreate)
 ```
 
 #### Product Query Enrichment
 
 ```go
-productQueryHook := hook.ForQuery[*<pkg>.GetProductsInput, []*<pkg>.Product](
+productQueryHook := hook.OnQuery(hook.ForQuery[*<pkg>.GetProductsInput, []*<pkg>.Product](
     <pkg>.TableProducts,
     func(ctx context.Context, q *hook.QueryContext, input *<pkg>.GetProductsInput, next func(context.Context) ([]*<pkg>.Product, error)) ([]*<pkg>.Product, error) {
         // Enforce maximum page size for products
@@ -11302,28 +11313,29 @@ productQueryHook := hook.ForQuery[*<pkg>.GetProductsInput, []*<pkg>.Product](
         }
         return next(ctx)
     },
-)
+), hook.OpGetMany)
 ```
 
 #### Entity-Level Caching
 
 ```go
-productCacheHook := hook.ForQuery[*<pkg>.GetProductsInput, *<pkg>.Product](
+productCacheHook := hook.OnQuery(hook.ForQuery[*<pkg>.GetProductsInput, []*<pkg>.Product](
     <pkg>.TableProducts,
-    func(ctx context.Context, q *hook.QueryContext, input *<pkg>.GetProductsInput, next func(context.Context) (*<pkg>.Product, error)) (*<pkg>.Product, error) {
-        if q.Op == hook.OpGet && q.PK != nil {
-            if cached, ok := cache.Get[<pkg>.Product](ctx, q.PK); ok {
-                return cached, nil // short-circuit
-            }
+    func(ctx context.Context, q *hook.QueryContext, input *<pkg>.GetProductsInput, next func(context.Context) ([]*<pkg>.Product, error)) ([]*<pkg>.Product, error) {
+        key := productsCacheKey(input)
+        if cached, ok := cache.Get[[]*<pkg>.Product](ctx, key); ok {
+            return cached, nil // short-circuit
         }
         result, err := next(ctx)
-        if err == nil && q.Op == hook.OpGet {
-            cache.Set(ctx, q.PK, result, 15*time.Minute)
+        if err == nil {
+            cache.Set(ctx, key, result, 15*time.Minute)
         }
         return result, err
     },
-)
+), hook.OpGetMany)
 ```
+
+`Get` carries its key in `PK` and no `Input`, so a typed helper cannot serve it; a hook on `Get` is an untyped `QueryHook` that reads `q.PK`.
 
 ### 21.9 Registration Summary
 
@@ -11342,7 +11354,7 @@ client := <pkg>.New(db,
 )
 ```
 
-Global hooks always execute before entity-level hooks, regardless of registration order. Entity-level hooks (created via `ForMutation`/`ForQuery`) automatically pass through when the table doesn't match, so they are safe to register alongside global hooks. This ordering ensures cross-cutting concerns (tracing, auth) always wrap entity-specific logic (validation, query enrichment).
+Hooks execute in registration order ([21.3](#213-registration)), so the global hooks are registered first: that is what makes cross-cutting concerns (tracing, auth) wrap entity-specific logic (validation, query enrichment). Entity-level hooks pass through on other tables, and each is scoped with `OnMutation` / `OnQuery` to the operations whose types it declares ([21.8](#218-entity-level-hooks-type-safe--specific-tables)), so they are safe to register alongside global hooks.
 
 ### 21.10 Rejected Alternative: Per-Operation Hook Methods
 

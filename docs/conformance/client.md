@@ -745,7 +745,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | concurrency.tx-fanout | A `txCtx` is safe to use from several goroutines: overlapping client calls fanned out over one transaction's context all succeed, and the transaction commits every write | `conformance: Concurrency/overlapping calls on one transaction's context all run and commit` | all |  |
 
 ## §21.2 Hook Types
-<!-- prd: 21.2 sha256: 9d8fd1b0bd0ec4e4 -->
+<!-- prd: 21.2 sha256: aa2a84591e5b6342 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -777,7 +777,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | create-many.hook-abort | A hook can abort: it returns an error without calling `next()`, and `CreateMany` writes nothing | `conformance: CreateMany/a hook that aborts writes nothing` | all |  |
 
 ## §21.6 Panic Recovery
-<!-- prd: 21.6 sha256: c3ace23d53631bac -->
+<!-- prd: 21.6 sha256: 5352bfd541d8b41b -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
