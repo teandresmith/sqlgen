@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -640,5 +641,26 @@ func TestTimeoutBeforeCommitRollsBackAndClosesTheTransaction(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("rows = %d, want 0: the timed-out transaction must not commit", n)
+	}
+}
+
+func TestRejectedPasswordIsNotConnectionFailed(t *testing.T) {
+	requireDocker(t)
+	ctx := context.Background()
+	cfg := testPool.Config().Copy()
+	cfg.ConnConfig.Password = "wrong"
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	_, err = pgxadapter.New(pool).Exec(ctx, "SELECT 1")
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "28P01" {
+		t.Fatalf("Exec() error = %v, want the server's 28P01 rejection", err)
+	}
+	if errors.Is(err, database.ErrConnectionFailed) {
+		t.Errorf("Exec() error = %v, want a rejected password not to be ErrConnectionFailed", err)
 	}
 }

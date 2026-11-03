@@ -29,7 +29,7 @@ func New(pool *pgxpool.Pool) database.Querier {
 func (a *pgxAdapter) Exec(ctx context.Context, sql string, arguments ...any) (database.Result, error) {
 	tag, err := a.pool.Exec(ctx, sql, arguments...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("exec: %w", err)
@@ -41,7 +41,7 @@ func (a *pgxAdapter) Exec(ctx context.Context, sql string, arguments ...any) (da
 func (a *pgxAdapter) Query(ctx context.Context, sql string, args ...any) (database.Rows, error) {
 	r, err := a.pool.Query(ctx, sql, args...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("query: %w", err)
@@ -70,6 +70,9 @@ func (a *pgxAdapter) Begin(ctx context.Context, name string, opts ...database.Tx
 
 	tx, err := a.pool.BeginTx(ctx, pgxOpts)
 	if err != nil {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
+			err = mapped
+		}
 		return nil, fmt.Errorf("beginning pgx transaction: %w", err)
 	}
 
@@ -180,7 +183,7 @@ type txConn struct {
 func (c *txConn) Exec(ctx context.Context, sql string, arguments ...any) (database.Result, error) {
 	tag, err := c.tx.Exec(ctx, sql, arguments...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("tx exec: %w", err)
@@ -192,7 +195,7 @@ func (c *txConn) Exec(ctx context.Context, sql string, arguments ...any) (databa
 func (c *txConn) Query(ctx context.Context, sql string, args ...any) (database.Rows, error) {
 	r, err := c.tx.Query(ctx, sql, args...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("tx query: %w", err)
@@ -213,7 +216,7 @@ func (c *txConn) Commit(ctx context.Context) error {
 		if errors.Is(err, pgx.ErrTxClosed) {
 			return fmt.Errorf("pgx commit: %w: %w", database.ErrTxDone, err)
 		}
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return mapped
 		}
 		return fmt.Errorf("pgx commit: %w", err)

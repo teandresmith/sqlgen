@@ -1,9 +1,16 @@
 package stdlib
 
 import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"net"
+	"os"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/lib/pq"
@@ -108,18 +115,29 @@ func TestMapPqErrorDeadlock(t *testing.T) {
 }
 
 func TestMapPqErrorConnectionFailed(t *testing.T) {
-	codes := []string{"08000", "08003", "08006"}
-	for _, code := range codes {
-		t.Run(code, func(t *testing.T) {
-			pqErr := &pq.Error{Code: pqerror.Code(code)}
+	tests := []struct {
+		name string
+		code string
+		want bool
+	}{
+		{name: "08000 connection exception", code: "08000", want: true},
+		{name: "08003 connection does not exist", code: "08003", want: true},
+		{name: "08006 connection failure", code: "08006", want: true},
+		{name: "53300 too many connections", code: "53300", want: true},
+		{name: "28P01 a rejected password is not a connection failure", code: "28P01", want: false},
+		{name: "3D000 an unknown database is not a connection failure", code: "3D000", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pqErr := &pq.Error{Code: pqerror.Code(tt.code)}
 
 			ok, got := mapPqError(pqErr)
 
-			if !ok {
-				t.Fatalf("mapPqError(%s) returned ok=false, want true", code)
+			if ok != tt.want || errors.Is(got, database.ErrConnectionFailed) != tt.want {
+				t.Fatalf("mapPqError(%s) = (%v, %v), want recognized and ErrConnectionFailed = %v", tt.code, ok, got, tt.want)
 			}
-			if !errors.Is(got, database.ErrConnectionFailed) {
-				t.Errorf("mapPqError(%s) is not ErrConnectionFailed: %v", code, got)
+			if !errors.Is(got, pqErr) {
+				t.Errorf("mapPqError(%s) = %v, want it to wrap the driver error", tt.code, got)
 			}
 		})
 	}
@@ -248,18 +266,26 @@ func TestMapMySQLErrorDeadlock(t *testing.T) {
 }
 
 func TestMapMySQLErrorConnectionFailed(t *testing.T) {
-	numbers := []uint16{2002, 2006, 1040}
-	for _, num := range numbers {
-		t.Run(fmt.Sprintf("%d", num), func(t *testing.T) {
-			mysqlErr := &mysql.MySQLError{Number: num, Message: "connection error"}
+	tests := []struct {
+		name   string
+		number uint16
+		want   bool
+	}{
+		{name: "1040 too many connections", number: 1040, want: true},
+		{name: "1045 a rejected password is not a connection failure", number: 1045, want: false},
+		{name: "1049 an unknown database is not a connection failure", number: 1049, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mysqlErr := &mysql.MySQLError{Number: tt.number, Message: "connection error"}
 
 			ok, got := mapMySQLError(mysqlErr)
 
-			if !ok {
-				t.Fatalf("mapMySQLError(%d) returned ok=false, want true", num)
+			if ok != tt.want || errors.Is(got, database.ErrConnectionFailed) != tt.want {
+				t.Fatalf("mapMySQLError(%d) = (%v, %v), want recognized and ErrConnectionFailed = %v", tt.number, ok, got, tt.want)
 			}
-			if !errors.Is(got, database.ErrConnectionFailed) {
-				t.Errorf("mapMySQLError(%d) is not ErrConnectionFailed: %v", num, got)
+			if !errors.Is(got, mysqlErr) {
+				t.Errorf("mapMySQLError(%d) = %v, want it to wrap the driver error", tt.number, got)
 			}
 		})
 	}
@@ -862,4 +888,185 @@ func TestMapSQLiteCodeFKNoDetail(t *testing.T) {
 	if ce.Column != "" {
 		t.Errorf("ConstraintError.Column = %q, want empty", ce.Column)
 	}
+}
+
+func TestMapErrorTransportFailures(t *testing.T) {
+	reset := &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
+	// MapError has no context, so an error matching a context error is taken
+	// to be the caller's.
+	timeout := &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "a broken socket read", err: fmt.Errorf("query: %w", reset), want: true},
+		{name: "a bad connection the pool gave up on", err: fmt.Errorf("exec: %w", driver.ErrBadConn), want: true},
+		{name: "a connection the MySQL driver gave up on", err: fmt.Errorf("exec: %w", mysql.ErrInvalidConn), want: true},
+		{name: "a context deadline is not a connection failure", err: fmt.Errorf("read: %w: %w", timeout, context.DeadlineExceeded), want: false},
+		{name: "a context cancellation is not a connection failure", err: fmt.Errorf("read: %w: %w", timeout, context.Canceled), want: false},
+		{name: "an unrecognized error is not a connection failure", err: errors.New("syntax error"), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, mapped := MapError(tt.err)
+			if ok != tt.want || errors.Is(mapped, database.ErrConnectionFailed) != tt.want {
+				t.Fatalf("MapError(%v) = (%v, %v), want recognized and ErrConnectionFailed = %v", tt.err, ok, mapped, tt.want)
+			}
+			if !errors.Is(mapped, tt.err) {
+				t.Errorf("MapError(%v) = %v, want it to wrap the original error", tt.err, mapped)
+			}
+		})
+	}
+}
+
+func TestMapErrorCtxTransportFailures(t *testing.T) {
+	reset := &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
+	dialTimeout := realDialTimeout(t)
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	tests := []struct {
+		name string
+		ctx  context.Context
+		err  error
+		want bool
+	}{
+		{name: "a driver's dial timeout while the caller waits is a connection failure", ctx: context.Background(), err: dialTimeout, want: true},
+		{name: "a broken socket while the caller waits is a connection failure", ctx: context.Background(), err: reset, want: true},
+		{name: "a broken socket after the caller's context ended is not a connection failure", ctx: ended, err: reset, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, mapped := mapErrorCtx(tt.ctx, tt.err)
+			if ok != tt.want || errors.Is(mapped, database.ErrConnectionFailed) != tt.want {
+				t.Fatalf("mapErrorCtx(%v) = (%v, %v), want recognized and ErrConnectionFailed = %v", tt.err, ok, mapped, tt.want)
+			}
+			if !errors.Is(mapped, tt.err) {
+				t.Errorf("mapErrorCtx(%v) = %v, want it to wrap the original error", tt.err, mapped)
+			}
+		})
+	}
+}
+
+func TestRefusedConnectionIsConnectionFailed(t *testing.T) {
+	ctx := context.Background()
+	// Nothing listens on port 1, so the dial is refused.
+	mysqlQ := refusedQuerier(t, "mysql", "u:p@tcp(127.0.0.1:1)/x")
+	postgresQ := refusedQuerier(t, "postgres", "postgres://u:p@127.0.0.1:1/x?sslmode=disable")
+
+	t.Run("mysql exec", func(t *testing.T) {
+		_, err := mysqlQ.Exec(ctx, "SELECT 1")
+		assertRefusedIsConnectionFailed(t, err)
+	})
+	t.Run("mysql begin", func(t *testing.T) {
+		_, err := mysqlQ.Begin(ctx, "refused")
+		assertRefusedIsConnectionFailed(t, err)
+	})
+	t.Run("postgres exec", func(t *testing.T) {
+		_, err := postgresQ.Exec(ctx, "SELECT 1")
+		assertRefusedIsConnectionFailed(t, err)
+	})
+	t.Run("postgres begin", func(t *testing.T) {
+		_, err := postgresQ.Begin(ctx, "refused")
+		assertRefusedIsConnectionFailed(t, err)
+	})
+}
+
+func refusedQuerier(t *testing.T, driverName, dsn string) database.Querier {
+	t.Helper()
+	db, err := sql.Open(driverName, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return New(db)
+}
+
+func assertRefusedIsConnectionFailed(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, database.ErrConnectionFailed) {
+		t.Errorf("error = %v, want ErrConnectionFailed", err)
+	}
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) || !errors.Is(err, syscall.ECONNREFUSED) {
+		t.Errorf("error = %v, want it to wrap the refused dial", err)
+	}
+}
+
+func TestConnectTimeoutIsConnectionFailedOnlyWhileTheCallerWaits(t *testing.T) {
+	t.Run("mysql handshake read timeout is a connection failure", func(t *testing.T) {
+		q := silentQuerier(t, "mysql", "u:p@tcp(%s)/x?timeout=300ms&readTimeout=300ms")
+		_, err := q.Exec(context.Background(), "SELECT 1")
+		if !errors.Is(err, database.ErrConnectionFailed) {
+			t.Errorf("Exec() error = %v, want ErrConnectionFailed", err)
+		}
+	})
+	t.Run("postgres handshake timeout is a connection failure", func(t *testing.T) {
+		q := silentQuerier(t, "postgres", "postgres://u:p@%s/x?sslmode=disable&connect_timeout=1")
+		_, err := q.Exec(context.Background(), "SELECT 1")
+		if !errors.Is(err, database.ErrConnectionFailed) {
+			t.Errorf("Exec() error = %v, want ErrConnectionFailed", err)
+		}
+	})
+	t.Run("the caller's deadline is not a connection failure", func(t *testing.T) {
+		q := silentQuerier(t, "mysql", "u:p@tcp(%s)/x")
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		_, err := q.Exec(ctx, "SELECT 1")
+		if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, database.ErrConnectionFailed) {
+			t.Errorf("Exec() error = %v, want the caller's deadline and not ErrConnectionFailed", err)
+		}
+	})
+}
+
+// silentQuerier opens dsnFormat, with %s replaced by the address of a listener
+// that accepts TCP connections and never answers, so a client's connect
+// handshake waits until a timeout ends it. The listener's connections are
+// closed before the pool, which would otherwise wait on a handshake that never
+// ends.
+func silentQuerier(t *testing.T, driverName, dsnFormat string) database.Querier {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conns []net.Conn
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conns = append(conns, c)
+		}
+	}()
+	q := refusedQuerier(t, driverName, fmt.Sprintf(dsnFormat, ln.Addr().String()))
+	t.Cleanup(func() {
+		_ = ln.Close()
+		<-done
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	})
+	return q
+}
+
+// realDialTimeout returns the error a dial that runs out of time reports. Like
+// a driver's connect timeout, it matches context.DeadlineExceeded although no
+// caller's context has ended.
+func realDialTimeout(t *testing.T) error {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	d := net.Dialer{Timeout: time.Nanosecond}
+	_, err = d.Dial("tcp", ln.Addr().String())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a 1ns dial returned %v, want a timeout matching context.DeadlineExceeded", err)
+	}
+	return err
 }

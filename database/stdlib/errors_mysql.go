@@ -47,7 +47,7 @@ func mapMySQLError(err error) (bool, error) {
 		}
 	case 1213: // ER_LOCK_DEADLOCK
 		return true, fmt.Errorf("%w: %w", database.ErrDeadlock, err)
-	case 2002, 2006, 1040: // connection errors
+	case 1040: // ER_CON_COUNT_ERROR: too many connections
 		return true, fmt.Errorf("%w: %w", database.ErrConnectionFailed, err)
 	default:
 		return false, err

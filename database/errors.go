@@ -40,8 +40,10 @@ var (
 	ErrDeadlock = errors.New("sqlgen: deadlock detected")
 
 	// ErrConnectionFailed is returned when a database operation fails due to
-	// a connection-level error (connection refused, reset, timeout, pool
-	// exhaustion). Wraps the underlying driver error for inspection.
+	// a connection-level error (connection refused or reset, a driver's
+	// connect timeout, the server out of connections). Wraps the underlying
+	// driver error for inspection. An exhausted pool waits on the caller's
+	// context, so it surfaces as that context's error.
 	ErrConnectionFailed = errors.New("sqlgen: connection failed")
 
 	// ErrTxDone is returned when a COMMIT or ROLLBACK finds the transaction

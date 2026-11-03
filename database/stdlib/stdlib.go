@@ -32,7 +32,7 @@ func New(db *sql.DB) database.Querier {
 func (a *stdlibAdapter) Exec(ctx context.Context, query string, arguments ...any) (database.Result, error) {
 	res, err := a.db.ExecContext(ctx, query, arguments...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("exec: %w", err)
@@ -44,7 +44,7 @@ func (a *stdlibAdapter) Exec(ctx context.Context, query string, arguments ...any
 func (a *stdlibAdapter) Query(ctx context.Context, query string, args ...any) (database.Rows, error) {
 	r, err := a.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("query: %w", err)
@@ -73,7 +73,7 @@ func (a *stdlibAdapter) Begin(ctx context.Context, name string, opts ...database
 func (a *stdlibAdapter) WithSession(ctx context.Context, fn func(session database.Querier) error) (err error) {
 	conn, err := a.db.Conn(ctx)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return mapped
 		}
 		return fmt.Errorf("pinning session: %w", err)
@@ -106,6 +106,9 @@ func beginTx(ctx context.Context, b txBeginner, name string, opts []database.TxO
 
 	tx, err := b.BeginTx(ctx, sqlOpts)
 	if err != nil {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
+			err = mapped
+		}
 		return nil, fmt.Errorf("beginning stdlib transaction: %w", err)
 	}
 
@@ -145,7 +148,7 @@ type sessionConn struct {
 func (c *sessionConn) Exec(ctx context.Context, query string, arguments ...any) (database.Result, error) {
 	res, err := c.conn.ExecContext(ctx, query, arguments...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("session exec: %w", err)
@@ -157,7 +160,7 @@ func (c *sessionConn) Exec(ctx context.Context, query string, arguments ...any) 
 func (c *sessionConn) Query(ctx context.Context, query string, args ...any) (database.Rows, error) {
 	r, err := c.conn.QueryContext(ctx, query, args...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("session query: %w", err)
@@ -187,7 +190,7 @@ type txConn struct {
 func (c *txConn) Exec(ctx context.Context, query string, arguments ...any) (database.Result, error) {
 	res, err := c.tx.ExecContext(ctx, query, arguments...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("tx exec: %w", err)
@@ -199,7 +202,7 @@ func (c *txConn) Exec(ctx context.Context, query string, arguments ...any) (data
 func (c *txConn) Query(ctx context.Context, query string, args ...any) (database.Rows, error) {
 	r, err := c.tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return nil, mapped
 		}
 		return nil, fmt.Errorf("tx query: %w", err)
@@ -305,7 +308,7 @@ func (c *txConn) Commit(ctx context.Context) error {
 		if errors.Is(err, sql.ErrTxDone) {
 			return txDoneErr(ctx, err)
 		}
-		if ok, mapped := MapError(err); ok {
+		if ok, mapped := mapErrorCtx(ctx, err); ok {
 			return mapped
 		}
 		return fmt.Errorf("stdlib commit: %w", err)

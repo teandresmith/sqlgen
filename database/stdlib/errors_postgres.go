@@ -19,8 +19,8 @@ func mapPqError(err error) (bool, error) {
 
 	code := string(pqErr.Code)
 
-	// Connection exception class (08xxx)
-	if strings.HasPrefix(code, "08") {
+	// Connection exception class (08xxx), and too_many_connections at connect
+	if strings.HasPrefix(code, "08") || code == "53300" {
 		return true, fmt.Errorf("%w: %w", database.ErrConnectionFailed, err)
 	}
 

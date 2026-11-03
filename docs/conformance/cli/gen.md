@@ -559,7 +559,7 @@
 | artifacts.soft-delete.soft-delete | A soft-delete table gets SoftDelete/SoftDeleteMany/SoftDeleteWhere and Restore/RestoreMany/RestoreWhere; a table without a soft delete column gets only the HardDelete methods | `unit: cmd/sqlgen/gen: TestClientTemplate_softDeleteConditional`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_noSoftDelete_onlyHardDelete`; `unit: cmd/sqlgen/gen: TestClientTemplate_fullOperations` | all | generated-artifacts: soft-delete × soft-delete |
 
 ## §22.1 Generated Error Types
-<!-- prd: 22.1 sha256: 8a1fba394bd43fb7 -->
+<!-- prd: 22.1 sha256: fc88cee1615c8824 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

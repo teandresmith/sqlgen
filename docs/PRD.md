@@ -11436,8 +11436,10 @@ var (
     ErrDeadlock = errors.New("sqlgen: deadlock detected")
 
     // ErrConnectionFailed is returned when a database operation fails due to
-    // a connection-level error (connection refused, reset, timeout, pool
-    // exhaustion). Wraps the underlying driver error for inspection.
+    // a connection-level error (connection refused or reset, a driver's
+    // connect timeout, the server out of connections). Wraps the underlying
+    // driver error for inspection. An exhausted pool waits on the caller's
+    // context, so it surfaces as that context's error. See Section 22.2.
     ErrConnectionFailed = errors.New("sqlgen: connection failed")
 
     // ErrConstraintViolation is the base error for all constraint failures.
@@ -11528,7 +11530,9 @@ func (e *NestedMutationError) Unwrap() error // unwraps to Err
 | Check violation | `23514` | `3819` | `SQLITE_CONSTRAINT_CHECK` (275) |
 | Not null violation | `23502` | `1048` / `1364` | `SQLITE_CONSTRAINT_NOTNULL` (1299) |
 | Deadlock | `40P01` | `1213` | N/A (SQLite uses file-level locking) |
-| Connection failed | `08*` class (connection exception) | `2002` (server gone), `2006` (connection lost), `1040` (too many connections) | `SQLITE_BUSY` (5), `SQLITE_CANTOPEN` (14) |
+| Connection failed | `08*` class (connection exception), `53300` (too many connections) | `1040` (too many connections) | `SQLITE_BUSY` (5), `SQLITE_CANTOPEN` (14) |
+
+A failure to reach the database or to keep the connection is also `ErrConnectionFailed`, on every driver and at `Begin` as at every statement: a refused or failed connect, a connect timeout the driver enforces, a broken socket, or a connection the driver has given up on (`database/sql`'s `driver.ErrBadConn`, the MySQL driver's `ErrInvalidConn`). These carry no SQLSTATE or MySQL error number of their own; MySQL's `2002` and `2006` are client-library codes the Go driver reports this way. The driver's error stays wrapped. A server that rejects the connection is mapped by its code, so only a rejection for capacity (`53300`, `1040`) is a connection failure; a rejected password or an unknown database is not. The caller's own deadline or cancellation is not a connection failure either: once the call's context has ended, no transport failure is mapped and the driver's error is returned as it came. The adapters decide that on the call's context, since a driver's connect timeout looks the same as a deadline.
 
 **Usage:**
 

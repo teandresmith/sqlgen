@@ -784,7 +784,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | panic.method-prefix | The method returns a recovered panic under its own prefix: a panicking hook on `Create` returns `create product: sqlgen: panic in create {Table}: boom`, and `Stream` yields it as `stream products: sqlgen: panic in stream {Table}: …` | `conformance: ErrorWrapping/Create prefixes a recovered panic with create and the singular`; `conformance: Stream/a panicking hook is yielded as the recovered error after no rows` | all |  |
 
 ## §22.2 Constraint Errors
-<!-- prd: 22.2 sha256: 79ed9d573708c0cf -->
+<!-- prd: 22.2 sha256: d4f5441b0dd75250 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
