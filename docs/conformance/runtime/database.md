@@ -1,6 +1,6 @@
 # Runtime Requirements: Database and Transactions
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: database database/mock database/pgx database/stdlib -->
 <!-- matrix: transactions rows=feature:isolation,read-only,deferrable,timeout,savepoint,commit-rollback,reservation,teardown-never-waits cols=pgx,stdlib-postgres,mysql,sqlite -->
 <!-- matrix: error-mapping rows=error-class:unique,foreign-key,check,not-null,deadlock,connection-failed cols=pgx,stdlib-postgres,mysql,sqlite -->
