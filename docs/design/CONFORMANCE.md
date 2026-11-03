@@ -2022,6 +2022,67 @@ database versions it ran against.
        workspace, and then skips writing `manifest_embed_gen.go`. Restore that file, and pass
        `--manifest-timestamp 2026-01-01T00:00:00Z`.
 
+   **Seventeenth slice, `runtime/hooks.md`, recorded 2026-11-03:**
+   - **Scope.** `runtime/hooks.md` (`hook`) had 2 rows. As `complete` it failed on 45 things: 9 owned
+     sections with no rows (§21.1, §21.2, §21.4, §21.5, §21.7–§21.9, §21.11, §24.2), the empty
+     `hooks` matrix and 35 orphan tests.
+   - **Rulings (10):**
+     - Six PRD amendments with no code change:
+       - hooks run in pure registration order, so "global before entity regardless of registration
+         order" is dropped (§21.3, §21.6, §21.9);
+       - on a matching table, `ForMutation` / `ForQuery` return an error on an `Input` type mismatch
+         (nil included) and on a non-nil `Result` mismatch after the operation ran, and a nil result
+         reaches `fn` as the zero `Result`; the §21.8 / §21.9 examples are scoped with `OnMutation` /
+         `OnQuery`, and `Get` / `Exists` take untyped hooks (§21.2, §21.8);
+       - `QueryOp` gains `OpStream` and `OpRefresh` (§21.2);
+       - `QueryContext` gains `CallOptions` (§21.2);
+       - `RejectMutation`'s error names the op and the table (§21.4).
+     - The `hooks` matrix redeclared as `rows=chain:mutation,query` over `order`, `modify`,
+       `short-circuit`, `abort`, `panic-recovery` and `panic-handler`. Per-method firing and
+       `SkipHooks` stay in `client.md`.
+     - §21.9 and §21.11 made `informative`.
+     - The flip to `complete`.
+   - **Defects: 2, both ruled PRD amendments.**
+     - The ordering promise could not be kept: `ForMutation` returns a plain `MutationHook`, so the
+       chain cannot tell the two kinds apart. A fail-first test reproduced it, and was dropped with
+       the ruling.
+     - The PRD's own §21.9 registration made every `Update` and `HardDelete` on `products` fail
+       with a type-assertion error. A probe confirmed it, along with the result-mismatch error
+       arriving after the terminal ran.
+   - **Measurement.** Done in-session, without agents: the package is three files, uses only the
+     standard library and needs no Docker. I added 10 top-level tests and about 30 subtests, and
+     deleted one duplicate (`TestBuildMutationChain_globalBeforeEntity`). 31 mutants were run, all
+     killed, including a `PK int` type change that the reviewer found surviving the first field
+     test. No equivalent mutants.
+   - **Claim check.** The sqlgen-reviewer found 6 issues, all fixed:
+     - the `any` fields of `MutationContext` / `QueryContext` were not type-pinned (now
+       `pinAny(...*any)`);
+     - the entity-hook rows each claimed both helpers on one helper's test;
+     - `OnQuery` and `ForTable` matched only their first listed element;
+     - a test still named after the retired ordering rule;
+     - a cross-table claim duplicated between §21.4 and §21.7;
+     - a "returns fn's result" clause no test could tell apart from `next`'s.
+
+     Its one open question, `OpExists` carrying two input shapes, became a §21.2 sentence.
+   - **Rows.** `runtime/hooks.md` 2 → 42 rows (6045 → 6085 in all), all 12 matrix cells filled, no
+     `n/a`, 5 unclaimed tests and no gaps. A backlog entry records that `sqlgen lint` does not flag
+     an unscoped typed helper. The 2026-10-29 entry on §21.2's missing `OpStream` / `CallOptions`
+     is removed, now that the amendment settles it.
+   - **Completion sweep.** With `runtime/hooks.md` set to `complete`, `req-check` passes. Flipped on
+     the user's sign-off (`e0c14dff`), after the report was generated.
+   - **Report.** `make conformance` at `953a3c32`: 6085 rows, 5972 pass, 0 fail, 0 skip, 0 not
+     run, 113 untested. `runtime/hooks.md` has 42 pass.
+   - **For the next slice (`runtime/cache.md`):**
+     - Seed `cache.md` next (98 orphans), then `events.md` (54), then `support.md` (31). The cache
+       and event hooks are ordinary chain members, so their rows can cite `hook.*` rows for order
+       and pass-through instead of restating them.
+     - `MutationContext.Tenant`, `AffectedTenants` and `QueryContext.Tenant` are §29.5 fields that
+       hooks.md does not claim; check them against §29.5 there.
+     - A positional struct literal pins named-type fields only. An `any` field takes any value, so
+       pin it through a `*any`.
+     - Ask "what does the PRD's own example do under this code?" A probe of the §21.9 registration
+       found the mismatch defect that reading the helper alone did not.
+
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
