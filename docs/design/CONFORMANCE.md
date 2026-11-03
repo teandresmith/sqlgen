@@ -1928,6 +1928,100 @@ database versions it ran against.
        committing: the null fix first looked like a one-type change, and its `types.JSON` effect
        needed a second ruling.
 
+   **Sixteenth slice, `runtime/database.md`, recorded 2026-11-03:**
+   - **Scope.** `runtime/database.md` (`database`, `database/mock`, `database/pgx`,
+     `database/stdlib`) had 3 rows. As `complete` it failed on 143 things: 9 owned sections with no
+     rows (§18.1–§18.5, §19.1–§19.4), the empty `transactions` matrix, 3 empty `not-null` cells and
+     130 orphan tests.
+   - **Rulings (20):**
+     - Four code fixes (below), and six follow-up rulings on them:
+       - an `ErrTxDone` sentinel for a teardown the driver has already ended;
+       - `WithTransaction` rolls back after a failed root `COMMIT`;
+       - a pgx `ROLLBACK` that fails for any reason other than an ended context closes the `Tx` and
+         still returns its error (`conn busy` stays loud);
+       - the transport mapping decides on the call's context, so a driver's connect timeout counts
+         and the caller's deadline does not;
+       - of the server's rejections at connect, only capacity (`53300`, `1040`) is
+         `ErrConnectionFailed`;
+       - §22.1 drops "pool exhaustion", which surfaces as the caller's deadline.
+     - Five PRD amendments with no code change: `Deferrable` is pgx-only and ignored through
+       `stdlib` (§18.2); more than one `TxOptions` returns an error (§18.3); the retry log carries the
+       callback's error (§18.6); savepoints are raw SQL on every driver (§18.6); the core package
+       imports only the standard library, `database/sql` included (§19.3).
+     - Both matrices redeclared with fixed rows: `transactions` with eight features (isolation,
+       read-only, deferrable, timeout, savepoint, commit-rollback, reservation, teardown-never-waits);
+       `error-mapping` with the six §22.2 classes.
+     - Test homes: `database/stdlib` gains a PostgreSQL container opened through `lib/pq` for the
+       `stdlib-postgres` cells, and the driver packages' `TestMain` runs the unit tests under
+       `-short` (`67ac7fd4`); they had exited before `m.Run()`.
+     - The flip to `complete`.
+   - **Defects: 4, each fixed with a fail-first test:**
+     - `d02c6f66`: in sync callback mode a cancelled context did not stop the remaining `OnCommit`
+       callbacks. They are now skipped and `WithTransaction` returns the context's error.
+     - `6d5869f8`: after `TxOptions.Timeout` expired, `WithTransaction` returned "rollback failed"
+       and the `Tx` kept reporting open, so `database.Conn` handed out a dead transaction, on every
+       driver. `ErrTxDone` is re-exported by the generated package, reserved as a package-scope name
+       and advertised in the manifest's `error_sentinels`.
+     - `e3b7e1ee`: a refused connection was not `ErrConnectionFailed` on any driver, and MySQL's
+       `2002` / `2006` could never occur. Transport failures now map, at `Begin` as at every
+       statement.
+     - The §19.3 import of `database/sql` was ruled a PRD amendment, not a code fix.
+     - `/verify` did not run, because the fixes have no FIX ID.
+   - **Measurement.** Two read-only agents mapped every behavior sentence of §18–§19 and §22.2 and
+     the 130 orphans. Two writers then added coverage in worktrees pinned to `e3b7e1ee` (core unit,
+     and driver integration with Docker), and a third tightened the tests the claim check flagged.
+     The writers ran more than 100 mutants. Equivalent mutants:
+     - dropping the isolation translation on SQLite, which modernc ignores anyway;
+     - the "not this driver" branches of `mapPqError` and `mapMySQLError`, whose value no caller
+       reads;
+     - the stdlib adapter's own `rows.Close` on drain for a single result set, which `database/sql`
+       closes itself;
+     - shape-based transport mapping against a handshake timeout, which lib/pq and MySQL report as a
+       plain socket deadline.
+   - **Timing.** One cited test depends on time to catch its mutant:
+     `TestReservationSerializesTwoGoroutinesOverAnOpenResultSet` holds a result set open 500 ms. With
+     the reservation disabled it failed 20 of 20 runs on every driver, and the real code passed 20 of
+     20. A `stdlib` timeout-then-commit test was dropped: the timer closes the transaction context
+     before it cancels the child `database/sql` derives in `BeginTx`, so a `COMMIT` in that window
+     can commit (1 in about 140 runs on MySQL). A cancelled caller context drives that path
+     deterministically.
+   - **Claim check.** One checker found 18 defects, all fixed:
+     - deadlock tests that never checked the wrapped driver error, and a pgx deadlock test that
+       bypassed the adapter;
+     - "unrecognized error returned as-is" checked only by `ok == false`;
+     - Timeout tests that told the statement's error from a failed rollback by a format-string
+       prefix;
+     - the struct-mutex test missing `Query` and `QueryRow`;
+     - release-on-drain tested on MySQL only, now on every driver;
+     - SQLite constraint names, MySQL's key-prefix stripping and lib/pq's leaked-teardown success
+       stated as requirements; now PRD gaps;
+     - and eleven narrower wording, citation and gap-text fixes.
+   - **Rows.** `runtime/database.md` 3 → 137 rows (5909 → 6045 in all), with 2 `n/a` cells citing
+     the PRD, 10 unclaimed tests and 19 open gaps, 5 of them read from code or measured by a probe
+     with no pinning test. Rows were added to `cli/gen.md` and `cli/manifest.md` for `ErrTxDone`, and
+     `cli/naming.md`'s reserved-name rows gained it. One finding went to `backlog.md`: a lib/pq
+     connect handshake ignores the caller's deadline unless `connect_timeout` is set.
+   - **Completion sweep.** With `runtime/database.md` set to `complete`, `req-check` passes.
+     Flipped on the user's sign-off (`c1d71c11`), after the report was generated.
+   - **Report.** `make conformance` at `fca42310`: 6045 rows, 5932 pass, 0 fail, 0 skip, 0 not
+     run, 113 untested. `runtime/database.md` has 135 pass and 2 untested: §18.6's shared commit
+     timestamp and MySQL's `COMMIT`-time Galera `1213`.
+   - **For the next slice (`runtime/hooks.md`):**
+     - Seed `hooks.md` next (35 orphans; §21, §24, §24.2). It is the smallest, and `cache.md` (98)
+       and `events.md` (54) both run through the hook chain and `OnCommit`, so their rows will cite
+       its behavior. `support.md` (31) last.
+     - A mutation backup keyed by basename collides when two packages share a file name
+       (`pgx/errors.go` and `stdlib/errors.go`); the restore then overwrote one with the other. Name
+       backups by package path.
+     - A fix ruling can contradict PRD text it does not name: the timeout fix met §18.4's
+       rejected-teardown rule and needed a second ruling. Read the sections next to the one ruled
+       before writing code.
+     - Test both exits of a teardown fix: the first `ErrTxDone` cut covered `fn` returning an
+       error, and a reviewer found the `fn`-returns-nil path still broken.
+     - `sqlgen generate` fails at the gqlgen step in several example directories when run from the
+       workspace, and then skips writing `manifest_embed_gen.go`. Restore that file, and pass
+       `--manifest-timestamp 2026-01-01T00:00:00Z`.
+
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
