@@ -3,8 +3,10 @@ package database_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -180,6 +182,81 @@ func TestQueryFuncReleasesTheReservationInsideATransaction(t *testing.T) {
 			if _, err := tx.Exec(expiredCtx(txCtx), "UPDATE t SET c = 1"); err != nil {
 				t.Errorf("Exec() after QueryFunc = %v, want nil: the reservation was not given back", err)
 			}
+		})
+	}
+}
+
+// TestStatementOnItsOwnHeldConnectionWaitsForTheDeadline issues a statement
+// from the goroutine that is itself holding the connection through an open
+// result set, on a context whose deadline is still in the future. The
+// statement must wait for the reservation, not give up at once because the
+// connection is busy, and fail only when the deadline ends the wait, with the
+// reservation's own error.
+func TestStatementOnItsOwnHeldConnectionWaitsForTheDeadline(t *testing.T) {
+	const deadline = 2 * time.Second
+	tests := []struct {
+		name string
+		run  func(ctx context.Context, tx *database.Tx) error
+	}{
+		{
+			name: "exec",
+			run: func(ctx context.Context, tx *database.Tx) error {
+				_, err := tx.Exec(ctx, "UPDATE t SET c = 1")
+				return err
+			},
+		},
+		{
+			name: "query",
+			run: func(ctx context.Context, tx *database.Tx) error {
+				rows, err := tx.Query(ctx, "SELECT 2")
+				if err == nil {
+					_ = rows.Close()
+				}
+				return err
+			},
+		},
+		{
+			name: "query row",
+			run: func(ctx context.Context, tx *database.Tx) error {
+				return tx.QueryRow(ctx, "SELECT 3").Scan()
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				conn := &mockTxConn{}
+				txCtx, rows := newHeldTx(t, conn)
+				defer func() { _ = rows.Close() }()
+				tx := database.FromContext(txCtx)
+				conn.queryFn = func(context.Context, string, ...any) (database.Rows, error) {
+					t.Error("driver Query called: the statement must not reach the driver")
+					return &mockRows{}, nil
+				}
+				conn.queryRowFn = func(context.Context, string, ...any) database.Row {
+					t.Error("driver QueryRow called: the statement must not reach the driver")
+					return &mockRow{}
+				}
+
+				ctx, cancel := context.WithTimeout(txCtx, deadline)
+				defer cancel()
+				start := time.Now()
+				err := tt.run(ctx, tx)
+				waited := time.Since(start)
+
+				if waited != deadline {
+					t.Errorf("%s on its own held connection returned after %s, want it to wait the full %s deadline", tt.name, waited, deadline)
+				}
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("%s error = %v, want it to wrap context.DeadlineExceeded", tt.name, err)
+				}
+				if err == nil || !strings.Contains(err.Error(), "waiting for the connection held by an open result set") {
+					t.Errorf("%s error = %v, want the reservation's wait error", tt.name, err)
+				}
+				if calls := conn.getExecCalls(); len(calls) != 0 {
+					t.Errorf("driver Exec calls = %q, want none: the statement must not reach the driver", calls)
+				}
+			})
 		})
 	}
 }

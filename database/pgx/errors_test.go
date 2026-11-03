@@ -108,6 +108,9 @@ func TestMapErrorDeadlock(t *testing.T) {
 	if !errors.Is(got, database.ErrDeadlock) {
 		t.Errorf("MapError(40P01) is not ErrDeadlock: %v", got)
 	}
+	if !errors.Is(got, pgErr) {
+		t.Errorf("MapError(40P01) = %v, does not wrap the driver error %v", got, pgErr)
+	}
 }
 
 func TestMapErrorConnectionFailed(t *testing.T) {
@@ -142,10 +145,13 @@ func TestMapErrorConnectionFailed(t *testing.T) {
 func TestMapErrorUnrecognized(t *testing.T) {
 	pgErr := &pgconn.PgError{Code: "42P01"} // undefined_table
 
-	ok, _ := pgxadapter.MapError(pgErr)
+	ok, got := pgxadapter.MapError(pgErr)
 
 	if ok {
 		t.Error("MapError(42P01) returned ok=true, want false for unrecognized code")
+	}
+	if got != error(pgErr) { //nolint:errorlint // identity: an unrecognized error is returned as-is
+		t.Errorf("MapError(42P01) returned %v (%T), want the input error itself", got, got)
 	}
 }
 
@@ -157,10 +163,14 @@ func TestMapErrorNil(t *testing.T) {
 }
 
 func TestMapErrorNonPgError(t *testing.T) {
-	ok, _ := pgxadapter.MapError(errors.New("some other error"))
+	in := errors.New("some other error")
+	ok, got := pgxadapter.MapError(in)
 
 	if ok {
 		t.Error("MapError(non-pgx error) returned ok=true, want false")
+	}
+	if got != in { //nolint:errorlint // identity: an unrecognized error is returned as-is
+		t.Errorf("MapError(non-pgx error) returned %v (%T), want the input error itself", got, got)
 	}
 }
 

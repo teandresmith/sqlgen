@@ -571,12 +571,16 @@ func TestTxOptionsVariadic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx, q := newTestSetup(database.CallbackAsync)
+			ctx := context.Background()
+			q := newBeginRecorder(&mockTxConn{})
 
 			txCtx, err := database.NewTransaction(ctx, q, "test", tt.opts...)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("NewTransaction() expected error with >1 TxOptions, got nil")
+				}
+				if got := q.beginCount(); got != 0 {
+					t.Errorf("NewTransaction() with >1 TxOptions reached Begin %d times, want 0", got)
 				}
 				return
 			}
@@ -643,8 +647,8 @@ func TestSyncCallbackMode(t *testing.T) {
 	})
 
 	err = database.Commit(txCtx)
-	if err == nil {
-		t.Fatal("Commit() error = nil, want callback error")
+	if !errors.Is(err, callbackErr) {
+		t.Fatalf("Commit() error = %v, want it to wrap the callback's error %v", err, callbackErr)
 	}
 
 	// First callback: initial call + retry = 2 calls, then error returned
@@ -773,16 +777,16 @@ func TestQueryFuncAutoCloseRows(t *testing.T) {
 	rows := &mockRows{}
 	q := &staticQuerier{rows: rows, row: &mockRow{}}
 
-	var called bool
+	var got database.Rows
 	err := database.QueryFunc(context.Background(), q, "SELECT 1", nil, func(r database.Rows) error {
-		called = true
+		got = r
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("QueryFunc() error = %v", err)
 	}
-	if !called {
-		t.Error("callback was not called")
+	if got != database.Rows(rows) {
+		t.Errorf("callback received rows %v, want the rows the querier returned %p", got, rows)
 	}
 	if !rows.closed.Load() {
 		t.Error("rows were not closed after QueryFunc")
@@ -793,16 +797,16 @@ func TestQueryRowFuncSingleRow(t *testing.T) {
 	row := &mockRow{}
 	q := &staticQuerier{rows: &mockRows{}, row: row}
 
-	var called bool
+	var got database.Row
 	err := database.QueryRowFunc(context.Background(), q, "SELECT 1", nil, func(r database.Row) error {
-		called = true
+		got = r
 		return r.Scan()
 	})
 	if err != nil {
 		t.Fatalf("QueryRowFunc() error = %v", err)
 	}
-	if !called {
-		t.Error("callback was not called")
+	if got != database.Row(row) {
+		t.Errorf("callback received row %v, want the row the querier returned %p", got, row)
 	}
 }
 
@@ -1123,6 +1127,35 @@ func TestStatementsDoNotHoldStructMutex(t *testing.T) {
 			},
 		},
 		{
+			name:      "plain query",
+			hook:      "query",
+			wantCalls: 1,
+			drive: func(t *testing.T, txCtx context.Context, _ *mockQuerier) {
+				t.Helper()
+				tx := database.FromContext(txCtx)
+				rows, err := tx.Query(txCtx, "SELECT c FROM t")
+				if err != nil {
+					t.Errorf("Query() error = %v", err)
+					return
+				}
+				if err := rows.Close(); err != nil {
+					t.Errorf("rows.Close() error = %v", err)
+				}
+			},
+		},
+		{
+			name:      "query row",
+			hook:      "query row",
+			wantCalls: 1,
+			drive: func(t *testing.T, txCtx context.Context, _ *mockQuerier) {
+				t.Helper()
+				tx := database.FromContext(txCtx)
+				if err := tx.QueryRow(txCtx, "SELECT c FROM t").Scan(); err != nil {
+					t.Errorf("QueryRow().Scan() error = %v", err)
+				}
+			},
+		},
+		{
 			name:      "root commit",
 			hook:      "commit",
 			wantCalls: 1,
@@ -1159,6 +1192,14 @@ func TestStatementsDoNotHoldStructMutex(t *testing.T) {
 			conn.execFn = func(context.Context, string, ...any) (database.Result, error) {
 				reenter()
 				return &mockResult{}, nil
+			}
+			conn.queryFn = func(context.Context, string, ...any) (database.Rows, error) {
+				reenter()
+				return &mockRows{}, nil
+			}
+			conn.queryRowFn = func(context.Context, string, ...any) database.Row {
+				reenter()
+				return &mockRow{}
 			}
 			conn.commitFn = func(context.Context) error {
 				reenter()

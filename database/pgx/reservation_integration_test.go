@@ -287,3 +287,39 @@ func TestLeakedResultSetBoundsTheNextStatement(t *testing.T) {
 		})
 	}
 }
+
+// TestDrainedResultSetReleasesTheConnection iterates a result set to
+// exhaustion without closing it and then issues another statement on the same
+// transaction. Exhaustion alone must give the connection back: the statement
+// runs at once instead of waiting on the reservation until its deadline.
+func TestDrainedResultSetReleasesTheConnection(t *testing.T) {
+	requireDocker(t)
+	cleanUsers(t)
+	ctx := context.Background()
+	q := pgxadapter.New(testPool)
+
+	txCtx, err := database.NewTransaction(ctx, q, "drain_release")
+	if err != nil {
+		t.Fatalf("NewTransaction() error = %v", err)
+	}
+	tx := database.FromContext(txCtx)
+
+	rows, err := tx.Query(txCtx, "SELECT generate_series(1, 3)")
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	if n := drain(t, rows); n != 3 {
+		t.Errorf("drained %d rows, want 3", n)
+	}
+
+	stmtCtx, cancel := context.WithTimeout(txCtx, leakWaitBound)
+	defer cancel()
+	if _, err := tx.Exec(stmtCtx, "INSERT INTO test_users (name, email) VALUES ($1, $2)", "drain", "drain@example.com"); err != nil {
+		t.Errorf("Exec() after draining without Close = %v, want nil: the drained result set still holds the connection", err)
+	}
+
+	_ = rows.Close()
+	if err := database.Rollback(txCtx); err != nil {
+		t.Errorf("Rollback() error = %v", err)
+	}
+}

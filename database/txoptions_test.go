@@ -310,3 +310,43 @@ func TestTxOptionsTimeout(t *testing.T) {
 		})
 	})
 }
+
+// TestMoreThanOneTxOptionsReachesNoBegin rejects a second TxOptions before
+// the querier is asked to begin anything, so no driver transaction is opened
+// and left behind by the failing call.
+func TestMoreThanOneTxOptionsReachesNoBegin(t *testing.T) {
+	two := []database.TxOptions{{IsoLevel: database.Serializable}, {}}
+	tests := []struct {
+		name string
+		run  func(q *beginRecorder) error
+	}{
+		{
+			name: "NewTransaction",
+			run: func(q *beginRecorder) error {
+				_, err := database.NewTransaction(context.Background(), q, "two_opts", two...)
+				return err
+			},
+		},
+		{
+			name: "WithTransaction",
+			run: func(q *beginRecorder) error {
+				return database.WithTransaction(context.Background(), q, "two_opts", func(context.Context) error {
+					t.Error("fn ran despite more than one TxOptions")
+					return nil
+				}, two...)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := newBeginRecorder(&mockTxConn{})
+
+			if err := tt.run(q); err == nil {
+				t.Errorf("%s with two TxOptions error = nil, want an error", tt.name)
+			}
+			if got := q.beginCount(); got != 0 {
+				t.Errorf("%s with two TxOptions reached Begin %d times, want 0", tt.name, got)
+			}
+		})
+	}
+}

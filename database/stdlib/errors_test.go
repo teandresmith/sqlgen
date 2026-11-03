@@ -112,6 +112,9 @@ func TestMapPqErrorDeadlock(t *testing.T) {
 	if !errors.Is(got, database.ErrDeadlock) {
 		t.Errorf("mapPqError(40P01) is not ErrDeadlock: %v", got)
 	}
+	if !errors.Is(got, pqErr) {
+		t.Errorf("mapPqError(40P01) = %v, does not wrap the driver error", got)
+	}
 }
 
 func TestMapPqErrorConnectionFailed(t *testing.T) {
@@ -146,10 +149,13 @@ func TestMapPqErrorConnectionFailed(t *testing.T) {
 func TestMapPqErrorUnrecognized(t *testing.T) {
 	pqErr := &pq.Error{Code: "42P01"} // undefined_table
 
-	ok, _ := mapPqError(pqErr)
+	ok, got := mapPqError(pqErr)
 
 	if ok {
 		t.Error("mapPqError(42P01) returned ok=true, want false for unrecognized code")
+	}
+	if got != error(pqErr) { //nolint:errorlint // identity: an unrecognized error is returned as-is
+		t.Errorf("mapPqError(42P01) returned %v (%T), want the input error itself", got, got)
 	}
 }
 
@@ -263,6 +269,9 @@ func TestMapMySQLErrorDeadlock(t *testing.T) {
 	if !errors.Is(got, database.ErrDeadlock) {
 		t.Errorf("mapMySQLError(1213) is not ErrDeadlock: %v", got)
 	}
+	if !errors.Is(got, mysqlErr) {
+		t.Errorf("mapMySQLError(1213) = %v, does not wrap the driver error", got)
+	}
 }
 
 func TestMapMySQLErrorConnectionFailed(t *testing.T) {
@@ -294,10 +303,13 @@ func TestMapMySQLErrorConnectionFailed(t *testing.T) {
 func TestMapMySQLErrorUnrecognized(t *testing.T) {
 	mysqlErr := &mysql.MySQLError{Number: 1146, Message: "Table doesn't exist"}
 
-	ok, _ := mapMySQLError(mysqlErr)
+	ok, got := mapMySQLError(mysqlErr)
 
 	if ok {
 		t.Error("mapMySQLError(1146) returned ok=true, want false for unrecognized code")
+	}
+	if got != error(mysqlErr) { //nolint:errorlint // identity: an unrecognized error is returned as-is
+		t.Errorf("mapMySQLError(1146) returned %v (%T), want the input error itself", got, got)
 	}
 }
 
@@ -484,6 +496,9 @@ func TestMapSQLiteCodeConnectionErrors(t *testing.T) {
 			if !errors.Is(got, database.ErrConnectionFailed) {
 				t.Errorf("mapSQLiteCode(%d) is not ErrConnectionFailed: %v", tt.code, got)
 			}
+			if !errors.Is(got, original) {
+				t.Errorf("mapSQLiteCode(%d) = %v, does not wrap the driver error", tt.code, got)
+			}
 		})
 	}
 }
@@ -491,10 +506,13 @@ func TestMapSQLiteCodeConnectionErrors(t *testing.T) {
 func TestMapSQLiteCodeUnrecognized(t *testing.T) {
 	original := errors.New("sqlite error")
 
-	ok, _ := mapSQLiteCode(999, "unknown error", original)
+	ok, got := mapSQLiteCode(999, "unknown error", original)
 
 	if ok {
 		t.Error("mapSQLiteCode(999) returned ok=true, want false for unrecognized code")
+	}
+	if got != original { //nolint:errorlint // identity: an unrecognized error is returned as-is
+		t.Errorf("mapSQLiteCode(999) returned %v (%T), want the input error itself", got, got)
 	}
 }
 
@@ -757,20 +775,26 @@ func TestMapModerncSQLiteErrorParsesDriverMessage(t *testing.T) {
 func TestMapModerncSQLiteErrorUnrecognized(t *testing.T) {
 	mockErr := &mockSQLiteError{code: 999, msg: "unknown"}
 
-	ok, _ := mapModerncSQLiteError(mockErr)
+	ok, got := mapModerncSQLiteError(mockErr)
 
 	if ok {
 		t.Error("mapModerncSQLiteError(999) returned ok=true, want false for unrecognized code")
+	}
+	if got != error(mockErr) { //nolint:errorlint // identity: an unrecognized error is returned as-is
+		t.Errorf("mapModerncSQLiteError(999) returned %v (%T), want the input error itself", got, got)
 	}
 }
 
 func TestMapModerncSQLiteErrorNonSQLite(t *testing.T) {
 	original := errors.New("not a sqlite error")
 
-	ok, _ := mapModerncSQLiteError(original)
+	ok, got := mapModerncSQLiteError(original)
 
 	if ok {
 		t.Error("mapModerncSQLiteError(non-sqlite) returned ok=true, want false")
+	}
+	if got != original { //nolint:errorlint // identity: an unrecognized error is returned as-is
+		t.Errorf("mapModerncSQLiteError(non-sqlite) returned %v (%T), want the input error itself", got, got)
 	}
 }
 
@@ -843,10 +867,14 @@ func TestMapErrorNil(t *testing.T) {
 }
 
 func TestMapErrorUnrecognized(t *testing.T) {
-	ok, _ := MapError(errors.New("unknown driver error"))
+	in := errors.New("unknown driver error")
+	ok, got := MapError(in)
 
 	if ok {
 		t.Error("MapError(unknown) returned ok=true, want false")
+	}
+	if got != in { //nolint:errorlint // identity: an unrecognized error is returned as-is
+		t.Errorf("MapError(unknown) returned %v (%T), want the input error itself", got, got)
 	}
 }
 

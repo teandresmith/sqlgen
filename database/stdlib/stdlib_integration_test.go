@@ -7,7 +7,6 @@ import (
 	"flag"
 	"os"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -749,14 +748,17 @@ func TestDeadlockMySQL(t *testing.T) {
 		errCh <- err
 	}()
 
-	var deadlockFound bool
+	var deadlockErr error
 	for range 2 {
-		if err := <-errCh; err != nil && errors.Is(err, database.ErrDeadlock) {
-			deadlockFound = true
+		if err := <-errCh; errors.Is(err, database.ErrDeadlock) {
+			deadlockErr = err
 		}
 	}
-	if !deadlockFound {
-		t.Error("expected at least one ErrDeadlock from concurrent MySQL transactions")
+	if deadlockErr == nil {
+		t.Fatal("expected at least one ErrDeadlock from concurrent MySQL transactions")
+	}
+	if !mysqlErrNumber(1213)(deadlockErr) {
+		t.Errorf("deadlock error = %v, want it to wrap the server's *mysql.MySQLError 1213", deadlockErr)
 	}
 }
 
@@ -949,18 +951,49 @@ func TestWithSessionReleasesTheConnection(t *testing.T) {
 }
 
 // TestWithSessionMapsErrors maps a statement's error on the pinned session
-// exactly as the pool does.
+// exactly as the pool does: the same violation yields the same
+// *database.ConstraintError, field for field, carrying the driver's own error.
 func TestWithSessionMapsErrors(t *testing.T) {
 	requireDocker(t)
+	const insert = "INSERT INTO test_users (name, email) VALUES (?, ?)"
+	// sameDriverError compares two driver errors by the code the driver
+	// reports, since the two calls return distinct error values.
+	sameDriverError := cmp.Comparer(func(a, b error) bool {
+		if ma, ok := errors.AsType[*mysql.MySQLError](a); ok {
+			mb, ok := errors.AsType[*mysql.MySQLError](b)
+			return ok && ma.Number == mb.Number && ma.Message == mb.Message
+		}
+		type coder interface {
+			error
+			Code() int
+		}
+		if ca, ok := errors.AsType[coder](a); ok {
+			cb, ok := errors.AsType[coder](b)
+			return ok && ca.Code() == cb.Code() && ca.Error() == cb.Error()
+		}
+		return false
+	})
 	for _, b := range backends() {
 		t.Run(b.name, func(t *testing.T) {
-			cleanTables(t, b.db)
 			ctx := context.Background()
+
+			cleanTables(t, b.db)
+			q := stdlibadapter.New(b.db)
+			if _, err := q.Exec(ctx, insert, "carol", "carol@example.com"); err != nil {
+				t.Fatalf("seeding through the pool: %v", err)
+			}
+			_, poolErr := q.Exec(ctx, insert, "dave", "carol@example.com")
+			poolCE, ok := errors.AsType[*database.ConstraintError](poolErr)
+			if !ok {
+				t.Fatalf("pool Exec() error = %v (%T), want a *database.ConstraintError", poolErr, poolErr)
+			}
+
+			cleanTables(t, b.db)
 			err := sessionPinner(t, b.db).WithSession(ctx, func(session database.Querier) error {
-				if _, err := session.Exec(ctx, "INSERT INTO test_users (name, email) VALUES (?, ?)", "carol", "carol@example.com"); err != nil {
+				if _, err := session.Exec(ctx, insert, "carol", "carol@example.com"); err != nil {
 					return err
 				}
-				_, err := session.Exec(ctx, "INSERT INTO test_users (name, email) VALUES (?, ?)", "dave", "carol@example.com")
+				_, err := session.Exec(ctx, insert, "dave", "carol@example.com")
 				return err
 			})
 			ce, ok := errors.AsType[*database.ConstraintError](err)
@@ -969,6 +1002,9 @@ func TestWithSessionMapsErrors(t *testing.T) {
 			}
 			if ce.Type != database.ConstraintUnique {
 				t.Errorf("ConstraintError.Type = %q, want %q", ce.Type, database.ConstraintUnique)
+			}
+			if diff := cmp.Diff(*poolCE, *ce, sameDriverError); diff != "" {
+				t.Errorf("session ConstraintError differs from the pool's for the same violation (-pool +session):\n%s", diff)
 			}
 		})
 	}
@@ -1127,21 +1163,22 @@ func assertTimeoutRollsBack(t *testing.T, db *sql.DB, insert string) {
 	ctx := context.Background()
 
 	var txCtx context.Context
+	var stmtErr error
 	err := database.WithTransaction(ctx, q, "timeout", func(c context.Context) error {
 		txCtx = c
 		if _, err := database.Conn(c, q).Exec(c, insert, "dora", "dora@example.com"); err != nil {
 			return err
 		}
 		<-c.Done()
-		_, err := database.Conn(c, q).Exec(c, insert, "eve", "eve@example.com")
-		return err
+		_, stmtErr = database.Conn(c, q).Exec(c, insert, "eve", "eve@example.com")
+		return stmtErr
 	}, database.TxOptions{Timeout: time.Second})
 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("WithTransaction() error = %v, want a deadline error", err)
 	}
-	if strings.HasPrefix(err.Error(), "rollback failed") {
-		t.Errorf("WithTransaction() error = %q, want the statement's error, not a failed rollback", err)
+	if stmtErr == nil || err != stmtErr { //nolint:errorlint // identity: the rollback succeeded, so WithTransaction returns fn's error untouched
+		t.Errorf("WithTransaction() error = %q, want exactly the statement's error %q: the rollback after the timeout must report success", err, stmtErr)
 	}
 	if !database.FromContext(txCtx).IsClosed() {
 		t.Error("IsClosed() = false after the timeout rolled the transaction back")

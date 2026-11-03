@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -457,11 +456,14 @@ func TestConstraintCheckViolation(t *testing.T) {
 	}, "23514")
 }
 
+// TestDeadlock drives a real deadlock through the adapter's transaction path
+// and checks that the error the losing statement returns is ErrDeadlock and
+// still carries the server's own error.
 func TestDeadlock(t *testing.T) {
 	requireDocker(t)
 	ctx := context.Background()
+	q := pgxadapter.New(testPool)
 
-	// Setup: create two rows for the deadlock scenario
 	_, _ = testPool.Exec(ctx, "DELETE FROM test_orders")
 	_, _ = testPool.Exec(ctx, "DELETE FROM test_users")
 	_, _ = testPool.Exec(ctx, "INSERT INTO test_users (id, name, email) VALUES (1, 'alice', 'alice@example.com')")
@@ -471,58 +473,56 @@ func TestDeadlock(t *testing.T) {
 	ready1 := make(chan struct{})
 	ready2 := make(chan struct{})
 
-	// Transaction 1: lock row 1, then try row 2
-	go func() {
-		tx1, err := testPool.Begin(ctx)
+	// lockThenCross locks row first, waits for the other transaction to lock
+	// its row, then updates the other transaction's row.
+	lockThenCross := func(name string, first, second int, mine, theirs chan struct{}) {
+		// A setup failure still releases the other transaction, so the test
+		// fails on the error instead of hanging.
+		released := false
+		defer func() {
+			if !released {
+				close(mine)
+			}
+		}()
+		txCtx, err := database.NewTransaction(ctx, q, name)
 		if err != nil {
 			errCh <- err
 			return
 		}
-		defer func() { _ = tx1.Rollback(ctx) }()
+		defer func() { _ = database.Rollback(txCtx) }()
+		tx := database.FromContext(txCtx)
 
-		_, err = tx1.Exec(ctx, "UPDATE test_users SET name = 'a1' WHERE id = 1")
-		if err != nil {
+		if _, err := tx.Exec(txCtx, "UPDATE test_users SET name = $1 WHERE id = $2", name, first); err != nil {
 			errCh <- err
 			return
 		}
-		close(ready1)
-		<-ready2
+		close(mine)
+		released = true
+		<-theirs
 
-		_, err = tx1.Exec(ctx, "UPDATE test_users SET name = 'a2' WHERE id = 2")
-		_, mapped := pgxadapter.MapError(err)
-		errCh <- mapped
-	}()
+		_, err = tx.Exec(txCtx, "UPDATE test_users SET name = $1 WHERE id = $2", name, second)
+		errCh <- err
+	}
+	go lockThenCross("tx1", 1, 2, ready1, ready2)
+	go lockThenCross("tx2", 2, 1, ready2, ready1)
 
-	// Transaction 2: lock row 2, then try row 1
-	go func() {
-		tx2, err := testPool.Begin(ctx)
-		if err != nil {
-			errCh <- err
-			return
-		}
-		defer func() { _ = tx2.Rollback(ctx) }()
-
-		_, err = tx2.Exec(ctx, "UPDATE test_users SET name = 'b2' WHERE id = 2")
-		if err != nil {
-			errCh <- err
-			return
-		}
-		close(ready2)
-		<-ready1
-
-		_, err = tx2.Exec(ctx, "UPDATE test_users SET name = 'b1' WHERE id = 1")
-		_, mapped := pgxadapter.MapError(err)
-		errCh <- mapped
-	}()
-
-	var deadlockFound bool
+	var deadlockErr error
 	for range 2 {
-		if err := <-errCh; err != nil && errors.Is(err, database.ErrDeadlock) {
-			deadlockFound = true
+		if err := <-errCh; errors.Is(err, database.ErrDeadlock) {
+			deadlockErr = err
+		} else if err != nil {
+			t.Errorf("the other transaction's statement error = %v, want nil or ErrDeadlock", err)
 		}
 	}
-	if !deadlockFound {
-		t.Error("expected at least one ErrDeadlock from concurrent transactions")
+	if deadlockErr == nil {
+		t.Fatal("neither transaction's statement returned ErrDeadlock")
+	}
+	pgErr, ok := errors.AsType[*pgconn.PgError](deadlockErr)
+	if !ok {
+		t.Fatalf("deadlock error = %v, want it to wrap the server's *pgconn.PgError", deadlockErr)
+	}
+	if pgErr.Code != "40P01" {
+		t.Errorf("wrapped PgError code = %q, want %q", pgErr.Code, "40P01")
 	}
 }
 
@@ -569,21 +569,22 @@ func TestTimeoutRollsBackAndClosesTheTransaction(t *testing.T) {
 	const insert = "INSERT INTO test_users (name, email) VALUES ($1, $2)"
 
 	var txCtx context.Context
+	var stmtErr error
 	err := database.WithTransaction(ctx, q, "timeout", func(c context.Context) error {
 		txCtx = c
 		if _, err := database.Conn(c, q).Exec(c, insert, "dora", "dora@example.com"); err != nil {
 			return err
 		}
 		<-c.Done()
-		_, err := database.Conn(c, q).Exec(c, insert, "eve", "eve@example.com")
-		return err
+		_, stmtErr = database.Conn(c, q).Exec(c, insert, "eve", "eve@example.com")
+		return stmtErr
 	}, database.TxOptions{Timeout: time.Second})
 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("WithTransaction() error = %v, want a deadline error", err)
 	}
-	if strings.HasPrefix(err.Error(), "rollback failed") {
-		t.Errorf("WithTransaction() error = %q, want the statement's error, not a failed rollback", err)
+	if stmtErr == nil || err != stmtErr { //nolint:errorlint // identity: the rollback succeeded, so WithTransaction returns fn's error untouched
+		t.Errorf("WithTransaction() error = %q, want exactly the statement's error %q: the rollback after the timeout must report success", err, stmtErr)
 	}
 	if !database.FromContext(txCtx).IsClosed() {
 		t.Error("IsClosed() = false after the timeout rolled the transaction back")
@@ -634,6 +635,39 @@ func TestTimeoutBeforeCommitRollsBackAndClosesTheTransaction(t *testing.T) {
 	if n != 0 {
 		t.Errorf("rows = %d, want 0: the timed-out transaction must not commit", n)
 	}
+}
+
+// TestTxConnOnAnEndedTransaction drives the adapter's Rollback and Commit on
+// a pgx transaction that pgx has already closed.
+func TestTxConnOnAnEndedTransaction(t *testing.T) {
+	requireDocker(t)
+	ctx := context.Background()
+	endedTx := func(t *testing.T) database.TxConn {
+		t.Helper()
+		tx, err := testPool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("Begin() error = %v", err)
+		}
+		if err := tx.Rollback(ctx); err != nil {
+			t.Fatalf("ending the transaction through pgx: %v", err)
+		}
+		return pgxadapter.NewTxConn(tx)
+	}
+
+	t.Run("rollback succeeds", func(t *testing.T) {
+		if err := endedTx(t).Rollback(ctx); err != nil {
+			t.Errorf("Rollback() of a transaction pgx already closed = %v, want nil", err)
+		}
+	})
+	t.Run("commit is ErrTxDone", func(t *testing.T) {
+		err := endedTx(t).Commit(ctx)
+		if !errors.Is(err, database.ErrTxDone) {
+			t.Errorf("Commit() of a transaction pgx already closed = %v, want it to wrap database.ErrTxDone", err)
+		}
+		if !errors.Is(err, pgx.ErrTxClosed) {
+			t.Errorf("Commit() of a transaction pgx already closed = %v, want it to wrap pgx.ErrTxClosed", err)
+		}
+	})
 }
 
 func TestRejectedPasswordIsNotConnectionFailed(t *testing.T) {

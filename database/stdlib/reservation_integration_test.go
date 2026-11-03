@@ -187,3 +187,53 @@ func assertLeakedTeardownSucceeds(t *testing.T, d dialect, teardown func(context
 		t.Errorf("rows after the teardown = %d, want %d", got, wantRows)
 	}
 }
+
+// TestDrainedResultSetReleasesTheConnection iterates a result set to
+// exhaustion without closing it and then issues another statement on the same
+// transaction. Exhaustion alone must give the connection back: the statement
+// runs at once instead of waiting on the reservation until its deadline.
+func TestDrainedResultSetReleasesTheConnection(t *testing.T) {
+	requireDocker(t)
+	t.Run("mysql", func(t *testing.T) { assertDrainReleases(t, mysqlDialect()) })
+	t.Run("sqlite", func(t *testing.T) { assertDrainReleases(t, sqliteDialect()) })
+	t.Run("postgres", func(t *testing.T) { assertDrainReleases(t, postgresDialect()) })
+}
+
+func assertDrainReleases(t *testing.T, d dialect) {
+	t.Helper()
+	cleanTables(t, d.db)
+	ctx := context.Background()
+	q := stdlibadapter.New(d.db)
+
+	txCtx, err := database.NewTransaction(ctx, q, "drain_release")
+	if err != nil {
+		t.Fatalf("NewTransaction() error = %v", err)
+	}
+	tx := database.FromContext(txCtx)
+
+	rows, err := tx.Query(txCtx, "SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3")
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	var n int
+	for rows.Next() {
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		t.Errorf("rows.Err() after draining = %v, want nil", err)
+	}
+	if n != 3 {
+		t.Errorf("drained %d rows, want 3", n)
+	}
+
+	stmtCtx, cancel := context.WithTimeout(txCtx, 2*time.Second)
+	defer cancel()
+	if _, err := tx.Exec(stmtCtx, d.insert, "drain", "drain@example.com"); err != nil {
+		t.Errorf("Exec() after draining without Close = %v, want nil: the drained result set still holds the connection", err)
+	}
+
+	_ = rows.Close()
+	if err := database.Rollback(txCtx); err != nil {
+		t.Errorf("Rollback() error = %v", err)
+	}
+}

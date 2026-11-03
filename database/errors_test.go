@@ -54,6 +54,26 @@ func TestSentinelErrors(t *testing.T) {
 			err:     database.ErrConstraintViolation,
 			wantMsg: "sqlgen: constraint violation",
 		},
+		{
+			name:    "ErrTxDone",
+			err:     database.ErrTxDone,
+			wantMsg: "sqlgen: transaction already ended by the driver",
+		},
+		{
+			name:    "ErrRefreshConcurrentlyInTx",
+			err:     database.ErrRefreshConcurrentlyInTx,
+			wantMsg: "sqlgen: REFRESH MATERIALIZED VIEW CONCURRENTLY cannot run inside a transaction",
+		},
+		{
+			name:    "ErrAlreadyRelated",
+			err:     database.ErrAlreadyRelated,
+			wantMsg: "sqlgen: already related to another row",
+		},
+		{
+			name:    "ErrNestedVerbConflict",
+			err:     database.ErrNestedVerbConflict,
+			wantMsg: "sqlgen: conflicting verbs on one nested relationship",
+		},
 	}
 
 	for _, tt := range tests {
@@ -117,12 +137,13 @@ func TestConstraintErrorIsWrapped(t *testing.T) {
 }
 
 func TestConstraintErrorAs(t *testing.T) {
+	driverErr := errors.New("driver error")
 	ce := &database.ConstraintError{
 		Type:       database.ConstraintUnique,
 		Constraint: "products_name_key",
 		Column:     "name",
 		Detail:     "Key (name)=(Widget) already exists.",
-		Err:        errors.New("driver error"),
+		Err:        driverErr,
 	}
 
 	wrapped := fmt.Errorf("create product: %w", ce)
@@ -143,8 +164,14 @@ func TestConstraintErrorAs(t *testing.T) {
 	if got.Detail != "Key (name)=(Widget) already exists." {
 		t.Errorf("ConstraintError.Detail = %q, want %q", got.Detail, "Key (name)=(Widget) already exists.")
 	}
-	if got.Err == nil {
-		t.Error("ConstraintError.Err = nil, want non-nil")
+	if got != ce {
+		t.Errorf("errors.As extracted %p, want the wrapped *ConstraintError %p", got, ce)
+	}
+	if got.Err != driverErr { //nolint:errorlint // identity: Err must be the driver's own error
+		t.Errorf("ConstraintError.Err = %v, want the driver error it was built with", got.Err)
+	}
+	if !errors.Is(got.Err, driverErr) {
+		t.Errorf("errors.Is(ConstraintError.Err, driver error) = false, want true")
 	}
 }
 
