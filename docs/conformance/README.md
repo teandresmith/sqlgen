@@ -295,9 +295,9 @@ another file also cites is still owned once.
 | §21.6 Panic Recovery | runtime/hooks.md |
 | §21.7 Global Hooks (untyped — all tables) | runtime/hooks.md |
 | §21.8 Entity-Level Hooks (type-safe — specific tables) | runtime/hooks.md |
-| §21.9 Registration Summary | runtime/hooks.md |
+| §21.9 Registration Summary | informative |
 | §21.10 Rejected Alternative: Per-Operation Hook Methods | informative |
-| §21.11 Testing Hooks | runtime/hooks.md |
+| §21.11 Testing Hooks | informative |
 | §22 Error Handling | runtime/database.md |
 | §22.1 Generated Error Types | cli/gen.md |
 | §22.2 Constraint Errors | runtime/database.md |
