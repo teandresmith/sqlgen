@@ -1,6 +1,6 @@
 # Runtime Requirements: Hooks
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: hook -->
 <!-- matrix: hooks rows=chain:mutation,query cols=order,modify,short-circuit,abort,panic-recovery,panic-handler -->
 
