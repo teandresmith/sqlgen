@@ -22,6 +22,10 @@ type getInput struct {
 	ID int
 }
 
+type updateInput struct {
+	Name string
+}
+
 const (
 	tableProducts hook.TableName = "products"
 	tableOrders   hook.TableName = "orders"
@@ -110,28 +114,147 @@ func TestForMutation(t *testing.T) {
 		}
 	})
 
-	t.Run("type assertion failure returns error", func(t *testing.T) {
+	t.Run("an input of another type returns an error without running fn or next", func(t *testing.T) {
+		handler := mutationHelperProbe(t)
+		_, err := handler(context.Background(), &hook.MutationContext{
+			Op:    hook.OpUpdate,
+			Table: tableProducts,
+			Input: &updateInput{Name: "widget"},
+		})
+		want := "hook: type assertion failed for update products: expected *hook_test.createInput, got *hook_test.updateInput"
+		if err == nil || err.Error() != want {
+			t.Errorf("error = %v, want %q", err, want)
+		}
+	})
+
+	t.Run("a nil input returns an error without running fn or next", func(t *testing.T) {
+		handler := mutationHelperProbe(t)
+		_, err := handler(context.Background(), &hook.MutationContext{
+			Op:    hook.OpHardDelete,
+			Table: tableProducts,
+			PK:    1,
+		})
+		want := "hook: type assertion failed for hard_delete products: expected *hook_test.createInput, got <nil>"
+		if err == nil || err.Error() != want {
+			t.Errorf("error = %v, want %q", err, want)
+		}
+	})
+
+	t.Run("a result of another type returns an error after next ran", func(t *testing.T) {
+		nextRan := false
 		h := hook.ForMutation[*createInput, *product](
 			tableProducts,
 			func(ctx context.Context, m *hook.MutationContext, input *createInput, next func(ctx context.Context) (*product, error)) (*product, error) {
 				return next(ctx)
 			},
 		)
-
-		terminal := terminalMutation(&product{ID: 1})
-		handler := h(terminal)
+		handler := h(func(context.Context, *hook.MutationContext) (any, error) {
+			nextRan = true
+			return []*product{{ID: 1}}, nil
+		})
 
 		_, err := handler(context.Background(), &hook.MutationContext{
+			Op:    hook.OpCreateMany,
+			Table: tableProducts,
+			Input: &createInput{Name: "widget"},
+		})
+		want := "hook: result type assertion failed for create_many products: expected *hook_test.product, got []*hook_test.product"
+		if err == nil || err.Error() != want {
+			t.Errorf("error = %v, want %q", err, want)
+		}
+		if !nextRan {
+			t.Error("next did not run before the result assertion")
+		}
+	})
+
+	t.Run("a nil result reaches fn as the zero value", func(t *testing.T) {
+		var gotResult *product
+		var gotErr error
+		called := false
+		h := hook.ForMutation[*createInput, *product](
+			tableProducts,
+			func(ctx context.Context, m *hook.MutationContext, input *createInput, next func(ctx context.Context) (*product, error)) (*product, error) {
+				called = true
+				gotResult, gotErr = next(ctx)
+				return gotResult, gotErr
+			},
+		)
+		handler := h(terminalMutation(nil))
+
+		if _, err := handler(context.Background(), &hook.MutationContext{
 			Op:    hook.OpCreate,
 			Table: tableProducts,
-			Input: "wrong-type", // string instead of *createInput
+			Input: &createInput{Name: "widget"},
+		}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !called {
+			t.Fatal("fn did not run")
+		}
+		if gotResult != nil || gotErr != nil {
+			t.Errorf("typed next = (%v, %v), want (nil, nil)", gotResult, gotErr)
+		}
+	})
+
+	t.Run("the terminal sees the input fn modified", func(t *testing.T) {
+		var seen any
+		h := hook.ForMutation[*createInput, *product](
+			tableProducts,
+			func(ctx context.Context, m *hook.MutationContext, input *createInput, next func(ctx context.Context) (*product, error)) (*product, error) {
+				input.Name = strings.TrimSpace(input.Name)
+				return next(ctx)
+			},
+		)
+		handler := h(func(_ context.Context, m *hook.MutationContext) (any, error) {
+			seen = m.Input
+			return &product{ID: 1}, nil
 		})
-		if err == nil {
-			t.Fatal("expected error for type assertion failure, got nil")
+
+		input := &createInput{Name: "  widget  "}
+		if _, err := handler(context.Background(), &hook.MutationContext{
+			Op:    hook.OpCreate,
+			Table: tableProducts,
+			Input: input,
+		}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(err.Error(), "type assertion failed") {
-			t.Errorf("error = %q, want it to contain %q", err.Error(), "type assertion failed")
+		if seen != input || input.Name != "widget" {
+			t.Errorf("terminal saw %v with Name %q, want the caller's input with Name %q", seen, input.Name, "widget")
 		}
+	})
+}
+
+// mutationHelperProbe returns a ForMutation[*createInput, *product] handler on
+// products whose fn and terminal each fail the test if they run.
+func mutationHelperProbe(t *testing.T) hook.MutationHandler {
+	t.Helper()
+	h := hook.ForMutation[*createInput, *product](
+		tableProducts,
+		func(ctx context.Context, m *hook.MutationContext, input *createInput, next func(ctx context.Context) (*product, error)) (*product, error) {
+			t.Error("fn ran on a mismatched input")
+			return next(ctx)
+		},
+	)
+	return h(func(context.Context, *hook.MutationContext) (any, error) {
+		t.Error("next ran on a mismatched input")
+		return &product{ID: 1}, nil
+	})
+}
+
+// queryHelperProbe returns a ForQuery[*getInput, *product] handler on products
+// whose fn and terminal each fail the test if they run.
+func queryHelperProbe(t *testing.T) hook.QueryHandler {
+	t.Helper()
+	h := hook.ForQuery[*getInput, *product](
+		tableProducts,
+		func(ctx context.Context, q *hook.QueryContext, input *getInput, next func(ctx context.Context) (*product, error)) (*product, error) {
+			t.Error("fn ran on a mismatched input")
+			return next(ctx)
+		},
+	)
+	return h(func(context.Context, *hook.QueryContext) (any, error) {
+		t.Error("next ran on a mismatched input")
+		return &product{ID: 1}, nil
 	})
 }
 
@@ -202,6 +325,191 @@ func TestForQuery(t *testing.T) {
 			t.Errorf("result.ID = %d, want 42", p.ID)
 		}
 	})
+
+	t.Run("an input of another type returns an error without running fn or next", func(t *testing.T) {
+		handler := queryHelperProbe(t)
+		_, err := handler(context.Background(), &hook.QueryContext{
+			Op:    hook.OpCount,
+			Table: tableProducts,
+			Input: &createInput{},
+		})
+		want := "hook: type assertion failed for count products: expected *hook_test.getInput, got *hook_test.createInput"
+		if err == nil || err.Error() != want {
+			t.Errorf("error = %v, want %q", err, want)
+		}
+	})
+
+	t.Run("a nil input returns an error without running fn or next", func(t *testing.T) {
+		handler := queryHelperProbe(t)
+		_, err := handler(context.Background(), &hook.QueryContext{
+			Op:    hook.OpGet,
+			Table: tableProducts,
+			PK:    1,
+		})
+		want := "hook: type assertion failed for get products: expected *hook_test.getInput, got <nil>"
+		if err == nil || err.Error() != want {
+			t.Errorf("error = %v, want %q", err, want)
+		}
+	})
+
+	t.Run("a result of another type returns an error after next ran", func(t *testing.T) {
+		nextRan := false
+		h := hook.ForQuery[*getInput, *product](
+			tableProducts,
+			func(ctx context.Context, q *hook.QueryContext, input *getInput, next func(ctx context.Context) (*product, error)) (*product, error) {
+				return next(ctx)
+			},
+		)
+		handler := h(func(context.Context, *hook.QueryContext) (any, error) {
+			nextRan = true
+			return []*product{{ID: 1}}, nil
+		})
+
+		_, err := handler(context.Background(), &hook.QueryContext{
+			Op:    hook.OpGetMany,
+			Table: tableProducts,
+			Input: &getInput{},
+		})
+		want := "hook: result type assertion failed for get_many products: expected *hook_test.product, got []*hook_test.product"
+		if err == nil || err.Error() != want {
+			t.Errorf("error = %v, want %q", err, want)
+		}
+		if !nextRan {
+			t.Error("next did not run before the result assertion")
+		}
+	})
+
+	t.Run("a nil result reaches fn as the zero value", func(t *testing.T) {
+		var gotResult *product
+		var gotErr error
+		called := false
+		h := hook.ForQuery[*getInput, *product](
+			tableProducts,
+			func(ctx context.Context, q *hook.QueryContext, input *getInput, next func(ctx context.Context) (*product, error)) (*product, error) {
+				called = true
+				gotResult, gotErr = next(ctx)
+				return gotResult, gotErr
+			},
+		)
+		handler := h(terminalQuery(nil))
+
+		if _, err := handler(context.Background(), &hook.QueryContext{
+			Op:    hook.OpGetMany,
+			Table: tableProducts,
+			Input: &getInput{},
+		}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !called {
+			t.Fatal("fn did not run")
+		}
+		if gotResult != nil || gotErr != nil {
+			t.Errorf("typed next = (%v, %v), want (nil, nil)", gotResult, gotErr)
+		}
+	})
+
+	t.Run("fn can return a result without calling next", func(t *testing.T) {
+		cached := &product{ID: 7, Name: "cached"}
+		h := hook.ForQuery[*getInput, *product](
+			tableProducts,
+			func(ctx context.Context, q *hook.QueryContext, input *getInput, next func(ctx context.Context) (*product, error)) (*product, error) {
+				return cached, nil
+			},
+		)
+		handler := h(func(context.Context, *hook.QueryContext) (any, error) {
+			t.Error("next ran after fn short-circuited")
+			return nil, nil
+		})
+
+		got, err := handler(context.Background(), &hook.QueryContext{
+			Op:    hook.OpGetMany,
+			Table: tableProducts,
+			Input: &getInput{},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != cached {
+			t.Errorf("result = %v, want fn's result", got)
+		}
+	})
+}
+
+// TestHelpersMatchTheTableValueAlone pins that the table helpers compare the
+// whole TableName value, so a hook on public.users never fires for
+// audit.users.
+func TestHelpersMatchTheTableValueAlone(t *testing.T) {
+	const (
+		publicUsers hook.TableName = "public.users"
+		auditUsers  hook.TableName = "audit.users"
+	)
+
+	t.Run("ForMutation", func(t *testing.T) {
+		fired := false
+		h := hook.ForMutation[*createInput, *product](publicUsers,
+			func(ctx context.Context, _ *hook.MutationContext, _ *createInput, next func(context.Context) (*product, error)) (*product, error) {
+				fired = true
+				return next(ctx)
+			})
+		handler := h(terminalMutation(&product{ID: 1}))
+		for _, tc := range []struct {
+			table hook.TableName
+			want  bool
+		}{{auditUsers, false}, {publicUsers, true}} {
+			fired = false
+			if _, err := handler(context.Background(), &hook.MutationContext{Op: hook.OpCreate, Table: tc.table, Input: &createInput{}}); err != nil {
+				t.Fatalf("%s: unexpected error: %v", tc.table, err)
+			}
+			if fired != tc.want {
+				t.Errorf("%s: fired = %v, want %v", tc.table, fired, tc.want)
+			}
+		}
+	})
+
+	t.Run("ForQuery", func(t *testing.T) {
+		fired := false
+		h := hook.ForQuery[*getInput, *product](publicUsers,
+			func(ctx context.Context, _ *hook.QueryContext, _ *getInput, next func(context.Context) (*product, error)) (*product, error) {
+				fired = true
+				return next(ctx)
+			})
+		handler := h(terminalQuery(&product{ID: 1}))
+		for _, tc := range []struct {
+			table hook.TableName
+			want  bool
+		}{{auditUsers, false}, {publicUsers, true}} {
+			fired = false
+			if _, err := handler(context.Background(), &hook.QueryContext{Op: hook.OpGetMany, Table: tc.table, Input: &getInput{}}); err != nil {
+				t.Fatalf("%s: unexpected error: %v", tc.table, err)
+			}
+			if fired != tc.want {
+				t.Errorf("%s: fired = %v, want %v", tc.table, fired, tc.want)
+			}
+		}
+	})
+
+	t.Run("ForTable", func(t *testing.T) {
+		fired := false
+		inner := hook.MutationHook(func(next hook.MutationHandler) hook.MutationHandler {
+			return func(ctx context.Context, m *hook.MutationContext) (any, error) {
+				fired = true
+				return next(ctx, m)
+			}
+		})
+		handler := hook.ForTable(inner, publicUsers)(terminalMutation("ok"))
+		for _, tc := range []struct {
+			table hook.TableName
+			want  bool
+		}{{auditUsers, false}, {publicUsers, true}} {
+			fired = false
+			if _, err := handler(context.Background(), &hook.MutationContext{Op: hook.OpCreate, Table: tc.table}); err != nil {
+				t.Fatalf("%s: unexpected error: %v", tc.table, err)
+			}
+			if fired != tc.want {
+				t.Errorf("%s: fired = %v, want %v", tc.table, fired, tc.want)
+			}
+		}
+	})
 }
 
 func TestOnMutation(t *testing.T) {
@@ -244,7 +552,7 @@ func TestOnMutation(t *testing.T) {
 			h := hook.OnMutation(inner, tt.filterOps...)
 			handler := h(terminalMutation("ok"))
 
-			_, err := handler(context.Background(), &hook.MutationContext{
+			got, err := handler(context.Background(), &hook.MutationContext{
 				Op:    tt.actualOp,
 				Table: tableProducts,
 			})
@@ -253,6 +561,9 @@ func TestOnMutation(t *testing.T) {
 			}
 			if hookCalled != tt.wantCalled {
 				t.Errorf("hook called = %v, want %v", hookCalled, tt.wantCalled)
+			}
+			if got != "ok" {
+				t.Errorf("result = %v, want the next handler's %q", got, "ok")
 			}
 		})
 	}
@@ -269,6 +580,12 @@ func TestOnQuery(t *testing.T) {
 			name:       "fires on matching op",
 			filterOps:  []hook.QueryOp{hook.OpGetMany, hook.OpCount},
 			actualOp:   hook.OpGetMany,
+			wantCalled: true,
+		},
+		{
+			name:       "fires on second matching op",
+			filterOps:  []hook.QueryOp{hook.OpGetMany, hook.OpCount},
+			actualOp:   hook.OpCount,
 			wantCalled: true,
 		},
 		{
@@ -292,7 +609,7 @@ func TestOnQuery(t *testing.T) {
 			h := hook.OnQuery(inner, tt.filterOps...)
 			handler := h(terminalQuery("ok"))
 
-			_, err := handler(context.Background(), &hook.QueryContext{
+			got, err := handler(context.Background(), &hook.QueryContext{
 				Op:    tt.actualOp,
 				Table: tableProducts,
 			})
@@ -301,6 +618,9 @@ func TestOnQuery(t *testing.T) {
 			}
 			if hookCalled != tt.wantCalled {
 				t.Errorf("hook called = %v, want %v", hookCalled, tt.wantCalled)
+			}
+			if got != "ok" {
+				t.Errorf("result = %v, want the next handler's %q", got, "ok")
 			}
 		})
 	}
@@ -317,6 +637,12 @@ func TestForTable(t *testing.T) {
 			name:        "fires on matching table",
 			filterTbls:  []hook.TableName{tableProducts, tableOrders},
 			actualTable: tableProducts,
+			wantCalled:  true,
+		},
+		{
+			name:        "fires on second matching table",
+			filterTbls:  []hook.TableName{tableProducts, tableOrders},
+			actualTable: tableOrders,
 			wantCalled:  true,
 		},
 		{
@@ -340,7 +666,7 @@ func TestForTable(t *testing.T) {
 			h := hook.ForTable(inner, tt.filterTbls...)
 			handler := h(terminalMutation("ok"))
 
-			_, err := handler(context.Background(), &hook.MutationContext{
+			got, err := handler(context.Background(), &hook.MutationContext{
 				Op:    hook.OpCreate,
 				Table: tt.actualTable,
 			})
@@ -350,6 +676,9 @@ func TestForTable(t *testing.T) {
 			if hookCalled != tt.wantCalled {
 				t.Errorf("hook called = %v, want %v", hookCalled, tt.wantCalled)
 			}
+			if got != "ok" {
+				t.Errorf("result = %v, want the next handler's %q", got, "ok")
+			}
 		})
 	}
 }
@@ -357,20 +686,37 @@ func TestForTable(t *testing.T) {
 func TestRejectMutation(t *testing.T) {
 	t.Run("returns error on matching op", func(t *testing.T) {
 		h := hook.RejectMutation(hook.OpHardDelete)
-		handler := h(terminalMutation("ok"))
-
-		_, err := handler(context.Background(), &hook.MutationContext{
-			Op:    hook.OpHardDelete,
-			Table: tableProducts,
+		handler := h(func(context.Context, *hook.MutationContext) (any, error) {
+			t.Error("next ran for a rejected op")
+			return "ok", nil
 		})
-		if err == nil {
-			t.Fatal("expected error for rejected operation, got nil")
+
+		got, err := handler(context.Background(), &hook.MutationContext{
+			Op:    hook.OpHardDelete,
+			Table: "public.products",
+		})
+		if want := "hook: operation hard_delete is not allowed on public.products"; err == nil || err.Error() != want {
+			t.Errorf("error = %v, want %q", err, want)
 		}
-		if !strings.Contains(err.Error(), "not allowed") {
-			t.Errorf("error = %q, want it to contain %q", err.Error(), "not allowed")
+		if got != nil {
+			t.Errorf("result = %v, want nil", got)
 		}
-		if !strings.Contains(err.Error(), string(hook.OpHardDelete)) {
-			t.Errorf("error = %q, want it to contain op %q", err.Error(), hook.OpHardDelete)
+	})
+
+	t.Run("rejects every listed op on every table", func(t *testing.T) {
+		h := hook.RejectMutation(hook.OpHardDelete, hook.OpHardDeleteMany)
+		handler := h(func(context.Context, *hook.MutationContext) (any, error) {
+			t.Error("next ran for a rejected op")
+			return "ok", nil
+		})
+
+		for _, table := range []hook.TableName{tableProducts, tableOrders} {
+			for _, op := range []hook.MutationOp{hook.OpHardDelete, hook.OpHardDeleteMany} {
+				_, err := handler(context.Background(), &hook.MutationContext{Op: op, Table: table})
+				if want := "hook: operation " + string(op) + " is not allowed on " + string(table); err == nil || err.Error() != want {
+					t.Errorf("%s %s: error = %v, want %q", op, table, err, want)
+				}
+			}
 		}
 	})
 
