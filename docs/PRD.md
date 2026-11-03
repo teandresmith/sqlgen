@@ -9746,9 +9746,11 @@ When `TxOptions` is zero-value (all empty strings), the database's default isola
 | `ReadCommitted` | Yes (default) | Yes | No |
 | `ReadUncommitted` | Yes | Yes | No |
 | `ReadOnly` | Yes | Yes (`START TRANSACTION READ ONLY`) | No |
-| `Deferrable` | Yes | No (ignored) | No (ignored) |
+| `Deferrable` | Yes (pgx only; ignored through `stdlib`) | No (ignored) | No (ignored) |
 
 SQLite only supports `SERIALIZABLE` isolation. Setting any other level on SQLite is silently ignored (SQLite transactions are always serializable).
+
+`DeferrableMode` reaches PostgreSQL only through the `pgx` driver. `database/sql`'s transaction options have no deferrable field, so the `stdlib` adapter ignores `DeferrableMode` on every dialect, PostgreSQL through `lib/pq` included.
 
 **Transaction timeout:**
 
@@ -9780,7 +9782,7 @@ The timeout covers the entire transaction lifecycle (BEGIN through COMMIT/ROLLBA
 | `Rollback(ctx)` | At root: ROLLBACK. At savepoint: ROLLBACK TO SAVEPOINT (discards callbacks at this depth). |
 | `WithTransaction(ctx, querier, name, fn, ...TxOptions)` | Automatic begin/commit/rollback wrapper. Nesting is transparent — inner calls create savepoints (options ignored for savepoints). |
 
-`TxOptions` is variadic — omitting it uses database defaults. At most one `TxOptions` value is accepted; passing more than one is a runtime panic.
+`TxOptions` is variadic — omitting it uses database defaults. At most one `TxOptions` value is accepted; passing more than one returns an error from `NewTransaction`, `WithTransaction` and the adapters' `Begin`, before any statement is sent.
 
 **Nesting is transparent.** The consumer writes the same code regardless of depth. `NewTransaction` / `WithTransaction` detect whether a transaction already exists in the context and automatically use a savepoint instead of a new transaction. **Transaction options only apply to the outermost `BEGIN`** — savepoints inherit the parent transaction's isolation and access mode.
 
@@ -10091,7 +10093,7 @@ Deferred callbacks fire in **registration order** (the order mutations occurred 
 If a deferred callback fails (e.g., event publisher is unreachable):
 
 1. **Retry once** — the callback is retried immediately
-2. **Log on second failure** — if the retry also fails, the failure is logged with full context (table, PK, operation, error)
+2. **Log on second failure** — if the retry also fails, the callback's error is logged. `OnCommit` takes an opaque function, so the table, PK and operation are whatever the hook that registered it put in that error
 3. **Continue** — remaining callbacks still fire (one failure doesn't block the others)
 4. **Trip the circuit breaker** — if failures exceed the threshold, the cache is disabled (see below)
 
@@ -10161,11 +10163,11 @@ When `NewTransaction` / `WithTransaction` is called and a transaction already ex
 
 | Dialect | Savepoint SQL | Go Driver |
 |---------|--------------|-----------|
-| PostgreSQL | `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT` | pgx: native via `tx.Begin(ctx)` |
-| MySQL | `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT` | stdlib: issued as raw SQL internally |
-| SQLite | `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TRANSACTION TO SAVEPOINT` | stdlib: issued as raw SQL internally |
+| PostgreSQL | `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT` | pgx or stdlib: issued as raw SQL by the `Tx` |
+| MySQL | `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT` | stdlib: issued as raw SQL by the `Tx` |
+| SQLite | `SAVEPOINT` / `RELEASE SAVEPOINT` / `ROLLBACK TO SAVEPOINT` | stdlib: issued as raw SQL by the `Tx` |
 
-All three dialects support savepoints. pgx handles them natively; for stdlib drivers (MySQL, SQLite), the `Tx` wrapper issues the appropriate SQL internally. The Go `database/sql` stdlib has no savepoint API (Go issue #7898, open since 2014) — sqlgen provides this functionality across all drivers.
+All three dialects support savepoints, and the `Tx` issues the same three statements on every driver; SQLite accepts `ROLLBACK TO SAVEPOINT` as a spelling of `ROLLBACK TRANSACTION TO SAVEPOINT`. The Go `database/sql` stdlib has no savepoint API (Go issue #7898, open since 2014) — sqlgen provides this functionality across all drivers.
 
 ##### Internal: Depth-Indexed Callback Stack
 
@@ -10487,10 +10489,10 @@ Each driver lives in its own sub-package so that importing one driver does not p
 
 ### 19.3 Import Isolation
 
-The core `database/` package never imports `pgx`, `database/sql`, or any driver. Driver packages import the core package for interfaces and the external driver library:
+The core `database/` package imports only the standard library and never `pgx` or any driver. It may import `database/sql`, which is part of the standard library. Driver packages import the core package for interfaces and the external driver library:
 
 ```
-database/          ← interfaces only, zero external deps
+database/          ← interfaces and shared utilities, standard library only
 database/pgx/      ← imports database/ + jackc/pgx/v5
 database/stdlib/   ← imports database/ + database/sql (std lib)
 database/mock/     ← imports database/ only
@@ -10500,7 +10502,7 @@ Generated code imports exactly one driver package based on config:
 - `output.driver: "pgx"` → generated code imports `database/pgx/`
 - `output.driver: "stdlib"` → generated code imports `database/stdlib/`
 
-This ensures projects using stdlib never pull in `pgx` (and vice versa).
+This ensures projects using stdlib never pull in `pgx`. The reverse does not hold for `database/sql`: it is part of the standard library, and pgx itself imports it.
 
 ### 19.4 Batch Behavior by Driver
 

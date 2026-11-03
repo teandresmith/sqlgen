@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -369,98 +370,91 @@ func TestQuerierMethodsImplemented(t *testing.T) {
 
 // --- Error mapping integration tests ---
 
+// assertConstraintError checks that err is exactly want, with Err holding the
+// server's *pgconn.PgError carrying code, and that it unwraps to
+// ErrConstraintViolation. Rows use explicit ids so the server's Detail, which
+// quotes the failing row, is fixed.
+func assertConstraintError(t *testing.T, err error, want database.ConstraintError, code string) {
+	t.Helper()
+	if !errors.Is(err, database.ErrConstraintViolation) {
+		t.Errorf("error = %v, want it to wrap ErrConstraintViolation", err)
+	}
+	ce, ok := errors.AsType[*database.ConstraintError](err)
+	if !ok {
+		t.Fatalf("error = %v (%T), want a *database.ConstraintError", err, err)
+	}
+	pgErr, ok := errors.AsType[*pgconn.PgError](ce.Err)
+	if !ok || pgErr.Code != code {
+		t.Fatalf("ConstraintError.Err = %v (%T), want the server's *pgconn.PgError with code %s", ce.Err, ce.Err, code)
+	}
+	want.Err = ce.Err
+	if diff := cmp.Diff(want, *ce, cmp.Comparer(func(a, b error) bool { return a == b })); diff != "" { //nolint:errorlint // identity: Err must be the very error the driver returned
+		t.Errorf("ConstraintError mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestConstraintUniqueViolation(t *testing.T) {
 	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
+	cleanUsers(t)
 
-	_, _ = q.Exec(ctx, "DELETE FROM test_orders")
-	_, _ = q.Exec(ctx, "DELETE FROM test_users")
-	_, _ = q.Exec(ctx, "INSERT INTO test_users (name, email) VALUES ($1, $2)", "alice", "alice@example.com")
+	if _, err := q.Exec(ctx, "INSERT INTO test_users (id, name, email) VALUES ($1, $2, $3)", 9001, "alice", "alice@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := q.Exec(ctx, "INSERT INTO test_users (id, name, email) VALUES ($1, $2, $3)", 9002, "bob", "alice@example.com")
 
-	_, err := q.Exec(ctx, "INSERT INTO test_users (name, email) VALUES ($1, $2)", "bob", "alice@example.com")
-
-	if !errors.Is(err, database.ErrConstraintViolation) {
-		t.Fatalf("expected ErrConstraintViolation, got %v", err)
-	}
-	var ce *database.ConstraintError
-	if !errors.As(err, &ce) {
-		t.Fatalf("expected ConstraintError, got %T: %v", err, err)
-	}
-	if ce.Type != database.ConstraintUnique {
-		t.Errorf("ConstraintError.Type = %q, want %q", ce.Type, database.ConstraintUnique)
-	}
-	if ce.Constraint == "" {
-		t.Error("ConstraintError.Constraint is empty, want non-empty")
-	}
+	assertConstraintError(t, err, database.ConstraintError{
+		Type:       database.ConstraintUnique,
+		Constraint: "test_users_email_key",
+		Detail:     "Key (email)=(alice@example.com) already exists.",
+	}, "23505")
 }
 
 func TestConstraintFKViolation(t *testing.T) {
 	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
+	cleanUsers(t)
 
-	_, _ = q.Exec(ctx, "DELETE FROM test_orders")
-	_, _ = q.Exec(ctx, "DELETE FROM test_users")
+	_, err := q.Exec(ctx, "INSERT INTO test_orders (id, user_id, amount) VALUES ($1, $2, $3)", 9001, 99999, 100)
 
-	// Insert with non-existent user_id
-	_, err := q.Exec(ctx, "INSERT INTO test_orders (user_id, amount) VALUES ($1, $2)", 99999, 100)
-
-	if !errors.Is(err, database.ErrConstraintViolation) {
-		t.Fatalf("expected ErrConstraintViolation, got %v", err)
-	}
-	var ce *database.ConstraintError
-	if !errors.As(err, &ce) {
-		t.Fatalf("expected ConstraintError, got %T: %v", err, err)
-	}
-	if ce.Type != database.ConstraintForeignKey {
-		t.Errorf("ConstraintError.Type = %q, want %q", ce.Type, database.ConstraintForeignKey)
-	}
+	assertConstraintError(t, err, database.ConstraintError{
+		Type:       database.ConstraintForeignKey,
+		Constraint: "test_orders_user_id_fkey",
+		Detail:     `Key (user_id)=(99999) is not present in table "test_users".`,
+	}, "23503")
 }
 
 func TestConstraintNotNullViolation(t *testing.T) {
 	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
+	cleanUsers(t)
 
-	_, _ = q.Exec(ctx, "DELETE FROM test_orders")
-	_, _ = q.Exec(ctx, "DELETE FROM test_users")
+	_, err := q.Exec(ctx, "INSERT INTO test_users (id, name, email) VALUES ($1, $2, $3)", 9001, nil, "test@example.com")
 
-	_, err := q.Exec(ctx, "INSERT INTO test_users (name, email) VALUES ($1, $2)", nil, "test@example.com")
-
-	if !errors.Is(err, database.ErrConstraintViolation) {
-		t.Fatalf("expected ErrConstraintViolation, got %v", err)
-	}
-	var ce *database.ConstraintError
-	if !errors.As(err, &ce) {
-		t.Fatalf("expected ConstraintError, got %T: %v", err, err)
-	}
-	if ce.Type != database.ConstraintNotNull {
-		t.Errorf("ConstraintError.Type = %q, want %q", ce.Type, database.ConstraintNotNull)
-	}
+	assertConstraintError(t, err, database.ConstraintError{
+		Type:   database.ConstraintNotNull,
+		Column: "name",
+		Detail: "Failing row contains (9001, null, test@example.com).",
+	}, "23502")
 }
 
 func TestConstraintCheckViolation(t *testing.T) {
 	requireDocker(t)
 	q := pgxadapter.New(testPool)
 	ctx := context.Background()
-
-	_, _ = q.Exec(ctx, "DELETE FROM test_orders")
-	_, _ = q.Exec(ctx, "DELETE FROM test_users")
+	cleanUsers(t)
 
 	// Empty name violates CHECK (length(name) > 0)
-	_, err := q.Exec(ctx, "INSERT INTO test_users (name, email) VALUES ($1, $2)", "", "test@example.com")
+	_, err := q.Exec(ctx, "INSERT INTO test_users (id, name, email) VALUES ($1, $2, $3)", 9001, "", "test@example.com")
 
-	if !errors.Is(err, database.ErrConstraintViolation) {
-		t.Fatalf("expected ErrConstraintViolation, got %v", err)
-	}
-	var ce *database.ConstraintError
-	if !errors.As(err, &ce) {
-		t.Fatalf("expected ConstraintError, got %T: %v", err, err)
-	}
-	if ce.Type != database.ConstraintCheck {
-		t.Errorf("ConstraintError.Type = %q, want %q", ce.Type, database.ConstraintCheck)
-	}
+	assertConstraintError(t, err, database.ConstraintError{
+		Type:       database.ConstraintCheck,
+		Constraint: "test_users_name_check",
+		Detail:     "Failing row contains (9001, , test@example.com).",
+	}, "23514")
 }
 
 func TestDeadlock(t *testing.T) {
@@ -558,13 +552,11 @@ func TestCommitMapsDeferredConstraint(t *testing.T) {
 
 	err = database.Commit(txCtx)
 	_ = database.Rollback(txCtx) // the transaction is still the caller's after a failed COMMIT
-	ce, ok := errors.AsType[*database.ConstraintError](err)
-	if !ok {
-		t.Fatalf("Commit() error = %v (%T), want a *database.ConstraintError", err, err)
-	}
-	if ce.Type != database.ConstraintUnique || ce.Constraint != "test_deferred_code_key" {
-		t.Errorf("ConstraintError = {Type: %q, Constraint: %q}, want {%q, %q}", ce.Type, ce.Constraint, database.ConstraintUnique, "test_deferred_code_key")
-	}
+	assertConstraintError(t, err, database.ConstraintError{
+		Type:       database.ConstraintUnique,
+		Constraint: "test_deferred_code_key",
+		Detail:     "Key (code)=(a) already exists.",
+	}, "23505")
 }
 
 func TestTimeoutRollsBackAndClosesTheTransaction(t *testing.T) {

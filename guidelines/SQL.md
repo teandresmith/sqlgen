@@ -650,7 +650,7 @@ BEGIN ISOLATION LEVEL SERIALIZABLE READ ONLY DEFERRABLE
 | Option | PostgreSQL | MySQL | SQLite |
 |--------|-----------|-------|--------|
 | `ReadOnly` | Yes | Yes (`START TRANSACTION READ ONLY`) | No |
-| `Deferrable` | Yes | No (ignored) | No (ignored) |
+| `Deferrable` | Yes (pgx only; ignored through stdlib) | No (ignored) | No (ignored) |
 
 SQLite only supports `SERIALIZABLE`. Other isolation levels are silently ignored.
 
@@ -662,9 +662,9 @@ Savepoints enable nested transactions.
 |-----------|-----------|-------|--------|
 | Create | `SAVEPOINT name` | `SAVEPOINT name` | `SAVEPOINT name` |
 | Release | `RELEASE SAVEPOINT name` | `RELEASE SAVEPOINT name` | `RELEASE SAVEPOINT name` |
-| Rollback | `ROLLBACK TO SAVEPOINT name` | `ROLLBACK TO SAVEPOINT name` | `ROLLBACK TRANSACTION TO SAVEPOINT name` |
+| Rollback | `ROLLBACK TO SAVEPOINT name` | `ROLLBACK TO SAVEPOINT name` | `ROLLBACK TO SAVEPOINT name` |
 
-Note the SQLite difference: `ROLLBACK TRANSACTION TO SAVEPOINT` vs `ROLLBACK TO SAVEPOINT`. This must be handled in the SQLite dialect implementation.
+The `Tx` issues the same statements on every dialect; SQLite accepts `ROLLBACK TO SAVEPOINT` as a spelling of `ROLLBACK TRANSACTION TO SAVEPOINT`.
 
 ### Driver Differences
 

@@ -9,3 +9,9 @@ CREATE TABLE IF NOT EXISTS test_orders (
     user_id INTEGER NOT NULL REFERENCES test_users(id),
     amount INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS test_deferred (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL,
+    CONSTRAINT test_deferred_code_key UNIQUE (code) DEFERRABLE INITIALLY DEFERRED
+);

@@ -690,7 +690,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert-many.transaction | Every generated client method calls `database.Conn(ctx, querier)`, so `UpsertMany` with a transaction in its context runs on that transaction | `conformance: UpsertMany/upserts inside the caller's transaction` | all | client-methods: UpsertMany × transaction |
 
 ## §18.3 API
-<!-- prd: 18.3 sha256: d74d13c5256f0eb9 -->
+<!-- prd: 18.3 sha256: 55bffbe8617e4b89 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

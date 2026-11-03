@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
+	"github.com/go-sql-driver/mysql"
+	"github.com/google/go-cmp/cmp"
+	"github.com/lib/pq"
+	"github.com/lib/pq/pqerror"
 	"github.com/testcontainers/testcontainers-go"
 	mysqltc "github.com/testcontainers/testcontainers-go/modules/mysql"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -30,8 +32,10 @@ var (
 	// whose tests use ? placeholders; tests that cover the stdlib adapter on
 	// PostgreSQL use it directly.
 	postgresDB *sql.DB
-	// mysqlDSN is kept so a test can open a pool with its own settings.
-	mysqlDSN string
+	// mysqlDSN and postgresDSN are kept so a test can open a pool with its
+	// own settings.
+	mysqlDSN    string
+	postgresDSN string
 )
 
 type backend struct {
@@ -148,6 +152,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
+	postgresDSN = pgConnStr
 	postgresDB, err = sql.Open("postgres", pgConnStr)
 	if err != nil {
 		panic(err)
@@ -464,118 +469,222 @@ func cleanTables(t *testing.T, db *sql.DB) {
 	_, _ = db.ExecContext(context.Background(), "DELETE FROM test_users")
 }
 
+// mysqlErrNumber reports whether err is the server's *mysql.MySQLError with
+// error number num.
+func mysqlErrNumber(num uint16) func(error) bool {
+	return func(err error) bool {
+		me, ok := errors.AsType[*mysql.MySQLError](err)
+		return ok && me.Number == num
+	}
+}
+
+// sqliteErrCode reports whether err is a SQLite driver error with extended
+// result code code.
+func sqliteErrCode(code int) func(error) bool {
+	return func(err error) bool {
+		se, ok := errors.AsType[interface {
+			error
+			Code() int
+		}](err)
+		return ok && se.Code() == code
+	}
+}
+
+// pqErrCode reports whether err is the server's *pq.Error with SQLSTATE code.
+func pqErrCode(code pqerror.Code) func(error) bool {
+	return func(err error) bool {
+		pe, ok := errors.AsType[*pq.Error](err)
+		return ok && pe.Code == code
+	}
+}
+
+// assertConstraintError checks that err is exactly want, with Err holding the
+// driver's own error (isDriverErr), and that it unwraps to
+// ErrConstraintViolation. Rows use explicit ids so a Detail that quotes the
+// failing row is fixed.
+func assertConstraintError(t *testing.T, err error, want database.ConstraintError, isDriverErr func(error) bool) {
+	t.Helper()
+	if !errors.Is(err, database.ErrConstraintViolation) {
+		t.Errorf("error = %v, want it to wrap ErrConstraintViolation", err)
+	}
+	ce, ok := errors.AsType[*database.ConstraintError](err)
+	if !ok {
+		t.Fatalf("error = %v (%T), want a *database.ConstraintError", err, err)
+	}
+	if !isDriverErr(ce.Err) {
+		t.Fatalf("ConstraintError.Err = %v (%T), want the driver's own error for this violation", ce.Err, ce.Err)
+	}
+	want.Err = ce.Err
+	if diff := cmp.Diff(want, *ce, cmp.Comparer(func(a, b error) bool { return a == b })); diff != "" { //nolint:errorlint // identity: Err must be the very error the driver returned
+		t.Errorf("ConstraintError mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// execOn cleans db's tables, runs each setup statement, and returns the error
+// of stmt.
+func execOn(t *testing.T, db *sql.DB, setup []string, stmt string, args ...any) error {
+	t.Helper()
+	cleanTables(t, db)
+	q := stdlibadapter.New(db)
+	ctx := context.Background()
+	for _, s := range setup {
+		if _, err := q.Exec(ctx, s); err != nil {
+			t.Fatalf("setup %q: %v", s, err)
+		}
+	}
+	_, err := q.Exec(ctx, stmt, args...)
+	return err
+}
+
 func TestConstraintUniqueViolation(t *testing.T) {
 	requireDocker(t)
-	for _, b := range backends() {
-		t.Run(b.name, func(t *testing.T) {
-			cleanTables(t, b.db)
-			q := stdlibadapter.New(b.db)
-			ctx := context.Background()
-
-			_, _ = q.Exec(ctx, "INSERT INTO test_users (name, email) VALUES (?, ?)", "alice", "alice@example.com")
-			_, err := q.Exec(ctx, "INSERT INTO test_users (name, email) VALUES (?, ?)", "bob", "alice@example.com")
-
-			if !errors.Is(err, database.ErrConstraintViolation) {
-				t.Fatalf("expected ErrConstraintViolation, got %v", err)
-			}
-			var ce *database.ConstraintError
-			if !errors.As(err, &ce) {
-				t.Fatalf("expected ConstraintError, got %T: %v", err, err)
-			}
-			if ce.Type != database.ConstraintUnique {
-				t.Errorf("ConstraintError.Type = %q, want %q", ce.Type, database.ConstraintUnique)
-			}
-			// SQLite names table.column; MySQL's 1062 message names only the key.
-			if b.name == "sqlite" && (ce.Constraint != "test_users.email" || ce.Column != "email") {
-				t.Errorf("ConstraintError{Constraint:%q Column:%q}, want {%q %q}", ce.Constraint, ce.Column, "test_users.email", "email")
-			}
-		})
-	}
+	const seed = "INSERT INTO test_users (id, name, email) VALUES (9001, 'alice', 'alice@example.com')"
+	t.Run("mysql", func(t *testing.T) {
+		err := execOn(t, mysqlDB, []string{seed}, "INSERT INTO test_users (id, name, email) VALUES (?, ?, ?)", 9002, "bob", "alice@example.com")
+		assertConstraintError(t, err, database.ConstraintError{
+			Type:       database.ConstraintUnique,
+			Constraint: "email",
+			Detail:     "Duplicate entry 'alice@example.com' for key 'test_users.email'",
+		}, mysqlErrNumber(1062))
+	})
+	t.Run("sqlite", func(t *testing.T) {
+		err := execOn(t, sqliteDB, []string{seed}, "INSERT INTO test_users (id, name, email) VALUES (?, ?, ?)", 9002, "bob", "alice@example.com")
+		assertConstraintError(t, err, database.ConstraintError{
+			Type:       database.ConstraintUnique,
+			Constraint: "test_users.email",
+			Column:     "email",
+			Detail:     "constraint failed: UNIQUE constraint failed: test_users.email (2067)",
+		}, sqliteErrCode(2067))
+	})
+	t.Run("postgres", func(t *testing.T) {
+		err := execOn(t, postgresDB, []string{seed}, "INSERT INTO test_users (id, name, email) VALUES ($1, $2, $3)", 9002, "bob", "alice@example.com")
+		assertConstraintError(t, err, database.ConstraintError{
+			Type:       database.ConstraintUnique,
+			Constraint: "test_users_email_key",
+			Detail:     "Key (email)=(alice@example.com) already exists.",
+		}, pqErrCode("23505"))
+	})
 }
 
 func TestConstraintFKViolation(t *testing.T) {
 	requireDocker(t)
-	for _, b := range backends() {
-		t.Run(b.name, func(t *testing.T) {
-			cleanTables(t, b.db)
-
-			if b.name == "sqlite" {
-				// Enable foreign key enforcement for SQLite
-				_, _ = b.db.ExecContext(context.Background(), "PRAGMA foreign_keys = ON")
-			}
-
-			q := stdlibadapter.New(b.db)
-			ctx := context.Background()
-
-			_, err := q.Exec(ctx, "INSERT INTO test_orders (user_id, amount) VALUES (?, ?)", 99999, 100)
-
-			if !errors.Is(err, database.ErrConstraintViolation) {
-				t.Fatalf("expected ErrConstraintViolation, got %v", err)
-			}
-			var ce *database.ConstraintError
-			if !errors.As(err, &ce) {
-				t.Fatalf("expected ConstraintError, got %T: %v", err, err)
-			}
-			if ce.Type != database.ConstraintForeignKey {
-				t.Errorf("ConstraintError.Type = %q, want %q", ce.Type, database.ConstraintForeignKey)
-			}
-			// SQLite's foreign key message names no constraint.
-			if b.name == "sqlite" && ce.Constraint != "" {
-				t.Errorf("ConstraintError.Constraint = %q, want empty", ce.Constraint)
-			}
-		})
-	}
+	t.Run("mysql", func(t *testing.T) {
+		err := execOn(t, mysqlDB, nil, "INSERT INTO test_orders (id, user_id, amount) VALUES (?, ?, ?)", 9001, 99999, 100)
+		assertConstraintError(t, err, database.ConstraintError{
+			Type:       database.ConstraintForeignKey,
+			Constraint: "test_orders_user_fk",
+			Detail:     "Cannot add or update a child row: a foreign key constraint fails (`sqlgen_test`.`test_orders`, CONSTRAINT `test_orders_user_fk` FOREIGN KEY (`user_id`) REFERENCES `test_users` (`id`))",
+		}, mysqlErrNumber(1452))
+	})
+	t.Run("sqlite", func(t *testing.T) {
+		err := execOn(t, sqliteDB, nil, "INSERT INTO test_orders (id, user_id, amount) VALUES (?, ?, ?)", 9001, 99999, 100)
+		// SQLite's foreign key message names no constraint and no column.
+		assertConstraintError(t, err, database.ConstraintError{
+			Type:   database.ConstraintForeignKey,
+			Detail: "constraint failed: FOREIGN KEY constraint failed (787)",
+		}, sqliteErrCode(787))
+	})
+	t.Run("postgres", func(t *testing.T) {
+		err := execOn(t, postgresDB, nil, "INSERT INTO test_orders (id, user_id, amount) VALUES ($1, $2, $3)", 9001, 99999, 100)
+		assertConstraintError(t, err, database.ConstraintError{
+			Type:       database.ConstraintForeignKey,
+			Constraint: "test_orders_user_id_fkey",
+			Detail:     `Key (user_id)=(99999) is not present in table "test_users".`,
+		}, pqErrCode("23503"))
+	})
 }
 
 func TestConstraintNotNullViolation(t *testing.T) {
 	requireDocker(t)
-	for _, b := range backends() {
-		t.Run(b.name, func(t *testing.T) {
-			cleanTables(t, b.db)
-			q := stdlibadapter.New(b.db)
-			ctx := context.Background()
-
-			_, err := q.Exec(ctx, "INSERT INTO test_users (name, email) VALUES (?, ?)", nil, "test@example.com")
-
-			if !errors.Is(err, database.ErrConstraintViolation) {
-				t.Fatalf("expected ErrConstraintViolation, got %v", err)
-			}
-			var ce *database.ConstraintError
-			if !errors.As(err, &ce) {
-				t.Fatalf("expected ConstraintError, got %T: %v", err, err)
-			}
-			if ce.Type != database.ConstraintNotNull {
-				t.Errorf("ConstraintError.Type = %q, want %q", ce.Type, database.ConstraintNotNull)
-			}
-			if ce.Column != "name" {
-				t.Errorf("ConstraintError.Column = %q, want %q", ce.Column, "name")
-			}
-		})
-	}
+	t.Run("mysql", func(t *testing.T) {
+		err := execOn(t, mysqlDB, nil, "INSERT INTO test_users (id, name, email) VALUES (?, ?, ?)", 9001, nil, "test@example.com")
+		assertConstraintError(t, err, database.ConstraintError{
+			Type:   database.ConstraintNotNull,
+			Column: "name",
+			Detail: "Column 'name' cannot be null",
+		}, mysqlErrNumber(1048))
+	})
+	t.Run("sqlite", func(t *testing.T) {
+		err := execOn(t, sqliteDB, nil, "INSERT INTO test_users (id, name, email) VALUES (?, ?, ?)", 9001, nil, "test@example.com")
+		assertConstraintError(t, err, database.ConstraintError{
+			Type:       database.ConstraintNotNull,
+			Constraint: "test_users.name",
+			Column:     "name",
+			Detail:     "constraint failed: NOT NULL constraint failed: test_users.name (1299)",
+		}, sqliteErrCode(1299))
+	})
+	t.Run("postgres", func(t *testing.T) {
+		err := execOn(t, postgresDB, nil, "INSERT INTO test_users (id, name, email) VALUES ($1, $2, $3)", 9001, nil, "test@example.com")
+		assertConstraintError(t, err, database.ConstraintError{
+			Type:   database.ConstraintNotNull,
+			Column: "name",
+			Detail: "Failing row contains (9001, null, test@example.com).",
+		}, pqErrCode("23502"))
+	})
 }
 
 func TestConstraintCheckViolation(t *testing.T) {
 	requireDocker(t)
-	for _, b := range backends() {
-		t.Run(b.name, func(t *testing.T) {
-			cleanTables(t, b.db)
-			q := stdlibadapter.New(b.db)
-			ctx := context.Background()
+	// An empty name violates CHECK (length(name) > 0) on every dialect.
+	t.Run("mysql", func(t *testing.T) {
+		err := execOn(t, mysqlDB, nil, "INSERT INTO test_users (id, name, email) VALUES (?, ?, ?)", 9001, "", "test@example.com")
+		assertConstraintError(t, err, database.ConstraintError{
+			Type:       database.ConstraintCheck,
+			Constraint: "test_users_name_check",
+			Detail:     "Check constraint 'test_users_name_check' is violated.",
+		}, mysqlErrNumber(3819))
+	})
+	t.Run("sqlite", func(t *testing.T) {
+		err := execOn(t, sqliteDB, nil, "INSERT INTO test_users (id, name, email) VALUES (?, ?, ?)", 9001, "", "test@example.com")
+		assertConstraintError(t, err, database.ConstraintError{
+			Type:       database.ConstraintCheck,
+			Constraint: "length(name) > 0",
+			Detail:     "constraint failed: CHECK constraint failed: length(name) > 0 (275)",
+		}, sqliteErrCode(275))
+	})
+	t.Run("postgres", func(t *testing.T) {
+		err := execOn(t, postgresDB, nil, "INSERT INTO test_users (id, name, email) VALUES ($1, $2, $3)", 9001, "", "test@example.com")
+		assertConstraintError(t, err, database.ConstraintError{
+			Type:       database.ConstraintCheck,
+			Constraint: "test_users_name_check",
+			Detail:     "Failing row contains (9001, , test@example.com).",
+		}, pqErrCode("23514"))
+	})
+}
 
-			// Empty name violates CHECK (length(name) > 0)
-			_, err := q.Exec(ctx, "INSERT INTO test_users (name, email) VALUES (?, ?)", "", "test@example.com")
+// TestCommitMapsDeferredConstraintPostgres maps an error that only COMMIT can
+// report through lib/pq. A DEFERRABLE INITIALLY DEFERRED unique constraint is
+// checked at commit, so the duplicate INSERT succeeds and COMMIT fails.
+func TestCommitMapsDeferredConstraintPostgres(t *testing.T) {
+	requireDocker(t)
+	ctx := context.Background()
+	if _, err := postgresDB.ExecContext(ctx, "DELETE FROM test_deferred"); err != nil {
+		t.Fatalf("cleaning test_deferred: %v", err)
+	}
 
-			if !errors.Is(err, database.ErrConstraintViolation) {
-				t.Fatalf("expected ErrConstraintViolation, got %v", err)
-			}
-			var ce *database.ConstraintError
-			if !errors.As(err, &ce) {
-				t.Fatalf("expected ConstraintError, got %T: %v", err, err)
-			}
-			if ce.Type != database.ConstraintCheck {
-				t.Errorf("ConstraintError.Type = %q, want %q", ce.Type, database.ConstraintCheck)
-			}
-		})
+	txCtx, err := database.NewTransaction(ctx, stdlibadapter.New(postgresDB), "deferred_unique")
+	if err != nil {
+		t.Fatalf("NewTransaction: %v", err)
+	}
+	tx := database.FromContext(txCtx)
+	if _, err := tx.Exec(txCtx, "INSERT INTO test_deferred (id, code) VALUES (1, 'a'), (2, 'a')"); err != nil {
+		t.Fatalf("duplicate INSERT failed before COMMIT, so the check was not deferred: %v", err)
+	}
+
+	err = database.Commit(txCtx)
+	_ = database.Rollback(txCtx) // the transaction is still the caller's after a failed COMMIT
+	assertConstraintError(t, err, database.ConstraintError{
+		Type:       database.ConstraintUnique,
+		Constraint: "test_deferred_code_key",
+		Detail:     "Key (code)=(a) already exists.",
+	}, pqErrCode("23505"))
+
+	var n int
+	if err := postgresDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM test_deferred").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("rows after the failed COMMIT = %d, want 0", n)
 	}
 }
 
@@ -937,13 +1046,10 @@ func TestCommitMapsDeferredConstraintSQLite(t *testing.T) {
 
 	err = database.Commit(txCtx)
 	_ = database.Rollback(txCtx) // the transaction is still the caller's after a failed COMMIT
-	ce, ok := errors.AsType[*database.ConstraintError](err)
-	if !ok {
-		t.Fatalf("Commit() error = %v (%T), want a *database.ConstraintError", err, err)
-	}
-	if ce.Type != database.ConstraintForeignKey {
-		t.Errorf("ConstraintError.Type = %q, want %q", ce.Type, database.ConstraintForeignKey)
-	}
+	assertConstraintError(t, err, database.ConstraintError{
+		Type:   database.ConstraintForeignKey,
+		Detail: "constraint failed: FOREIGN KEY constraint failed (787)",
+	}, sqliteErrCode(787))
 }
 
 func TestTimeoutRollsBackAndClosesTheTransaction(t *testing.T) {

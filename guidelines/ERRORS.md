@@ -419,7 +419,7 @@ Events, cache invalidation, and other side effects are collected via `Tx.OnCommi
 When `OnCommit` callbacks fail after a successful commit:
 
 1. Retry once immediately.
-2. Log on second failure with full context (table, PK, operation, error).
+2. Log the callback's error on second failure; the hook that registered it supplies the table, PK and operation.
 3. Continue — one failure does not block others.
 4. Trip the circuit breaker if failures exceed threshold.
 
