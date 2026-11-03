@@ -4,6 +4,7 @@ package stdlib
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/teandresmith/sqlgen/database"
@@ -301,6 +302,9 @@ func (r *rows) Err() error {
 // is reported by COMMIT, not by the statement that caused it.
 func (c *txConn) Commit(ctx context.Context) error {
 	if err := c.tx.Commit(); err != nil {
+		if errors.Is(err, sql.ErrTxDone) {
+			return txDoneErr(ctx, err)
+		}
 		if ok, mapped := MapError(err); ok {
 			return mapped
 		}
@@ -309,10 +313,28 @@ func (c *txConn) Commit(ctx context.Context) error {
 	return nil
 }
 
-// Rollback rolls back the underlying stdlib transaction.
+// Rollback rolls back the underlying stdlib transaction. database/sql marks
+// its transaction done before calling the driver, so a failed ROLLBACK still
+// ends it and is reported wrapped as database.ErrTxDone. sql.ErrTxDone means
+// database/sql had already rolled the transaction back, as it does when the
+// context the transaction was begun with ends, so it reports success.
 func (c *txConn) Rollback(ctx context.Context) error {
 	if err := c.tx.Rollback(); err != nil {
-		return fmt.Errorf("stdlib rollback: %w", err)
+		if errors.Is(err, sql.ErrTxDone) {
+			return nil
+		}
+		return fmt.Errorf("stdlib rollback: %w: %w", database.ErrTxDone, err)
 	}
 	return nil
+}
+
+// txDoneErr reports a COMMIT of a transaction database/sql had already ended.
+// database/sql rolls a transaction back itself when the context it was begun
+// with is done, so when ctx has ended that is the cause, and it is wrapped in
+// place of sql.ErrTxDone.
+func txDoneErr(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		err = ctxErr
+	}
+	return fmt.Errorf("stdlib commit: %w: %w", database.ErrTxDone, err)
 }

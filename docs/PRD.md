@@ -2850,7 +2850,7 @@ Each schema entity claims three things at package scope, and any one of them can
 | `Connection`, `ConnectionInput`, `Edge`, `PageInfo` | the cursor-pagination types |
 | `PaginateInput`, `PaginateResult` | the offset-pagination types |
 | `CallOptions`, `IncrementInput` | the shared types |
-| `ErrNotFound`, `ErrConstraintViolation`, `ErrDeadlock`, `ErrConnectionFailed`, `ErrInvalidCursor`, `ErrEmptyFilter`, `ErrAmbiguousFilter`, `ErrNilInput`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ConstraintError`, `ConstraintType`, `ConstraintCheck`, `ConstraintForeignKey`, `ConstraintNotNull`, `ConstraintUnique`, `NestedMutationError` | the error types |
+| `ErrNotFound`, `ErrConstraintViolation`, `ErrDeadlock`, `ErrConnectionFailed`, `ErrTxDone`, `ErrInvalidCursor`, `ErrEmptyFilter`, `ErrAmbiguousFilter`, `ErrNilInput`, `ErrAlreadyRelated`, `ErrNestedVerbConflict`, `ConstraintError`, `ConstraintType`, `ConstraintCheck`, `ConstraintForeignKey`, `ConstraintNotNull`, `ConstraintUnique`, `NestedMutationError` | the error types |
 | `Cache`, `CacheOption`, `NewCache`, `WithSerializer`, `WithCircuitBreaker`, `WithInvalidationSource`, `WithMetricsRecorder`, `WithOnError` | the cache hooks |
 | `WithEventPublisher` | the event hooks |
 | The stems `models`, `views`, `errors`, `tablenames`, `sorter`, `pagination`, `connection`, `shared_types`, `sets`, `cache`, `event_hooks`, `api_envelopes`, `manifest_embed`, plus `output.client.file`, `output.enums.file` and `output.types.file` | the fixed filenames the generator writes |
@@ -9752,7 +9752,7 @@ SQLite only supports `SERIALIZABLE` isolation. Setting any other level on SQLite
 
 **Transaction timeout:**
 
-When `Timeout` is set, `WithTransaction`/`NewTransaction` wraps the transaction context with `context.WithTimeout`. If the timeout expires, the context is cancelled and any in-flight database operations return a context deadline error. The transaction is then rolled back by `WithTransaction`'s error handling.
+When `Timeout` is set, `WithTransaction`/`NewTransaction` wraps the transaction context with `context.WithTimeout`. If the timeout expires, the context is cancelled and any in-flight database operations return a context deadline error. The transaction is then rolled back by `WithTransaction`'s error handling, which returns that deadline error; the `Tx` reports closed and `database.Conn` falls back to the original querier ([18.4](#184-txisclosed-and-safe-fallback)). If `fn` returns `nil` after the deadline, the `COMMIT` usually fails on the expired context, and `WithTransaction` then rolls back and returns that error, so the `Tx` is closed either way. On `database/sql` a `COMMIT` issued in the instant after the deadline can still succeed, because the transaction context `database/sql` derives is cancelled a moment after the timeout's own.
 
 When `Timeout` is zero (the default), no timeout is applied. This is intentional — some transactions involve legitimate long-running work, and an aggressive default timeout would cause unexpected failures. Consumers opt in per transaction based on their knowledge of expected duration:
 
@@ -9816,6 +9816,14 @@ The consumer never calls `Savepoint()`, `RollbackTo()`, or `Release()` directly.
 ### 18.4 Tx.IsClosed and Safe Fallback
 
 The `Tx` type exposes an `IsClosed() bool` method that returns `true` after the transaction has been committed or rolled back. "After" is exact: a root `COMMIT` or `ROLLBACK` that has been issued and not yet answered still reports `false`, and one the driver rejects leaves the transaction open and keeps reporting `false`. See [18.5](#185-concurrent-safety), "What `IsClosed` reports while a root teardown is in flight", for what depends on that and for what makes a root teardown at-most-once instead.
+
+A teardown that finds the transaction **already ended by the driver** is not a rejection. `database/sql` marks its transaction done before it calls the driver, and rolls it back on its own when the context it was begun with ends; pgx closes its transaction, and drops the connection, whenever a `ROLLBACK` fails.
+
+- A `Rollback` of a transaction the driver had already ended (`sql.ErrTxDone`, `pgx.ErrTxClosed`), or one that failed after its context ended, returns `nil`: the transaction is rolled back.
+- A `ROLLBACK` that failed for any other reason — a connection still busy with a leaked result set, a broken socket — has still ended the transaction. The adapter wraps `database.ErrTxDone` into the error; the `Tx` reports closed and the error is returned.
+- A `COMMIT` that finds the transaction already ended is reported the same way, wrapping the context's error on `database/sql` when that is what ended it. The `Tx` reports closed and its `OnCommit` callbacks never fire.
+
+A root `COMMIT` that fails for any other reason leaves the transaction open and the caller's to roll back. `WithTransaction` is that caller: when its root `COMMIT` fails it rolls back, and returns the `COMMIT`'s error with the `Tx` closed. A savepoint's `RELEASE` that fails is left to the enclosing scope.
 
 `database.Conn(ctx, querier)` checks `IsClosed()` before returning a transaction from the context. If the transaction is closed, it falls back to the original querier instead. This prevents errors from attempting to use a committed or rolled-back transaction (e.g., when a deferred operation runs after the transaction has already completed).
 
@@ -11435,6 +11443,11 @@ var (
     // ErrConstraintViolation is the base error for all constraint failures.
     // Use errors.As() to extract the specific ConstraintError.
     ErrConstraintViolation = errors.New("sqlgen: constraint violation")
+
+    // ErrTxDone is returned when a COMMIT or ROLLBACK finds the transaction
+    // ended by the driver, as when its context expires or its connection
+    // fails. The transaction did not commit. See Section 18.4.
+    ErrTxDone = errors.New("sqlgen: transaction already ended by the driver")
 
     // ErrRefreshConcurrentlyInTx is returned when RefreshConcurrently on a
     // materialized-view client is called while an ambient transaction is
@@ -15780,6 +15793,7 @@ Package-wide reference, answered once. Per-entity entries cross-reference rather
       { "name": "ErrInvalidCursor",       "graphql_code": "",                "package": "models" },
       { "name": "ErrDeadlock",            "graphql_code": "",                "package": "models" },
       { "name": "ErrConnectionFailed",    "graphql_code": "",                "package": "models" },
+      { "name": "ErrTxDone",              "graphql_code": "",                "package": "models" },
       { "name": "ErrConstraintViolation", "graphql_code": "",                "package": "models" },
       { "name": "ErrAlreadyRelated",      "graphql_code": "CONFLICT",        "package": "models" },
       { "name": "ErrNestedVerbConflict",  "graphql_code": "INVALID_INPUT",   "package": "models" },

@@ -332,6 +332,7 @@ func buildConventions(cfg *config.RootConfig, tables []gen.TableContext, views [
 		{Name: "ErrInvalidCursor", Package: pkg},
 		{Name: "ErrDeadlock", Package: pkg},
 		{Name: "ErrConnectionFailed", Package: pkg},
+		{Name: "ErrTxDone", Package: pkg},
 		{Name: "ErrConstraintViolation", Package: pkg},
 		{Name: "ErrAlreadyRelated", GraphQLCode: "CONFLICT", Package: pkg},
 		{Name: "ErrNestedVerbConflict", GraphQLCode: "INVALID_INPUT", Package: pkg},

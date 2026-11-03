@@ -559,7 +559,7 @@
 | artifacts.soft-delete.soft-delete | A soft-delete table gets SoftDelete/SoftDeleteMany/SoftDeleteWhere and Restore/RestoreMany/RestoreWhere; a table without a soft delete column gets only the HardDelete methods | `unit: cmd/sqlgen/gen: TestClientTemplate_softDeleteConditional`; `unit: cmd/sqlgen/gen: TestDeleteTemplate_noSoftDelete_onlyHardDelete`; `unit: cmd/sqlgen/gen: TestClientTemplate_fullOperations` | all | generated-artifacts: soft-delete × soft-delete |
 
 ## §22.1 Generated Error Types
-<!-- prd: 22.1 sha256: dfbff3c554e1beb0 -->
+<!-- prd: 22.1 sha256: 8a1fba394bd43fb7 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -573,6 +573,7 @@
 | gen.errors.constraint-violation | The generated package re-exports `ErrConstraintViolation` from `database` | `unit: cmd/sqlgen/gen: TestErrorTemplate_sentinelErrors`; `unit: cmd/sqlgen/gen: TestErrorTemplate_goldenFile` | all | |
 | gen.errors.already-related | The generated package re-exports `ErrAlreadyRelated` from `database` | `unit: cmd/sqlgen/gen: TestErrorTemplate_sentinelErrors`; `unit: cmd/sqlgen/gen: TestErrorTemplate_goldenFile` | all | |
 | gen.errors.nested-verb-conflict | The generated package re-exports `ErrNestedVerbConflict` from `database` | `unit: cmd/sqlgen/gen: TestErrorTemplate_sentinelErrors`; `unit: cmd/sqlgen/gen: TestErrorTemplate_goldenFile` | all | |
+| gen.errors.tx-done | The generated package re-exports `ErrTxDone` from `database` | `unit: cmd/sqlgen/gen: TestErrorTemplate_sentinelErrors`; `unit: cmd/sqlgen/gen: TestErrorTemplate_goldenFile` | all | |
 | gen.errors.refresh-concurrently-not-reexported | `ErrRefreshConcurrentlyInTx` is not re-exported. Materialized-view clients return it and consumers reach it through `database` | `unit: cmd/sqlgen/gen: TestErrorTemplate_goldenFile`; `unit: cmd/sqlgen/gen: TestViewRefreshTemplate_txGuardPrecedesExecution` | postgres |  |
 
 ## §22.4 Stack Traces and Custom Error Packages

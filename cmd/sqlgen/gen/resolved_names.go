@@ -104,6 +104,7 @@ var generatedPackageTypes = []reservedName{
 	{name: "ErrEmptyFilter", owner: "errors_gen.go"},
 	{name: "ErrNestedVerbConflict", owner: "errors_gen.go"},
 	{name: "ErrNilInput", owner: "errors_gen.go"},
+	{name: "ErrTxDone", owner: "errors_gen.go"},
 	{name: "ErrInvalidCursor", owner: "errors_gen.go"},
 	{name: "ErrNotFound", owner: "errors_gen.go"},
 	{name: "NestedMutationError", owner: "errors_gen.go"},

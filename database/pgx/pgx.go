@@ -3,6 +3,7 @@ package pgx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -209,6 +210,9 @@ func (c *txConn) QueryRow(ctx context.Context, sql string, args ...any) database
 // violation is reported by COMMIT, not by the statement that caused it.
 func (c *txConn) Commit(ctx context.Context) error {
 	if err := c.tx.Commit(ctx); err != nil {
+		if errors.Is(err, pgx.ErrTxClosed) {
+			return fmt.Errorf("pgx commit: %w: %w", database.ErrTxDone, err)
+		}
 		if ok, mapped := MapError(err); ok {
 			return mapped
 		}
@@ -217,10 +221,18 @@ func (c *txConn) Commit(ctx context.Context) error {
 	return nil
 }
 
-// Rollback rolls back the underlying pgx transaction.
+// Rollback rolls back the underlying pgx transaction. pgx closes its
+// transaction whether or not the ROLLBACK succeeds, and on a failure drops the
+// connection, which ends the transaction on the server. A transaction pgx had
+// already closed, or a ROLLBACK that failed only because ctx has ended, is
+// rolled back, so it reports success; any other failure is still reported,
+// wrapped as database.ErrTxDone so the Tx closes.
 func (c *txConn) Rollback(ctx context.Context) error {
 	if err := c.tx.Rollback(ctx); err != nil {
-		return fmt.Errorf("pgx rollback: %w", err)
+		if errors.Is(err, pgx.ErrTxClosed) || ctx.Err() != nil {
+			return nil //nolint:nilerr // the transaction is rolled back, which is what Rollback reports
+		}
+		return fmt.Errorf("pgx rollback: %w: %w", database.ErrTxDone, err)
 	}
 	return nil
 }

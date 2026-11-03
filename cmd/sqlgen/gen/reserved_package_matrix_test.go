@@ -63,6 +63,7 @@ func TestReservedPackageNamesMatrix(t *testing.T) {
 		{name: "ErrNilInput", row: "reserved-pkg-errors", sqlName: "err_nil_input"},
 		{name: "ErrAlreadyRelated", row: "reserved-pkg-errors", sqlName: "err_already_related"},
 		{name: "ErrNestedVerbConflict", row: "reserved-pkg-errors", sqlName: "err_nested_verb_conflict"},
+		{name: "ErrTxDone", row: "reserved-pkg-errors", sqlName: "err_tx_done"},
 		{name: "ConstraintError", row: "reserved-pkg-errors", sqlName: "constraint_error"},
 		{name: "ConstraintType", row: "reserved-pkg-errors", sqlName: "constraint_type"},
 		{name: "ConstraintCheck", row: "reserved-pkg-errors", sqlName: "constraint_check"},

@@ -7,11 +7,15 @@ import (
 	"flag"
 	"os"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/lib/pq"
 	"github.com/testcontainers/testcontainers-go"
 	mysqltc "github.com/testcontainers/testcontainers-go/modules/mysql"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 	_ "modernc.org/sqlite"
 
@@ -22,6 +26,10 @@ import (
 var (
 	mysqlDB  *sql.DB
 	sqliteDB *sql.DB
+	// postgresDB is PostgreSQL through lib/pq. It is not one of backends(),
+	// whose tests use ? placeholders; tests that cover the stdlib adapter on
+	// PostgreSQL use it directly.
+	postgresDB *sql.DB
 	// mysqlDSN is kept so a test can open a pool with its own settings.
 	mysqlDSN string
 )
@@ -119,11 +127,47 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
+	// PostgreSQL via testcontainers, opened through lib/pq
+	pgContainer, err := postgres.Run(
+		ctx,
+		"postgres:18-alpine",
+		postgres.WithDatabase("sqlgen_test"),
+		postgres.WithUsername("test"),
+		postgres.WithPassword("test"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2),
+		),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	pgConnStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		panic(err)
+	}
+
+	postgresDB, err = sql.Open("postgres", pgConnStr)
+	if err != nil {
+		panic(err)
+	}
+
+	postgresSchema, err := os.ReadFile("testdata/postgres_schema.sql")
+	if err != nil {
+		panic(err)
+	}
+	if _, err := postgresDB.ExecContext(ctx, string(postgresSchema)); err != nil {
+		panic(err)
+	}
+
 	code := m.Run()
 
 	_ = mysqlDB.Close()
 	_ = sqliteDB.Close()
+	_ = postgresDB.Close()
 	_ = mysqlContainer.Terminate(ctx)
+	_ = pgContainer.Terminate(ctx)
 	os.Exit(code)
 }
 
@@ -899,5 +943,111 @@ func TestCommitMapsDeferredConstraintSQLite(t *testing.T) {
 	}
 	if ce.Type != database.ConstraintForeignKey {
 		t.Errorf("ConstraintError.Type = %q, want %q", ce.Type, database.ConstraintForeignKey)
+	}
+}
+
+func TestTimeoutRollsBackAndClosesTheTransaction(t *testing.T) {
+	requireDocker(t)
+	t.Run("mysql", func(t *testing.T) {
+		assertTimeoutRollsBack(t, mysqlDB, "INSERT INTO test_users (name, email) VALUES (?, ?)")
+	})
+	t.Run("sqlite", func(t *testing.T) {
+		assertTimeoutRollsBack(t, sqliteDB, "INSERT INTO test_users (name, email) VALUES (?, ?)")
+	})
+	t.Run("postgres", func(t *testing.T) {
+		assertTimeoutRollsBack(t, postgresDB, "INSERT INTO test_users (name, email) VALUES ($1, $2)")
+	})
+}
+
+func TestCancelledContextBeforeCommitRollsBackAndClosesTheTransaction(t *testing.T) {
+	requireDocker(t)
+	t.Run("mysql", func(t *testing.T) {
+		assertCancelBeforeCommitRollsBack(t, mysqlDB, "INSERT INTO test_users (name, email) VALUES (?, ?)")
+	})
+	t.Run("sqlite", func(t *testing.T) {
+		assertCancelBeforeCommitRollsBack(t, sqliteDB, "INSERT INTO test_users (name, email) VALUES (?, ?)")
+	})
+	t.Run("postgres", func(t *testing.T) {
+		assertCancelBeforeCommitRollsBack(t, postgresDB, "INSERT INTO test_users (name, email) VALUES ($1, $2)")
+	})
+}
+
+// assertCancelBeforeCommitRollsBack cancels the caller's context inside fn and
+// then returns nil, so the COMMIT fails on the cancelled context before
+// database/sql has rolled the transaction back on its own. A Timeout cannot
+// drive this path deterministically here: the timer closes the transaction
+// context's Done channel before it cancels the child database/sql derives in
+// BeginTx, so a COMMIT issued in between can still succeed.
+func assertCancelBeforeCommitRollsBack(t *testing.T, db *sql.DB, insert string) {
+	t.Helper()
+	cleanTable(t, db)
+	q := stdlibadapter.New(db)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var txCtx context.Context
+	err := database.WithTransaction(ctx, q, "cancel_commit", func(c context.Context) error {
+		txCtx = c
+		if _, err := database.Conn(c, q).Exec(c, insert, "dora", "dora@example.com"); err != nil {
+			return err
+		}
+		cancel()
+		return nil
+	})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("WithTransaction() error = %v, want the commit's cancellation error", err)
+	}
+	if !database.FromContext(txCtx).IsClosed() {
+		t.Error("IsClosed() = false after the failed commit was rolled back")
+	}
+	var n int
+	if err := db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM test_users").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("rows = %d, want 0: the cancelled transaction must not commit", n)
+	}
+}
+
+// assertTimeoutRollsBack runs a transaction whose TxOptions.Timeout expires
+// after one write, and checks that the write is rolled back, that
+// WithTransaction returns the statement's deadline error, and that the Tx
+// reports closed.
+func assertTimeoutRollsBack(t *testing.T, db *sql.DB, insert string) {
+	t.Helper()
+	cleanTable(t, db)
+	q := stdlibadapter.New(db)
+	ctx := context.Background()
+
+	var txCtx context.Context
+	err := database.WithTransaction(ctx, q, "timeout", func(c context.Context) error {
+		txCtx = c
+		if _, err := database.Conn(c, q).Exec(c, insert, "dora", "dora@example.com"); err != nil {
+			return err
+		}
+		<-c.Done()
+		_, err := database.Conn(c, q).Exec(c, insert, "eve", "eve@example.com")
+		return err
+	}, database.TxOptions{Timeout: time.Second})
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WithTransaction() error = %v, want a deadline error", err)
+	}
+	if strings.HasPrefix(err.Error(), "rollback failed") {
+		t.Errorf("WithTransaction() error = %q, want the statement's error, not a failed rollback", err)
+	}
+	if !database.FromContext(txCtx).IsClosed() {
+		t.Error("IsClosed() = false after the timeout rolled the transaction back")
+	}
+	if got := database.Conn(txCtx, q); got != q {
+		t.Errorf("Conn() = %T, want the pool once the transaction is closed", got)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM test_users").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("rows = %d, want 0: the timeout should roll the write back", n)
 	}
 }

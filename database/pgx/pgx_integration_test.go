@@ -5,7 +5,9 @@ import (
 	"errors"
 	"flag"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -561,5 +563,82 @@ func TestCommitMapsDeferredConstraint(t *testing.T) {
 	}
 	if ce.Type != database.ConstraintUnique || ce.Constraint != "test_deferred_code_key" {
 		t.Errorf("ConstraintError = {Type: %q, Constraint: %q}, want {%q, %q}", ce.Type, ce.Constraint, database.ConstraintUnique, "test_deferred_code_key")
+	}
+}
+
+func TestTimeoutRollsBackAndClosesTheTransaction(t *testing.T) {
+	requireDocker(t)
+	ctx := context.Background()
+	q := pgxadapter.New(testPool)
+	if _, err := q.Exec(ctx, "DELETE FROM test_users"); err != nil {
+		t.Fatal(err)
+	}
+	const insert = "INSERT INTO test_users (name, email) VALUES ($1, $2)"
+
+	var txCtx context.Context
+	err := database.WithTransaction(ctx, q, "timeout", func(c context.Context) error {
+		txCtx = c
+		if _, err := database.Conn(c, q).Exec(c, insert, "dora", "dora@example.com"); err != nil {
+			return err
+		}
+		<-c.Done()
+		_, err := database.Conn(c, q).Exec(c, insert, "eve", "eve@example.com")
+		return err
+	}, database.TxOptions{Timeout: time.Second})
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WithTransaction() error = %v, want a deadline error", err)
+	}
+	if strings.HasPrefix(err.Error(), "rollback failed") {
+		t.Errorf("WithTransaction() error = %q, want the statement's error, not a failed rollback", err)
+	}
+	if !database.FromContext(txCtx).IsClosed() {
+		t.Error("IsClosed() = false after the timeout rolled the transaction back")
+	}
+	if got := database.Conn(txCtx, q); got != q {
+		t.Errorf("Conn() = %T, want the pool once the transaction is closed", got)
+	}
+	var n int
+	if err := testPool.QueryRow(ctx, "SELECT COUNT(*) FROM test_users").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("rows = %d, want 0: the timeout should roll the write back", n)
+	}
+}
+
+func TestTimeoutBeforeCommitRollsBackAndClosesTheTransaction(t *testing.T) {
+	requireDocker(t)
+	ctx := context.Background()
+	q := pgxadapter.New(testPool)
+	if _, err := q.Exec(ctx, "DELETE FROM test_users"); err != nil {
+		t.Fatal(err)
+	}
+
+	var txCtx context.Context
+	err := database.WithTransaction(ctx, q, "timeout_commit", func(c context.Context) error {
+		txCtx = c
+		if _, err := database.Conn(c, q).Exec(c, "INSERT INTO test_users (name, email) VALUES ($1, $2)", "dora", "dora@example.com"); err != nil {
+			return err
+		}
+		<-c.Done()
+		return nil
+	}, database.TxOptions{Timeout: time.Second})
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WithTransaction() error = %v, want the commit's deadline error", err)
+	}
+	if !database.FromContext(txCtx).IsClosed() {
+		t.Error("IsClosed() = false after the failed commit was rolled back")
+	}
+	if got := database.Conn(txCtx, q); got != q {
+		t.Errorf("Conn() = %T, want the pool once the transaction is closed", got)
+	}
+	var n int
+	if err := testPool.QueryRow(ctx, "SELECT COUNT(*) FROM test_users").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("rows = %d, want 0: the timed-out transaction must not commit", n)
 	}
 }

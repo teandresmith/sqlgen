@@ -7,7 +7,7 @@
 The generated manifest (§30): configuration, the emitted artifacts, the JSON shape, versioning, extended schema metadata and the `manifest` subcommands. The runtime-embedded manifest (§30.6) is in `runtime/support.md`. The `manifest-artifacts` matrix has one row per §30.3 artifact, the GraphQL breadcrumb pair included; `emitted` is the artifact written when the manifest is enabled and its own gate is on, `gated` not written when that gate is off, `removed-when-disabled` gone after the next `generate` once `enabled` flips to false, `ownership` the overwrite and removal guard (the breadcrumb provenance marker, the manifest directory's anchors), and `deterministic` byte-identical across two runs with `--manifest-timestamp` pinned.
 
 ## §30 Manifest
-<!-- prd: 30 sha256: 87240615158d6b11 -->
+<!-- prd: 30 sha256: 41d9e3f9dd49a8b4 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -250,7 +250,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.art.graph.pointer-doc-comments | The graph breadcrumb's third pointer is the doc comments on the generated resolver, walker and middleware Go files in that directory | `golden: graphql` | all |  |
 
 ## §30.4 JSON Schema
-<!-- prd: 30.4 sha256: 799379b751a42b74 -->
+<!-- prd: 30.4 sha256: 548b1af8f5141c6e -->
 
 ### Single layout
 
@@ -300,7 +300,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.top.extras.domain | `extras` lists the generated domain aliases | `golden: postgres`; `golden: introspect_postgres` | postgres |  |
 
 ## §30.4.1 Conventions block
-<!-- prd: 30.4.1 sha256: 80f3b67c2be1df07 -->
+<!-- prd: 30.4.1 sha256: 72bb402f1fb149ff -->
 
 ### `client_entry_points`
 
@@ -320,6 +320,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.conv.sentinel.invalid-cursor | `error_sentinels[]` holds `{name: ErrInvalidCursor, graphql_code: "", package: <output.package>}` | `golden: postgres`; `unit: cmd/sqlgen/manifest: TestErrorSentinelsMatchGeneratedPackage` | all |  |
 | manifest.json.conv.sentinel.deadlock | `error_sentinels[]` holds `{name: ErrDeadlock, graphql_code: "", package: <output.package>}` | `golden: postgres`; `unit: cmd/sqlgen/manifest: TestErrorSentinelsMatchGeneratedPackage` | all |  |
 | manifest.json.conv.sentinel.connection-failed | `error_sentinels[]` holds `{name: ErrConnectionFailed, graphql_code: "", package: <output.package>}` | `golden: postgres`; `unit: cmd/sqlgen/manifest: TestErrorSentinelsMatchGeneratedPackage` | all |  |
+| manifest.json.conv.sentinel.tx-done | `error_sentinels[]` holds `{name: ErrTxDone, graphql_code: "", package: <output.package>}` | `golden: postgres`; `unit: cmd/sqlgen/manifest: TestErrorSentinelsMatchGeneratedPackage` | all |  |
 | manifest.json.conv.sentinel.constraint-violation | `error_sentinels[]` holds `{name: ErrConstraintViolation, graphql_code: "", package: <output.package>}`: its code is deliberately empty because it maps 1:N through `constraint_error_codes` | `golden: postgres`; `unit: cmd/sqlgen/manifest: TestErrorSentinelsMatchGeneratedPackage` | all |  |
 | manifest.json.conv.sentinel.already-related | `error_sentinels[]` holds `{name: ErrAlreadyRelated, graphql_code: CONFLICT, package: <output.package>}` | `golden: postgres`; `unit: cmd/sqlgen/manifest: TestErrorSentinelsMatchGeneratedPackage` | all |  |
 | manifest.json.conv.sentinel.nested-verb-conflict | `error_sentinels[]` holds `{name: ErrNestedVerbConflict, graphql_code: INVALID_INPUT, package: <output.package>}` | `golden: postgres`; `unit: cmd/sqlgen/manifest: TestErrorSentinelsMatchGeneratedPackage` | all |  |

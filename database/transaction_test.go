@@ -1354,6 +1354,108 @@ func TestFailedRootTeardownReopensTransaction(t *testing.T) {
 	}
 }
 
+func TestTeardownOfATransactionTheDriverEndedClosesIt(t *testing.T) {
+	ended := fmt.Errorf("driver: %w: %w", database.ErrTxDone, context.DeadlineExceeded)
+
+	setup := func(t *testing.T, conn *mockTxConn) (context.Context, *mockQuerier, *atomic.Int64) {
+		t.Helper()
+		q := &mockQuerier{conn: conn, mode: database.CallbackSync}
+		txCtx, err := database.NewTransaction(context.Background(), q, "root")
+		if err != nil {
+			t.Fatalf("NewTransaction() error = %v", err)
+		}
+		var fired atomic.Int64
+		database.FromContext(txCtx).OnCommit(func(context.Context) error {
+			fired.Add(1)
+			return nil
+		})
+		return txCtx, q, &fired
+	}
+	assertClosed := func(t *testing.T, txCtx context.Context, q *mockQuerier, fired *atomic.Int64) {
+		t.Helper()
+		if !database.FromContext(txCtx).IsClosed() {
+			t.Error("IsClosed() = false, want true: the driver has ended the transaction")
+		}
+		if got := database.Conn(txCtx, q); got != database.Querier(q) {
+			t.Errorf("Conn() = %T, want the original querier", got)
+		}
+		if got := fired.Load(); got != 0 {
+			t.Errorf("OnCommit callbacks fired %d times, want 0", got)
+		}
+	}
+
+	t.Run("a rollback closes it and still returns the error", func(t *testing.T) {
+		conn := &mockTxConn{rollbackFn: func(context.Context) error { return ended }}
+		txCtx, q, fired := setup(t, conn)
+
+		if err := database.Rollback(txCtx); !errors.Is(err, database.ErrTxDone) {
+			t.Errorf("Rollback() error = %v, want it to wrap ErrTxDone", err)
+		}
+		assertClosed(t, txCtx, q, fired)
+	})
+
+	t.Run("a commit returns the error and fires no callback", func(t *testing.T) {
+		conn := &mockTxConn{commitFn: func(context.Context) error { return ended }}
+		txCtx, q, fired := setup(t, conn)
+
+		err := database.Commit(txCtx)
+		if !errors.Is(err, database.ErrTxDone) || !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Commit() error = %v, want it to wrap ErrTxDone and the deadline", err)
+		}
+		assertClosed(t, txCtx, q, fired)
+	})
+
+	t.Run("WithTransaction rolls back after a failed root commit", func(t *testing.T) {
+		commitErr := errors.New("connection reset")
+		var rollbacks atomic.Int64
+		conn := &mockTxConn{
+			commitFn:   func(context.Context) error { return commitErr },
+			rollbackFn: func(context.Context) error { rollbacks.Add(1); return nil },
+		}
+		q := &mockQuerier{conn: conn, mode: database.CallbackSync}
+
+		var txCtx context.Context
+		err := database.WithTransaction(context.Background(), q, "root", func(c context.Context) error {
+			txCtx = c
+			return nil
+		})
+		if !errors.Is(err, commitErr) {
+			t.Errorf("WithTransaction() error = %v, want the commit error", err)
+		}
+		if got := rollbacks.Load(); got != 1 {
+			t.Errorf("driver rollbacks = %d, want 1", got)
+		}
+		if !database.FromContext(txCtx).IsClosed() {
+			t.Error("IsClosed() = false after WithTransaction rolled back the failed commit")
+		}
+	})
+
+	t.Run("WithTransaction leaves a failed savepoint release to the enclosing scope", func(t *testing.T) {
+		releaseErr := errors.New("release failed")
+		conn := &mockTxConn{execFn: func(_ context.Context, sql string, _ ...any) (database.Result, error) {
+			if strings.HasPrefix(sql, "RELEASE SAVEPOINT") {
+				return nil, releaseErr
+			}
+			return &mockResult{}, nil
+		}}
+		q := &mockQuerier{conn: conn, mode: database.CallbackSync}
+
+		txCtx, err := database.NewTransaction(context.Background(), q, "root")
+		if err != nil {
+			t.Fatalf("NewTransaction() error = %v", err)
+		}
+		err = database.WithTransaction(txCtx, q, "nested", func(context.Context) error { return nil })
+		if !errors.Is(err, releaseErr) {
+			t.Errorf("WithTransaction() error = %v, want the release error", err)
+		}
+		for _, sql := range conn.getExecCalls() {
+			if strings.HasPrefix(sql, "ROLLBACK") {
+				t.Errorf("issued %q after a failed release; only a failed root commit is rolled back", sql)
+			}
+		}
+	})
+}
+
 // TestSavepointUnwindSurvivesAnEmptiedStack gates the bounds guard the untangle
 // made necessary. With tx.mu held for the whole body, tx.depth could not change
 // between the savepoint statement and the bookkeeping that follows it; released

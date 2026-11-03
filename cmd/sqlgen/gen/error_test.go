@@ -93,6 +93,7 @@ func TestErrorTemplate_sentinelErrors(t *testing.T) {
 		"ErrInvalidCursor = database.ErrInvalidCursor",
 		"ErrDeadlock = database.ErrDeadlock",
 		"ErrConnectionFailed = database.ErrConnectionFailed",
+		"ErrTxDone = database.ErrTxDone",
 		"ErrConstraintViolation = database.ErrConstraintViolation",
 		"ErrAlreadyRelated = database.ErrAlreadyRelated",
 		"ErrNestedVerbConflict = database.ErrNestedVerbConflict",

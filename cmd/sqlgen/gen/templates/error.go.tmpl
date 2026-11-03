@@ -34,6 +34,10 @@ var (
 	// a connection-level error.
 	ErrConnectionFailed = database.ErrConnectionFailed
 
+	// ErrTxDone is returned when a COMMIT or ROLLBACK finds the transaction
+	// ended by the driver, as when its context expires or its connection fails.
+	ErrTxDone = database.ErrTxDone
+
 	// ErrConstraintViolation is the base error for all constraint failures.
 	// Use errors.As() to extract the specific ConstraintError.
 	ErrConstraintViolation = database.ErrConstraintViolation

@@ -131,12 +131,15 @@ func TestReservationSerializesAFanOutInsideATransaction(t *testing.T) {
 func TestLeakedResultSetDoesNotStrandTheConnection(t *testing.T) {
 	requireDocker(t)
 
+	// A failed ROLLBACK has still ended the transaction on pgx, so the Tx
+	// closes; a failed COMMIT stays the caller's to roll back.
 	tests := []struct {
-		name     string
-		teardown func(ctx context.Context) error
+		name       string
+		teardown   func(ctx context.Context) error
+		wantClosed bool
 	}{
 		{name: "commit", teardown: database.Commit},
-		{name: "rollback", teardown: database.Rollback},
+		{name: "rollback", teardown: database.Rollback, wantClosed: true},
 	}
 
 	for _, tt := range tests {
@@ -163,13 +166,17 @@ func TestLeakedResultSetDoesNotStrandTheConnection(t *testing.T) {
 
 			select {
 			case err := <-done:
-				// The driver's own complaint is the expected outcome, and it is
-				// what callers already see today. What must not happen is a
-				// wait: the assertion is that this arrived at all.
-				if err == nil {
-					t.Logf("%s() against a pinned connection = nil", tt.name)
-				} else {
-					t.Logf("%s() against a pinned connection = %v", tt.name, err)
+				// The driver's own complaint is the expected outcome, and what
+				// must not happen is a wait: the first assertion is that this
+				// arrived at all.
+				if err == nil || !strings.Contains(err.Error(), "conn busy") {
+					t.Errorf("%s() against a pinned connection = %v, want the driver's conn busy error", tt.name, err)
+				}
+				if got := errors.Is(err, database.ErrTxDone); got != tt.wantClosed {
+					t.Errorf("%s() error wraps ErrTxDone = %v, want %v", tt.name, got, tt.wantClosed)
+				}
+				if got := tx.IsClosed(); got != tt.wantClosed {
+					t.Errorf("IsClosed() after %s() = %v, want %v", tt.name, got, tt.wantClosed)
 				}
 			case <-time.After(teardownBound):
 				t.Fatalf("%s() did not return within %s: a leaked result set stranded the connection (PRD §18.5)", tt.name, teardownBound)

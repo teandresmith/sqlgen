@@ -51,6 +51,11 @@
         "package": "models"
       },
       {
+        "name": "ErrTxDone",
+        "graphql_code": "",
+        "package": "models"
+      },
+      {
         "name": "ErrConstraintViolation",
         "graphql_code": "",
         "package": "models"

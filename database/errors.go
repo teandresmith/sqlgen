@@ -44,6 +44,13 @@ var (
 	// exhaustion). Wraps the underlying driver error for inspection.
 	ErrConnectionFailed = errors.New("sqlgen: connection failed")
 
+	// ErrTxDone is returned when a COMMIT or ROLLBACK finds the transaction
+	// ended by the driver, as when its context expires or its connection fails.
+	// A driver adapter wraps it into a Commit or Rollback error to say the
+	// transaction is over whatever the error says; the Tx then reports closed,
+	// its callbacks are discarded, and the error is still returned.
+	ErrTxDone = errors.New("sqlgen: transaction already ended by the driver")
+
 	// ErrConstraintViolation is the base error for all constraint failures.
 	// Use errors.As() to extract the specific ConstraintError.
 	ErrConstraintViolation = errors.New("sqlgen: constraint violation")
