@@ -445,6 +445,12 @@ func TestPatternsMatchTheKeysTheyCover(t *testing.T) {
 			want:    true,
 		},
 		{
+			name:    "table pattern matches a second tenant of the same table",
+			pattern: cache.BuildTablePattern("sqlgen", "public", "orders"),
+			key:     cache.BuildTenantKey("sqlgen", "public", "orders", "1a2b3c4d", "globex", 42),
+			want:    true,
+		},
+		{
 			name:    "table pattern matches a composite tenanted key",
 			pattern: cache.BuildTablePattern("sqlgen", "", "order_items"),
 			key:     cache.BuildCompositeTenantKey("sqlgen", "", "order_items", "1a2b3c4d", "acme", []any{1, 2}),

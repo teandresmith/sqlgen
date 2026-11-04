@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/teandresmith/sqlgen/cache"
 )
 
@@ -156,9 +158,13 @@ func TestBreaker_HalfOpenSuccessReturnsToClosed(t *testing.T) {
 	if got := b.State(); got != cache.StateClosed {
 		t.Errorf("State() after HalfOpen success = %v, want Closed", got)
 	}
-	records := snap()
-	if last := records[len(records)-1]; last != (stateRecord{cache.StateHalfOpen, cache.StateClosed}) {
-		t.Errorf("last OnStateChange = %v, want {HalfOpen Closed}", last)
+	want := []stateRecord{
+		{cache.StateClosed, cache.StateOpen},
+		{cache.StateOpen, cache.StateHalfOpen},
+		{cache.StateHalfOpen, cache.StateClosed},
+	}
+	if diff := cmp.Diff(want, snap(), cmp.AllowUnexported(stateRecord{})); diff != "" {
+		t.Errorf("OnStateChange records mismatch (-want +got):\n%s", diff)
 	}
 	// Counter must be reset: N-1 failures must not trip.
 	b.RecordFailure()
@@ -188,10 +194,13 @@ func TestBreaker_HalfOpenFailureReopensImmediately(t *testing.T) {
 		t.Errorf("State() after HalfOpen failure = %v, want Open", got)
 	}
 	// Final record should be HalfOpen → Open.
-	records := snap()
-	last := records[len(records)-1]
-	if last != (stateRecord{cache.StateHalfOpen, cache.StateOpen}) {
-		t.Errorf("last OnStateChange = %v, want {HalfOpen Open}", last)
+	want := []stateRecord{
+		{cache.StateClosed, cache.StateOpen},
+		{cache.StateOpen, cache.StateHalfOpen},
+		{cache.StateHalfOpen, cache.StateOpen},
+	}
+	if diff := cmp.Diff(want, snap(), cmp.AllowUnexported(stateRecord{})); diff != "" {
+		t.Errorf("OnStateChange records mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -287,5 +296,21 @@ func TestBreaker_ConcurrentAllowAndRecordRaceFree(t *testing.T) {
 	}
 	if ops.Load() == 0 {
 		t.Errorf("expected ops > 0, got 0")
+	}
+}
+
+func TestBreaker_HalfOpenSingleProbe(t *testing.T) {
+	b := cache.NewBreaker(cache.BreakerConfig{
+		FailureThreshold:  1,
+		ProbeInterval:     10 * time.Millisecond,
+		HalfOpenMaxProbes: 1,
+	})
+	b.RecordFailure()
+	time.Sleep(25 * time.Millisecond)
+	if !b.Allow() {
+		t.Fatalf("1st Allow() in HalfOpen = false, want true")
+	}
+	if b.Allow() {
+		t.Errorf("2nd Allow() in HalfOpen = true, want false (one probe allowed)")
 	}
 }

@@ -389,6 +389,9 @@ func TestInvalidatePatternWith10KKeysUsesSCANAndBatchedDELs(t *testing.T) {
 
 	// DEL batching observed — one DEL per SCAN page, not a single
 	// unbounded variadic. With 10k keys we expect multiple DEL calls.
+	if n, scans := len(rec.findByName("del")), rec.count("scan"); n > scans {
+		t.Errorf("DEL call count = %d, want at most one per SCAN page (%d pages)", n, scans)
+	}
 	dels := rec.findByName("del")
 	if len(dels) < 2 {
 		t.Errorf("DEL call count = %d, want >= 2 (InvalidatePattern must batch DELs per SCAN page)", len(dels))

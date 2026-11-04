@@ -250,6 +250,9 @@ func TestTx_CommittedWriteSurvivesInvalidationFailure(t *testing.T) {
 			if err != nil {
 				t.Fatalf("WithTx returned %v for a committed write; a cache invalidation failure must not reach the caller", err)
 			}
+			if tt.mode == database.CallbackSync && env.backend.failCount.Load() == 0 {
+				t.Fatal("no invalidation failed, so the test proved nothing")
+			}
 
 			env.backend.setFail("")
 			got, err := client.Products().Get(ctx, p.ID, func(o *models.CallOptions[models.ProductFieldOptions]) { o.SkipCache = true })
@@ -267,55 +270,75 @@ func TestTx_CommittedWriteSurvivesInvalidationFailure(t *testing.T) {
 // later call to the wrapped backend.
 type failFirstInvalidate struct {
 	cache.Backend
-	calls atomic.Int32
+	calls   atomic.Int32
+	failAll bool
 }
 
 func (f *failFirstInvalidate) InvalidateMany(ctx context.Context, keys []string) error {
-	if f.calls.Add(1) == 1 {
+	if f.calls.Add(1) == 1 || f.failAll {
 		return errors.New("transient invalidate failure")
 	}
 	return f.Backend.InvalidateMany(ctx, keys)
 }
 
-// A commit callback that fails runs once more: a transient backend failure on
-// the first invalidation still evicts the stale entry.
+// A commit callback that fails runs once more, and only once: a transient
+// failure on the first invalidation still evicts the stale entry, and a
+// persistent one costs exactly two backend calls.
 func TestTx_FailedInvalidationIsRetriedOnce(t *testing.T) {
-	ctx := context.Background()
-	inner, err := cachememory.New(cachememory.Options{MaxSize: 1_000})
-	if err != nil {
-		t.Fatalf("memory.New: %v", err)
+	tests := []struct {
+		name      string
+		failAll   bool
+		wantName  string
+		wantCalls int32
+	}{
+		{name: "transient failure", failAll: false, wantName: "After", wantCalls: 2},
+		{name: "persistent failure", failAll: true, wantName: "Before", wantCalls: 2},
 	}
-	t.Cleanup(func() { _ = inner.Close() })
-	flaky := &failFirstInvalidate{Backend: inner}
-	c, err := models.NewCache(flaky, models.WithOnError(func(context.Context, string, string, hook.TableName, error) {}))
-	if err != nil {
-		t.Fatalf("NewCache: %v", err)
-	}
-	client := models.New(dbstdlib.New(testDB), models.WithCache(c), models.WithCallbackMode(database.CallbackSync))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			inner, err := cachememory.New(cachememory.Options{MaxSize: 1_000})
+			if err != nil {
+				t.Fatalf("memory.New: %v", err)
+			}
+			t.Cleanup(func() { _ = inner.Close() })
+			flaky := &failFirstInvalidate{Backend: inner, failAll: tt.failAll}
+			// A breaker that never opens, so every call reaches the backend.
+			c, err := models.NewCache(flaky,
+				models.WithOnError(func(context.Context, string, string, hook.TableName, error) {}),
+				models.WithCircuitBreaker(cache.NewBreaker(cache.BreakerConfig{FailureThreshold: 1_000, ProbeInterval: time.Hour, HalfOpenMaxProbes: 1})),
+			)
+			if err != nil {
+				t.Fatalf("NewCache: %v", err)
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			client := models.New(dbstdlib.New(testDB), models.WithCache(c), models.WithCallbackMode(database.CallbackSync))
 
-	p, err := client.Products().Create(ctx, &models.CreateProductInput{
-		Name: "Before", SKU: uniqueSku(t, "tx-retry"), Price: 1.0,
-	})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Products().HardDelete(ctx, p.ID) })
+			p, err := client.Products().Create(ctx, &models.CreateProductInput{
+				Name: "Before", SKU: uniqueSku(t, "tx-retry"), Price: 1.0,
+			})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			t.Cleanup(func() { _ = client.Products().HardDelete(ctx, p.ID) })
 
-	if err := client.WithTx(ctx, "retry", func(ctx context.Context) error {
-		_, err := client.Products().Update(ctx, p.ID, &models.UpdateProductInput{Name: omittable.Set("After")})
-		return err
-	}); err != nil {
-		t.Fatalf("WithTx: %v", err)
-	}
-	if got := flaky.calls.Load(); got != 2 {
-		t.Errorf("InvalidateMany calls = %d, want 2 (the failure, then the retry)", got)
-	}
-	got, err := client.Products().Get(ctx, p.ID)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.Name != "After" {
-		t.Errorf("Get served %q, want %q: the retried invalidation should have evicted the stale entry", got.Name, "After")
+			if err := client.WithTx(ctx, "retry", func(ctx context.Context) error {
+				_, err := client.Products().Update(ctx, p.ID, &models.UpdateProductInput{Name: omittable.Set("After")})
+				return err
+			}); err != nil {
+				t.Fatalf("WithTx: %v", err)
+			}
+			if got := flaky.calls.Load(); got != tt.wantCalls {
+				t.Errorf("InvalidateMany calls = %d, want %d (the failure, then one retry)", got, tt.wantCalls)
+			}
+			got, err := client.Products().Get(ctx, p.ID)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.Name != tt.wantName {
+				t.Errorf("Get served %q, want %q", got.Name, tt.wantName)
+			}
+		})
 	}
 }
 

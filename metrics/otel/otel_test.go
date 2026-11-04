@@ -375,8 +375,10 @@ func TestHydrationStartIsNoop(t *testing.T) {
 	rec, reader := newTestRecorder(t)
 	rec.HydrationStart("public", hook.TableName("products"))
 
-	if m := findMetric(collect(t, reader), "sqlgen.cache.hydrations"); m != nil {
-		t.Errorf("HydrationStart unexpectedly recorded on sqlgen.cache.hydrations: %+v", m)
+	for _, sm := range collect(t, reader).ScopeMetrics {
+		for _, m := range sm.Metrics {
+			t.Errorf("HydrationStart recorded on %s, want no instrument at all", m.Name)
+		}
 	}
 }
 

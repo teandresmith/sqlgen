@@ -153,7 +153,7 @@ func TestFromEventSubscriber_ForwardsTenantMetadata(t *testing.T) {
 		Schema:   adapterSchema,
 		Action:   event.Update,
 		PK:       7,
-		Metadata: map[string]string{"tenant": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"},
+		Metadata: map[string]string{"tenant": " Acme:Corp "},
 	}
 	if err := bus.Publish(context.Background(), ev); err != nil {
 		t.Fatalf("Publish() err = %v", err)
@@ -163,7 +163,7 @@ func TestFromEventSubscriber_ForwardsTenantMetadata(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("handler calls = %d, want 1", len(calls))
 	}
-	if got, want := calls[0].Tenant, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"; got != want {
+	if got, want := calls[0].Tenant, " Acme:Corp "; got != want {
 		t.Errorf("signal.Tenant = %q, want %q (forwarded verbatim from Metadata[tenant])", got, want)
 	}
 }
