@@ -69,6 +69,33 @@ func mergeEventMetadata(base, system map[string]string) map[string]string {
 	return merged
 }
 
+// publishEvents hands one mutation's events to the publisher and routes a
+// failure to onError, once: an error PublishBatch returns, or a panic it
+// raises (an in-process bus runs its subscribers inside PublishBatch). The
+// mutation has already succeeded, so neither reaches its caller. onError runs
+// outside the recover, so a panic of its own is not reported as the
+// publisher's.
+func publishEvents(ctx context.Context, publisher event.Publisher, onError func(ctx context.Context, events []event.Event, err error), events []event.Event) {
+	if err := publishBatchRecovered(ctx, publisher, events); err != nil {
+		onError(ctx, events, err)
+	}
+}
+
+// publishBatchRecovered calls PublishBatch and returns its error, or an error
+// wrapping the value it panicked with.
+func publishBatchRecovered(ctx context.Context, publisher event.Publisher, events []event.Event) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if rerr, ok := r.(error); ok {
+				err = fmt.Errorf("event publish panicked: %w", rerr)
+				return
+			}
+			err = fmt.Errorf("event publish panicked: %v", r)
+		}
+	}()
+	return publisher.PublishBatch(ctx, events)
+}
+
 // newAssetEventHook creates a mutation hook that publishes events for Asset mutations.
 func newAssetEventHook(publisher event.Publisher, onError func(ctx context.Context, events []event.Event, err error), metaFunc func(ctx context.Context) map[string]string) hook.MutationHook {
 	return func(next hook.MutationHandler) hook.MutationHandler {
@@ -148,9 +175,7 @@ func newAssetEventHook(publisher event.Publisher, onError func(ctx context.Conte
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -244,9 +269,7 @@ func newAssetDocumentLinkEventHook(publisher event.Publisher, onError func(ctx c
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -357,9 +380,7 @@ func newCategoryEventHook(publisher event.Publisher, onError func(ctx context.Co
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -453,9 +474,7 @@ func newDocumentEventHook(publisher event.Publisher, onError func(ctx context.Co
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -549,9 +568,7 @@ func newEventEventHook(publisher event.Publisher, onError func(ctx context.Conte
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -645,9 +662,7 @@ func newFilterProbeEventHook(publisher event.Publisher, onError func(ctx context
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -741,9 +756,7 @@ func newKeyedCodeEventHook(publisher event.Publisher, onError func(ctx context.C
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -837,9 +850,7 @@ func newKeyedCodeEntryEventHook(publisher event.Publisher, onError func(ctx cont
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -933,9 +944,7 @@ func newMaskedLabelEventHook(publisher event.Publisher, onError func(ctx context
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -1029,9 +1038,7 @@ func newNumericWidthEventHook(publisher event.Publisher, onError func(ctx contex
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -1125,9 +1132,7 @@ func newOrderEventHook(publisher event.Publisher, onError func(ctx context.Conte
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -1221,9 +1226,7 @@ func newOrderItemEventHook(publisher event.Publisher, onError func(ctx context.C
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -1317,9 +1320,7 @@ func newProductEventHook(publisher event.Publisher, onError func(ctx context.Con
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -1413,9 +1414,7 @@ func newProfileEventHook(publisher event.Publisher, onError func(ctx context.Con
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -1509,9 +1508,7 @@ func newScalarProbeEventHook(publisher event.Publisher, onError func(ctx context
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -1635,9 +1632,7 @@ func newUserEventHook(publisher event.Publisher, onError func(ctx context.Contex
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -1759,9 +1754,7 @@ func newUserBadgeEventHook(publisher event.Publisher, onError func(ctx context.C
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -1855,9 +1848,7 @@ func newUserCategoryEventHook(publisher event.Publisher, onError func(ctx contex
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -1951,9 +1942,7 @@ func newUserCredentialEventHook(publisher event.Publisher, onError func(ctx cont
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -2047,9 +2036,7 @@ func newUserSessionEventHook(publisher event.Publisher, onError func(ctx context
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -2158,9 +2145,7 @@ func newWorkspaceNoteEventHook(publisher event.Publisher, onError func(ctx conte
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -2267,9 +2252,7 @@ func newWorkspaceSettingEventHook(publisher event.Publisher, onError func(ctx co
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 

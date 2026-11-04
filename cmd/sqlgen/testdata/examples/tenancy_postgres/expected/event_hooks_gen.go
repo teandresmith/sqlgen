@@ -60,6 +60,33 @@ func mergeEventMetadata(base, system map[string]string) map[string]string {
 	return merged
 }
 
+// publishEvents hands one mutation's events to the publisher and routes a
+// failure to onError, once: an error PublishBatch returns, or a panic it
+// raises (an in-process bus runs its subscribers inside PublishBatch). The
+// mutation has already succeeded, so neither reaches its caller. onError runs
+// outside the recover, so a panic of its own is not reported as the
+// publisher's.
+func publishEvents(ctx context.Context, publisher event.Publisher, onError func(ctx context.Context, events []event.Event, err error), events []event.Event) {
+	if err := publishBatchRecovered(ctx, publisher, events); err != nil {
+		onError(ctx, events, err)
+	}
+}
+
+// publishBatchRecovered calls PublishBatch and returns its error, or an error
+// wrapping the value it panicked with.
+func publishBatchRecovered(ctx context.Context, publisher event.Publisher, events []event.Event) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if rerr, ok := r.(error); ok {
+				err = fmt.Errorf("event publish panicked: %w", rerr)
+				return
+			}
+			err = fmt.Errorf("event publish panicked: %v", r)
+		}
+	}()
+	return publisher.PublishBatch(ctx, events)
+}
+
 // newArticleEventHook creates a mutation hook that publishes events for Article mutations.
 func newArticleEventHook(publisher event.Publisher, onError func(ctx context.Context, events []event.Event, err error), metaFunc func(ctx context.Context) map[string]string) hook.MutationHook {
 	return func(next hook.MutationHandler) hook.MutationHandler {
@@ -154,9 +181,7 @@ func newArticleEventHook(publisher event.Publisher, onError func(ctx context.Con
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 
@@ -265,9 +290,7 @@ func newLineItemEventHook(publisher event.Publisher, onError func(ctx context.Co
 			}
 
 			publish := func(ctx context.Context) error {
-				if err := publisher.PublishBatch(ctx, events); err != nil {
-					onError(ctx, events, err)
-				}
+				publishEvents(ctx, publisher, onError, events)
 				return nil
 			}
 

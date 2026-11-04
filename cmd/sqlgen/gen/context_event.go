@@ -170,16 +170,13 @@ func BuildEventHooksContext(tables []TableContext, cfg *config.RootConfig, pkg, 
 
 	imports := []string{
 		"context",
+		"fmt",
 		"maps",
 		"time",
 		uuid.ImportPath,
 		"github.com/teandresmith/sqlgen/database",
 		"github.com/teandresmith/sqlgen/event",
 		"github.com/teandresmith/sqlgen/hook",
-	}
-	if hasTenantedEventTable(eventTables) {
-		// fmt is only needed for the §29.6 tenant stringification.
-		imports = append(imports, "fmt")
 	}
 
 	return &EventHooksContext{
@@ -396,17 +393,6 @@ func redactedInputFields(t TableContext) (create, update []string) {
 		}
 	}
 	return create, update
-}
-
-// hasTenantedEventTable reports whether any generated event hook needs the
-// tenant metadata injection block (and therefore the "fmt" import).
-func hasTenantedEventTable(tables []EventTableContext) bool {
-	for _, t := range tables {
-		if t.Tenanted {
-			return true
-		}
-	}
-	return false
 }
 
 // findTableConfig returns the TableConfig for a table by name, trying
