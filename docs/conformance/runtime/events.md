@@ -1,6 +1,6 @@
 # Runtime Requirements: Events
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: event event/memorybus event/natsbus -->
 <!-- matrix: transports rows=transport:memorybus,nats-core,nats-jetstream cols=delivery,ordering,persistence,handler-error -->
 
