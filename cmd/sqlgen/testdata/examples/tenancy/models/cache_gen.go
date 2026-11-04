@@ -394,8 +394,10 @@ func (c *Cache) readThroughArticle(ctx context.Context, tenant uuid.UUID, pk int
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*Article](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -657,8 +659,10 @@ func (c *Cache) readThroughLegacyWidget(ctx context.Context, tenant uuid.UUID, p
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*LegacyWidget](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -929,8 +933,10 @@ func (c *Cache) readThroughOrderItem(ctx context.Context, tenant uuid.UUID, pk O
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*OrderItem](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -1199,8 +1205,10 @@ func (c *Cache) readThroughPost(ctx context.Context, tenant uuid.UUID, pk int64,
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*Post](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -1462,8 +1470,10 @@ func (c *Cache) readThroughPostTag(ctx context.Context, pk PostTagPK, q *hook.Qu
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*PostTag](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -1723,8 +1733,10 @@ func (c *Cache) readThroughProduct(ctx context.Context, tenant uuid.UUID, pk int
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*Product](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -1994,8 +2006,10 @@ func (c *Cache) readThroughTag(ctx context.Context, tenant uuid.UUID, pk int64, 
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*Tag](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -2263,8 +2277,10 @@ func (c *Cache) readThroughTagLink(ctx context.Context, tenant uuid.UUID, pk Tag
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*TagLink](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -2537,8 +2553,10 @@ func (c *Cache) readThroughUser(ctx context.Context, tenant uuid.UUID, pk int64,
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*User](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -2803,8 +2821,10 @@ func (c *Cache) readThroughUserProfile(ctx context.Context, tenant uuid.UUID, pk
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*UserProfile](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}
@@ -3064,8 +3084,10 @@ func (c *Cache) readThroughWorkspace(ctx context.Context, pk uuid.UUID, q *hook.
 		// completed would register a new flight and run a duplicate DB query.
 		// The outer probe already recorded the Miss / breaker success; this
 		// inner re-check is dedup machinery, not an observable cache event, so
-		// it emits no metrics.
-		if c.breaker == nil || c.breaker.Allow() {
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
 			if entity, hit, err := cache.GetAs[*Workspace](ctx, c.backend, c.serializer, key); err == nil && hit {
 				return entity, nil
 			}

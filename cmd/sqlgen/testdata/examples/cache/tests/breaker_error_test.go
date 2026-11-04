@@ -268,3 +268,79 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+// The breaker NewCache builds from the config reports its transitions to the
+// MetricsRecorder passed with WithMetricsRecorder.
+func TestBreaker_DefaultBreakerReportsToMetricsRecorder(t *testing.T) {
+	ctx := context.Background()
+	env := newEnv(t)
+	p, err := env.client.Products().Create(ctx, &models.CreateProductInput{
+		Name: "Trip", SKU: uniqueSku(t, "trip-default"), Price: 1.0,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { _ = env.client.Products().HardDelete(ctx, p.ID) })
+
+	// The first Get fails its read and its write; the second Get's read is
+	// the third consecutive failure, which reaches the configured threshold.
+	env.backend.setFail("all")
+	for range 2 {
+		if _, err := env.client.Products().Get(ctx, p.ID); err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+	}
+	env.backend.setFail("")
+
+	env.metrics.mu.Lock()
+	got := append([]breakerTransition(nil), env.metrics.breakerTransitions...)
+	env.metrics.mu.Unlock()
+	// Only the first transition is fixed: a slow runner can let the
+	// configured probe interval elapse during the second Get.
+	if want := (breakerTransition{from: cache.StateClosed, to: cache.StateOpen}); len(got) == 0 || got[0] != want {
+		t.Errorf("recorder transitions = %v, want them to start with %v", got, want)
+	}
+}
+
+// Every read-through call the breaker admits as a HalfOpen probe must report
+// its outcome, or the probe slot is never released and the breaker stays in
+// HalfOpen, refusing every call. Probe intervals around the read-through's
+// own duration make one of its later Allow calls the one that leaves Open;
+// over many trials a leaked slot shows up as a breaker still in HalfOpen
+// after the Get returns.
+func TestBreaker_ReadThroughNeverStrandsAHalfOpenProbe(t *testing.T) {
+	ctx := context.Background()
+	env := newEnv(t)
+	p, err := env.client.Products().Create(ctx, &models.CreateProductInput{
+		Name: "Probe", SKU: uniqueSku(t, "probe-slot"), Price: 1.0,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { _ = env.client.Products().HardDelete(ctx, p.ID) })
+
+	const trials = 3000
+	stranded := 0
+	for i := range trials {
+		b := cache.NewBreaker(cache.BreakerConfig{
+			FailureThreshold:  1,
+			ProbeInterval:     time.Duration(i%60) * time.Microsecond,
+			HalfOpenMaxProbes: 1,
+		})
+		c, err := models.NewCache(env.backend, models.WithCircuitBreaker(b))
+		if err != nil {
+			t.Fatalf("NewCache: %v", err)
+		}
+		client := models.New(env.counter, models.WithCache(c))
+		b.RecordFailure()
+		if _, err := client.Products().Get(ctx, p.ID); err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if b.State() == cache.StateHalfOpen && !b.Allow() {
+			stranded++
+		}
+	}
+	if stranded > 0 {
+		t.Errorf("%d of %d Gets left the breaker in HalfOpen with its probe slot taken; it would refuse every call from then on", stranded, trials)
+	}
+}

@@ -473,7 +473,7 @@ func TestCacheTemplate_readThroughInFlightRecheck(t *testing.T) {
 	preFetch := out[flightStart : flightStart+fetchIdx]
 
 	for _, want := range []string{
-		"if c.breaker == nil || c.breaker.Allow() {",
+		"if c.breaker == nil || c.breaker.State() == cache.StateClosed {",
 		"cache.GetAs[*Product](ctx, c.backend, c.serializer, key)",
 		"return entity, nil",
 	} {
@@ -488,9 +488,10 @@ func TestCacheTemplate_readThroughInFlightRecheck(t *testing.T) {
 		"c.metrics.GetLatency(schema",
 		"c.breaker.RecordSuccess()",
 		"cache.RouteError(",
+		"c.breaker.Allow()",
 	} {
 		if strings.Contains(preFetch, banned) {
-			t.Errorf("in-flight re-check must not emit %q (outer probe already accounted for it); pre-fetch body:\n%s", banned, preFetch)
+			t.Errorf("in-flight re-check must not emit %q (it records no outcome, so it must neither report nor take a probe); pre-fetch body:\n%s", banned, preFetch)
 		}
 	}
 }
