@@ -2083,6 +2083,80 @@ database versions it ran against.
      - Ask "what does the PRD's own example do under this code?" A probe of the §21.9 registration
        found the mismatch defect that reading the helper alone did not.
 
+   **Eighteenth slice, `runtime/cache.md`, recorded 2026-11-04:**
+   - **Scope.** `runtime/cache.md` (`cache`, `cache/memory`, `cache/redis`, `cache/msgpack`,
+     `metrics/otel`) had 48 rows, all citing `cmd/sqlgen/gen` template tests. As `complete` it
+     failed on 101 things: §27.10 and §27.12 had no rows, the `cache-keys` matrix had none, and
+     98 tests were orphans.
+   - **Rulings (14):**
+     - Three defects fixed (below), plus one follow-on: a key the mutation hook cannot build is
+       reported through metrics and `OnErrorFunc` under `invalidate_many`, with no breaker
+       feedback, rather than dropped.
+     - PRD amendments with no code change:
+       - §21.2 lists `Tenant` on both contexts and `AffectedTenants` on `MutationContext`;
+       - §27.3: the Redis backend implements `io.Closer` and closes the client only with
+         `WithOwnedClient`;
+       - §27.4: `WithCache` runs outermost whatever the option order;
+       - §27.9: direct `Invalidate` / `InvalidateMany` error on every tenanted table,
+         tenant-in-PK included; `WithEventMetrics` is the adapter caller's to wire, since the
+         facade never sees the adapter; a cache commit callback's error never reaches `Commit`;
+       - §27.10: the custom-serializer error names the `cache.serializer` key;
+       - §27.13: the facade's error op set (`invalidate` is the adapter's alone, and
+         `invalidate_tenant_fallback` joins the list) and the breaker gauge's 1/0 convention.
+     - The `cache-keys` matrix redeclared as `rows=key-shape:entity,table-pattern,tenant-table-pattern`
+       over the five declared columns, with the four pattern × PK-shape cells `n/a`.
+     - §27.12 is covered by one row (`cache.warm` rejected by the loader and the schema), and
+       §27.10's Size and Speed columns are read as informative.
+     - The flip to `complete`.
+   - **Defects: 3, all fixed with fail-first tests.**
+     - `5afdbf61`: under `CallbackSync`, a failing cache invalidation on `tx.OnCommit` made
+       `WithTx` return the backend error for a committed write (§27.9, §29.5). The cache's commit
+       callbacks now go through `afterCommit`, which retries once and returns nil; the
+       materialized-view refresh had the same path.
+     - `63ad679c`: the OTel `circuit_breaker` gauge never cleared the state it left, so after a
+       full cycle every state read 1.
+     - `eefc07be`: the read-through's in-flight re-check called `Allow` and recorded nothing.
+       When it was the call that left `Open`, it held the only `HalfOpen` probe slot forever and
+       the cache stayed off. A probe stranded it in 13–26 of 3,000 trips per run. The re-check
+       now runs only while the breaker is `Closed`. The regression test is statistical; the
+       deterministic gate is the template test banning `Allow` in the re-check.
+   - **Measurement.** Done in-session: a read-only agent mapped every §27.3–§27.13 / §29.5
+     sentence to tests across the runtime, the templates and the examples, and I classified the
+     98 orphans and probed the PRD's examples. The §27.4 wiring ran clean in both option orders;
+     the §27.9 direct calls behaved as documented, and the tenanted-table error they hit became an
+     amendment. About 50 mutants were run, Docker ones one at a time. The
+     one equivalent mutant: counting a `HalfOpen` failure toward the threshold, since the count
+     never drops below the threshold while in `HalfOpen`.
+   - **Gates.** The two fixes and the first test commit were gated together and committed as
+     three commits, so `5afdbf61`, `63ad679c` and `6cf19e7b` were not gated one by one.
+   - **Claim check.** An independent pass found 6 high, 10 medium and 8 low issues. All were fixed
+     by narrowing wording, dropping or adding citations, or tightening tests, and it surfaced the
+     third defect. Among them: `TestTx_EventBeforeCacheOnCommit` could not fail (the setup's
+     event came first); the async committed-write case and `TestReadThrough_SingleflightDedup`
+     could not back their claims; "each shipped backend implements `StatsReporter`" went to a gap;
+     and Redis refs are `integration:`.
+   - **Rows.** `runtime/cache.md` 48 → 113 rows (6085 → 6150 in all). All 15 matrix cells are
+     filled or `n/a` citing the PRD; there are 4 unclaimed tests and 15 open gaps (13 new). `hooks.md`'s two field
+     rows gained the tenant fields. Five findings went to `backlog.md`: a misnamed hydration
+     test, out-of-order breaker callbacks, Redis glob syntax in patterns, a panic between
+     `Allow` and its record, and four example tests weaker than their names.
+   - **Completion sweep.** With `runtime/cache.md` set to `complete`, `req-check` passes.
+     Flipped on the user's sign-off (`d01465c3`), after the report was generated.
+   - **Report.** `make conformance` at `af3723ba`: 6150 rows, 6037 pass, 0 fail, 0 skip, 0 not
+     run, 113 untested. `runtime/cache.md` has 113 pass.
+   - **For the next slice (`runtime/events.md`):**
+     - Seed `events.md` next (54 orphans), then `support.md` (31). The event hook registers on
+       `OnCommit` like the cache does: check its sync-mode error path against §28 the way §27.9's
+       was checked here.
+     - A generated facade behavior proven only by a template string match is not proven. Cite an
+       example test when one exists, and check that it can fail: two of this slice's cited
+       examples could not.
+     - A breaker, pool or slot that a call acquires must be released on every exit. List each
+       acquire and check what releases it; reading for that found the stranded probe.
+     - A fix that swallows an error must still report it. Check every error the swallowed path
+       could carry, not only the backend's.
+     - `TestMain` is not a test function for `req-check`; don't list it as unclaimed.
+
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
