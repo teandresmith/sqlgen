@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"os/exec"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -390,7 +393,47 @@ func TestUnsubscribeStopsDelivery(t *testing.T) {
 	}
 }
 
-func TestCloseDrainsAndRejectsPublish(t *testing.T) {
+// TestUnsubscribeReleasesEverySubject: a single-table subscription listens on
+// two subjects, and Unsubscribe releases both.
+func TestUnsubscribeReleasesEverySubject(t *testing.T) {
+	conn := startServer(t)
+	bus := natsbus.New(conn)
+	t.Cleanup(func() { _ = bus.Close() })
+	sub, err := bus.Subscribe(event.SubscribeOptions{Tables: []string{"products"}}, func(context.Context, event.Event) error { return nil })
+	if err != nil {
+		t.Fatalf("Subscribe() unexpected error: %v", err)
+	}
+	if n := conn.NumSubscriptions(); n != 2 {
+		t.Fatalf("conn subscriptions = %d, want 2 (both subject forms)", n)
+	}
+	if err := sub.Unsubscribe(); err != nil {
+		t.Fatalf("Unsubscribe() unexpected error: %v", err)
+	}
+	if n := conn.NumSubscriptions(); n != 0 {
+		t.Errorf("conn subscriptions after Unsubscribe = %d, want 0", n)
+	}
+}
+
+// TestSubscribeRacingCloseLeavesNothingLive: whichever of Subscribe and Close
+// wins, once both return the bus holds no subscription on the caller's
+// connection.
+func TestSubscribeRacingCloseLeavesNothingLive(t *testing.T) {
+	conn := startServer(t)
+	for i := range 200 {
+		bus := natsbus.New(conn)
+		var wg sync.WaitGroup
+		wg.Go(func() { _ = bus.Close() })
+		wg.Go(func() {
+			_, _ = bus.Subscribe(event.SubscribeOptions{Tables: []string{"products"}}, func(context.Context, event.Event) error { return nil })
+		})
+		wg.Wait()
+		if n := conn.NumSubscriptions(); n != 0 {
+			t.Fatalf("iteration %d: conn subscriptions after Close = %d, want 0", i, n)
+		}
+	}
+}
+
+func TestCloseRejectsPublishAndSubscribe(t *testing.T) {
 	bus := natsbus.New(startServer(t))
 
 	if _, err := bus.Subscribe(event.SubscribeOptions{}, func(_ context.Context, _ event.Event) error { return nil }); err != nil {
@@ -830,8 +873,9 @@ func TestDefaultFailingHandlerNoPanicNoRedeliver(t *testing.T) {
 	}
 
 	waitFor(t, time.Second, func() bool { return atomic.LoadInt64(&calls) == 1 })
-	// With no error handler and no retry, the error is discarded: no panic,
-	// no redelivery (core is at-most-once).
+	// With no error handler and no retry, the error is logged (see
+	// TestHandlerErrorLoggedWithoutErrorHandler): no panic, no redelivery
+	// (core is at-most-once).
 	time.Sleep(100 * time.Millisecond)
 	if got := atomic.LoadInt64(&calls); got != 1 {
 		t.Errorf("handler invocations = %d, want 1 (core does not redeliver)", got)
@@ -1726,5 +1770,442 @@ func TestActionSubjectsBrokerFilter(t *testing.T) {
 	defer mu.Unlock()
 	if diff := cmp.Diff([]event.Action{event.Create}, got); diff != "" {
 		t.Errorf("delivered actions mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestSchemalessEventReachesSingleTableSubscriber: SQLite and MySQL events
+// carry no schema and publish to "{prefix}.{table}". A single-table
+// subscription receives them as well as schema-qualified events, each exactly
+// once, with and without action subjects and in a queue group.
+func TestSchemalessEventReachesSingleTableSubscriber(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []natsbus.Option
+		sub  event.SubscribeOptions
+	}{
+		{name: "core", sub: event.SubscribeOptions{Tables: []string{"products"}}},
+		{name: "core queue group", sub: event.SubscribeOptions{Tables: []string{"products"}, Group: "workers"}},
+		{
+			name: "action subjects single action",
+			opts: []natsbus.Option{natsbus.WithActionSubjects()},
+			sub:  event.SubscribeOptions{Tables: []string{"products"}, Actions: []event.Action{event.Create}},
+		},
+		{
+			name: "action subjects any action",
+			opts: []natsbus.Option{natsbus.WithActionSubjects()},
+			sub:  event.SubscribeOptions{Tables: []string{"products"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bus := natsbus.New(startServer(t), tt.opts...)
+			t.Cleanup(func() { _ = bus.Close() })
+
+			var mu sync.Mutex
+			var got []string
+			if _, err := bus.Subscribe(tt.sub, func(_ context.Context, e event.Event) error {
+				mu.Lock()
+				defer mu.Unlock()
+				got = append(got, e.ID)
+				return nil
+			}); err != nil {
+				t.Fatalf("Subscribe() unexpected error: %v", err)
+			}
+
+			events := []event.Event{
+				{ID: "schemaless", Table: "products", Action: event.Create},
+				{ID: "other-table", Table: "orders", Action: event.Create},
+				{ID: "schema", Table: "products", Schema: "public", Action: event.Create},
+			}
+			for _, e := range events {
+				if err := bus.Publish(context.Background(), e); err != nil {
+					t.Fatalf("Publish(%q) unexpected error: %v", e.ID, err)
+				}
+			}
+			// The two subjects are dispatched independently, so only the set
+			// of deliveries is asserted; per-subject order is all core NATS
+			// promises. The settle lets a duplicate or the other table's
+			// event surface.
+			waitFor(t, time.Second, func() bool {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(got) == 2
+			})
+			time.Sleep(100 * time.Millisecond)
+			mu.Lock()
+			defer mu.Unlock()
+			if diff := cmp.Diff([]string{"schema", "schemaless"}, slices.Sorted(slices.Values(got))); diff != "" {
+				t.Errorf("delivered IDs mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestJetStreamSchemalessEventReachesSingleTableSubscriber is the durable
+// counterpart: the consumer's filter subjects cover the schema-less subject.
+func TestJetStreamSchemalessEventReachesSingleTableSubscriber(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping JetStream integration test in short mode")
+	}
+	conn := startJetStreamServer(t)
+	bus := natsbus.New(conn, natsbus.WithJetStream(natsbus.StreamConfig{Name: "SQLGEN_EVENTS"}))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	for _, e := range []event.Event{
+		{ID: "schemaless", Table: "products", Action: event.Create},
+		{ID: "other-table", Table: "orders", Action: event.Create},
+		{ID: "schema", Table: "products", Schema: "public", Action: event.Create},
+	} {
+		if err := bus.Publish(context.Background(), e); err != nil {
+			t.Fatalf("Publish(%q) unexpected error: %v", e.ID, err)
+		}
+	}
+
+	var mu sync.Mutex
+	var got []string
+	sub, err := bus.SubscribeWith(event.SubscribeOptions{Tables: []string{"products"}}, func(_ context.Context, e event.Event) error {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, e.ID)
+		return nil
+	}, natsbus.WithDurable("schemaless"))
+	if err != nil {
+		t.Fatalf("SubscribeWith() unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+
+	waitFor(t, 3*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(got) == 2
+	})
+	assertConsumerSettled(t, conn, "schemaless")
+	mu.Lock()
+	defer mu.Unlock()
+	if diff := cmp.Diff([]string{"schema", "schemaless"}, slices.Sorted(slices.Values(got))); diff != "" {
+		t.Errorf("delivered IDs mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// startServerWithHandle is startServer that also returns the server, so a test
+// can observe the server's client count.
+func startServerWithHandle(t *testing.T) (*server.Server, *nats.Conn) {
+	t.Helper()
+	opts := natstest.DefaultTestOptions
+	opts.Port = server.RANDOM_PORT
+	srv := natstest.RunServer(&opts)
+	t.Cleanup(srv.Shutdown)
+	conn, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("nats.Connect() unexpected error: %v", err)
+	}
+	t.Cleanup(conn.Close)
+	return srv, conn
+}
+
+// TestCloseLeavesCallerConnOpen: a New(conn) bus does not own conn, so Close
+// unsubscribes the bus's own handlers and leaves the connection usable.
+func TestCloseLeavesCallerConnOpen(t *testing.T) {
+	conn := startServer(t)
+	bus := natsbus.New(conn)
+	if _, err := bus.Subscribe(event.SubscribeOptions{Tables: []string{"products"}}, func(context.Context, event.Event) error { return nil }); err != nil {
+		t.Fatalf("Subscribe() unexpected error: %v", err)
+	}
+	if err := bus.Close(); err != nil {
+		t.Fatalf("Close() unexpected error: %v", err)
+	}
+	if conn.IsClosed() || conn.IsDraining() {
+		t.Fatalf("caller-owned conn after Close: closed=%v draining=%v, want open", conn.IsClosed(), conn.IsDraining())
+	}
+	if n := conn.NumSubscriptions(); n != 0 {
+		t.Errorf("conn subscriptions after Close = %d, want 0 (Close unsubscribes the bus's handlers)", n)
+	}
+	// The caller can keep using the connection.
+	msgCh := make(chan *nats.Msg, 1)
+	rawSub, err := conn.ChanSubscribe("after.close", msgCh)
+	if err != nil {
+		t.Fatalf("ChanSubscribe() after Close unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = rawSub.Unsubscribe() })
+	if err := conn.Publish("after.close", []byte("x")); err != nil {
+		t.Fatalf("conn.Publish() after Close unexpected error: %v", err)
+	}
+	select {
+	case <-msgCh:
+	case <-time.After(time.Second):
+		t.Fatal("caller-owned conn did not deliver after Close")
+	}
+}
+
+// TestConnectCloseClosesConn: a Connect bus dialed its own connection, so Close
+// drains and closes it; the server sees the client leave.
+func TestConnectCloseClosesConn(t *testing.T) {
+	srv, _ := startServerWithHandle(t) // one client: the handle's own conn
+	bus, err := natsbus.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatalf("Connect() unexpected error: %v", err)
+	}
+	waitFor(t, time.Second, func() bool { return srv.NumClients() == 2 })
+	if err := bus.Close(); err != nil {
+		t.Fatalf("Close() unexpected error: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool { return srv.NumClients() == 1 })
+}
+
+// captureLog redirects the standard logger into a buffer for the test's
+// duration and returns a function reading what was logged.
+func captureLog(t *testing.T) func() string {
+	t.Helper()
+	var mu sync.Mutex
+	var buf strings.Builder
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(writerFunc(func(p []byte) (int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.Write(p)
+	}))
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+	return func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.String()
+	}
+}
+
+type writerFunc func(p []byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// TestHandlerErrorLoggedWithoutErrorHandler: with no WithSubscribeErrorHandler,
+// a Handler error on a core subscription is logged, not discarded.
+func TestHandlerErrorLoggedWithoutErrorHandler(t *testing.T) {
+	logged := captureLog(t)
+	bus := natsbus.New(startServer(t))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	var calls atomic.Int64
+	if _, err := bus.Subscribe(event.SubscribeOptions{}, func(context.Context, event.Event) error {
+		calls.Add(1)
+		return errHandlerBoom
+	}); err != nil {
+		t.Fatalf("Subscribe() unexpected error: %v", err)
+	}
+	if err := bus.Publish(context.Background(), event.Event{ID: "evt-logged", Table: "products", Schema: "public", Action: event.Create}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+	waitFor(t, time.Second, func() bool {
+		return strings.Contains(logged(), errHandlerBoom.Error())
+	})
+	if got := logged(); !strings.Contains(got, "evt-logged") {
+		t.Errorf("log = %q, want it to name the event %q", got, "evt-logged")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("handler invocations = %d, want 1 (logging does not redeliver)", got)
+	}
+}
+
+// TestJetStreamHandlerErrorLoggedWithoutErrorHandler: a durable consumer's
+// Handler error is logged as well as nak'd when no error handler is set.
+func TestJetStreamHandlerErrorLoggedWithoutErrorHandler(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping JetStream integration test in short mode")
+	}
+	logged := captureLog(t)
+	bus := natsbus.New(startJetStreamServer(t), natsbus.WithJetStream(natsbus.StreamConfig{Name: "SQLGEN_EVENTS"}))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	sub, err := bus.SubscribeWith(event.SubscribeOptions{}, func(context.Context, event.Event) error {
+		return errHandlerBoom
+	}, natsbus.WithDurable("logged"), natsbus.WithMaxDeliver(1))
+	if err != nil {
+		t.Fatalf("SubscribeWith() unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+	if err := bus.Publish(context.Background(), event.Event{ID: "evt-js-logged", Table: "products", Schema: "public", Action: event.Create}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		got := logged()
+		return strings.Contains(got, errHandlerBoom.Error()) && strings.Contains(got, "evt-js-logged")
+	})
+}
+
+// TestUndecodableBodyReported: a core message whose body is not an event is
+// reported to the error handler with the zero Event and the decode error, and
+// is logged when no error handler is set.
+func TestUndecodableBodyReported(t *testing.T) {
+	t.Run("error handler", func(t *testing.T) {
+		conn := startServer(t)
+		var mu sync.Mutex
+		var gotEvents []event.Event
+		var gotErrs []error
+		bus := natsbus.New(conn, natsbus.WithSubscribeErrorHandler(func(_ context.Context, e event.Event, err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			gotEvents = append(gotEvents, e)
+			gotErrs = append(gotErrs, err)
+		}))
+		t.Cleanup(func() { _ = bus.Close() })
+		if _, err := bus.Subscribe(event.SubscribeOptions{}, func(context.Context, event.Event) error { return nil }); err != nil {
+			t.Fatalf("Subscribe() unexpected error: %v", err)
+		}
+		if err := conn.Publish("sqlgen.events.public.products", []byte("{ not valid json")); err != nil {
+			t.Fatalf("raw Publish() unexpected error: %v", err)
+		}
+		waitFor(t, time.Second, func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return len(gotErrs) == 1
+		})
+		mu.Lock()
+		defer mu.Unlock()
+		if diff := cmp.Diff([]event.Event{{}}, gotEvents); diff != "" {
+			t.Errorf("reported event mismatch (-want +got):\n%s", diff)
+		}
+		var syntaxErr *json.SyntaxError
+		if !errors.As(gotErrs[0], &syntaxErr) {
+			t.Errorf("reported error = %v, want it to wrap the *json.SyntaxError", gotErrs[0])
+		}
+	})
+	t.Run("logged", func(t *testing.T) {
+		logged := captureLog(t)
+		conn := startServer(t)
+		bus := natsbus.New(conn)
+		t.Cleanup(func() { _ = bus.Close() })
+		if _, err := bus.Subscribe(event.SubscribeOptions{}, func(context.Context, event.Event) error { return nil }); err != nil {
+			t.Fatalf("Subscribe() unexpected error: %v", err)
+		}
+		if err := conn.Publish("sqlgen.events.public.products", []byte("{ not valid json")); err != nil {
+			t.Fatalf("raw Publish() unexpected error: %v", err)
+		}
+		waitFor(t, time.Second, func() bool {
+			return strings.Contains(logged(), "decode event on sqlgen.events.public.products")
+		})
+	})
+}
+
+// TestJetStreamUndecodableBodyReported: on a durable consumer an undecodable
+// body is reported with the zero Event as well as terminated.
+func TestJetStreamUndecodableBodyReported(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping JetStream integration test in short mode")
+	}
+	conn := startJetStreamServer(t)
+	var mu sync.Mutex
+	var gotEvents []event.Event
+	var gotErrs []error
+	bus := natsbus.New(conn,
+		natsbus.WithJetStream(natsbus.StreamConfig{Name: "SQLGEN_EVENTS"}),
+		natsbus.WithSubscribeErrorHandler(func(_ context.Context, e event.Event, err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			gotEvents = append(gotEvents, e)
+			gotErrs = append(gotErrs, err)
+		}))
+	t.Cleanup(func() { _ = bus.Close() })
+	sub, err := bus.SubscribeWith(event.SubscribeOptions{}, func(context.Context, event.Event) error { return nil }, natsbus.WithDurable("undecodable"))
+	if err != nil {
+		t.Fatalf("SubscribeWith() unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+	if err := conn.Publish("sqlgen.events.public.products", []byte("{ not valid json")); err != nil {
+		t.Fatalf("raw Publish() unexpected error: %v", err)
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(gotErrs) == 1
+	})
+	assertConsumerSettled(t, conn, "undecodable")
+	mu.Lock()
+	defer mu.Unlock()
+	if diff := cmp.Diff([]event.Event{{}}, gotEvents); diff != "" {
+		t.Errorf("reported event mismatch (-want +got):\n%s", diff)
+	}
+	var syntaxErr *json.SyntaxError
+	if !errors.As(gotErrs[0], &syntaxErr) {
+		t.Errorf("reported error = %v, want it to wrap the *json.SyntaxError", gotErrs[0])
+	}
+}
+
+// TestJetStreamFailedDeadLetterPublishReported: when the final delivery's
+// dead-letter republish fails, the failure is reported alongside the Handler's
+// error, and the message is nak'd rather than lost.
+func TestJetStreamFailedDeadLetterPublishReported(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping JetStream integration test in short mode")
+	}
+	var mu sync.Mutex
+	var gotErrs []error
+	bus := natsbus.New(startJetStreamServer(t),
+		natsbus.WithJetStream(natsbus.StreamConfig{Name: "SQLGEN_EVENTS"}),
+		natsbus.WithSubscribeErrorHandler(func(_ context.Context, _ event.Event, err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			gotErrs = append(gotErrs, err)
+		}))
+	t.Cleanup(func() { _ = bus.Close() })
+	// A subject with a space is rejected by the client, so the republish fails.
+	sub, err := bus.SubscribeWith(event.SubscribeOptions{}, func(context.Context, event.Event) error {
+		return errHandlerBoom
+	}, natsbus.WithDurable("bad-dlq"), natsbus.WithMaxDeliver(1), natsbus.WithDeadLetter("bad dlq"))
+	if err != nil {
+		t.Fatalf("SubscribeWith() unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+	if err := bus.Publish(context.Background(), event.Event{ID: "evt-bad-dlq", Table: "products", Schema: "public", Action: event.Create}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(gotErrs) == 2
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if gotErrs[0] != errHandlerBoom { //nolint:errorlint // identity: the Handler's own error is passed as-is
+		t.Errorf("first reported error = %v, want the Handler's error %v", gotErrs[0], errHandlerBoom)
+	}
+	if !errors.Is(gotErrs[1], nats.ErrBadSubject) || !strings.Contains(gotErrs[1].Error(), "dead-letter publish bad dlq") {
+		t.Errorf("second reported error = %v, want the failed dead-letter publish wrapping %v", gotErrs[1], nats.ErrBadSubject)
+	}
+}
+
+// TestSingleTableHandlerNotConcurrent: a single-table subscription listens on
+// two subjects, but its Handler still never runs concurrently with itself.
+func TestSingleTableHandlerNotConcurrent(t *testing.T) {
+	bus := natsbus.New(startServer(t))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	var inFlight, maxInFlight, calls atomic.Int64
+	if _, err := bus.Subscribe(event.SubscribeOptions{Tables: []string{"products"}}, func(context.Context, event.Event) error {
+		n := inFlight.Add(1)
+		for {
+			m := maxInFlight.Load()
+			if n <= m || maxInFlight.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		inFlight.Add(-1)
+		calls.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe() unexpected error: %v", err)
+	}
+	for i := range 5 {
+		for _, schema := range []string{"", "public"} {
+			if err := bus.Publish(context.Background(), event.Event{ID: fmt.Sprint(schema, i), Table: "products", Schema: schema, Action: event.Create}); err != nil {
+				t.Fatalf("Publish() unexpected error: %v", err)
+			}
+		}
+	}
+	waitFor(t, 3*time.Second, func() bool { return calls.Load() == 10 })
+	if got := maxInFlight.Load(); got != 1 {
+		t.Errorf("max concurrent Handler invocations = %d, want 1", got)
 	}
 }

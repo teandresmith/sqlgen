@@ -3,6 +3,8 @@ package memorybus_test
 import (
 	"context"
 	"errors"
+	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -381,8 +383,8 @@ func TestDefaultFailingHandlerNoPanicNoRedeliver(t *testing.T) {
 		t.Fatalf("Subscribe() unexpected error: %v", err)
 	}
 
-	// No sink configured: the error is discarded, no panic, no redelivery —
-	// byte-identical to prior behavior.
+	// No sink configured: the error is logged (see
+	// TestHandlerErrorLoggedWithoutErrorHandler), no panic, no redelivery.
 	if err := bus.Publish(context.Background(), event.Event{
 		ID: "evt-default", Table: "products", Schema: "public", Action: event.Create,
 	}); err != nil {
@@ -445,5 +447,40 @@ func TestConcurrentPublishSubscribe(t *testing.T) {
 	// Every publish hits at least the `workers` stable subscribers.
 	if got := atomic.LoadInt64(&received); got < int64(workers*events*workers) {
 		t.Errorf("received = %d, want at least %d", got, workers*events*workers)
+	}
+}
+
+// TestHandlerErrorLoggedWithoutErrorHandler: with no WithSubscribeErrorHandler,
+// a Handler error is logged through the standard logger, not discarded, and
+// the Handler still runs once.
+func TestHandlerErrorLoggedWithoutErrorHandler(t *testing.T) {
+	var buf strings.Builder
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	bus := memorybus.New()
+	t.Cleanup(func() { _ = bus.Close() })
+	var calls int
+	if _, err := bus.Subscribe(event.SubscribeOptions{}, func(context.Context, event.Event) error {
+		calls++
+		return errHandlerBoom
+	}); err != nil {
+		t.Fatalf("Subscribe() unexpected error: %v", err)
+	}
+	if err := bus.Publish(context.Background(), event.Event{ID: "evt-logged", Table: "products", Action: event.Create}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, errHandlerBoom.Error()) || !strings.Contains(got, "evt-logged") {
+		t.Errorf("log = %q, want a line naming event %q and carrying %q", got, "evt-logged", errHandlerBoom)
+	}
+	if calls != 1 {
+		t.Errorf("handler invocations = %d, want 1", calls)
 	}
 }
