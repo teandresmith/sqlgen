@@ -8,21 +8,21 @@ Caching (§27), its tenant key grammar (§29.5), and the OpenTelemetry metrics r
 [README.md](../README.md) for the format.
 
 ## §27 Caching
-<!-- prd: 27 sha256: dfe94499db41cc8f -->
+<!-- prd: 27 sha256: 1e92aadf9550a3ea -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | cache.off-generates-nothing | When caching resolves off for every table and view (global `cache.enabled` false or absent, and no per-table or per-view opt-in), no caching code is generated | `unit: cmd/sqlgen/gen: TestBuildCacheContext_disabled`; `unit: cmd/sqlgen/gen: TestBuildCacheContext_explicitlyDisabled`; `unit: cmd/sqlgen/gen: TestBuildCacheContext_NoOptInUnderGlobalOff` | all |  |
 
 ## §27.3 Cache Interface
-<!-- prd: 27.3 sha256: 67630a847c031706 -->
+<!-- prd: 27.3 sha256: 0f5d5eded788b441 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | cache.facade.close-probes-closer | The generated `Cache.Close()` closes the backend only when the backend implements `io.Closer` | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsCloseMethod` | all |  |
 
 ## §27.4 Injection via Hooks
-<!-- prd: 27.4 sha256: a8a4c83955bdc5a2 -->
+<!-- prd: 27.4 sha256: 7a57b9dc63f77f85 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -79,7 +79,7 @@ Caching (§27), its tenant key grammar (§29.5), and the OpenTelemetry metrics r
 | cache.hydration.timeout | The hydration goroutine runs on a background context bounded by `hydration.timeout` | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsHydrateHelper` | all |  |
 
 ## §27.9 Invalidation Strategies
-<!-- prd: 27.9 sha256: 9dca090bd7d17f12 -->
+<!-- prd: 27.9 sha256: 3da4c69fd22e6845 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -97,7 +97,7 @@ Caching (§27), its tenant key grammar (§29.5), and the OpenTelemetry metrics r
 | cache.matview.refresh-uncached-noop | With no cached view, a materialized-view refresh performs no cache operation | `unit: cmd/sqlgen/gen: TestCacheTemplate_refreshNoCachedViewsIsNoOp` | postgres |  |
 
 ## §27.13 Cache Metrics
-<!-- prd: 27.13 sha256: ffd50e67fa6a325f -->
+<!-- prd: 27.13 sha256: 5a26bc9406b46682 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

@@ -20,14 +20,14 @@ in [client.md](../client.md), and the generated event hooks are in [cli/gen.md](
 | hook.recovery-without-hooks | Panic recovery is present when no hooks are registered: a chain built with no hooks still turns a panic in the operation into the recovery error | `unit: hook: TestBuildMutationChain_skipHooksPreservesPanicRecovery`; `unit: hook: TestBuildQueryChain_skipHooksPreservesPanicRecovery` | all |  |
 
 ## §21.2 Hook Types
-<!-- prd: 21.2 sha256: aa2a84591e5b6342 -->
+<!-- prd: 21.2 sha256: a6e8d120d9159205 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | hook.mutation-hook-types | `MutationHook` is `func(next MutationHandler) MutationHandler`, and `MutationHandler` is `func(ctx context.Context, m *MutationContext) (any, error)` | `unit: hook: TestMutationHookSignature` | all |  |
 | hook.query-hook-types | `QueryHook` is `func(next QueryHandler) QueryHandler`, and `QueryHandler` is `func(ctx context.Context, q *QueryContext) (any, error)` | `unit: hook: TestQueryHookSignature` | all |  |
-| hook.mutation-context-fields | `MutationContext` has the fields `Op MutationOp`, `Table TableName`, `Schema string`, `PK any`, `Input any`, `CallOptions any` and `AffectedPKs []any` | `unit: hook: TestMutationContextFields` | all |  |
-| hook.query-context-fields | `QueryContext` has the fields `Op QueryOp`, `Table TableName`, `Schema string`, `PK any`, `Input any` and `CallOptions any` | `unit: hook: TestQueryContextFields` | all |  |
+| hook.mutation-context-fields | `MutationContext` has exactly the fields `Op MutationOp`, `Table TableName`, `Schema string`, `PK any`, `Input any`, `CallOptions any`, `AffectedPKs []any`, `AffectedTenants []any` and `Tenant any` | `unit: hook: TestMutationContextFields` | all |  |
+| hook.query-context-fields | `QueryContext` has exactly the fields `Op QueryOp`, `Table TableName`, `Schema string`, `PK any`, `Input any`, `CallOptions any` and `Tenant any` | `unit: hook: TestQueryContextFields` | all |  |
 | hook.mutation-op-values | The `MutationOp` constants are `create`, `create_many`, `update`, `update_many`, `update_where`, `upsert`, `upsert_many`, `soft_delete`, `soft_delete_many`, `soft_delete_where`, `restore`, `restore_many`, `restore_where`, `hard_delete`, `hard_delete_many`, `hard_delete_where` and `increment` | `unit: hook: TestMutationOpConstants` | all |  |
 | hook.query-op-values | The `QueryOp` constants are `get`, `get_many`, `exists`, `count`, `paginate`, `connection`, `stream` and `refresh` | `unit: hook: TestQueryOpConstants` | all |  |
 | hook.table-name-type | `TableName` is a string type, so a context's `Table` compares directly against a constant | `unit: hook: TestTableNameType` | all |  |

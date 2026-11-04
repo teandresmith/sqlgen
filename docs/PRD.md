@@ -10914,6 +10914,8 @@ type MutationContext struct {
     Input       any        // *CreateInput, *UpdateInput, filter, etc.
     CallOptions any        // resolved CallOptions[FO]; hooks can type-assert for table-specific access
     AffectedPKs []any      // post-mutation: all affected PKs, set by terminal (see Section 28)
+    AffectedTenants []any  // post-mutation: each affected row's tenant, index-aligned with AffectedPKs (see 29.5)
+    Tenant      any        // tenant resolved at the method boundary; nil when not tenanted or tenancy is skipped (see 29.5)
 }
 
 // QueryHook wraps a QueryHandler to produce a new QueryHandler.
@@ -10930,6 +10932,7 @@ type QueryContext struct {
     PK          any       // primary key value (for Get/Exists; nil for GetMany/Count)
     Input       any       // *GetInput, *Filter, etc.
     CallOptions any       // resolved CallOptions[FO]; hooks can type-assert for table-specific access
+    Tenant      any       // tenant resolved at the method boundary; nil when not tenanted or tenancy is skipped (see 29.5)
 }
 ```
 
@@ -13868,7 +13871,7 @@ type Stats struct {
 }
 ```
 
-Graceful shutdown uses stdlib `io.Closer`. Backends that hold owned resources (Redis clients, background goroutines) implement it; thin wrappers over caller-owned clients do not. The generated `Cache` facade probes with `if c, ok := backend.(io.Closer); ok { c.Close() }`.
+Graceful shutdown uses stdlib `io.Closer`. Backends that hold owned resources (background goroutines) implement it, and `Close` releases them. The Redis backend implements it too, but closes the Redis client only when it was built with `WithOwnedClient()`; by default the client stays the caller's, and `Close` leaves it open. The generated `Cache` facade probes with `if c, ok := backend.(io.Closer); ok { c.Close() }`.
 
 **Shipped backends:**
 
@@ -13900,8 +13903,9 @@ func WithSerializer(s cache.Serializer) CacheOption
 func WithCircuitBreaker(b *cache.Breaker) CacheOption
 func WithOnError(fn cache.OnErrorFunc) CacheOption
 
-// WithCache wires a *Cache instance into the generated client. Shorthand for:
-//   WithQueryHook(c.QueryHook()), WithMutationHook(c.MutationHook())
+// WithCache wires a *Cache instance into the generated client. Its query and
+// mutation hooks run outermost, ahead of the event hooks and every hook
+// registered with WithQueryHook / WithMutationHook, whatever the option order.
 func WithCache(c *Cache) Option
 ```
 
@@ -14204,7 +14208,7 @@ func (c *Cache) InvalidateMany(ctx context.Context, table hook.TableName, pks []
 func (c *Cache) InvalidateTable(ctx context.Context, table hook.TableName) error
 ```
 
-These methods are the same ones called internally by the mutation hook and the `InvalidationSource` handler. All invalidation paths converge on shared internal helpers — key construction, metrics emission, circuit-breaker accounting, and the final `Backend.InvalidateMany` / `Backend.InvalidatePattern` call.
+On a non-tenanted table these methods are the same ones called internally by the mutation hook and the `InvalidationSource` handler. On a tenanted table, `Invalidate` and `InvalidateMany` cannot rebuild the tenant segment of a key from a bare PK, so both return `cache: InvalidateMany("<table>"): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern`, tenant-in-PK tables included. The precise tenanted paths are the mutation hook and a tenant-stamped `InvalidationSignal` (29.5); `InvalidateTable` works on every table. All invalidation paths converge on shared internal helpers — key construction, metrics emission, circuit-breaker accounting, and the final `Backend.InvalidateMany` / `Backend.InvalidatePattern` call.
 
 #### FromEventSubscriber Adapter
 
@@ -14216,8 +14220,9 @@ The `cache` package provides a built-in adapter that bridges `event.Subscriber` 
 // and all mutation actions with an empty SubscribeOptions{}.
 //
 // The zero-option form — FromEventSubscriber(sub) — is the user-facing
-// constructor. Options are used by the generated *Cache facade to wire
-// observability (metrics) at construction time.
+// constructor. The caller builds the adapter, so the caller wires its
+// options; the generated *Cache facade only receives the finished
+// InvalidationSource.
 func FromEventSubscriber(sub event.Subscriber, opts ...EventAdapterOption) InvalidationSource
 
 // EventAdapterOption configures the InvalidationSource returned by
@@ -14226,8 +14231,10 @@ type EventAdapterOption func(*eventAdapter)
 
 // WithEventMetrics wires a MetricsRecorder so handler-returned errors are
 // recorded via MetricsRecorder.Error(schema, table, "invalidate", err)
-// before propagating to the underlying event.Handler. The generated facade
-// always supplies this; user-direct callers may omit it.
+// before propagating to the underlying event.Handler. It is opt-in: without
+// it the adapter records nothing itself, and a failing backend call is still
+// recorded by the facade's own error policy ("invalidate_many" /
+// "invalidate_pattern").
 func WithEventMetrics(m MetricsRecorder) EventAdapterOption
 ```
 
@@ -14245,7 +14252,7 @@ Post-commit ordering is deterministic: `database.Tx.OnCommit` preserves FIFO ord
 
 `FromEventSubscriber` and custom `InvalidationSource` inputs are **already post-commit** (events only fire after commit), so invalidation from those layers is fired immediately — no nested `OnCommit` needed.
 
-`CallbackMode` defaults to `CallbackAsync`; the async path executes callbacks on `context.Background()` — cache invalidation MUST NOT read request-scoped metadata from the callback's ctx. Closure-captured key + table is all the backend call needs. Both sync and async paths retry a failed callback once before giving up; cache invalidation is idempotent by contract (27.3) so the retry is safe.
+`CallbackMode` defaults to `CallbackAsync`; the async path executes callbacks on `context.Background()` — cache invalidation MUST NOT read request-scoped metadata from the callback's ctx. Closure-captured key + table is all the backend call needs. Both sync and async paths retry a failed callback once before giving up; cache invalidation is idempotent by contract (27.3) so the retry is safe. On neither path does a cache callback's error reach `Commit` or `WithTx`: the write has committed, and the error policy below has already recorded the failure.
 
 #### Circuit Breaker
 
@@ -14307,7 +14314,7 @@ type Serializer interface {
 **Validation timing.**
 
 - At YAML parse time: `cache.serializer` must be one of `json`, `msgpack`, `custom`, or unset. Unset defaults to `json`.
-- At `NewCache` construction time: `cache.serializer == "custom"` with no `WithSerializer(...)` fails with an error naming the config line. `json` and `msgpack` never error at construction — both are generator-resolved.
+- At `NewCache` construction time: `cache.serializer == "custom"` with no `WithSerializer(...)` fails with an error naming the `cache.serializer` key. `json` and `msgpack` never error at construction — both are generator-resolved.
 
 The serializer choice feeds the schema fingerprint (27.5), so switching from `json` to `msgpack` (or vice versa) produces a new key namespace — cached bytes are never read under the wrong decoder.
 
@@ -14393,7 +14400,7 @@ type MetricsRecorder interface {
 | `Miss` | Cache read returns nil (no entry or expired) | Miss rate, cold start detection |
 | `Set` | Entity written to cache (after DB read or create) | Write volume |
 | `Invalidate` | Cache entry invalidated (mutation, pattern delete, direct call) | Invalidation rate |
-| `Error` | Cache backend returns an error (read, write, or invalidate) | Backend health — `op ∈ {"get","set","invalidate","invalidate_many","invalidate_pattern"}` |
+| `Error` | Cache backend returns an error (read, write, or invalidate) | Backend health — `op ∈ {"get","set","invalidate_many","invalidate_pattern","invalidate_tenant_fallback"}` from the generated facade (a direct `Invalidate` reports `invalidate_many`, and `invalidate_tenant_fallback` is 29.5's capture-gap signal), and `"invalidate"` from the `FromEventSubscriber` adapter when `WithEventMetrics` is wired |
 | `HydrationStart` | Background hydration goroutine launched | Hydration volume |
 | `HydrationComplete` | Background hydration finished (success or failure) | Hydration failure rate |
 | `CircuitBreakerStateChange` | Circuit breaker transitions between Closed/Open/HalfOpen | Outage detection (not schema-labeled — breaker is `*Cache`-scoped) |
@@ -14466,7 +14473,7 @@ The OTel package emits the following instruments:
 | `sqlgen.cache.invalidations` | Counter | `schema`, `table` | — | Cache invalidations |
 | `sqlgen.cache.errors` | Counter | `schema`, `table`, `op` | — | Cache backend errors |
 | `sqlgen.cache.hydrations` | Counter | `schema`, `table`, `status` (`success`/`error`) | — | Background hydrations |
-| `sqlgen.cache.circuit_breaker` | Gauge | `state` (`closed`/`open`/`half_open`) | — | Current circuit breaker state |
+| `sqlgen.cache.circuit_breaker` | Gauge | `state` (`closed`/`open`/`half_open`) | — | Current circuit breaker state: each transition records 0 under the state left and 1 under the state entered, so with transitions delivered in order exactly one state reads 1 |
 | `sqlgen.cache.get.duration` | Histogram | `schema`, `table` | seconds | Backend `Get` latency |
 | `sqlgen.cache.set.duration` | Histogram | `schema`, `table` | seconds | Backend `Set` latency |
 | `sqlgen.cache.invalidate.duration` | Histogram | `schema`, `table` | seconds | Backend `Invalidate*` latency |
