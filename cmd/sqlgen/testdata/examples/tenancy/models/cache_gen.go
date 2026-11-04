@@ -3242,40 +3242,50 @@ func (c *Cache) Invalidate(ctx context.Context, table hook.TableName, pk any) er
 // automatically) or InvalidateTable / BuildTenantTablePattern for
 // pattern-based clears.
 func (c *Cache) InvalidateMany(ctx context.Context, table hook.TableName, pks []any) error {
-	var (
-		keys []string
-		err  error
-	)
-	switch table {
-	case TablePostTags:
-		keys, err = cache.KeysFromAny(pks, c.keyForPostTag)
-	case TableWorkspaces:
-		keys, err = cache.KeysFromAny(pks, c.keyForWorkspace)
-	case TableArticles:
-		return fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
-	case TableLegacyWidgets:
-		return fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
-	case TableOrderItems:
-		return fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
-	case TablePosts:
-		return fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
-	case TableProducts:
-		return fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
-	case TableTags:
-		return fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
-	case TableTagLinks:
-		return fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
-	case TableUsers:
-		return fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
-	case TableUserProfiles:
-		return fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
-	default:
-		return fmt.Errorf("cache: unknown or non-cached table %q", table)
-	}
+	keys, err := c.keysFor(table, pks)
 	if err != nil {
-		return fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		return err
 	}
 	return c.invalidateKeys(ctx, table, keys)
+}
+
+// keysFor builds the cache keys for pks on a non-tenanted cached table. It
+// touches no backend, so its errors are the caller's to report.
+func (c *Cache) keysFor(table hook.TableName, pks []any) ([]string, error) {
+	switch table {
+	case TablePostTags:
+		keys, err := cache.KeysFromAny(pks, c.keyForPostTag)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableWorkspaces:
+		keys, err := cache.KeysFromAny(pks, c.keyForWorkspace)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableArticles:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	case TableLegacyWidgets:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	case TableOrderItems:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	case TablePosts:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	case TableProducts:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	case TableTags:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	case TableTagLinks:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	case TableUsers:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	case TableUserProfiles:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	default:
+		return nil, fmt.Errorf("cache: unknown or non-cached table %q", table)
+	}
 }
 
 // invalidateAffectedTenanted routes per-row invalidation for a tenanted
@@ -4128,11 +4138,10 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 			if len(affected) == 0 {
 				return nil
 			}
-			// A table the config left uncached still reaches this hook. It
-			// has nothing to evict, and the "non-cached table" error would
-			// otherwise surface out of a CallbackSync commit for a write
-			// that already succeeded.
-			if _, ok := cacheSchemaFor(table); !ok {
+			// A table the config left uncached still reaches this hook, and
+			// has nothing to evict.
+			schema, ok := cacheSchemaFor(table)
+			if !ok {
 				return nil
 			}
 			switch table {
@@ -4173,7 +4182,14 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 				// captured tenant — never a cross-tenant clear.
 				return c.invalidateAffectedTenanted(ctx, table, affectedTenants, affected)
 			}
-			return c.InvalidateMany(ctx, table, affected)
+			keys, err := c.keysFor(table, affected)
+			if err != nil {
+				// No backend call failed, so the error policy has not seen
+				// this: report it here, without breaker feedback.
+				cache.RouteError(ctx, c.metrics, c.onError, nil, "invalidate_many", schema, table, err)
+				return nil
+			}
+			return c.invalidateKeys(ctx, table, keys)
 		}
 		return nil
 	}
@@ -4198,8 +4214,8 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 	}
 
 	if tx := database.FromContext(ctx); tx != nil && !tx.IsClosed() {
-		tx.OnCommit(entityOp)
-		tx.OnCommit(viewOp)
+		c.afterCommit(tx, entityOp)
+		c.afterCommit(tx, viewOp)
 		return
 	}
 	_ = entityOp(ctx)
@@ -4223,10 +4239,23 @@ func (c *Cache) dispatchRefresh(ctx context.Context, table hook.TableName) {
 		return c.InvalidateTable(ctx, table)
 	}
 	if tx := database.FromContext(ctx); tx != nil && !tx.IsClosed() {
-		tx.OnCommit(refreshOp)
+		c.afterCommit(tx, refreshOp)
 		return
 	}
 	_ = refreshOp(ctx)
+}
+
+// afterCommit registers op on tx.OnCommit. A failing op runs once more, as any
+// commit callback does, but its error never leaves the callback: the write has
+// committed, and every failure has already gone through the error policy, so a
+// synchronous commit must not report it to the caller.
+func (c *Cache) afterCommit(tx *database.Tx, op func(ctx context.Context) error) {
+	tx.OnCommit(func(ctx context.Context) error {
+		if err := op(ctx); err != nil {
+			_ = op(ctx)
+		}
+		return nil
+	})
 }
 
 // isCachedView reports whether table names a cached view.

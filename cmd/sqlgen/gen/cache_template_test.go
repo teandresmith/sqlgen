@@ -2,10 +2,13 @@ package gen_test
 
 import (
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 	"text/template"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gen"
@@ -82,13 +85,13 @@ func TestCacheTemplate_emitsInvalidateDispatch(t *testing.T) {
 	)
 	out := executeCacheTemplate(t, ctx)
 
-	if !strings.Contains(out, "case TableProducts:\n\t\tkeys, err = cache.KeysFromAny(pks, c.keyForProduct)") {
+	if !strings.Contains(out, "case TableProducts:\n\t\tkeys, err := cache.KeysFromAny(pks, c.keyForProduct)") {
 		t.Error("InvalidateMany dispatch missing Product case")
 	}
-	if !strings.Contains(out, "case TableOrderItems:\n\t\tkeys, err = cache.KeysFromAny(pks, c.keyForOrderItem)") {
+	if !strings.Contains(out, "case TableOrderItems:\n\t\tkeys, err := cache.KeysFromAny(pks, c.keyForOrderItem)") {
 		t.Error("InvalidateMany dispatch missing OrderItem case")
 	}
-	if !strings.Contains(out, `return fmt.Errorf("cache: unknown or non-cached table %q", table)`) {
+	if !strings.Contains(out, `return nil, fmt.Errorf("cache: unknown or non-cached table %q", table)`) {
 		t.Error("InvalidateMany missing canonical unknown-table error")
 	}
 }
@@ -119,7 +122,7 @@ func TestCacheTemplate_emitsCustomSerializerError(t *testing.T) {
 	ctx := gen.BuildCacheContext([]gen.TableContext{cacheTestTable()}, nil, cfg, "db", "Client")
 	out := executeCacheTemplate(t, ctx)
 
-	if !strings.Contains(out, `fmt.Errorf("cache: serializer: custom requires WithSerializer(...)`) {
+	if !strings.Contains(out, `fmt.Errorf("cache: serializer: custom requires WithSerializer(...) — see cache.serializer in sqlgen.yml")`) {
 		t.Errorf("missing custom-serializer construction error; output:\n%s", out)
 	}
 }
@@ -862,7 +865,7 @@ func TestCacheTemplate_emitsRefreshInvalidation(t *testing.T) {
 		"func (c *Cache) dispatchRefresh(ctx context.Context, table hook.TableName)",
 		"func (c *Cache) isCachedView(table hook.TableName) bool",
 		"case TableOrderSummaries:\n\t\treturn true",
-		"tx.OnCommit(refreshOp)",
+		"c.afterCommit(tx, refreshOp)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in generated output", want)
@@ -920,9 +923,8 @@ func TestCacheTemplate_whereOpsShareKeyBasedArm(t *testing.T) {
 		t.Errorf("BuildTablePattern call count = %d, want 1 (InvalidateTable only); a mutation-path pattern wipe has come back", got)
 	}
 
-	// The uncached-table guard keeps a cache-bookkeeping miss from failing a
-	// committed write under CallbackSync (PRD §27.9).
-	if !strings.Contains(out, "if _, ok := cacheSchemaFor(table); !ok {") {
+	// The uncached-table guard returns before any backend call.
+	if !strings.Contains(out, "schema, ok := cacheSchemaFor(table)\n\t\t\tif !ok {\n\t\t\t\treturn nil\n\t\t\t}") {
 		t.Error("invalidation arm missing the uncached-table guard")
 	}
 }
@@ -1038,5 +1040,29 @@ func TestCacheTemplate_storesEveryAccessRoleUnredacted(t *testing.T) {
 
 	if !strings.Contains(out, "cache.GetAs[*User](") {
 		t.Errorf("cache read path does not decode the full *User entity\n%s", out)
+	}
+}
+
+// TestCacheTemplate_errorOpLabels collects the op label of every error the
+// generated facade routes through the error policy. The event adapter's
+// "invalidate" belongs to the runtime cache package, not to this file.
+func TestCacheTemplate_errorOpLabels(t *testing.T) {
+	cfg := cacheTestConfig(true)
+	ctx := gen.BuildCacheContext([]gen.TableContext{cacheTestTable(), cacheTestTenantedTable()}, nil, cfg, "db", "Client")
+	out := executeCacheTemplate(t, ctx)
+
+	calls := regexp.MustCompile(`cache\.RouteError\(ctx, c\.metrics, c\.onError, [a-z.]+, "([a-z_]+)"`).FindAllStringSubmatch(out, -1)
+	if n := strings.Count(out, "cache.RouteError("); n != len(calls) {
+		t.Fatalf("matched an op label on %d of %d cache.RouteError calls; a call changed shape", len(calls), n)
+	}
+	var got []string
+	for _, c := range calls {
+		got = append(got, c[1])
+	}
+	slices.Sort(got)
+	got = slices.Compact(got)
+	want := []string{"get", "invalidate_many", "invalidate_pattern", "invalidate_tenant_fallback", "set"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("RouteError op labels mismatch (-want +got):\n%s", diff)
 	}
 }

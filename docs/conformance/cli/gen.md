@@ -784,6 +784,7 @@ is claimed by a row in this file or another registry file.
 | cmd/sqlgen/gen: TestCachedTable_singlePKGoType | Context plumbing; the rendered value-typed key helper is pinned by TestCacheTemplate_emitsSinglePKKeyHelper |
 | cmd/sqlgen/gen: TestCachedTable_compositePKStruct | Context plumbing; the rendered composite key helper is pinned by TestCacheTemplate_emitsCompositePKKeyHelper |
 | cmd/sqlgen/gen: TestFingerprint_tenantValueDoesNotEnter | Compares two identical inputs, so it only re-checks determinism; no tenant value exists at codegen for it to exclude, so it cannot fail on the §29.5 rule |
+| cmd/sqlgen/gen: TestCacheTemplate_errorOpLabels | Pins the generated facade's error op labels, which §27.13 does not yet list as written; the amendment in progress moves it to a `runtime/cache.md` row |
 | cmd/sqlgen/gen: TestCacheTemplate_emitsHasAnyRelationshipHelper | Helper presence only; the relationship bypass is backed by TestCacheTemplate_queryHookPreservesBypassGates |
 | cmd/sqlgen/gen: TestCacheTemplate_hydrateSignatureTakesNext | Internal helper signature; no PRD behavior |
 | cmd/sqlgen/gen: TestBuildSharedTypesContext_helpersSorted | Internal invariant: the static helper list is declared sorted; shared-helper order is not a PRD rule (§5.7 sorts schema elements only) |

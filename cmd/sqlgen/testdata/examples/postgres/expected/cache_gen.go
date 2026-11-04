@@ -7383,74 +7383,188 @@ func (c *Cache) Invalidate(ctx context.Context, table hook.TableName, pk any) er
 // automatically) or InvalidateTable / BuildTenantTablePattern for
 // pattern-based clears.
 func (c *Cache) InvalidateMany(ctx context.Context, table hook.TableName, pks []any) error {
-	var (
-		keys []string
-		err  error
-	)
-	switch table {
-	case TableArticles:
-		keys, err = cache.KeysFromAny(pks, c.keyForArticle)
-	case TableAssets:
-		keys, err = cache.KeysFromAny(pks, c.keyForAsset)
-	case TableAssetDocumentLinks:
-		keys, err = cache.KeysFromAny(pks, c.keyForAssetDocumentLink)
-	case TableAuditNotes:
-		keys, err = cache.KeysFromAny(pks, c.keyForAuditNote)
-	case TableAuditUsers:
-		keys, err = cache.KeysFromAny(pks, c.keyForAuditUser)
-	case TableCategories:
-		keys, err = cache.KeysFromAny(pks, c.keyForCategory)
-	case TableCounters:
-		keys, err = cache.KeysFromAny(pks, c.keyForCounter)
-	case TableDefaultOnlyRows:
-		keys, err = cache.KeysFromAny(pks, c.keyForDefaultOnlyRow)
-	case TableDocuments:
-		keys, err = cache.KeysFromAny(pks, c.keyForDocument)
-	case TableEvents:
-		keys, err = cache.KeysFromAny(pks, c.keyForEvent)
-	case TableFingerprints:
-		keys, err = cache.KeysFromAny(pks, c.keyForFingerprint)
-	case TableHosts:
-		keys, err = cache.KeysFromAny(pks, c.keyForHost)
-	case TableHostFingerprints:
-		keys, err = cache.KeysFromAny(pks, c.keyForHostFingerprint)
-	case TableKeyOnlyRows:
-		keys, err = cache.KeysFromAny(pks, c.keyForKeyOnlyRow)
-	case TableNoteWatchers:
-		keys, err = cache.KeysFromAny(pks, c.keyForNoteWatcher)
-	case TableOrders:
-		keys, err = cache.KeysFromAny(pks, c.keyForOrder)
-	case TableOrderItems:
-		keys, err = cache.KeysFromAny(pks, c.keyForOrderItem)
-	case TableProducts:
-		keys, err = cache.KeysFromAny(pks, c.keyForProduct)
-	case TableProductTagLabels:
-		keys, err = cache.KeysFromAny(pks, c.keyForProductTagLabel)
-	case TableProfiles:
-		keys, err = cache.KeysFromAny(pks, c.keyForProfile)
-	case TablePublicNotes:
-		keys, err = cache.KeysFromAny(pks, c.keyForPublicNote)
-	case TablePublicUsers:
-		keys, err = cache.KeysFromAny(pks, c.keyForPublicUser)
-	case TableRateLimits:
-		keys, err = cache.KeysFromAny(pks, c.keyForRateLimit)
-	case TableSequenceRows:
-		keys, err = cache.KeysFromAny(pks, c.keyForSequenceRow)
-	case TableSluggedRows:
-		keys, err = cache.KeysFromAny(pks, c.keyForSluggedRow)
-	case TableTags:
-		keys, err = cache.KeysFromAny(pks, c.keyForTag)
-	case TableUserCategories:
-		keys, err = cache.KeysFromAny(pks, c.keyForUserCategory)
-	case TableWarehouses:
-		keys, err = cache.KeysFromAny(pks, c.keyForWarehouse)
-	default:
-		return fmt.Errorf("cache: unknown or non-cached table %q", table)
-	}
+	keys, err := c.keysFor(table, pks)
 	if err != nil {
-		return fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		return err
 	}
 	return c.invalidateKeys(ctx, table, keys)
+}
+
+// keysFor builds the cache keys for pks on a non-tenanted cached table. It
+// touches no backend, so its errors are the caller's to report.
+func (c *Cache) keysFor(table hook.TableName, pks []any) ([]string, error) {
+	switch table {
+	case TableArticles:
+		keys, err := cache.KeysFromAny(pks, c.keyForArticle)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableAssets:
+		keys, err := cache.KeysFromAny(pks, c.keyForAsset)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableAssetDocumentLinks:
+		keys, err := cache.KeysFromAny(pks, c.keyForAssetDocumentLink)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableAuditNotes:
+		keys, err := cache.KeysFromAny(pks, c.keyForAuditNote)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableAuditUsers:
+		keys, err := cache.KeysFromAny(pks, c.keyForAuditUser)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableCategories:
+		keys, err := cache.KeysFromAny(pks, c.keyForCategory)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableCounters:
+		keys, err := cache.KeysFromAny(pks, c.keyForCounter)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableDefaultOnlyRows:
+		keys, err := cache.KeysFromAny(pks, c.keyForDefaultOnlyRow)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableDocuments:
+		keys, err := cache.KeysFromAny(pks, c.keyForDocument)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableEvents:
+		keys, err := cache.KeysFromAny(pks, c.keyForEvent)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableFingerprints:
+		keys, err := cache.KeysFromAny(pks, c.keyForFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableHosts:
+		keys, err := cache.KeysFromAny(pks, c.keyForHost)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableHostFingerprints:
+		keys, err := cache.KeysFromAny(pks, c.keyForHostFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableKeyOnlyRows:
+		keys, err := cache.KeysFromAny(pks, c.keyForKeyOnlyRow)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableNoteWatchers:
+		keys, err := cache.KeysFromAny(pks, c.keyForNoteWatcher)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableOrders:
+		keys, err := cache.KeysFromAny(pks, c.keyForOrder)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableOrderItems:
+		keys, err := cache.KeysFromAny(pks, c.keyForOrderItem)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableProducts:
+		keys, err := cache.KeysFromAny(pks, c.keyForProduct)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableProductTagLabels:
+		keys, err := cache.KeysFromAny(pks, c.keyForProductTagLabel)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableProfiles:
+		keys, err := cache.KeysFromAny(pks, c.keyForProfile)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TablePublicNotes:
+		keys, err := cache.KeysFromAny(pks, c.keyForPublicNote)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TablePublicUsers:
+		keys, err := cache.KeysFromAny(pks, c.keyForPublicUser)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableRateLimits:
+		keys, err := cache.KeysFromAny(pks, c.keyForRateLimit)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableSequenceRows:
+		keys, err := cache.KeysFromAny(pks, c.keyForSequenceRow)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableSluggedRows:
+		keys, err := cache.KeysFromAny(pks, c.keyForSluggedRow)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableTags:
+		keys, err := cache.KeysFromAny(pks, c.keyForTag)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableUserCategories:
+		keys, err := cache.KeysFromAny(pks, c.keyForUserCategory)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableWarehouses:
+		keys, err := cache.KeysFromAny(pks, c.keyForWarehouse)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	default:
+		return nil, fmt.Errorf("cache: unknown or non-cached table %q", table)
+	}
 }
 
 // InvalidateTable clears every cached entry for the given table, including
@@ -8161,14 +8275,20 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 			if len(affected) == 0 {
 				return nil
 			}
-			// A table the config left uncached still reaches this hook. It
-			// has nothing to evict, and the "non-cached table" error would
-			// otherwise surface out of a CallbackSync commit for a write
-			// that already succeeded.
-			if _, ok := cacheSchemaFor(table); !ok {
+			// A table the config left uncached still reaches this hook, and
+			// has nothing to evict.
+			schema, ok := cacheSchemaFor(table)
+			if !ok {
 				return nil
 			}
-			return c.InvalidateMany(ctx, table, affected)
+			keys, err := c.keysFor(table, affected)
+			if err != nil {
+				// No backend call failed, so the error policy has not seen
+				// this: report it here, without breaker feedback.
+				cache.RouteError(ctx, c.metrics, c.onError, nil, "invalidate_many", schema, table, err)
+				return nil
+			}
+			return c.invalidateKeys(ctx, table, keys)
 		}
 		return nil
 	}
@@ -8193,8 +8313,8 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 	}
 
 	if tx := database.FromContext(ctx); tx != nil && !tx.IsClosed() {
-		tx.OnCommit(entityOp)
-		tx.OnCommit(viewOp)
+		c.afterCommit(tx, entityOp)
+		c.afterCommit(tx, viewOp)
 		return
 	}
 	_ = entityOp(ctx)
@@ -8218,10 +8338,23 @@ func (c *Cache) dispatchRefresh(ctx context.Context, table hook.TableName) {
 		return c.InvalidateTable(ctx, table)
 	}
 	if tx := database.FromContext(ctx); tx != nil && !tx.IsClosed() {
-		tx.OnCommit(refreshOp)
+		c.afterCommit(tx, refreshOp)
 		return
 	}
 	_ = refreshOp(ctx)
+}
+
+// afterCommit registers op on tx.OnCommit. A failing op runs once more, as any
+// commit callback does, but its error never leaves the callback: the write has
+// committed, and every failure has already gone through the error policy, so a
+// synchronous commit must not report it to the caller.
+func (c *Cache) afterCommit(tx *database.Tx, op func(ctx context.Context) error) {
+	tx.OnCommit(func(ctx context.Context) error {
+		if err := op(ctx); err != nil {
+			_ = op(ctx)
+		}
+		return nil
+	})
 }
 
 // isCachedView reports whether table names a cached view.
