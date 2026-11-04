@@ -1,6 +1,6 @@
 # Runtime Requirements: Caching
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: cache cache/memory cache/redis cache/msgpack metrics/otel -->
 <!-- matrix: cache-keys rows=key-shape:entity,table-pattern,tenant-table-pattern cols=single-pk,composite-pk,schema,no-schema,tenanted -->
 
