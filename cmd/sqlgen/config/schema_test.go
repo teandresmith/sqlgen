@@ -112,6 +112,10 @@ func TestSchemaV1_rejectsKnownMistakes(t *testing.T) {
 			yaml: "output:\n  driver: pq\n",
 		},
 		{
+			name: "cache warming block",
+			yaml: "cache:\n  enabled: true\n  warm:\n    enabled: true\n",
+		},
+		{
 			name: "invalid operations preset",
 			yaml: "api:\n  operations: readonly\n",
 		},

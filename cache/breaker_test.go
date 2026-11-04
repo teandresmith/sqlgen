@@ -89,7 +89,7 @@ func TestBreaker_NthFailureTripsAndFiresStateChange(t *testing.T) {
 func TestBreaker_OpenAllowReturnsFalseUntilProbeIntervalElapses(t *testing.T) {
 	b := cache.NewBreaker(cache.BreakerConfig{
 		FailureThreshold:  1,
-		ProbeInterval:     50 * time.Millisecond,
+		ProbeInterval:     time.Hour,
 		HalfOpenMaxProbes: 1,
 	})
 	b.RecordFailure() // trip immediately
@@ -139,10 +139,12 @@ func TestBreaker_AllowPostProbeIntervalTransitionsToHalfOpen(t *testing.T) {
 
 // --- Case (f) ---
 func TestBreaker_HalfOpenSuccessReturnsToClosed(t *testing.T) {
+	onChange, snap := newStateRecorder()
 	b := cache.NewBreaker(cache.BreakerConfig{
 		FailureThreshold:  2,
 		ProbeInterval:     10 * time.Millisecond,
 		HalfOpenMaxProbes: 1,
+		OnStateChange:     onChange,
 	})
 	b.RecordFailure()
 	b.RecordFailure()
@@ -153,6 +155,10 @@ func TestBreaker_HalfOpenSuccessReturnsToClosed(t *testing.T) {
 	b.RecordSuccess()
 	if got := b.State(); got != cache.StateClosed {
 		t.Errorf("State() after HalfOpen success = %v, want Closed", got)
+	}
+	records := snap()
+	if last := records[len(records)-1]; last != (stateRecord{cache.StateHalfOpen, cache.StateClosed}) {
+		t.Errorf("last OnStateChange = %v, want {HalfOpen Closed}", last)
 	}
 	// Counter must be reset: N-1 failures must not trip.
 	b.RecordFailure()
@@ -165,12 +171,14 @@ func TestBreaker_HalfOpenSuccessReturnsToClosed(t *testing.T) {
 func TestBreaker_HalfOpenFailureReopensImmediately(t *testing.T) {
 	onChange, snap := newStateRecorder()
 	b := cache.NewBreaker(cache.BreakerConfig{
-		FailureThreshold:  1,
+		FailureThreshold:  3,
 		ProbeInterval:     10 * time.Millisecond,
 		HalfOpenMaxProbes: 1,
 		OnStateChange:     onChange,
 	})
-	b.RecordFailure()
+	for range 3 {
+		b.RecordFailure()
+	}
 	time.Sleep(25 * time.Millisecond)
 	if !b.Allow() {
 		t.Fatalf("Allow() post-interval = false, want true")

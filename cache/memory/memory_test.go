@@ -246,6 +246,16 @@ func TestInvalidatePattern(t *testing.T) {
 		}
 	})
 
+	t.Run("no matching key is not an error", func(t *testing.T) {
+		b := newBackend(t, memory.Options{MaxSize: 16})
+		if err := b.Set(ctx, "sqlgen:public.orders:pk:9", []byte("9"), time.Hour); err != nil {
+			t.Fatalf("Set() err = %v", err)
+		}
+		if err := b.InvalidatePattern(ctx, "sqlgen:public.products:*"); err != nil {
+			t.Errorf("InvalidatePattern(no match) err = %v, want nil", err)
+		}
+	})
+
 	t.Run("missing trailing star errors", func(t *testing.T) {
 		b := newBackend(t, memory.Options{MaxSize: 16})
 		if err := b.InvalidatePattern(ctx, "sqlgen:products"); err == nil {
@@ -279,11 +289,11 @@ func TestStatsReportsActivity(t *testing.T) {
 	}
 
 	got := b.Stats()
-	if got.Hits == 0 {
-		t.Errorf("Stats().Hits = 0, want > 0")
+	if got.Hits != 1 {
+		t.Errorf("Stats().Hits = %d, want 1", got.Hits)
 	}
-	if got.Misses == 0 {
-		t.Errorf("Stats().Misses = 0, want > 0")
+	if got.Misses != 1 {
+		t.Errorf("Stats().Misses = %d, want 1", got.Misses)
 	}
 	if got.Sets != 2 {
 		t.Errorf("Stats().Sets = %d, want 2", got.Sets)

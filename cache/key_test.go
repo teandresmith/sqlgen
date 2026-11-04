@@ -423,3 +423,81 @@ func TestBuildTablePattern(t *testing.T) {
 		})
 	}
 }
+
+// matches applies the Backend pattern contract: a pattern is a literal prefix
+// followed by one trailing "*".
+func matches(pattern, key string) bool {
+	prefix, ok := strings.CutSuffix(pattern, "*")
+	return ok && strings.HasPrefix(key, prefix)
+}
+
+func TestPatternsMatchTheKeysTheyCover(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		key     string
+		want    bool
+	}{
+		{
+			name:    "table pattern matches every tenant of a tenanted table",
+			pattern: cache.BuildTablePattern("sqlgen", "public", "orders"),
+			key:     cache.BuildTenantKey("sqlgen", "public", "orders", "1a2b3c4d", "acme", 42),
+			want:    true,
+		},
+		{
+			name:    "table pattern matches a composite tenanted key",
+			pattern: cache.BuildTablePattern("sqlgen", "", "order_items"),
+			key:     cache.BuildCompositeTenantKey("sqlgen", "", "order_items", "1a2b3c4d", "acme", []any{1, 2}),
+			want:    true,
+		},
+		{
+			name:    "table pattern matches an earlier fingerprint generation",
+			pattern: cache.BuildTablePattern("sqlgen", "public", "products"),
+			key:     cache.BuildKey("sqlgen", "public", "products", "00000000", 42),
+			want:    true,
+		},
+		{
+			name:    "table pattern does not match a table whose name extends it",
+			pattern: cache.BuildTablePattern("sqlgen", "public", "products"),
+			key:     cache.BuildKey("sqlgen", "public", "products_archive", "1a2b3c4d", 42),
+			want:    false,
+		},
+		{
+			name:    "table pattern does not match the same table in another schema",
+			pattern: cache.BuildTablePattern("sqlgen", "public", "users"),
+			key:     cache.BuildKey("sqlgen", "audit", "users", "1a2b3c4d", 42),
+			want:    false,
+		},
+		{
+			name:    "tenant pattern matches its tenant under any fingerprint",
+			pattern: cache.BuildTenantTablePattern("sqlgen", "public", "orders", "acme"),
+			key:     cache.BuildTenantKey("sqlgen", "public", "orders", "00000000", "acme", 42),
+			want:    true,
+		},
+		{
+			name:    "tenant pattern matches its tenant's composite keys",
+			pattern: cache.BuildTenantTablePattern("sqlgen", "", "order_items", 7),
+			key:     cache.BuildCompositeTenantKey("sqlgen", "", "order_items", "1a2b3c4d", 7, []any{1, 2}),
+			want:    true,
+		},
+		{
+			name:    "tenant pattern does not match another tenant",
+			pattern: cache.BuildTenantTablePattern("sqlgen", "public", "orders", "acme"),
+			key:     cache.BuildTenantKey("sqlgen", "public", "orders", "1a2b3c4d", "globex", 42),
+			want:    false,
+		},
+		{
+			name:    "tenant pattern does not match a tenant whose value extends it",
+			pattern: cache.BuildTenantTablePattern("sqlgen", "public", "orders", 1),
+			key:     cache.BuildTenantKey("sqlgen", "public", "orders", "1a2b3c4d", 10, 42),
+			want:    false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := matches(tt.pattern, tt.key); got != tt.want {
+				t.Errorf("pattern %q matches key %q = %v, want %v", tt.pattern, tt.key, got, tt.want)
+			}
+		})
+	}
+}

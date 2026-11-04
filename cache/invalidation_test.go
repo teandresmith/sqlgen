@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/teandresmith/sqlgen/cache"
 	"github.com/teandresmith/sqlgen/event"
 	"github.com/teandresmith/sqlgen/event/memorybus"
@@ -311,7 +313,7 @@ func TestFromEventSubscriber_HandlerErrorIsRecordedAndPropagates(t *testing.T) {
 	}
 	gotErr := fake.dispatch(context.Background(), ev)
 
-	if !errors.Is(gotErr, boom) {
+	if gotErr != boom { //nolint:errorlint // identity: the handler's error is returned as-is
 		t.Errorf("event.Handler error = %v, want %v (must propagate for ACK transports)", gotErr, boom)
 	}
 
@@ -329,7 +331,7 @@ func TestFromEventSubscriber_HandlerErrorIsRecordedAndPropagates(t *testing.T) {
 	if r.table != adapterTable {
 		t.Errorf("metrics.Error table = %q, want %q", r.table, adapterTable)
 	}
-	if !errors.Is(r.err, boom) {
+	if r.err != boom { //nolint:errorlint // identity: the recorder gets the handler's own error
 		t.Errorf("metrics.Error err = %v, want %v", r.err, boom)
 	}
 }
@@ -459,14 +461,8 @@ func TestFromEventSubscriber_SubscribesToAllTablesAndActions(t *testing.T) {
 	opts := fake.handlerOpts
 	fake.mu.Unlock()
 
-	if len(opts.Tables) != 0 {
-		t.Errorf("SubscribeOptions.Tables = %v, want empty (all tables)", opts.Tables)
-	}
-	if len(opts.Actions) != 0 {
-		t.Errorf("SubscribeOptions.Actions = %v, want empty (all actions)", opts.Actions)
-	}
-	if opts.Group != "" {
-		t.Errorf("SubscribeOptions.Group = %q, want \"\" (broadcast, not grouped)", opts.Group)
+	if diff := cmp.Diff(event.SubscribeOptions{}, opts); diff != "" {
+		t.Errorf("SubscribeOptions mismatch, want the zero value (all tables, all actions, no group) (-want +got):\n%s", diff)
 	}
 }
 
@@ -520,3 +516,17 @@ type noopInvalidationSubscription struct{}
 func (noopInvalidationSubscription) Unsubscribe() error { return nil }
 
 var _ cache.InvalidationSubscription = noopInvalidationSubscription{}
+
+func TestFromEventSubscriber_HandlerErrorWithoutMetricsPropagates(t *testing.T) {
+	fake := &fakeSubscriber{}
+	src := cache.FromEventSubscriber(fake)
+	boom := errors.New("backend down")
+	h := &capturingHandler{err: boom}
+	if _, err := src.Subscribe(h.handle); err != nil {
+		t.Fatalf("Subscribe() err = %v", err)
+	}
+	ev := event.Event{ID: "ev-1", Table: adapterWireTable, Schema: adapterSchema, Action: event.Update, PK: 7}
+	if err := fake.dispatch(context.Background(), ev); err != boom { //nolint:errorlint // identity: the handler's error is returned as-is
+		t.Errorf("event.Handler error = %v, want %v returned as-is", err, boom)
+	}
+}

@@ -57,6 +57,21 @@ generation:
 `,
 			wantErr: "field markdwn_dir not found",
 		},
+		{
+			name: "cache warming is not a config key",
+			yaml: `
+input:
+  dialect: postgres
+  paths: ["./migrations"]
+output:
+  dir: ./models
+cache:
+  enabled: true
+  warm:
+    enabled: true
+`,
+			wantErr: "field warm not found",
+		},
 	}
 
 	for _, tt := range tests {

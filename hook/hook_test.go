@@ -150,28 +150,35 @@ func TestMutationContextFields(t *testing.T) {
 	// named-type field changes type; the pointer assignments pin the any fields,
 	// which accept any value.
 	type fields struct {
-		Op          hook.MutationOp
-		Table       hook.TableName
-		Schema      string
-		PK          any
-		Input       any
-		CallOptions any
-		AffectedPKs []any
+		Op              hook.MutationOp
+		Table           hook.TableName
+		Schema          string
+		PK              any
+		Input           any
+		CallOptions     any
+		AffectedPKs     []any
+		AffectedTenants []any
+		Tenant          any
 	}
 	m := &hook.MutationContext{
-		Op:          hook.OpUpdate,
-		Table:       "public.products",
-		Schema:      "public",
-		PK:          123,
-		Input:       "some-input",
-		CallOptions: "some-options",
-		AffectedPKs: []any{123},
+		Op:              hook.OpUpdate,
+		Table:           "public.products",
+		Schema:          "public",
+		PK:              123,
+		Input:           "some-input",
+		CallOptions:     "some-options",
+		AffectedPKs:     []any{123},
+		AffectedTenants: []any{"acme"},
+		Tenant:          "acme",
 	}
 
-	pinAny(&m.PK, &m.Input, &m.CallOptions)
+	pinAny(&m.PK, &m.Input, &m.CallOptions, &m.Tenant)
+	// An unkeyed literal of the struct itself fails to compile if a field is
+	// added or removed.
+	_ = hook.MutationContext{hook.OpUpdate, "", "", nil, nil, nil, nil, nil, nil}
 
-	got := fields{m.Op, m.Table, m.Schema, m.PK, m.Input, m.CallOptions, m.AffectedPKs}
-	want := fields{hook.OpUpdate, "public.products", "public", 123, "some-input", "some-options", []any{123}}
+	got := fields{m.Op, m.Table, m.Schema, m.PK, m.Input, m.CallOptions, m.AffectedPKs, m.AffectedTenants, m.Tenant}
+	want := fields{hook.OpUpdate, "public.products", "public", 123, "some-input", "some-options", []any{123}, []any{"acme"}, "acme"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("MutationContext fields mismatch (-want +got):\n%s", diff)
 	}
@@ -250,6 +257,7 @@ func TestQueryContextFields(t *testing.T) {
 		PK          any
 		Input       any
 		CallOptions any
+		Tenant      any
 	}
 	q := &hook.QueryContext{
 		Op:          hook.OpGet,
@@ -258,12 +266,14 @@ func TestQueryContextFields(t *testing.T) {
 		PK:          7,
 		Input:       "filter",
 		CallOptions: "some-options",
+		Tenant:      "acme",
 	}
 
-	pinAny(&q.PK, &q.Input, &q.CallOptions)
+	pinAny(&q.PK, &q.Input, &q.CallOptions, &q.Tenant)
+	_ = hook.QueryContext{hook.OpGet, "", "", nil, nil, nil, nil}
 
-	got := fields{q.Op, q.Table, q.Schema, q.PK, q.Input, q.CallOptions}
-	want := fields{hook.OpGet, "users", "", 7, "filter", "some-options"}
+	got := fields{q.Op, q.Table, q.Schema, q.PK, q.Input, q.CallOptions, q.Tenant}
+	want := fields{hook.OpGet, "users", "", 7, "filter", "some-options", "acme"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("QueryContext fields mismatch (-want +got):\n%s", diff)
 	}

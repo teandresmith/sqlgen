@@ -667,3 +667,39 @@ func TestCloseOwnedClientClosesClient(t *testing.T) {
 		t.Errorf("second Close() err = %v, want nil (idempotent)", err)
 	}
 }
+
+func TestInvalidateManyIgnoresAbsentKeys(t *testing.T) {
+	b, _, _ := newBackend(t)
+	ctx := context.Background()
+	if err := b.Set(ctx, "present", []byte("v"), 0); err != nil {
+		t.Fatalf("Set() err = %v", err)
+	}
+	if err := b.InvalidateMany(ctx, []string{"present", "absent"}); err != nil {
+		t.Fatalf("InvalidateMany(present, absent) err = %v, want nil (absent is not an error)", err)
+	}
+	got, err := b.Get(ctx, "present")
+	if err != nil {
+		t.Fatalf("Get() err = %v", err)
+	}
+	if got != nil {
+		t.Errorf("Get(present) after InvalidateMany = %q, want nil", got)
+	}
+}
+
+func TestInvalidatePatternWithNoMatchIsNotAnError(t *testing.T) {
+	b, _, _ := newBackend(t)
+	ctx := context.Background()
+	if err := b.Set(ctx, "sqlgen:public.orders:pk:9", []byte("o"), 0); err != nil {
+		t.Fatalf("Set() err = %v", err)
+	}
+	if err := b.InvalidatePattern(ctx, "sqlgen:public.products:*"); err != nil {
+		t.Errorf("InvalidatePattern(no match) err = %v, want nil", err)
+	}
+	got, err := b.Get(ctx, "sqlgen:public.orders:pk:9")
+	if err != nil {
+		t.Fatalf("Get() err = %v", err)
+	}
+	if !bytes.Equal(got, []byte("o")) {
+		t.Errorf("Get(orders) = %q, want %q (pattern must not match)", got, "o")
+	}
+}
