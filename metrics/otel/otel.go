@@ -123,7 +123,7 @@ func New(provider metric.MeterProvider) cache.MetricsRecorder {
 
 	breakerState, _ := meter.Int64Gauge(
 		instrCircuitBreaker,
-		metric.WithDescription("Current cache circuit breaker state; value is 1 for the current state label."),
+		metric.WithDescription("Current cache circuit breaker state: 1 under the current state label, 0 under the others it has held."),
 	)
 
 	getLatency, _ := meter.Float64Histogram(
@@ -232,14 +232,14 @@ func (r *recorder) HydrationComplete(schema string, table hook.TableName, err er
 	))
 }
 
-// CircuitBreakerStateChange records a single data point on the
-// sqlgen.cache.circuit_breaker gauge with value 1 and a state label
-// naming the new state. No schema / table attributes — the breaker is
-// *Cache-scoped, not per-table.
-func (r *recorder) CircuitBreakerStateChange(_, to cache.CircuitState) {
-	r.breakerState.Record(context.Background(), 1, metric.WithAttributes(
-		attribute.String(attrKeyState, to.String()),
-	))
+// CircuitBreakerStateChange moves the sqlgen.cache.circuit_breaker gauge to
+// the new state: value 0 under the state label it left and 1 under the one it
+// entered, so exactly one state reads 1. No schema / table attributes — the
+// breaker is *Cache-scoped, not per-table.
+func (r *recorder) CircuitBreakerStateChange(from, to cache.CircuitState) {
+	ctx := context.Background()
+	r.breakerState.Record(ctx, 0, metric.WithAttributes(attribute.String(attrKeyState, from.String())))
+	r.breakerState.Record(ctx, 1, metric.WithAttributes(attribute.String(attrKeyState, to.String())))
 }
 
 // GetLatency records a backend Get duration on the
