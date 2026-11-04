@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/teandresmith/sqlgen/comparator"
 	dbstdlib "github.com/teandresmith/sqlgen/database/stdlib"
 	"github.com/teandresmith/sqlgen/event"
+	"github.com/teandresmith/sqlgen/hook"
 	"github.com/teandresmith/sqlgen/omittable"
 
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/events/models"
@@ -208,6 +210,7 @@ func TestEvent_UpdateWhere(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("got %d events, want 2 (affected row count)", len(events))
 	}
+	assertEventPKs(t, events, []int64{p1.ID, p2.ID})
 }
 
 func TestEvent_Upsert(t *testing.T) {
@@ -360,6 +363,7 @@ func TestEvent_SoftDeleteWhere(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("got %d events, want 2 (affected row count)", len(events))
 	}
+	assertEventPKs(t, events, []int64{a1.ID, a2.ID})
 }
 
 func TestEvent_HardDeleteWhere(t *testing.T) {
@@ -383,6 +387,7 @@ func TestEvent_HardDeleteWhere(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("got %d events, want 2 (affected row count)", len(events))
 	}
+	assertEventPKs(t, events, []int64{p1.ID, p2.ID})
 }
 
 func TestEvent_Restore(t *testing.T) {
@@ -635,6 +640,7 @@ func TestEvent_RestoreWhere(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("got %d events, want 2 (affected row count)", len(events))
 	}
+	assertEventPKs(t, events, []int64{a1.ID, a2.ID})
 }
 
 func TestEvent_Increment(t *testing.T) {
@@ -669,10 +675,21 @@ func TestEvent_Increment(t *testing.T) {
 	}
 }
 
-// A mutation that fails publishes nothing.
+// A mutation that fails publishes nothing, even when the write ran and an
+// inner hook fails it afterwards.
 func TestEvent_FailedMutationPublishesNothing(t *testing.T) {
 	ctx := context.Background()
-	client, bus := newClientWithBus(t)
+	hookErr := errors.New("rejected after write")
+	failAfterWrite := func(next hook.MutationHandler) hook.MutationHandler {
+		return func(ctx context.Context, mc *hook.MutationContext) (any, error) {
+			result, err := next(ctx, mc)
+			if err == nil && mc.Op == hook.OpUpdateMany {
+				return result, hookErr
+			}
+			return result, err
+		}
+	}
+	client, bus := newClientWithBus(t, models.WithMutationHook(failAfterWrite))
 
 	p, err := client.Products().Create(ctx, &models.CreateProductInput{Name: "Dup", SKU: "EV-FAIL-1", Price: 1})
 	if err != nil {
@@ -687,6 +704,17 @@ func TestEvent_FailedMutationPublishesNothing(t *testing.T) {
 	}
 	if events := got.snapshot(); len(events) != 0 {
 		t.Errorf("got %d events after a failed Create, want 0: %+v", len(events), events)
+	}
+
+	// The write runs and records its affected rows; the inner hook then
+	// fails the call.
+	if _, err := client.Products().UpdateMany(ctx, []models.UpdateProductItem{
+		{ID: p.ID, Input: &models.UpdateProductInput{Price: omittable.Set(2.0)}},
+	}); !errors.Is(err, hookErr) {
+		t.Fatalf("UpdateMany err = %v, want %v", err, hookErr)
+	}
+	if events := got.snapshot(); len(events) != 0 {
+		t.Errorf("got %d events after a failed UpdateMany, want 0: %+v", len(events), events)
 	}
 }
 
@@ -723,11 +751,70 @@ func TestEvent_BatchMutationPublishesOneBatch(t *testing.T) {
 	for i, p := range created {
 		ids[i] = p.ID
 	}
+	if _, err := client.Products().UpdateMany(ctx, []models.UpdateProductItem{
+		{ID: ids[0], Input: &models.UpdateProductInput{Price: omittable.Set(2.0)}},
+		{ID: ids[1], Input: &models.UpdateProductInput{Price: omittable.Set(2.0)}},
+	}); err != nil {
+		t.Fatalf("UpdateMany: %v", err)
+	}
+	if _, err := client.Products().UpdateWhere(ctx,
+		&models.ProductFilter{ID: &comparator.Number[int64]{In: ids}},
+		&models.UpdateProductInput{Price: omittable.Set(3.0)},
+	); err != nil {
+		t.Fatalf("UpdateWhere: %v", err)
+	}
+	if err := client.Products().HardDeleteMany(ctx, ids); err != nil {
+		t.Fatalf("HardDeleteMany: %v", err)
+	}
 	rec.mu.Lock()
 	got := slices.Clone(rec.batches)
 	rec.mu.Unlock()
-	if !slices.Equal(got, []int{3}) {
-		t.Errorf("PublishBatch batch sizes = %v, want [3] (one call carrying every event)", got)
+	// CreateMany, UpdateMany, UpdateWhere, HardDeleteMany: one call each.
+	if !slices.Equal(got, []int{3, 2, 3, 3}) {
+		t.Errorf("PublishBatch batch sizes = %v, want [3 2 3 3] (one call per mutation, carrying every event)", got)
 	}
-	_ = client.Products().HardDeleteMany(ctx, ids)
+}
+
+// A mutation that affects no row never calls PublishBatch, not even with an
+// empty batch.
+func TestEvent_NoAffectedRowCallsNoPublishBatch(t *testing.T) {
+	ctx := context.Background()
+	rec := &batchRecorder{}
+	client := models.New(dbstdlib.New(testDB), models.WithEventPublisher(rec))
+
+	const missingID int64 = 987_654
+	if err := client.Products().HardDelete(ctx, missingID); err != nil && !errors.Is(err, models.ErrNotFound) {
+		t.Fatalf("HardDelete(missing): %v", err)
+	}
+	missing := missingID
+	if _, err := client.Products().UpdateWhere(ctx,
+		&models.ProductFilter{ID: &comparator.Number[int64]{Eq: &missing}},
+		&models.UpdateProductInput{Price: omittable.Set(1.0)},
+	); err != nil {
+		t.Fatalf("UpdateWhere(zero match): %v", err)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.batches) != 0 {
+		t.Errorf("PublishBatch calls = %v, want none", rec.batches)
+	}
+}
+
+// assertEventPKs checks that events carry exactly the given int64 PKs, one
+// each, in any order.
+func assertEventPKs(t *testing.T, events []event.Event, want []int64) {
+	t.Helper()
+	got := make([]int64, 0, len(events))
+	for _, e := range events {
+		pk, ok := e.PK.(int64)
+		if !ok {
+			t.Errorf("event PK = %v (%T), want an int64", e.PK, e.PK)
+		}
+		got = append(got, pk)
+	}
+	slices.Sort(got)
+	want = slices.Sorted(slices.Values(want))
+	if !slices.Equal(got, want) {
+		t.Errorf("event PKs = %v, want %v (one event per affected row)", got, want)
+	}
 }

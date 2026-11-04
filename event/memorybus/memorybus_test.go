@@ -60,7 +60,7 @@ func TestPublishBatch(t *testing.T) {
 
 	events := []event.Event{
 		{ID: "1", Table: "products", Action: event.Create},
-		{ID: "2", Table: "products", Action: event.Update},
+		{ID: "2", Table: "orders", Action: event.Update},
 		{ID: "3", Table: "products", Action: event.Delete},
 	}
 	if err := bus.PublishBatch(context.Background(), events); err != nil {
@@ -128,6 +128,20 @@ func TestFilters(t *testing.T) {
 				{ID: "2", Table: "orders", Action: event.Update},
 			},
 			wantBySub: map[int][]string{0: {"1", "2"}},
+		},
+		{
+			name: "two tables and two actions",
+			subOptions: []event.SubscribeOptions{
+				{Tables: []string{"products", "orders"}, Actions: []event.Action{event.Create, event.Delete}},
+			},
+			publish: []event.Event{
+				{ID: "1", Table: "products", Action: event.Create},
+				{ID: "2", Table: "orders", Action: event.Delete},
+				{ID: "3", Table: "users", Action: event.Create},
+				{ID: "4", Table: "orders", Action: event.Update},
+				{ID: "5", Table: "products", Action: event.Delete},
+			},
+			wantBySub: map[int][]string{0: {"1", "2", "5"}},
 		},
 		{
 			name: "multiple subscribers with different filters",
@@ -403,15 +417,17 @@ func TestConcurrentPublishSubscribe(t *testing.T) {
 	const workers = 8
 	const events = 200
 
-	var received int64
-	var handler event.Handler = func(_ context.Context, _ event.Event) error {
-		atomic.AddInt64(&received, 1)
+	var standing int64
+	var standingHandler event.Handler = func(_ context.Context, _ event.Event) error {
+		atomic.AddInt64(&standing, 1)
 		return nil
 	}
+	var handler event.Handler = func(_ context.Context, _ event.Event) error { return nil }
 
-	// Start with a few long-lived subscribers so every publish hits at least one handler.
+	// Long-lived subscribers, counted on their own so churn deliveries cannot
+	// mask a lost one.
 	for range workers {
-		if _, err := bus.Subscribe(event.SubscribeOptions{}, handler); err != nil {
+		if _, err := bus.Subscribe(event.SubscribeOptions{}, standingHandler); err != nil {
 			t.Fatalf("Subscribe() unexpected error: %v", err)
 		}
 	}
@@ -444,9 +460,9 @@ func TestConcurrentPublishSubscribe(t *testing.T) {
 
 	wg.Wait()
 
-	// Every publish hits at least the `workers` stable subscribers.
-	if got := atomic.LoadInt64(&received); got < int64(workers*events*workers) {
-		t.Errorf("received = %d, want at least %d", got, workers*events*workers)
+	// Every publish reaches every standing subscriber exactly once.
+	if got := atomic.LoadInt64(&standing); got != int64(workers*events*workers) {
+		t.Errorf("standing deliveries = %d, want %d", got, workers*events*workers)
 	}
 }
 
