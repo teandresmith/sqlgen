@@ -2157,6 +2157,86 @@ database versions it ran against.
        could carry, not only the backend's.
      - `TestMain` is not a test function for `req-check`; don't list it as unclaimed.
 
+   **Nineteenth slice, `runtime/events.md`, recorded 2026-11-04:**
+   - **Scope.** `runtime/events.md` (`event`, `event/memorybus`, `event/natsbus`) had 5 rows, all
+     under §29.6 and all citing `cmd/sqlgen/gen` template tests. As `complete` it failed on 61
+     things: §28.2–§28.7 and §28.11 had no rows, and 54 tests were orphans.
+   - **Rulings (7):**
+     - Six defects fixed (below).
+     - The `transports` matrix declared as
+       `rows=transport:memorybus,nats-core,nats-jetstream cols=delivery,ordering,persistence,handler-error`.
+       The §28.7 table states the first three columns and §28.5 the fourth.
+   - **Defects: 6, all fixed with fail-first tests.**
+     - `efe9fa75` (four defects):
+       - **Schema-less events.** SQLite and MySQL events have no schema, so they publish to
+         `{prefix}.{table}`. A single-table natsbus subscription listened only on
+         `{prefix}.*.{table}` and got none of them (0 of 1 measured), in core mode, under
+         `WithActionSubjects` and on JetStream. It now listens on both forms, with a mutex so
+         the `Handler` never runs concurrently with itself.
+       - **Close.** A `New(conn)` bus's `Close` drained the caller's connection, which closed it.
+         Only a `Connect` bus now closes its connection. The reviewer then found that a
+         `Subscribe` racing `Close` could leave a live subscription once the conn stayed open;
+         `trackSub` now re-checks `closed`.
+       - **Default log.** With no error handler, both buses discarded a `Handler` error, against
+         §28.5's "never silently discarded". They now log it.
+       - **Subscribe-path errors.** natsbus dropped undecodable messages, failed
+         ack/nak/term/metadata reads, failed dead-letter publishes and consumer errors. They now
+         go to the same handler, or the log.
+     - `726f24d7`: outside a transaction, a panicking publisher (or memorybus subscriber) made a
+       committed mutation return an error, and under async commit it killed the process
+       (§28.8). The hook now publishes through `publishEvents`, which recovers the panic into
+       one `OnError` call. The reviewer found that the first shape ran `OnError` inside the
+       recover, so a panicking `OnError` was reported back to itself as a publish panic, twice.
+     - Ruled with a PRD amendment and no code: `natsbus.WithCodec`, named by §28.7.1, never
+       existed and is dropped.
+   - **Measurement.**
+     - Done in-session: every §28.2–§28.7 / §28.11 / §29.6 sentence was mapped to tests across
+       the three packages, the templates and the `events` / `tenancy` examples.
+     - The PRD's own examples were probed. The memorybus and JetStream wiring ran as documented
+       (`MaxAge`, `DedupWindow`, the core tap and `WithBackoff` measured). The sync-commit path
+       with a failing publisher held: `WithTx` nil, `OnError` once, error identity kept. The
+       panicking publisher was found the same way.
+     - About 60 mutants were run, all killed. Two tests have no mutation point:
+       `TestPublishOrder` and `TestNoReplayForLateSubscriber` (memorybus dispatches synchronously
+       and stores nothing). The natsbus suite ran 0 flakes in 5 runs at the start, and the
+       claim check ran each timing test 100 times with 0 failures.
+   - **Gates.** Each code commit was gated on its own tree: `make check`, then a
+     sqlgen-reviewer pass, then `make check-examples`. Reviewer fixups re-ran `make check` and
+     went back to the reviewer.
+   - **Claim check.** An independent pass found 5 high, 11 medium and 4 low issues; all were
+     fixed (`f7d31cf5` and the registry):
+     - The JetStream ack tests could not see a missing ack: the 30 s AckWait is longer than the
+       settle. They now check the consumer's ack state.
+     - The dead-letter test could not see an early dead-letter.
+     - Every `*Where` and `CreateMany` op row passed with all events carrying the first PK.
+     - Filters were only ever tested with one-element lists.
+     - `TestEvent_FailedMutationPublishesNothing` could not fail: a failed Create records no PK.
+     - `event.input.shape-sweep` contradicted §28.6 and was dropped.
+     - `tenant-event.uncaptured-key-absent` lost its example ref: no public path reaches it.
+     - Duplicate dead-letter and nak rows were merged.
+   - **Rows.** `runtime/events.md` 5 → 94 rows (6150 → 6239 in all). All 12 matrix cells are
+     filled; there are 5 unclaimed tests and 12 open gaps.
+     - Other files: `cli/gen.md`'s four event-hook rows gained example refs, and
+       `cli/config-features.md`'s `OnError` row covers panics.
+     - Two findings went to `backlog.md`: the `events` example fails at `-count=2`, and
+       natsbus close and slow-consumer edges.
+     - `guidelines/CI.md`'s natsbus lines were corrected.
+   - **Completion sweep.** With `runtime/events.md` set to `complete`, `req-check` passes.
+   - **Report.** `make conformance` at `0c2456b2`: 6239 rows, 6126 pass, 0 fail, 0 skip, 0 not
+     run, 113 untested. `runtime/events.md` has 94 pass.
+   - **For the next slice (`runtime/support.md`, the last runtime file):**
+     - Seed `support.md` (`types`, `manifest`, `tenancy`; 31 orphans at the cache slice's count).
+     - A sleep-then-count test cannot see a missing ack or an early redelivery when the
+       broker's timeout is longer than the settle. Check consumer state instead, and count at
+       the moment of the event, not after it.
+     - Batch and `*Where` claims need the exact PK set, not a count or set membership: a
+       first-PK-for-all mutant passes both.
+     - A test whose setup already rules out the bad case cannot fail. Make the failure happen
+       after the write, as the inner hook does here.
+     - Two open questions for the user carry over: whether a panicking `OnError` should be
+       recovered as the cache's `OnErrorFunc` is (`gap.event.on-error-panic`), and the event
+       gaps' rulings.
+
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
