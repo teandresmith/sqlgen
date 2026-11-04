@@ -14271,6 +14271,8 @@ Success in `Closed` resets the consecutive-failure counter. Transitions emit `Me
 
 When the breaker is open, the DB operation still executes normally — the cache is non-authoritative. TTL remains the safety net.
 
+Every call the breaker admits as a `HalfOpen` probe reports its outcome, so the probe slot is always released. The read-through's in-flight cache re-check (27.7) reports none, so it runs only while the breaker is `Closed` and never takes a probe; outside `Closed`, a straggler may repeat the database read.
+
 #### Cache Error Policy
 
 The cache MUST NOT break user-facing calls. A failing `Get` surfaces as a cache miss; a failing `Set` / `Invalidate*` is dropped from the caller's error path. Every cache backend error routes through a three-pronged policy:
@@ -14279,7 +14281,7 @@ The cache MUST NOT break user-facing calls. A failing `Get` surfaces as a cache 
 2. **Textual log fallback.** `OnErrorFunc` callback; default `DefaultOnCacheError` logs to stderr (swappable via `WithOnError`).
 3. **Breaker feedback.** Every error calls `breaker.RecordFailure()`.
 
-All three fire in order so a misconfigured logger cannot mask a cache outage. Marshal / unmarshal errors route through the same policy; unmarshal errors additionally treat the call as a cache miss (fall through to DB) — the entry is not auto-deleted, since TTL + the fingerprint segment (27.5) already handle stale-payload scenarios.
+All three fire in order so a misconfigured logger cannot mask a cache outage. A key the mutation hook cannot build from an affected PK (an element of the wrong type) involves no backend call: the hook reports it through the first two prongs under op `invalidate_many`, with no breaker feedback, and the write proceeds. Marshal / unmarshal errors route through the same policy; unmarshal errors additionally treat the call as a cache miss (fall through to DB) — the entry is not auto-deleted, since TTL + the fingerprint segment (27.5) already handle stale-payload scenarios.
 
 #### Why TTL + Source-Driven Are Both Required
 

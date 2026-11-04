@@ -8,7 +8,7 @@ Caching (§27), its tenant key grammar (§29.5), and the OpenTelemetry metrics r
 [README.md](../README.md) for the format.
 
 ## §27 Caching
-<!-- prd: 27 sha256: 1e92aadf9550a3ea -->
+<!-- prd: 27 sha256: 1ed6a6d177707fb7 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -79,7 +79,7 @@ Caching (§27), its tenant key grammar (§29.5), and the OpenTelemetry metrics r
 | cache.hydration.timeout | The hydration goroutine runs on a background context bounded by `hydration.timeout` | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsHydrateHelper` | all |  |
 
 ## §27.9 Invalidation Strategies
-<!-- prd: 27.9 sha256: 3da4c69fd22e6845 -->
+<!-- prd: 27.9 sha256: 1b446d2707de8dbb -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
