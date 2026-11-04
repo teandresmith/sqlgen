@@ -14648,7 +14648,7 @@ type Subscription interface {
 
 **Consumer group:** When `Group` is set, events are distributed across subscribers in the group (each event processed by exactly one subscriber). When empty, events are broadcast to all subscribers. This maps to Redis Pub/Sub (broadcast) vs Redis Streams consumer groups (distributed), or NATS queue groups.
 
-**Handler error semantics:** A `Handler` that returns a non-nil error signals "redeliver me." The signal is honored by transports that support redelivery (durable/at-least-once backends — e.g. NATS JetStream, Redis Streams, Kafka): the message is negatively acknowledged and retried per the transport's policy, routing to a dead-letter destination after the configured maximum delivery attempts. Transports that cannot redeliver (at-most-once backends — the in-memory bus, core NATS) instead route the error to their configured error handler (where one is offered) rather than retrying; the event is not redelivered. Handlers should therefore be idempotent under at-least-once transports, and error returns are always observable — never silently discarded.
+**Handler error semantics:** A `Handler` that returns a non-nil error signals "redeliver me." The signal is honored by transports that support redelivery (durable/at-least-once backends — e.g. NATS JetStream, Redis Streams, Kafka): the message is negatively acknowledged and retried per the transport's policy, routing to a dead-letter destination after the configured maximum delivery attempts. Transports that cannot redeliver (at-most-once backends — the in-memory bus, core NATS) instead route the error to their configured error handler (where one is offered) rather than retrying; the event is not redelivered. A provided transport with no error handler configured logs the error through the standard library logger instead, and the handler, or the log, receives the Handler's own error unchanged. Handlers should therefore be idempotent under at-least-once transports, and error returns are always observable — never silently discarded.
 
 ### 28.6 Event Input
 
@@ -14767,7 +14767,7 @@ defer sub.Unsubscribe()
 
 - Separate Go module (`github.com/teandresmith/sqlgen/event/natsbus`) — depends on `github.com/nats-io/nats.go`
 - Implements both `Publisher` and `Subscriber`
-- Subject pattern: `{prefix}.{schema}.{table}` (configurable prefix, default `sqlgen.events`)
+- Subject pattern: `{prefix}.{schema}.{table}` (configurable prefix, default `sqlgen.events`); an event with no schema (SQLite, MySQL) publishes to `{prefix}.{table}`. A subscription filtered to one table receives both forms, each event once, core and JetStream alike
 - Consumer groups map to NATS queue groups
 
 The bus has two modes. **Core mode is the default and is unchanged**: `natsbus.New(conn)`
@@ -14827,16 +14827,21 @@ compatible. Any change to the subject scheme or body encoding bumps `Sqlgen-Enve
 - `natsbus.Connect(url, ...ConnectOption)` — a blessed constructor that dials with
   production-sane defaults (infinite reconnect, a reconnect buffer so publishes during a blip are
   not lost, drain-on-close, disconnect/reconnect callbacks), returning a bus ready to pair with
-  `WithJetStream`. `New(conn)` remains for callers who own their `*nats.Conn`.
+  `WithJetStream`; its `Close` drains and closes the connection it dialed. `New(conn)` remains for
+  callers who own their `*nats.Conn`: its `Close` unsubscribes the bus's handlers and leaves the
+  connection open.
 - `natsbus.WithSubscribeErrorHandler(func(ctx, event.Event, error))` — invoked when a `Handler`
-  returns an error on an at-most-once (core) subscription, so failures are observable instead of
-  discarded. `WithRetry(n, backoff)` adds bounded in-process retry before the error handler on
-  core mode.
-- `natsbus.WithActionSubjects()` — publishes to `{prefix}.{schema}.{table}.{action}` so a
+  returns an error on an at-most-once (core) subscription, in place of the default log
+  ([section 28.5](#285-subscriber-interface)). The same handler, or the log, receives the bus's own
+  failures on the subscribe path, core and JetStream: a message whose body cannot be decoded
+  (with the zero `Event`), and a failed ack, nak, terminate, delivery-metadata read, dead-letter
+  publish or consumer. These leave the message's handling unchanged: an undecodable JetStream
+  message is still terminated, and a failed dead-letter publish still naks.
+  `WithRetry(n, backoff)` adds bounded in-process retry before the error handler on core mode.
+- `natsbus.WithActionSubjects()` — publishes to `{prefix}.{schema}.{table}.{action}` (or
+  `{prefix}.{table}.{action}` for an event with no schema) so a
   consumer can let the broker filter by action (e.g. subscribe to `...tasks.create`). This
   changes the subject scheme, so it is opt-in and bumps the envelope version.
-- `natsbus.WithCodec(codec)` — replaces the default JSON encoding for the event body (e.g.
-  protobuf, msgpack) where a non-JSON wire format is required.
 
 ### 28.8 Configuration
 
@@ -14887,7 +14892,7 @@ client := New(db,
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `OnError` | `func(ctx, []Event, error)` | `log.Printf` to stderr | Called when `PublishBatch` fails. Mutation always succeeds — publish failure is never propagated to the caller. |
+| `OnError` | `func(ctx, []Event, error)` | `log.Printf` to stderr | Called when `PublishBatch` returns an error or panics; a panic arrives as an error wrapping the panicked value (an `error` value stays reachable through `errors.Is`). Mutation always succeeds — publish failure is never propagated to the caller. |
 | `MetadataFunc` | `func(ctx) map[string]string` | `nil` (no metadata added) | Called once per mutation-hook entry to derive context metadata (e.g. `actor`, `request_id`, `traceparent`) merged into every resulting `Event.Metadata`. See below. |
 
 **`MetadataFunc` timing and merge.** `MetadataFunc` is invoked **once at mutation-hook entry**,
@@ -14980,11 +14985,10 @@ func newProductEventHook(publisher event.Publisher, onError func(ctx context.Con
                 }
             }
 
-            // Transaction-aware publishing
+            // Transaction-aware publishing. publishEvents calls PublishBatch and passes a
+            // returned error, or a recovered panic, to onError (28.8).
             publish := func(ctx context.Context) error {
-                if err := publisher.PublishBatch(ctx, events); err != nil {
-                    onError(ctx, events, err)
-                }
+                publishEvents(ctx, publisher, onError, events)
                 return nil
             }
 

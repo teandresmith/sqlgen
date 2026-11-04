@@ -78,7 +78,7 @@ against the global block (`feature-resolution`). The runtime behavior of each fe
 | feature-resolution: cache.serializer × view-inherits | §27.2: ViewCacheConfig has no `serializer` field | |
 
 ## §28.8 Configuration
-<!-- prd: 28.8 sha256: e0dd855382a6dc6e -->
+<!-- prd: 28.8 sha256: 793c6d4acb989bd3 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

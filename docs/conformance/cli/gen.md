@@ -592,7 +592,7 @@
 | gen.check-constraint.constraint-error | A CHECK violation returns a `ConstraintError` with `Type: ConstraintCheck` | `unit: database/pgx: TestMapErrorConstraintCodes/23514 check violation`; `unit: database/stdlib: TestMapPqErrorConstraintCodes/23514 check violation`; `unit: database/stdlib: TestMapMySQLErrorConstraintCodes/3819 check violation`; `unit: database/stdlib: TestMapSQLiteCode/275 SQLITE_CONSTRAINT_CHECK`; `integration: database/pgx: TestConstraintCheckViolation`; `integration: database/stdlib: TestConstraintCheckViolation` | all | |
 
 ## §28.9 Generated Event Hook Architecture
-<!-- prd: 28.9 sha256: 75a66c47d503dad9 -->
+<!-- prd: 28.9 sha256: 6d5fd5642912cfde -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
