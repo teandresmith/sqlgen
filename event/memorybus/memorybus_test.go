@@ -363,7 +363,7 @@ func TestSubscribeErrorHandlerRoutesError(t *testing.T) {
 	if calls != 1 {
 		t.Errorf("error handler calls = %d, want 1", calls)
 	}
-	if !errors.Is(gotErr, errHandlerBoom) {
+	if gotErr != errHandlerBoom { //nolint:errorlint // identity: the Handler's own error is routed as-is
 		t.Errorf("routed error = %v, want %v", gotErr, errHandlerBoom)
 	}
 	if diff := cmp.Diff(want, gotEvent); diff != "" {
@@ -482,5 +482,52 @@ func TestHandlerErrorLoggedWithoutErrorHandler(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("handler invocations = %d, want 1", calls)
+	}
+}
+
+// TestPublishOrder: events published one after another reach a subscriber in
+// publish order.
+func TestPublishOrder(t *testing.T) {
+	bus := memorybus.New()
+	t.Cleanup(func() { _ = bus.Close() })
+
+	var got []string
+	if _, err := bus.Subscribe(event.SubscribeOptions{Tables: []string{"products"}}, func(_ context.Context, e event.Event) error {
+		got = append(got, e.ID)
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe() unexpected error: %v", err)
+	}
+	want := []string{"5", "3", "9", "1", "7"}
+	for _, id := range want {
+		if err := bus.Publish(context.Background(), event.Event{ID: id, Table: "products", Action: event.Update}); err != nil {
+			t.Fatalf("Publish(%q) unexpected error: %v", id, err)
+		}
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("delivery order mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestNoReplayForLateSubscriber: the bus keeps nothing, so a subscriber added
+// after a publish never receives that event.
+func TestNoReplayForLateSubscriber(t *testing.T) {
+	bus := memorybus.New()
+	t.Cleanup(func() { _ = bus.Close() })
+	if err := bus.Publish(context.Background(), event.Event{ID: "early", Table: "products", Action: event.Create}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+	var got []string
+	if _, err := bus.Subscribe(event.SubscribeOptions{}, func(_ context.Context, e event.Event) error {
+		got = append(got, e.ID)
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe() unexpected error: %v", err)
+	}
+	if err := bus.Publish(context.Background(), event.Event{ID: "late", Table: "products", Action: event.Create}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+	if diff := cmp.Diff([]string{"late"}, got); diff != "" {
+		t.Errorf("late subscriber events mismatch (-want +got):\n%s", diff)
 	}
 }

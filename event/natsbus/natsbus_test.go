@@ -99,24 +99,32 @@ func TestPublishSubscribe(t *testing.T) {
 }
 
 func TestPublishBatch(t *testing.T) {
-	bus := natsbus.New(startServer(t))
+	conn := startServer(t)
+	bus := natsbus.New(conn)
 	t.Cleanup(func() { _ = bus.Close() })
+
+	// Each event goes to its own subject, not the batch's first.
+	ordersCh := make(chan *nats.Msg, 4)
+	ordersSub, err := conn.ChanSubscribe("sqlgen.events.audit.orders", ordersCh)
+	if err != nil {
+		t.Fatalf("ChanSubscribe() unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = ordersSub.Unsubscribe() })
 
 	var mu sync.Mutex
 	var got []string
-	_, err := bus.Subscribe(event.SubscribeOptions{}, func(_ context.Context, e event.Event) error {
+	if _, err := bus.Subscribe(event.SubscribeOptions{}, func(_ context.Context, e event.Event) error {
 		mu.Lock()
 		defer mu.Unlock()
 		got = append(got, e.ID)
 		return nil
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("Subscribe() unexpected error: %v", err)
 	}
 
 	events := []event.Event{
 		{ID: "1", Table: "products", Schema: "public", Action: event.Create},
-		{ID: "2", Table: "products", Schema: "public", Action: event.Update},
+		{ID: "2", Table: "orders", Schema: "audit", Action: event.Update},
 		{ID: "3", Table: "products", Schema: "public", Action: event.Delete},
 	}
 	if err := bus.PublishBatch(context.Background(), events); err != nil {
@@ -133,6 +141,18 @@ func TestPublishBatch(t *testing.T) {
 	defer mu.Unlock()
 	if diff := cmp.Diff([]string{"1", "2", "3"}, got); diff != "" {
 		t.Errorf("PublishBatch() IDs mismatch (-want +got):\n%s", diff)
+	}
+	select {
+	case msg := <-ordersCh:
+		var e event.Event
+		if err := json.Unmarshal(msg.Data, &e); err != nil || e.ID != "2" {
+			t.Errorf("message on sqlgen.events.audit.orders = %q (%v), want event 2", msg.Data, err)
+		}
+	case <-time.After(time.Second):
+		t.Error("no message on event 2's subject sqlgen.events.audit.orders")
+	}
+	if extra := len(ordersCh); extra != 0 {
+		t.Errorf("%d extra messages on sqlgen.events.audit.orders, want 0", extra)
 	}
 }
 
@@ -229,6 +249,8 @@ func TestQueueGroupDistributes(t *testing.T) {
 		return atomic.LoadInt64(&counts[0])+atomic.LoadInt64(&counts[1]) == total
 	})
 
+	// Settle: a broadcast would deliver each event to both members.
+	time.Sleep(100 * time.Millisecond)
 	got0 := atomic.LoadInt64(&counts[0])
 	got1 := atomic.LoadInt64(&counts[1])
 	if got0+got1 != total {
@@ -290,6 +312,7 @@ func TestTableAndActionFilter(t *testing.T) {
 		{ID: "1", Table: "products", Schema: "public", Action: event.Create},
 		{ID: "2", Table: "products", Schema: "public", Action: event.Update},
 		{ID: "3", Table: "orders", Schema: "public", Action: event.Create},
+		{ID: "4", Table: "products", Schema: "public", Action: event.Create},
 	}
 	for _, e := range events {
 		if err := bus.Publish(context.Background(), e); err != nil {
@@ -297,12 +320,17 @@ func TestTableAndActionFilter(t *testing.T) {
 		}
 	}
 
-	// Allow time for all events to propagate; only "1" should be delivered.
-	time.Sleep(100 * time.Millisecond)
+	// "4" shares "1" and "2"'s subject and is published last, so once it
+	// arrives "2" has been received and filtered out.
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Contains(got, "4")
+	})
 
 	mu.Lock()
 	defer mu.Unlock()
-	if diff := cmp.Diff([]string{"1"}, got); diff != "" {
+	if diff := cmp.Diff([]string{"1", "4"}, got); diff != "" {
 		t.Errorf("filtered delivery mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -336,7 +364,7 @@ func TestJSONRoundTrip(t *testing.T) {
 		Table:     "products",
 		Schema:    "public",
 		Action:    event.Update,
-		PK:        "42",
+		PK:        map[string]any{"order_id": float64(1), "product_id": float64(2)},
 		Input:     map[string]any{"name": "widget", "price": float64(100)},
 		Timestamp: ts,
 		Metadata:  map[string]string{"user": "alice"},
@@ -501,7 +529,7 @@ func TestSubscribeErrorHandlerRoutesError(t *testing.T) {
 	if calls != 1 {
 		t.Errorf("error handler calls = %d, want 1", calls)
 	}
-	if !errors.Is(gotErr, errHandlerBoom) {
+	if gotErr != errHandlerBoom { //nolint:errorlint // identity: the Handler's own error is routed as-is
 		t.Errorf("routed error = %v, want %v", gotErr, errHandlerBoom)
 	}
 	if diff := cmp.Diff(want, gotEvent); diff != "" {
@@ -920,6 +948,7 @@ func TestJetStreamPublishStoresMessage(t *testing.T) {
 		Action:    event.Create,
 		PK:        "42",
 		Timestamp: time.Date(2026, 4, 17, 10, 0, 0, 0, time.UTC),
+		Metadata:  map[string]string{"traceparent": "00-js-trace-01"},
 	}
 	if err := bus.Publish(context.Background(), want); err != nil {
 		t.Fatalf("Publish() unexpected error: %v", err)
@@ -948,6 +977,12 @@ func TestJetStreamPublishStoresMessage(t *testing.T) {
 	}
 	if got := msg.Header.Get("Nats-Msg-Id"); got != want.ID {
 		t.Errorf("Nats-Msg-Id header = %q, want %q (= Event.ID)", got, want.ID)
+	}
+	if got := msg.Header.Get("Sqlgen-Envelope-Version"); got != "1" {
+		t.Errorf("Sqlgen-Envelope-Version header = %q, want %q", got, "1")
+	}
+	if got := msg.Header.Get("traceparent"); got != "00-js-trace-01" {
+		t.Errorf("traceparent header = %q, want %q", got, "00-js-trace-01")
 	}
 	var got event.Event
 	if err := json.Unmarshal(msg.Data, &got); err != nil {
@@ -1491,6 +1526,7 @@ func TestSubscribeInterfaceNarrowing(t *testing.T) {
 	// in reach — this line compiling proves *Bus still satisfies event.Subscriber
 	// after SubscribeWith's variadic was added to the concrete type.
 	var narrowed event.Subscriber = bus
+	pin[event.Publisher](bus)
 
 	var mu sync.Mutex
 	var viaInterface, viaConcrete int
@@ -2207,5 +2243,381 @@ func TestSingleTableHandlerNotConcurrent(t *testing.T) {
 	waitFor(t, 3*time.Second, func() bool { return calls.Load() == 10 })
 	if got := maxInFlight.Load(); got != 1 {
 		t.Errorf("max concurrent Handler invocations = %d, want 1", got)
+	}
+}
+
+// TestPublishOrderPerSubject: core events on one subject reach a subscriber in
+// publish order.
+func TestPublishOrderPerSubject(t *testing.T) {
+	bus := natsbus.New(startServer(t))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	var mu sync.Mutex
+	var got []string
+	if _, err := bus.Subscribe(event.SubscribeOptions{}, func(_ context.Context, e event.Event) error {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, e.ID)
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe() unexpected error: %v", err)
+	}
+	want := make([]string, 0, 50)
+	for i := range 50 {
+		id := fmt.Sprintf("%02d", (i*37)%50)
+		want = append(want, id)
+		if err := bus.Publish(context.Background(), event.Event{ID: id, Table: "products", Schema: "public", Action: event.Update}); err != nil {
+			t.Fatalf("Publish(%q) unexpected error: %v", id, err)
+		}
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(got) == len(want)
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("delivery order mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestJetStreamDeliversInStreamOrder: a durable consumer receives the stream's
+// messages in stream order.
+func TestJetStreamDeliversInStreamOrder(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping JetStream integration test in short mode")
+	}
+	bus := natsbus.New(startJetStreamServer(t), natsbus.WithJetStream(natsbus.StreamConfig{Name: "SQLGEN_EVENTS"}))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	want := make([]string, 0, 30)
+	for i := range 30 {
+		id := fmt.Sprintf("%02d", (i*7)%30)
+		want = append(want, id)
+		table := []string{"products", "orders", "users"}[i%3]
+		if err := bus.Publish(context.Background(), event.Event{ID: id, Table: table, Schema: "public", Action: event.Create}); err != nil {
+			t.Fatalf("Publish(%q) unexpected error: %v", id, err)
+		}
+	}
+	var mu sync.Mutex
+	var got []string
+	sub, err := bus.SubscribeWith(event.SubscribeOptions{}, func(_ context.Context, e event.Event) error {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, e.ID)
+		return nil
+	}, natsbus.WithDurable("ordered"))
+	if err != nil {
+		t.Fatalf("SubscribeWith() unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+	waitFor(t, 3*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(got) == len(want)
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("delivery order mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestJetStreamPlainSubscribeIsCoreTap: in JetStream mode the plain Subscribe
+// creates no consumer, receives live events, and a Handler error is not
+// redelivered.
+func TestJetStreamPlainSubscribeIsCoreTap(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping JetStream integration test in short mode")
+	}
+	conn := startJetStreamServer(t)
+	bus := natsbus.New(conn,
+		natsbus.WithJetStream(natsbus.StreamConfig{Name: "SQLGEN_EVENTS"}),
+		natsbus.WithSubscribeErrorHandler(func(context.Context, event.Event, error) {}))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	var calls atomic.Int64
+	sub, err := bus.Subscribe(event.SubscribeOptions{}, func(context.Context, event.Event) error {
+		calls.Add(1)
+		return errHandlerBoom
+	})
+	if err != nil {
+		t.Fatalf("Subscribe() unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+	if err := bus.Publish(context.Background(), event.Event{ID: "tap", Table: "products", Schema: "public", Action: event.Create}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+	waitFor(t, time.Second, func() bool { return calls.Load() >= 1 })
+
+	js, err := jetstream.New(conn)
+	if err != nil {
+		t.Fatalf("jetstream.New() unexpected error: %v", err)
+	}
+	stream, err := js.Stream(context.Background(), "SQLGEN_EVENTS")
+	if err != nil {
+		t.Fatalf("Stream() unexpected error: %v", err)
+	}
+	info, err := stream.Info(context.Background())
+	if err != nil {
+		t.Fatalf("Stream.Info() unexpected error: %v", err)
+	}
+	if info.State.Consumers != 0 {
+		t.Errorf("stream consumers = %d, want 0 (plain Subscribe is a core tap, not a consumer)", info.State.Consumers)
+	}
+	// A consumer would redeliver a nak'd message within its AckWait; a core
+	// tap never does.
+	time.Sleep(300 * time.Millisecond)
+	if got := calls.Load(); got != 1 {
+		t.Errorf("handler invocations = %d, want 1 (no redelivery on the core tap)", got)
+	}
+}
+
+// TestJetStreamNakBackoffDelaysRedelivery: a failed delivery is redelivered no
+// sooner than the WithBackoff delay.
+func TestJetStreamNakBackoffDelaysRedelivery(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping JetStream integration test in short mode")
+	}
+	bus := natsbus.New(startJetStreamServer(t), natsbus.WithJetStream(natsbus.StreamConfig{Name: "SQLGEN_EVENTS"}))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	const backoff = 300 * time.Millisecond
+	var mu sync.Mutex
+	var at []time.Time
+	sub, err := bus.SubscribeWith(event.SubscribeOptions{}, func(context.Context, event.Event) error {
+		mu.Lock()
+		defer mu.Unlock()
+		at = append(at, time.Now())
+		if len(at) < 3 {
+			return errHandlerBoom
+		}
+		return nil
+	}, natsbus.WithDurable("backoff"), natsbus.WithBackoff(backoff))
+	if err != nil {
+		t.Fatalf("SubscribeWith() unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+	if err := bus.Publish(context.Background(), event.Event{ID: "backoff", Table: "products", Schema: "public", Action: event.Create}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(at) == 3
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	// Only the lower bound is asserted: a slow machine can redeliver later,
+	// never sooner.
+	for i := 1; i < len(at); i++ {
+		if gap := at[i].Sub(at[i-1]); gap < backoff {
+			t.Errorf("redelivery %d came %v after the nak, want at least %v", i, gap, backoff)
+		}
+	}
+}
+
+// TestJetStreamContextPropagation: a durable consumer's Handler ctx continues
+// the producer's trace, as on a core subscription.
+func TestJetStreamContextPropagation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping JetStream integration test in short mode")
+	}
+	bus := natsbus.New(startJetStreamServer(t),
+		natsbus.WithJetStream(natsbus.StreamConfig{Name: "SQLGEN_EVENTS"}),
+		natsbus.WithContextPropagation(fakePropagator{}))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	const traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+	got := make(chan any, 1)
+	sub, err := bus.SubscribeWith(event.SubscribeOptions{}, func(ctx context.Context, _ event.Event) error {
+		got <- ctx.Value(traceCtxKey{})
+		return nil
+	}, natsbus.WithDurable("traced"))
+	if err != nil {
+		t.Fatalf("SubscribeWith() unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+	if err := bus.Publish(context.Background(), event.Event{
+		ID: "evt-js-trace", Table: "products", Schema: "public", Action: event.Create,
+		Metadata: map[string]string{"traceparent": traceparent},
+	}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+	select {
+	case v := <-got:
+		if v != traceparent {
+			t.Errorf("handler ctx traceparent = %v, want %q", v, traceparent)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler never ran")
+	}
+}
+
+// TestJetStreamUnsubscribeStopsDelivery: after Unsubscribe a durable
+// subscription receives nothing more.
+func TestJetStreamUnsubscribeStopsDelivery(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping JetStream integration test in short mode")
+	}
+	bus := natsbus.New(startJetStreamServer(t), natsbus.WithJetStream(natsbus.StreamConfig{Name: "SQLGEN_EVENTS"}))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	var calls atomic.Int64
+	sub, err := bus.SubscribeWith(event.SubscribeOptions{}, func(context.Context, event.Event) error {
+		calls.Add(1)
+		return nil
+	}, natsbus.WithDurable("unsub"))
+	if err != nil {
+		t.Fatalf("SubscribeWith() unexpected error: %v", err)
+	}
+	if err := bus.Publish(context.Background(), event.Event{ID: "before", Table: "products", Schema: "public", Action: event.Create}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+	waitFor(t, 3*time.Second, func() bool { return calls.Load() == 1 })
+	if err := sub.Unsubscribe(); err != nil {
+		t.Fatalf("Unsubscribe() unexpected error: %v", err)
+	}
+	if err := bus.Publish(context.Background(), event.Event{ID: "after", Table: "products", Schema: "public", Action: event.Create}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := calls.Load(); got != 1 {
+		t.Errorf("handler invocations after Unsubscribe = %d, want 1", got)
+	}
+	if err := sub.Unsubscribe(); err != nil {
+		t.Errorf("second Unsubscribe() unexpected error: %v", err)
+	}
+}
+
+// pin fixes a value's static type: the call compiles only if v is a T.
+func pin[T any](T) {}
+
+// TestPublishBodyUsesWireKeys: the published body is the event's JSON with
+// the wire keys, decoded here without the Event type.
+func TestPublishBodyUsesWireKeys(t *testing.T) {
+	conn := startServer(t)
+	bus := natsbus.New(conn)
+	t.Cleanup(func() { _ = bus.Close() })
+
+	msgCh := make(chan *nats.Msg, 1)
+	rawSub, err := conn.ChanSubscribe("sqlgen.events.public.products", msgCh)
+	if err != nil {
+		t.Fatalf("ChanSubscribe() unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = rawSub.Unsubscribe() })
+	if err := bus.Publish(context.Background(), event.Event{
+		ID: "evt-keys", Table: "products", Schema: "public", Action: event.Delete, PK: int64(7),
+		Timestamp: time.Date(2026, 4, 17, 10, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("Publish() unexpected error: %v", err)
+	}
+	select {
+	case msg := <-msgCh:
+		var got map[string]any
+		if err := json.Unmarshal(msg.Data, &got); err != nil {
+			t.Fatalf("Unmarshal(body) unexpected error: %v", err)
+		}
+		// The timestamp's text form is encoding/json's; only its key is the
+		// wire contract.
+		if _, ok := got["timestamp"]; !ok {
+			t.Errorf("wire body %v has no %q key", got, "timestamp")
+		}
+		delete(got, "timestamp")
+		want := map[string]any{
+			"id": "evt-keys", "table": "products", "schema": "public", "action": "delete",
+			"pk": float64(7), "input": nil,
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("wire body mismatch (-want +got):\n%s", diff)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no message received")
+	}
+}
+
+// TestJetStreamStreamConfig: WithJetStream provisions the named stream over
+// every subject under the prefix, with the given MaxAge and DedupWindow.
+func TestJetStreamStreamConfig(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping JetStream integration test in short mode")
+	}
+	conn := startJetStreamServer(t)
+	bus := natsbus.New(conn, natsbus.WithPrefix("app.events"), natsbus.WithJetStream(natsbus.StreamConfig{
+		Name:        "APP_EVENTS",
+		MaxAge:      30 * 24 * time.Hour,
+		DedupWindow: 2 * time.Minute,
+	}))
+	t.Cleanup(func() { _ = bus.Close() })
+
+	js, err := jetstream.New(conn)
+	if err != nil {
+		t.Fatalf("jetstream.New() unexpected error: %v", err)
+	}
+	stream, err := js.Stream(context.Background(), "APP_EVENTS")
+	if err != nil {
+		t.Fatalf("Stream() unexpected error: %v", err)
+	}
+	info, err := stream.Info(context.Background())
+	if err != nil {
+		t.Fatalf("Stream.Info() unexpected error: %v", err)
+	}
+	type cfg struct {
+		Subjects   []string
+		MaxAge     time.Duration
+		Duplicates time.Duration
+	}
+	want := cfg{Subjects: []string{"app.events.>"}, MaxAge: 30 * 24 * time.Hour, Duplicates: 2 * time.Minute}
+	got := cfg{Subjects: info.Config.Subjects, MaxAge: info.Config.MaxAge, Duplicates: info.Config.Duplicates}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("stream config mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestJetStreamConsumerFailureReported: a durable consumer deleted under a
+// live subscription is reported with the zero Event.
+func TestJetStreamConsumerFailureReported(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping JetStream integration test in short mode")
+	}
+	conn := startJetStreamServer(t)
+	var mu sync.Mutex
+	var gotEvents []event.Event
+	var gotErrs []error
+	bus := natsbus.New(conn,
+		natsbus.WithJetStream(natsbus.StreamConfig{Name: "SQLGEN_EVENTS"}),
+		natsbus.WithSubscribeErrorHandler(func(_ context.Context, e event.Event, err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			gotEvents = append(gotEvents, e)
+			gotErrs = append(gotErrs, err)
+		}))
+	t.Cleanup(func() { _ = bus.Close() })
+	sub, err := bus.SubscribeWith(event.SubscribeOptions{}, func(context.Context, event.Event) error { return nil }, natsbus.WithDurable("doomed"))
+	if err != nil {
+		t.Fatalf("SubscribeWith() unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+
+	js, err := jetstream.New(conn)
+	if err != nil {
+		t.Fatalf("jetstream.New() unexpected error: %v", err)
+	}
+	if err := js.DeleteConsumer(context.Background(), "SQLGEN_EVENTS", "doomed"); err != nil {
+		t.Fatalf("DeleteConsumer() unexpected error: %v", err)
+	}
+	waitFor(t, 5*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(gotErrs) > 0
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if diff := cmp.Diff(event.Event{}, gotEvents[0]); diff != "" {
+		t.Errorf("reported event mismatch (-want +got):\n%s", diff)
+	}
+	if !errors.Is(gotErrs[0], jetstream.ErrConsumerDeleted) {
+		t.Errorf("reported error = %v, want it to wrap %v", gotErrs[0], jetstream.ErrConsumerDeleted)
 	}
 }

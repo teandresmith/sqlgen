@@ -2,10 +2,13 @@ package tests
 
 import (
 	"context"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/teandresmith/sqlgen/comparator"
+	dbstdlib "github.com/teandresmith/sqlgen/database/stdlib"
 	"github.com/teandresmith/sqlgen/event"
 	"github.com/teandresmith/sqlgen/omittable"
 
@@ -405,6 +408,12 @@ func TestEvent_Restore(t *testing.T) {
 	if events[0].Action != event.Update {
 		t.Errorf("Action = %q, want Update (Restore maps to Update)", events[0].Action)
 	}
+	if events[0].PK != a.ID {
+		t.Errorf("PK = %v, want %v", events[0].PK, a.ID)
+	}
+	if events[0].Input != nil {
+		t.Errorf("Input = %v (%T), want nil (the PK travels on Event.PK)", events[0].Input, events[0].Input)
+	}
 }
 
 // A by-key write whose key matches no row writes nothing, so it publishes
@@ -584,10 +593,19 @@ func TestEvent_RestoreMany(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("got %d events, want 2", len(events))
 	}
+	var pks []int64
 	for _, e := range events {
 		if e.Action != event.Update {
 			t.Errorf("Action = %q, want Update", e.Action)
 		}
+		if e.Input != nil {
+			t.Errorf("Input = %v (%T), want nil (the PK travels on Event.PK)", e.Input, e.Input)
+		}
+		pk, _ := e.PK.(int64)
+		pks = append(pks, pk)
+	}
+	if !slices.Equal(ids, pks) {
+		t.Errorf("event PKs = %v, want %v", pks, ids)
 	}
 }
 
@@ -649,4 +667,67 @@ func TestEvent_Increment(t *testing.T) {
 	if events[0].PK != p.ID {
 		t.Errorf("PK = %v, want %v", events[0].PK, p.ID)
 	}
+}
+
+// A mutation that fails publishes nothing.
+func TestEvent_FailedMutationPublishesNothing(t *testing.T) {
+	ctx := context.Background()
+	client, bus := newClientWithBus(t)
+
+	p, err := client.Products().Create(ctx, &models.CreateProductInput{Name: "Dup", SKU: "EV-FAIL-1", Price: 1})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Products().HardDelete(ctx, p.ID) })
+
+	got := subscribe(t, bus, event.SubscribeOptions{})
+	// The SKU is unique, so a second Create with it fails.
+	if _, err := client.Products().Create(ctx, &models.CreateProductInput{Name: "Dup2", SKU: "EV-FAIL-1", Price: 1}); err == nil {
+		t.Fatal("duplicate-SKU Create succeeded, want a constraint error")
+	}
+	if events := got.snapshot(); len(events) != 0 {
+		t.Errorf("got %d events after a failed Create, want 0: %+v", len(events), events)
+	}
+}
+
+// batchRecorder records each PublishBatch call's batch size.
+type batchRecorder struct {
+	mu      sync.Mutex
+	batches []int
+}
+
+func (r *batchRecorder) Publish(context.Context, event.Event) error { return nil }
+func (r *batchRecorder) PublishBatch(_ context.Context, events []event.Event) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.batches = append(r.batches, len(events))
+	return nil
+}
+func (r *batchRecorder) Close() error { return nil }
+
+// A batch mutation hands all of its events to one PublishBatch call.
+func TestEvent_BatchMutationPublishesOneBatch(t *testing.T) {
+	ctx := context.Background()
+	rec := &batchRecorder{}
+	client := models.New(dbstdlib.New(testDB), models.WithEventPublisher(rec))
+
+	created, err := client.Products().CreateMany(ctx, []*models.CreateProductInput{
+		{Name: "B1", SKU: "EV-ONEBATCH-1", Price: 1},
+		{Name: "B2", SKU: "EV-ONEBATCH-2", Price: 1},
+		{Name: "B3", SKU: "EV-ONEBATCH-3", Price: 1},
+	})
+	if err != nil {
+		t.Fatalf("CreateMany: %v", err)
+	}
+	ids := make([]int64, len(created))
+	for i, p := range created {
+		ids[i] = p.ID
+	}
+	rec.mu.Lock()
+	got := slices.Clone(rec.batches)
+	rec.mu.Unlock()
+	if !slices.Equal(got, []int{3}) {
+		t.Errorf("PublishBatch batch sizes = %v, want [3] (one call carrying every event)", got)
+	}
+	_ = client.Products().HardDeleteMany(ctx, ids)
 }

@@ -281,3 +281,51 @@ func TestEventDrivenInvalidation_HandlerReturnsNoError(t *testing.T) {
 		t.Errorf("fallback signals after ∈-PK signal = %d, want still 1 (PK-derived path is precise)", n)
 	}
 }
+
+// A tenant-in-PK table needs no stamp: an event carrying only the PK struct
+// evicts the receiver's exact entry for that tenant and leaves another
+// tenant's entry cached, without the table-wide fallback.
+func TestEventDrivenInvalidation_TenantInPKPreciseWithoutStamp(t *testing.T) {
+	resetDB(t)
+	ctx := context.Background()
+
+	bus := memorybus.New()
+	t.Cleanup(func() { _ = bus.Close() })
+	local := models.New(dbstdlib.New(testDB), models.WithTenantResolver(staticResolver(tenantA)))
+	remote := newRemoteInstance(t, bus)
+
+	pkA := models.OrderItemPK{WorkspaceID: tenantA, OrderID: 1, ProductID: 10}
+	pkB := models.OrderItemPK{WorkspaceID: tenantB, OrderID: 1, ProductID: 10}
+	for _, pk := range []models.OrderItemPK{pkA, pkB} {
+		if _, err := local.OrderItems().Create(ctx, &models.CreateOrderItemInput{
+			WorkspaceID: pk.WorkspaceID, OrderID: pk.OrderID, ProductID: pk.ProductID, Quantity: 1, UnitPrice: 1,
+		}, func(o *models.CallOptions[models.OrderItemFieldOptions]) { o.SkipTenancy = true }); err != nil {
+			t.Fatalf("create order item %v: %v", pk, err)
+		}
+	}
+	if _, err := remote.cacheA.OrderItems().Get(ctx, pkA); err != nil {
+		t.Fatalf("warm remote A: %v", err)
+	}
+	if _, err := remote.cacheB.OrderItems().Get(ctx, pkB); err != nil {
+		t.Fatalf("warm remote B: %v", err)
+	}
+
+	// No Metadata: the tenant can only come from the PK struct.
+	if err := bus.Publish(ctx, event.Event{ID: "pk-only", Table: "order_items", Action: event.Update, PK: pkA}); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	missesBefore := remote.metrics.missCount()
+	if _, err := remote.cacheA.OrderItems().Get(ctx, pkA); err != nil {
+		t.Fatalf("remote Get A: %v", err)
+	}
+	if remote.metrics.missCount() == missesBefore {
+		t.Errorf("remote entry for tenant A still cached after its PK-only event, want it evicted")
+	}
+	assertCacheHit(t, remote.metrics, "remote Get B after tenant A's PK-only event", func() {
+		if _, err := remote.cacheB.OrderItems().Get(ctx, pkB); err != nil {
+			t.Fatalf("remote Get B: %v", err)
+		}
+	})
+	assertNoFallbackSignal(t, remote.metrics)
+}

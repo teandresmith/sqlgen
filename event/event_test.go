@@ -138,29 +138,37 @@ func TestEventJSONWireFormat(t *testing.T) {
 		}
 	})
 
-	t.Run("empty metadata is omitted", func(t *testing.T) {
-		e := event.Event{
-			ID:        "evt-abc",
-			Table:     "products",
-			Action:    event.Delete,
-			Timestamp: time.Date(2026, 4, 17, 10, 0, 0, 0, time.UTC),
-			// Metadata left nil.
-		}
+	for _, tc := range []struct {
+		name string
+		meta map[string]string
+	}{
+		{name: "nil metadata is omitted", meta: nil},
+		{name: "empty metadata is omitted", meta: map[string]string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := event.Event{
+				ID:        "evt-abc",
+				Table:     "products",
+				Action:    event.Delete,
+				Timestamp: time.Date(2026, 4, 17, 10, 0, 0, 0, time.UTC),
+				Metadata:  tc.meta,
+			}
 
-		data, err := json.Marshal(e)
-		if err != nil {
-			t.Fatalf("json.Marshal(Event) unexpected error: %v", err)
-		}
+			data, err := json.Marshal(e)
+			if err != nil {
+				t.Fatalf("json.Marshal(Event) unexpected error: %v", err)
+			}
 
-		var keyed map[string]json.RawMessage
-		if err := json.Unmarshal(data, &keyed); err != nil {
-			t.Fatalf("json.Unmarshal into map unexpected error: %v", err)
-		}
+			var keyed map[string]json.RawMessage
+			if err := json.Unmarshal(data, &keyed); err != nil {
+				t.Fatalf("json.Unmarshal into map unexpected error: %v", err)
+			}
 
-		if _, present := keyed["metadata"]; present {
-			t.Errorf("empty Metadata must be omitted from the wire form, got %q", data)
-		}
-	})
+			if _, present := keyed["metadata"]; present {
+				t.Errorf("empty Metadata must be omitted from the wire form, got %q", data)
+			}
+		})
+	}
 }
 
 func TestConfigResolveOnError_Default(t *testing.T) {
