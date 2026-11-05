@@ -337,18 +337,25 @@ func TestEmitJSON_PerEntityIndexCarriesSchema(t *testing.T) {
 	if err := json.Unmarshal(readFile(t, filepath.Join(dir, "manifest", "manifest_gen.json")), &index); err != nil {
 		t.Fatalf("decoding index: %v", err)
 	}
-	got := map[string]any{}
+	// A missing key and an explicit null decode alike from a map, so the entry
+	// records whether the key is present at all.
+	type schemaKey struct {
+		Present bool
+		Value   any
+	}
+	got := map[string]schemaKey{}
 	for _, entry := range index.Entities {
 		table, _ := entry["table"].(string)
-		got[table] = entry["schema"]
+		v, ok := entry["schema"]
+		got[table] = schemaKey{Present: ok, Value: v}
 	}
-	want := map[string]any{}
+	want := map[string]schemaKey{}
 	for i, e := range doc.Entities {
 		if i == 0 {
-			want[e.Table] = "audit"
+			want[e.Table] = schemaKey{Present: true, Value: "audit"}
 			continue
 		}
-		want[e.Table] = nil
+		want[e.Table] = schemaKey{}
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("index schema per table (-want +got):\n%s", diff)

@@ -124,6 +124,11 @@ func TestManifest_EveryEntityRecordIsReachable(t *testing.T) {
 	if len(records) == 0 {
 		t.Fatal("no on-disk entity records")
 	}
+	// A file outside the entities directory read as an entity lands under the
+	// empty key; nothing may.
+	if phantom, err := client.ManifestEntity(""); err != manifest.ErrEntityNotFound { //nolint:errorlint // identity: an unknown name returns the sentinel itself
+		t.Errorf("ManifestEntity(\"\") = (%+v, %v), want ErrEntityNotFound: a non-entity file was loaded as an entity", phantom, err)
+	}
 	ids := make([]identity, len(records))
 	schemasPerTable := map[string]int{}
 	for i, rec := range records {

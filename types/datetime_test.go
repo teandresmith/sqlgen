@@ -157,6 +157,15 @@ func TestDateTimeValue(t *testing.T) {
 	if got != want {
 		t.Errorf("Value() = %q, want the RFC 3339 text %q", got, want)
 	}
+
+	offset := DateTime{Time: time.Date(2024, 3, 15, 10, 30, 45, 0, time.FixedZone("", 5*60*60))}
+	val, err = offset.Value()
+	if err != nil {
+		t.Fatalf("Value() unexpected error: %v", err)
+	}
+	if got, want := val, "2024-03-15T10:30:45+05:00"; got != want {
+		t.Errorf("Value() of a +05:00 time = %v, want the RFC 3339 text %q", got, want)
+	}
 }
 
 func TestDateTimeValueRoundTrip(t *testing.T) {

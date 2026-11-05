@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"slices"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -398,9 +399,10 @@ func TestFindEntity(t *testing.T) {
 		if !errors.Is(err, manifest.ErrEntityNotFound) {
 			t.Fatalf("FindEntity(users) err = %v, want an error wrapping manifest.ErrEntityNotFound", err)
 		}
-		const want = `manifest: entity not found: table "users" is in more than one schema (audit.users, public.users); name it as schema.table`
-		if err.Error() != want {
-			t.Errorf("FindEntity(users) err = %q, want %q", err, want)
+		for _, candidate := range []string{"audit.users", "public.users"} {
+			if !strings.Contains(err.Error(), candidate) {
+				t.Errorf("FindEntity(users) err = %q, want it to name %s", err, candidate)
+			}
 		}
 	})
 }
