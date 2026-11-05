@@ -590,9 +590,11 @@ introspection of the manifest:
 // full entity records — the lookup is layout-agnostic.
 func (c *Client) Manifest() *manifest.Document
 
-// ManifestEntity returns the full record for a given table name.
-// Works identically across `single` and `per_entity` disk layouts.
-// Returns (nil, manifest.ErrEntityNotFound) for unknown tables.
+// ManifestEntity returns the full record for a given table: `schema.table`
+// for a table with a schema, or its bare name when no other schema has a
+// table of that name. Works identically across `single` and `per_entity`
+// disk layouts. Returns (nil, manifest.ErrEntityNotFound) for unknown
+// tables, and an error wrapping it for a bare name several schemas share.
 func (c *Client) ManifestEntity(table string) (*manifest.Entity, error)
 
 // ManifestVersion returns the schema_version field, pre-extracted at
@@ -659,8 +661,10 @@ sensitive consumers (embedded systems, lambda cold starts, etc.).
 
 **Marshaling back to bytes.** Consumers needing JSON for an HTTP
 endpoint or telemetry simply do `json.Marshal(client.Manifest())`. The
-output is content-equivalent to the on-disk file (key order may differ;
-content identical). No `ManifestRaw() []byte` helper in v1 — add later
+output is content-equivalent to the on-disk top-level file, `$schema`
+included (key order may differ); in the `single` layout `entities[]`
+comes back in the index form, and full records come from
+`ManifestEntity`. No `ManifestRaw() []byte` helper in v1 — add later
 if a consumer surfaces a real need for byte-identical output.
 
 ---
@@ -1439,7 +1443,8 @@ var (
 func LoadInto(doc **Document, raw []byte, entitiesFS embed.FS, entities map[string]*Entity) error
 ```
 
-**Type count.** ~25 named types total. All flat data structs with JSON
+**Type count.** The named types of PRD §30.6 plus the sub-structs of the
+JSON shape they hold. All flat data structs with JSON
 struct tags. No methods other than `String()` on a few enum-style
 aliases (`Dialect`, `EntityKind`, `Layout`, `RelationshipKind`).
 
@@ -1873,7 +1878,8 @@ here so the design doc shows the full implementation arc.
   layout-agnostic `ManifestEntity` lookup across single and per-entity
   fixtures, drift between `ManifestVersion()` and `Document.SchemaVersion`.
 - Marshal round-trip test (`json.Marshal(c.Manifest())` produces
-  content-equivalent JSON to the on-disk file).
+  content-equivalent JSON to the on-disk top-level file; `entities[]` in
+  index form for the `single` layout).
 - Binary-size regression test on a 100-entity fixture (expected: ~30KB
   embed; total package binary growth <50KB including init code).
 

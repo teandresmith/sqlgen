@@ -14,7 +14,7 @@ manifest, §30.6) and `tenancy` (§29.3). See [README.md](../README.md) for the 
 | tenancy.resolver-concrete-type | With tenancy enabled, the unified client emits `WithTenantResolver(r tenancy.TenantResolver[T]) ClientOption` and holds a concrete `tenantResolver tenancy.TenantResolver[T]` field, where `T` is the resolved Go type of the tenant column | `unit: cmd/sqlgen/gen: TestBuildClientContext_tenancyEnabledProducesResolverWiring`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_clientRawHasBypassComment` | all |  |
 
 ## §30.6 Runtime-Embedded Manifest
-<!-- prd: 30.6 sha256: dc335fc02e406523 -->
+<!-- prd: 30.6 sha256: 8014344072762285 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

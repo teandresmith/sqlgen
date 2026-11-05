@@ -15786,6 +15786,8 @@ The on-disk JSON has two layouts, controlled by `json_layout`:
 }
 ```
 
+An index entry also carries `schema` when its entity has one (every PostgreSQL entity), so the index alone names each entity the way `ManifestEntity` looks it up ([30.6](#306-runtime-embedded-manifest)): two schemas' tables of one name stay apart.
+
 `enums[]` and `extras[]` are **always inline** in both layouts (typically 10–50 elements; not load-bearing for split economics).
 
 #### Top-level fields
@@ -16028,13 +16030,18 @@ import sqlgenmanifest "github.com/teandresmith/sqlgen/manifest"
 
 // Manifest returns the parsed manifest document. Pre-parsed at package
 // init; safe for concurrent reads. Entities[] is always the lightweight
-// index (Name + Table + Kind + optional File); use ManifestEntity for
-// full entity records — the lookup is layout-agnostic.
+// index (Name + Table + Kind, plus Schema when the entity has one and
+// File in per_entity); use ManifestEntity for full entity records — the
+// lookup is layout-agnostic.
 func (c *Client) Manifest() *sqlgenmanifest.Document
 
-// ManifestEntity returns the full record for a given table name.
-// Works identically across `single` and `per_entity` disk layouts.
-// Returns (nil, manifest.ErrEntityNotFound) for unknown tables.
+// ManifestEntity returns the full record for a given table. A table with
+// a schema is named `schema.table`, or by its bare name when no other
+// schema has a table of that name; a table without a schema is named by
+// its name. Works identically across `single` and `per_entity` disk
+// layouts. Returns (nil, manifest.ErrEntityNotFound) for unknown tables,
+// and nil with an error wrapping manifest.ErrEntityNotFound, naming each
+// `schema.table` it could mean, for a bare name several schemas share.
 func (c *Client) ManifestEntity(table string) (*sqlgenmanifest.Entity, error)
 
 // ManifestVersion returns the schema_version field, pre-extracted at
@@ -16042,7 +16049,7 @@ func (c *Client) ManifestEntity(table string) (*sqlgenmanifest.Entity, error)
 func (c *Client) ManifestVersion() string
 ```
 
-**Type package:** `github.com/teandresmith/sqlgen/manifest` is a new top-level runtime package (peer to `database/`, `cache/`, `comparator/`, `omittable/`). Stdlib-only — runtime dependency invariant per PRD §3 holds. Exports `Document`, `EntityIndex`, `Entity`, `Column`, `Relationship`, `Method`, `Filter`, `Sort`, `Features`, `PK`, `Conventions`, `Generator`, `Enum`, `Extra`, plus typed aliases `Layout`, `Dialect`, `EntityKind`, `RelationshipKind`. ~25 named types total. Same types serve both as the JSON unmarshal target and the public Client API surface.
+**Type package:** `github.com/teandresmith/sqlgen/manifest` is a new top-level runtime package (peer to `database/`, `cache/`, `comparator/`, `omittable/`). Stdlib-only — runtime dependency invariant per PRD §3 holds. Exports `Document`, `EntityIndex`, `Entity`, `Column`, `Relationship`, `Method`, `Filter`, `Sort`, `Features`, `PK`, `Conventions`, `Generator`, `Enum`, `Extra`, plus typed aliases `Layout`, `Dialect`, `EntityKind`, `RelationshipKind`, and the sub-structs of the [30.4](#304-json-schema) shape they hold (`Index`, `FK`, `Junction`, `MethodParam`, the feature and convention structs, …). Same types serve both as the JSON unmarshal target and the public Client API surface; `Document` carries every [30.4](#304-json-schema) top-level field, `$schema` included.
 
 **Sentinel errors** exported from the `manifest` package:
 
@@ -16053,11 +16060,11 @@ var (
 )
 ```
 
-**Embed mechanics.** The generator emits `manifest_embed_gen.go` in the output package containing `//go:embed manifest/manifest_gen.json` (always) and `//go:embed all:manifest/entities` (populated only in `per_entity` layout). A package `init()` calls the runtime helper `manifest.LoadInto(...)` which parses the top-level into `*Document`, walks the embedded entity FS (if present), populates a `map[string]*Entity` for `ManifestEntity` lookups, and extracts `schema_version` for `ManifestVersion`.
+**Embed mechanics.** The generator emits `manifest_embed_gen.go` in the output package containing `//go:embed manifest/manifest_gen.json` (always) and `//go:embed all:manifest/entities` (only in `per_entity` layout, and omitted for a `per_entity` package with no entities, since a `//go:embed` pattern must match a file). A package `init()` calls the runtime helper `manifest.LoadInto(...)` which parses the top-level into `*Document`, walks the embedded entity FS (if present), populates a `map[string]*Entity` keyed by `schema.table` (the bare table for an entity without a schema), and extracts `schema_version` for `ManifestVersion`. The generated `ManifestEntity` reads the map through the runtime helper `manifest.FindEntity`.
 
-**Layout-agnostic `ManifestEntity`.** The disk-layout choice does not leak into the Go API. `client.ManifestEntity("users")` returns the full record whether the JSON was emitted single or per-entity.
+**Layout-agnostic `ManifestEntity`.** The disk-layout choice does not leak into the Go API. `client.ManifestEntity("users")` (or `"public.users"` in a package where another schema also has a `users` table) returns the full record whether the JSON was emitted single or per-entity.
 
-**Marshaling back to bytes.** Consumers needing JSON for an HTTP endpoint do `json.Marshal(client.Manifest())`. The output is content-equivalent to the on-disk file; byte-identical is not guaranteed (key order may differ). There is no `ManifestRaw() []byte` helper.
+**Marshaling back to bytes.** Consumers needing JSON for an HTTP endpoint do `json.Marshal(client.Manifest())`. The output is content-equivalent to the on-disk top-level file, `$schema` included, except that in the `single` layout, whose file carries each entity's full record inline, `entities[]` comes back in the index form (`name`, `table`, `schema` when set, `kind`); full records come from `ManifestEntity`. Byte-identical is not guaranteed (key order may differ). There is no `ManifestRaw() []byte` helper.
 
 **Binary-size cost.** Raw embedded JSON ~30KB for 100 entities; parsed struct overhead in memory ~200–500KB. Negligible for typical Go services. `embed_in_client: false` opts out for binary-size-sensitive consumers (embedded systems, lambda cold starts).
 
