@@ -264,6 +264,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | manifest.json.per-entity.index-pointers | Under `json_layout: per_entity`, `entities[]` holds one lightweight pointer per entity carrying `name`, `table`, `kind` and `file` | `unit: cmd/sqlgen/manifest: TestEmitJSON_PerEntityLayout`; `golden: graphql`; `golden: tenancy_postgres` | all |  |
+| manifest.json.per-entity.index-schema | A `per_entity` index entry also carries `schema` when its entity has one, and omits it otherwise | `unit: cmd/sqlgen/manifest: TestEmitJSON_PerEntityIndexCarriesSchema`; `golden: graphql`; `golden: tenancy_postgres` | all |  |
 | manifest.json.per-entity.file-holds-entity | Each pointer's `file` names the file holding that entity's full object | `unit: cmd/sqlgen/manifest: TestEmitJSON_PerEntityLayout`; `unit: cmd/sqlgen/cli: TestManifestDiff_PerEntityLayout` | all |  |
 | manifest.json.per-entity.envelope | The per-entity index carries the same top-level fields as the single-layout document | `unit: cmd/sqlgen/manifest: TestEmitJSON_IndexEnvelopeMatchesDocumentTopLevel` | all |  |
 | manifest.json.enums-inline.single | `enums[]` is inline in the single layout | `unit: cmd/sqlgen/manifest: TestEmitJSON_SingleLayout`; `golden: postgres` | all |  |
@@ -733,7 +734,6 @@ Tests in this file's packages that back no PRD behavior.
 
 | Unclaimed test | Reason |
 |---|---|
-| cmd/sqlgen/manifest: TestEmitJSON_PerEntityIndexCarriesSchema | Pins the `schema` on a `per_entity` index entry, ruled 2026-11-05 so `ManifestEntity` keys can be read off the index; waits here for the §30.4 per-entity index amendment, when it becomes a row |
 | cmd/sqlgen/manifest: TestEmitMarkdown_Examples | markdown rendering detail (per-entity example blocks + fence-aware blank-line normalization); no PRD statement about entity.md content |
 | cmd/sqlgen/manifest: TestEmitMarkdown_FKCell | markdown rendering detail (schema-qualified FK cell); no PRD statement about the markdown relationships table |
 | cmd/sqlgen/manifest: TestEmitMarkdown_FeaturesLine | markdown rendering detail (_index.md "Features:" line); PRD §30.3 fixes no _index.md content beyond the scan table / cross-reference |
