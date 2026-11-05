@@ -270,3 +270,28 @@ func TestEntityIndex_DecodesSchema(t *testing.T) {
 		t.Errorf("EntityIndex decode (-want +got):\n%s", diff)
 	}
 }
+
+// TestPackage_ExportsTheDocumentedTypes names each documented type, so the
+// package fails to build if one is renamed or removed.
+func TestPackage_ExportsTheDocumentedTypes(_ *testing.T) {
+	_ = []any{
+		manifest.Document{},
+		manifest.EntityIndex{},
+		manifest.Entity{},
+		manifest.Column{},
+		manifest.Relationship{},
+		manifest.Method{},
+		manifest.Filter{},
+		manifest.Sort{},
+		manifest.Features{},
+		manifest.PK{},
+		manifest.Conventions{},
+		manifest.Generator{},
+		manifest.Enum{},
+		manifest.Extra{},
+		manifest.Layout(""),
+		manifest.Dialect(""),
+		manifest.EntityKind(""),
+		manifest.RelationshipKind(""),
+	}
+}
