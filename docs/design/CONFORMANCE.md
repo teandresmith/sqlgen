@@ -2237,6 +2237,93 @@ database versions it ran against.
        recovered as the cache's `OnErrorFunc` is (`gap.event.on-error-panic`), and the event
        gaps' rulings.
 
+   **Twentieth slice, `runtime/support.md`, recorded 2026-11-05:**
+   - **Scope.** `runtime/support.md` (`types`, `manifest`, `tenancy`) had 2 rows and 1 gap, all
+     citing `cmd/sqlgen/gen` template tests. As `complete` it failed on 31 orphans (11 `types`,
+     11 `manifest`, 9 `tenancy`). No owned section was empty, so a green `req-check` was not the
+     goal: §29.3.2 and §29.3.3 had no rows.
+   - **Rulings (9):**
+     - Three defects fixed (below), plus a follow-on the reviewer found: `EntityIndex` gains
+       `schema`.
+     - The zero-entities gap amends §30.6, and §30.6 drops its "~25 named types" count.
+     - The unstated `types.DateTime` surface (Scan sources, `RegisterLayout`, the Julian-day
+       decode, `UnmarshalGQL` errors) is `gap.types.datetime-surface`. The two DateTime
+       behaviors §7.2 does state became rows in `cli/gotype.md`.
+     - `tenancy.WithResolvedTenant` / `CachedTenant`, which no PRD text names, are
+       `gap.tenancy.resolved-tenant-cache`.
+     - §29.3.3's compile-time claim is one row backed by signature pins. Its "Reads / mutations"
+       and "Mismatch check" bullets are informative.
+     - No matrix: the PRD states no cells for the DateTime scan forms or the manifest load paths.
+   - **Defects: 3, all fixed with fail-first tests (`359bb427`).**
+     - **Lookup collision.** `ManifestEntity` keyed by bare table, so in the multi-schema
+       postgres example `audit.notes` and `audit.users` were unreachable. `LoadInto` now keys
+       `schema.table`. The new `manifest.FindEntity` also resolves a bare name only one schema
+       has, and wraps `ErrEntityNotFound` naming the candidates for a shared one. The reviewer
+       then found that the index gave no way to name them, so the `per_entity` index entry and
+       `EntityIndex` carry `schema`.
+     - **`$schema` dropped.** `Document` had no field for it, so `json.Marshal(client.Manifest())`
+       lost it in both layouts.
+     - **Single-layout marshal.** §30.6 said both "Entities[] is always the lightweight index" and
+       "content-equivalent to the on-disk file", which can't both hold when `single` inlines full
+       records. Ruled as a PRD amendment (`4727f740`): the marshal returns the index form there.
+   - **Measurement.**
+     - Every §29.3 and §30.6 sentence was mapped to a test, a row elsewhere, or `informative`.
+       `ErrMissing`'s zero-value rule is `config-features.md`'s; "three methods generated" is
+       `cli/manifest.md`'s.
+     - **The PRD's examples were probed.**
+       - Decoding every example's real manifest through `LoadInto` and marshaling it back found
+         all three defects. Entity records came back with no field lost.
+       - §29.3.2's wiring (ctx resolver plus events plus cache on one client) runs as
+         documented, now `TestResolverWiring_ComposesWithEventsAndCache`.
+     - **`types` global state.** The layout tests restore what they change, and `-count=2 -race`
+       is green. One fix: `resetCustomState` hard-coded `RFC3339Nano`, so the test set the very
+       layout it checked, and a changed package default survived. It now restores the value
+       captured at package init.
+     - **Mutants.** About 30, all killed in the end; the default-layout mutant and two the claim
+       check found were killed only after their tests were fixed. No equivalent mutants. Two
+       unclaimed tenancy tests have no mutation point: they call a func value and run no package
+       code. `TenantResolver`'s `comparable` constraint is not rowed, because only a test that
+       fails to build could show it.
+   - **Gates.** Each code commit was gated on its own tree: `make check`, then a
+     sqlgen-reviewer pass, then `make check-examples`. Reviewer fixups re-ran `make check` and
+     went back to the reviewer.
+     - Measured lesson: a background gate written as `make …; echo $? > file` reports the
+       wrapper's exit 0. Only the exit file says whether make passed. One `req-check` failure
+       was misreported that way before it was caught.
+   - **Claim check.** An independent pass found 4 medium and 8 low issues; all were fixed
+       (`c2ea7837` and the registry):
+     - The generated `init()` handing `LoadInto` the un-subbed FS passed every test. Now a
+       phantom entity under `""` fails it.
+     - A literal-`Z` output layout passed `TestDateTimeValue`; a +05:00 case kills it.
+     - `date-text-scans` cited a `string` scan, but modernc returns `time.Time`. It now cites
+       the events example.
+     - `wiring-resolver-error` overclaimed "before any statement", and one of its tests could
+       not see a swallowed resolver error.
+     - The index-schema test could not tell a missing key from `null`.
+     - A ref on `config-features`' `cache-per-logical-op` row was dropped. Its test checks only
+       that `context.WithValue` leaves the parent alone, which the stdlib guarantees.
+   - **Rows.** `runtime/support.md` 2 → 27 rows (6239 → 6267 in all, with 2 in `cli/gotype.md`
+     and 1 in `cli/manifest.md`); 6 unclaimed tests and 2 open gaps.
+     - Two findings went to `backlog.md`: `sqlgen manifest diff` and the MCP store's `byTable`
+       still key by bare table and collide the same way.
+   - **Completion sweep.** With `runtime/support.md` set to `complete`, `req-check` passes.
+   - **Report.** `make conformance` at `cc3d686a`: 6267 rows, 6154 pass, 0 fail, 0 skip, 0 not
+     run, 113 untested. `runtime/support.md` has 27 pass.
+   - **This closes the runtime files.** All six from the split at `73619393` are seeded. Once
+     `support.md` flips, every registry file is `complete` (measured at `7e4518dc`: 22 of 23,
+     with `support.md` the only `in-progress`). Step 6 then has no file left to seed. What
+     remains:
+     - The 113 untested rows.
+     - The open PRD gaps (310), including `gap.event.on-error-panic`.
+     - The two new backlog collisions.
+   - **For the next step:**
+     - Probe a PRD example end to end before reading it; this slice's three defects all came
+       from decoding real generator output.
+     - Look for a test whose setup writes the very state it checks: a reset helper that
+       hard-codes the default is one.
+     - Check which form a real driver actually hands to `Scan` before citing a unit test that
+       feeds it a different one.
+
 7. **Skill changes (§6).** `/design`, `/phase` and `/implement` landed with step 2. `/verify` and
    `/close-phase` change during the config pilot (step 3), once there are rows for them to read
    (§9 ruling 14). Done 2026-10-23: `/verify` reads the registry rows for a sub-item's PRD
