@@ -90,10 +90,11 @@ func emitPerEntity(doc *Document, dir, filename, entitiesDir string) error {
 // entityIndexEntry is the lightweight per-entity pointer emitted in the
 // per_entity top-level index (PRD §30.4 per-entity layout).
 type entityIndexEntry struct {
-	Name  string `json:"name"`
-	Table string `json:"table"`
-	Kind  string `json:"kind"`
-	File  string `json:"file"`
+	Name   string `json:"name"`
+	Table  string `json:"table"`
+	Schema string `json:"schema,omitempty"`
+	Kind   string `json:"kind"`
+	File   string `json:"file"`
 }
 
 // indexDocument mirrors Document's top-level envelope but replaces the full
@@ -122,10 +123,11 @@ func indexDocumentOf(doc *Document, entitiesDir string) *indexDocument {
 	for i := range doc.Entities {
 		e := &doc.Entities[i]
 		entries[i] = entityIndexEntry{
-			Name:  e.Name,
-			Table: e.Table,
-			Kind:  e.Kind,
-			File:  path.Join(entitiesDir, e.FilePrefix+".json"),
+			Name:   e.Name,
+			Table:  e.Table,
+			Schema: e.Schema,
+			Kind:   e.Kind,
+			File:   path.Join(entitiesDir, e.FilePrefix+".json"),
 		}
 	}
 	return &indexDocument{

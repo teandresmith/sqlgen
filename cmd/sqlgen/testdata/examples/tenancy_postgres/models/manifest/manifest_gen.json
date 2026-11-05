@@ -177,24 +177,28 @@
     {
       "name": "Article",
       "table": "articles",
+      "schema": "public",
       "kind": "table",
       "file": "entities/article.json"
     },
     {
       "name": "ArticleStat",
       "table": "article_stats",
+      "schema": "public",
       "kind": "view",
       "file": "entities/article_stat.json"
     },
     {
       "name": "LineItem",
       "table": "line_items",
+      "schema": "public",
       "kind": "table",
       "file": "entities/line_item.json"
     },
     {
       "name": "WorkspaceLineTotal",
       "table": "workspace_line_totals",
+      "schema": "public",
       "kind": "view",
       "file": "entities/workspace_line_total.json"
     }

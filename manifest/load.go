@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"slices"
 	"strings"
 )
 
 // LoadInto parses the embedded manifest bytes into dst and populates entityMap
-// with the full per-entity records keyed by SQL table name. It is the helper
-// the generated package's init() calls once at package-load time.
+// with the full per-entity records, keyed by schema.table for an entity with a
+// schema and by the bare table otherwise; read it with FindEntity. It is the
+// helper the generated package's init() calls once at package-load time.
 //
 // dst.Entities always ends up in the lightweight index form (that is how both
 // layouts serialize the top-level document). The full entity records are
@@ -47,7 +49,7 @@ func loadInline(topJSON []byte, entityMap map[string]*Entity) error {
 	}
 	for i := range full.Entities {
 		e := full.Entities[i]
-		entityMap[e.Table] = &e
+		entityMap[entityKey(&e)] = &e
 	}
 	return nil
 }
@@ -72,8 +74,52 @@ func loadPerEntity(entityFS fs.FS, entityMap map[string]*Entity) error {
 		if err := json.Unmarshal(data, &e); err != nil {
 			return fmt.Errorf("%w: %w", ErrParseManifest, err)
 		}
-		entityMap[e.Table] = &e
+		entityMap[entityKey(&e)] = &e
 		return nil
 	})
 	return err //nolint:wrapcheck // walk func already wraps every error in ErrParseManifest
+}
+
+// entityKey is the key LoadInto stores an entity under: schema.table when the
+// entity has a schema, so two schemas' tables of one name stay apart, and the
+// bare table otherwise.
+func entityKey(e *Entity) string {
+	if e.Schema == "" {
+		return e.Table
+	}
+	return e.Schema + "." + e.Table
+}
+
+// FindEntity returns the record LoadInto stored for name; it is the lookup
+// behind the generated Client.ManifestEntity. name is an entity's key
+// (schema.table for an entity with a schema, the table otherwise) or the bare
+// table of a schema'd entity whose table name no other schema shares.
+//
+// An unknown name returns ErrEntityNotFound itself. A bare table that two or
+// more schemas share returns an error wrapping ErrEntityNotFound that names each
+// schema.table it could mean.
+func FindEntity(entityMap map[string]*Entity, name string) (*Entity, error) {
+	if e, ok := entityMap[name]; ok {
+		return e, nil
+	}
+	var (
+		found      *Entity
+		candidates []string
+	)
+	for key, e := range entityMap {
+		if e.Schema != "" && e.Table == name {
+			found = e
+			candidates = append(candidates, key)
+		}
+	}
+	switch len(candidates) {
+	case 0:
+		return nil, ErrEntityNotFound
+	case 1:
+		return found, nil
+	default:
+		slices.Sort(candidates)
+		return nil, fmt.Errorf("%w: table %q is in more than one schema (%s); name it as schema.table",
+			ErrEntityNotFound, name, strings.Join(candidates, ", "))
+	}
 }

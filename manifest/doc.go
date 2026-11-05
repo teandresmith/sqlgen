@@ -9,8 +9,10 @@
 // / §30.4.2 / §30.4.3 / §30.7): the same structs serve both as the JSON
 // unmarshal target and the public Client API surface. LoadInto is the helper
 // the generated package's init() calls to parse the embedded bytes into a
-// *Document plus a table-keyed *Entity lookup map that is layout-agnostic — the
-// disk-layout choice (single vs per_entity) never leaks into the Go API.
+// *Document plus an *Entity lookup map keyed by schema.table (or table, for an
+// entity without a schema), which FindEntity reads. The lookup is
+// layout-agnostic — the disk-layout choice (single vs per_entity) never leaks
+// into the Go API.
 //
 // This is a runtime package peer to database/, cache/, comparator/, and
 // omittable/: it imports only the standard library, honoring the runtime

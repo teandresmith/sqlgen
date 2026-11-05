@@ -106,20 +106,16 @@ func TestLoadInto_SingleLayout(t *testing.T) {
 	}
 
 	wantIndex := []manifest.EntityIndex{
-		{Name: "User", Table: "users", Kind: manifest.EntityKindTable},
+		{Name: "User", Table: "users", Schema: "public", Kind: manifest.EntityKindTable},
 		{Name: "Order", Table: "orders", Kind: manifest.EntityKindTable},
 	}
 	if diff := cmp.Diff(wantIndex, doc.Entities); diff != "" {
 		t.Errorf("Document.Entities not lightweight index (-want +got):\n%s", diff)
 	}
 
-	if got := entities["users"]; got == nil {
-		t.Fatal(`entities["users"] missing`)
-	} else if diff := cmp.Diff(users, *got); diff != "" {
-		t.Errorf("users full record mismatch (-want +got):\n%s", diff)
-	}
-	if _, ok := entities["orders"]; !ok {
-		t.Error(`entities["orders"] missing`)
+	want := map[string]*manifest.Entity{"public.users": &users, "orders": &orders}
+	if diff := cmp.Diff(want, entities); diff != "" {
+		t.Errorf("entity map (-want +got):\n%s", diff)
 	}
 }
 
@@ -148,10 +144,9 @@ func TestLoadInto_PerEntityLayout(t *testing.T) {
 	if got := doc.Entities[0].File; got != "entities/users.json" {
 		t.Errorf("index File = %q, want entities/users.json", got)
 	}
-	if got := entities["orders"]; got == nil {
-		t.Fatal(`entities["orders"] missing`)
-	} else if diff := cmp.Diff(orders, *got); diff != "" {
-		t.Errorf("orders full record mismatch (-want +got):\n%s", diff)
+	want := map[string]*manifest.Entity{"public.users": &users, "orders": &orders}
+	if diff := cmp.Diff(want, entities); diff != "" {
+		t.Errorf("entity map (-want +got):\n%s", diff)
 	}
 }
 
@@ -199,7 +194,7 @@ func TestLoadInto_SubRootedFS(t *testing.T) {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
-	if diff := cmp.Diff([]string{"orders", "users"}, keys); diff != "" {
+	if diff := cmp.Diff([]string{"orders", "public.users"}, keys); diff != "" {
 		t.Errorf("entityMap keys (-want +got):\n%s", diff)
 	}
 	if _, ok := entities[""]; ok {
@@ -208,8 +203,8 @@ func TestLoadInto_SubRootedFS(t *testing.T) {
 	// A mis-ingested top-level document would decode into an Entity whose Table
 	// (absent in the doc) does not match its map key.
 	for k, e := range entities {
-		if e.Table != k {
-			t.Errorf("entityMap[%q] keyed by mismatched entity Table %q", k, e.Table)
+		if e.Table != k && e.Schema+"."+e.Table != k {
+			t.Errorf("entityMap[%q] keyed by mismatched entity %q.%q", k, e.Schema, e.Table)
 		}
 	}
 }
@@ -233,7 +228,10 @@ func TestLoadInto_LayoutAgnostic(t *testing.T) {
 		t.Fatalf("per-entity LoadInto: %v", err)
 	}
 
-	if diff := cmp.Diff(singleMap["users"], perMap["users"]); diff != "" {
+	if singleMap["public.users"] == nil || perMap["public.users"] == nil {
+		t.Fatalf("users record missing: single %v, per_entity %v", singleMap["public.users"], perMap["public.users"])
+	}
+	if diff := cmp.Diff(singleMap["public.users"], perMap["public.users"]); diff != "" {
 		t.Errorf("layout-agnostic lookup mismatch (-single +per_entity):\n%s", diff)
 	}
 }
@@ -280,4 +278,148 @@ func TestLoadInto_ErrorWrapping(t *testing.T) {
 			t.Fatalf("err = %v, want ErrParseManifest", err)
 		}
 	})
+}
+
+// auditUsers is a full entity whose table name public.users (fullEntity) shares.
+func auditUsers() manifest.Entity {
+	return manifest.Entity{
+		Kind:       manifest.EntityKindTable,
+		Name:       "AuditUser",
+		Table:      "users",
+		Schema:     "audit",
+		FilePrefix: "audit_user",
+		Files:      []string{"audit_user_gen.go"},
+		PK: manifest.PK{
+			Kind:    "single",
+			Columns: []manifest.PKColumn{{Name: "id", GoField: "ID", GoType: "int64"}},
+		},
+		Columns: []manifest.Column{{Name: "id", GoField: "ID", GoType: "int64", DBType: "bigint", PK: true}},
+	}
+}
+
+// TestLoadInto_KeysSchemasApart loads two schemas' tables of one name in both
+// layouts and expects each under its own schema.table key, next to a
+// schema-less entity under its bare table.
+func TestLoadInto_KeysSchemasApart(t *testing.T) {
+	users, audit, orders := fullEntity(), auditUsers(), ordersEntity()
+	want := map[string]*manifest.Entity{"public.users": &users, "audit.users": &audit, "orders": &orders}
+
+	t.Run("single", func(t *testing.T) {
+		got := map[string]*manifest.Entity{}
+		top := fullDocJSON(t, []manifest.Entity{users, audit, orders})
+		if err := manifest.LoadInto(top, nil, &manifest.Document{}, got); err != nil {
+			t.Fatalf("LoadInto: %v", err)
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("entity map (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("per_entity", func(t *testing.T) {
+		got := map[string]*manifest.Entity{}
+		top := indexDocJSON(t, []manifest.EntityIndex{
+			{Name: "User", Table: "users", Kind: manifest.EntityKindTable, File: "entities/users.json"},
+			{Name: "AuditUser", Table: "users", Kind: manifest.EntityKindTable, File: "entities/audit_user.json"},
+			{Name: "Order", Table: "orders", Kind: manifest.EntityKindTable, File: "entities/orders.json"},
+		})
+		entityFS := fstest.MapFS{
+			"users.json":      {Data: entityJSON(t, users)},
+			"audit_user.json": {Data: entityJSON(t, audit)},
+			"orders.json":     {Data: entityJSON(t, orders)},
+		}
+		if err := manifest.LoadInto(top, entityFS, &manifest.Document{}, got); err != nil {
+			t.Fatalf("LoadInto: %v", err)
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("entity map (-want +got):\n%s", diff)
+		}
+	})
+}
+
+// TestFindEntity resolves names against a map holding a schema-less entity, a
+// table name two schemas share, and a table name only one schema has.
+func TestFindEntity(t *testing.T) {
+	users, audit, orders := fullEntity(), auditUsers(), ordersEntity()
+	events := manifest.Entity{Kind: manifest.EntityKindTable, Name: "Event", Table: "events", Schema: "audit"}
+	entities := map[string]*manifest.Entity{
+		"public.users": &users,
+		"audit.users":  &audit,
+		"orders":       &orders,
+		"audit.events": &events,
+	}
+
+	found := []struct {
+		name string
+		key  string
+		want *manifest.Entity
+	}{
+		{name: "qualified name", key: "audit.users", want: &audit},
+		{name: "the other schema's qualified name", key: "public.users", want: &users},
+		{name: "bare table no other schema shares", key: "events", want: &events},
+		{name: "schema-less entity", key: "orders", want: &orders},
+	}
+	for _, tt := range found {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := manifest.FindEntity(entities, tt.key)
+			if err != nil {
+				t.Fatalf("FindEntity(%q): %v", tt.key, err)
+			}
+			if got != tt.want {
+				t.Errorf("FindEntity(%q) = %+v, want the record stored for it", tt.key, got)
+			}
+		})
+	}
+
+	notFound := []struct {
+		name string
+		key  string
+	}{
+		{name: "unknown table", key: "invoices"},
+		{name: "unknown schema", key: "billing.users"},
+		{name: "schema-less entity qualified", key: "public.orders"},
+	}
+	for _, tt := range notFound {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := manifest.FindEntity(entities, tt.key)
+			if err != manifest.ErrEntityNotFound { //nolint:errorlint // identity: an unknown name returns the sentinel itself
+				t.Errorf("FindEntity(%q) err = %v, want manifest.ErrEntityNotFound itself", tt.key, err)
+			}
+			if got != nil {
+				t.Errorf("FindEntity(%q) = %+v, want nil", tt.key, got)
+			}
+		})
+	}
+
+	t.Run("bare table two schemas share", func(t *testing.T) {
+		got, err := manifest.FindEntity(entities, "users")
+		if got != nil {
+			t.Errorf("FindEntity(users) = %+v, want nil", got)
+		}
+		if !errors.Is(err, manifest.ErrEntityNotFound) {
+			t.Fatalf("FindEntity(users) err = %v, want an error wrapping manifest.ErrEntityNotFound", err)
+		}
+		const want = `manifest: entity not found: table "users" is in more than one schema (audit.users, public.users); name it as schema.table`
+		if err.Error() != want {
+			t.Errorf("FindEntity(users) err = %q, want %q", err, want)
+		}
+	})
+}
+
+// TestSentinelErrors pins the two sentinels' text.
+func TestSentinelErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "entity not found", err: manifest.ErrEntityNotFound, want: "manifest: entity not found"},
+		{name: "parse failure", err: manifest.ErrParseManifest, want: "manifest: parse failure (corrupt embed)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.Error(); got != tt.want {
+				t.Errorf("Error() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

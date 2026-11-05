@@ -733,6 +733,7 @@ Tests in this file's packages that back no PRD behavior.
 
 | Unclaimed test | Reason |
 |---|---|
+| cmd/sqlgen/manifest: TestEmitJSON_PerEntityIndexCarriesSchema | Pins the `schema` on a `per_entity` index entry, ruled 2026-11-05 so `ManifestEntity` keys can be read off the index; waits here for the §30.4 per-entity index amendment, when it becomes a row |
 | cmd/sqlgen/manifest: TestEmitMarkdown_Examples | markdown rendering detail (per-entity example blocks + fence-aware blank-line normalization); no PRD statement about entity.md content |
 | cmd/sqlgen/manifest: TestEmitMarkdown_FKCell | markdown rendering detail (schema-qualified FK cell); no PRD statement about the markdown relationships table |
 | cmd/sqlgen/manifest: TestEmitMarkdown_FeaturesLine | markdown rendering detail (_index.md "Features:" line); PRD §30.3 fixes no _index.md content beyond the scan table / cross-reference |

@@ -84,11 +84,7 @@ func loadEmittedLookup(t *testing.T, mdDir string, layout config.JSONLayout) fun
 		t.Fatalf("manifest.LoadInto: %v", err)
 	}
 	return func(table string) (*rtmanifest.Entity, error) {
-		e, ok := entities[table]
-		if !ok {
-			return nil, rtmanifest.ErrEntityNotFound
-		}
-		return e, nil
+		return rtmanifest.FindEntity(entities, table)
 	}
 }
 

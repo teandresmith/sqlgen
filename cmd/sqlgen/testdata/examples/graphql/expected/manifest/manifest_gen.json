@@ -177,144 +177,168 @@
     {
       "name": "Asset",
       "table": "assets",
+      "schema": "public",
       "kind": "table",
       "file": "entities/asset.json"
     },
     {
       "name": "AssetDocumentLink",
       "table": "asset_document_links",
+      "schema": "public",
       "kind": "table",
       "file": "entities/asset_document_link.json"
     },
     {
       "name": "Category",
       "table": "categories",
+      "schema": "public",
       "kind": "table",
       "file": "entities/category.json"
     },
     {
       "name": "CategoryPriceTotal",
       "table": "category_price_totals",
+      "schema": "public",
       "kind": "view",
       "file": "entities/category_price_total.json"
     },
     {
       "name": "Document",
       "table": "documents",
+      "schema": "public",
       "kind": "table",
       "file": "entities/document.json"
     },
     {
       "name": "Event",
       "table": "events",
+      "schema": "public",
       "kind": "table",
       "file": "entities/event.json"
     },
     {
       "name": "FilterProbe",
       "table": "filter_probes",
+      "schema": "public",
       "kind": "table",
       "file": "entities/filter_probe.json"
     },
     {
       "name": "KeyedCode",
       "table": "keyed_codes",
+      "schema": "public",
       "kind": "table",
       "file": "entities/keyed_code.json"
     },
     {
       "name": "KeyedCodeEntry",
       "table": "keyed_code_entries",
+      "schema": "public",
       "kind": "table",
       "file": "entities/keyed_code_entry.json"
     },
     {
       "name": "MaskedLabel",
       "table": "masked_labels",
+      "schema": "public",
       "kind": "table",
       "file": "entities/masked_label.json"
     },
     {
       "name": "NumericWidth",
       "table": "numeric_widths",
+      "schema": "public",
       "kind": "table",
       "file": "entities/numeric_width.json"
     },
     {
       "name": "Order",
       "table": "orders",
+      "schema": "public",
       "kind": "table",
       "file": "entities/order.json"
     },
     {
       "name": "OrderItem",
       "table": "order_items",
+      "schema": "public",
       "kind": "table",
       "file": "entities/order_item.json"
     },
     {
       "name": "Product",
       "table": "products",
+      "schema": "public",
       "kind": "table",
       "file": "entities/product.json"
     },
     {
       "name": "Profile",
       "table": "profiles",
+      "schema": "public",
       "kind": "table",
       "file": "entities/profile.json"
     },
     {
       "name": "ScalarProbe",
       "table": "scalar_probes",
+      "schema": "public",
       "kind": "table",
       "file": "entities/scalar_probe.json"
     },
     {
       "name": "User",
       "table": "users",
+      "schema": "public",
       "kind": "table",
       "file": "entities/user.json"
     },
     {
       "name": "UserBadge",
       "table": "user_badges",
+      "schema": "public",
       "kind": "table",
       "file": "entities/user_badge.json"
     },
     {
       "name": "UserCategory",
       "table": "user_categories",
+      "schema": "public",
       "kind": "table",
       "file": "entities/user_category.json"
     },
     {
       "name": "UserCredential",
       "table": "user_credentials",
+      "schema": "public",
       "kind": "table",
       "file": "entities/user_credential.json"
     },
     {
       "name": "UserSession",
       "table": "user_sessions",
+      "schema": "public",
       "kind": "table",
       "file": "entities/user_session.json"
     },
     {
       "name": "WorkspaceNote",
       "table": "workspace_notes",
+      "schema": "public",
       "kind": "table",
       "file": "entities/workspace_note.json"
     },
     {
       "name": "WorkspaceNoteSummary",
       "table": "workspace_note_summary",
+      "schema": "public",
       "kind": "view",
       "file": "entities/workspace_note_summary.json"
     },
     {
       "name": "WorkspaceSetting",
       "table": "workspace_settings",
+      "schema": "public",
       "kind": "table",
       "file": "entities/workspace_setting.json"
     }

@@ -317,6 +317,44 @@ func TestEmitJSON_PerEntityLayout(t *testing.T) {
 	}
 }
 
+// TestEmitJSON_PerEntityIndexCarriesSchema gives one entity a schema and
+// expects the per_entity index to carry it on that entity's entry alone.
+func TestEmitJSON_PerEntityIndexCarriesSchema(t *testing.T) {
+	doc := newFixtureDocument()
+	doc.Layout = string(config.JSONLayoutPerEntity)
+	if len(doc.Entities) < 2 {
+		t.Fatalf("fixture has %d entities, want at least 2", len(doc.Entities))
+	}
+	doc.Entities[0].Schema = "audit"
+	dir := t.TempDir()
+	if err := manifest.EmitJSON(doc, manifestCfg(config.JSONLayoutPerEntity), dir); err != nil {
+		t.Fatalf("EmitJSON(per_entity) error: %v", err)
+	}
+
+	var index struct {
+		Entities []map[string]any `json:"entities"`
+	}
+	if err := json.Unmarshal(readFile(t, filepath.Join(dir, "manifest", "manifest_gen.json")), &index); err != nil {
+		t.Fatalf("decoding index: %v", err)
+	}
+	got := map[string]any{}
+	for _, entry := range index.Entities {
+		table, _ := entry["table"].(string)
+		got[table] = entry["schema"]
+	}
+	want := map[string]any{}
+	for i, e := range doc.Entities {
+		if i == 0 {
+			want[e.Table] = "audit"
+			continue
+		}
+		want[e.Table] = nil
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("index schema per table (-want +got):\n%s", diff)
+	}
+}
+
 func TestEmitJSON_Deterministic(t *testing.T) {
 	for _, layout := range []config.JSONLayout{config.JSONLayoutSingle, config.JSONLayoutPerEntity} {
 		t.Run(string(layout), func(t *testing.T) {

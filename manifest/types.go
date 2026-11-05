@@ -56,10 +56,12 @@ const (
 func (k RelationshipKind) String() string { return string(k) }
 
 // Document is the top-level manifest envelope. When decoded from the embedded
-// bytes, Entities is always the lightweight index form (Name + Table + Kind +
-// optional File) regardless of disk layout — use the generated
-// Client.ManifestEntity(table) for full entity records. See PRD §30.4 / §30.6.
+// bytes, Entities is always the lightweight index form (Name + Table + Kind,
+// plus Schema and File when present) regardless of disk layout — use the
+// generated Client.ManifestEntity(table) for full entity records. See PRD
+// §30.4 / §30.6.
 type Document struct {
+	SchemaURL        string           `json:"$schema,omitempty"`
 	SchemaVersion    string           `json:"schema_version"`
 	GeneratedAt      string           `json:"generated_at"`
 	Generator        Generator        `json:"generator"`
@@ -168,13 +170,15 @@ type OmittableConvention struct {
 }
 
 // EntityIndex is the lightweight pointer form carried in Document.Entities. Use
-// the generated Client.ManifestEntity(table) for the full record regardless of
-// disk layout. See PRD §30.6.
+// the generated Client.ManifestEntity for the full record regardless of disk
+// layout, naming it Schema.Table when Schema is set and Table otherwise. See
+// PRD §30.6.
 type EntityIndex struct {
-	Name  string     `json:"name"`
-	Table string     `json:"table"`
-	Kind  EntityKind `json:"kind"`
-	File  string     `json:"file,omitempty"` // only in per_entity layout
+	Name   string     `json:"name"`
+	Table  string     `json:"table"`
+	Schema string     `json:"schema,omitempty"`
+	Kind   EntityKind `json:"kind"`
+	File   string     `json:"file,omitempty"` // only in per_entity layout
 }
 
 // Entity is a single generated entity — table or view — in its full form. See

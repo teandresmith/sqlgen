@@ -80,6 +80,7 @@ func fullEntity() manifest.Entity {
 
 func fullDocument() manifest.Document {
 	return manifest.Document{
+		SchemaURL:     "https://example.test/sqlgen/manifest/schema/v1.json",
 		SchemaVersion: "0.1.0",
 		GeneratedAt:   "2026-07-09T00:00:00Z",
 		Generator:     manifest.Generator{Name: "sqlgen", Version: "v1.2.3"},
@@ -223,4 +224,49 @@ func boolLit(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// TestDocument_DecodesSchemaURL decodes the top-level "$schema" key and writes it
+// back under the same key.
+func TestDocument_DecodesSchemaURL(t *testing.T) {
+	const url = "https://raw.githubusercontent.com/teandresmith/sqlgen/v1.2.3/cmd/sqlgen/manifest/schema/v1.json"
+	var doc manifest.Document
+	if err := json.Unmarshal([]byte(`{"$schema":"`+url+`","schema_version":"0.2.0"}`), &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if doc.SchemaURL != url {
+		t.Errorf("SchemaURL = %q, want %q", doc.SchemaURL, url)
+	}
+
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var keys map[string]any
+	if err := json.Unmarshal(data, &keys); err != nil {
+		t.Fatalf("unmarshal keys: %v", err)
+	}
+	if keys["$schema"] != url {
+		t.Errorf(`marshaled "$schema" = %v, want %q`, keys["$schema"], url)
+	}
+}
+
+// TestEntityIndex_DecodesSchema decodes an index entry with a schema and one
+// without, from the keys the generator writes.
+func TestEntityIndex_DecodesSchema(t *testing.T) {
+	body := []byte(`[
+		{"name": "AuditUser", "table": "users", "schema": "audit", "kind": "table", "file": "entities/audit_user.json"},
+		{"name": "Order", "table": "orders", "kind": "table"}
+	]`)
+	var got []manifest.EntityIndex
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	want := []manifest.EntityIndex{
+		{Name: "AuditUser", Table: "users", Schema: "audit", Kind: manifest.EntityKindTable, File: "entities/audit_user.json"},
+		{Name: "Order", Table: "orders", Kind: manifest.EntityKindTable},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("EntityIndex decode (-want +got):\n%s", diff)
+	}
 }

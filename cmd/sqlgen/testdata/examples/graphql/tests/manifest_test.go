@@ -2,7 +2,6 @@ package tests
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"slices"
 	"testing"
@@ -121,8 +120,12 @@ func TestManifest_EntityLookup(t *testing.T) {
 		t.Error("users entity has no columns; expected the full record, not the index form")
 	}
 
-	if _, err := client.ManifestEntity("does_not_exist"); !errors.Is(err, manifest.ErrEntityNotFound) {
-		t.Errorf("ManifestEntity(unknown) error = %v, want ErrEntityNotFound", err)
+	missing, err := client.ManifestEntity("does_not_exist")
+	if err != manifest.ErrEntityNotFound { //nolint:errorlint // identity: an unknown table returns the sentinel itself
+		t.Errorf("ManifestEntity(unknown) error = %v, want manifest.ErrEntityNotFound itself", err)
+	}
+	if missing != nil {
+		t.Errorf("ManifestEntity(unknown) = %+v, want nil", missing)
 	}
 }
 
@@ -136,5 +139,8 @@ func TestManifest_VersionAgreement(t *testing.T) {
 	}
 	if got, want := client.ManifestVersion(), client.Manifest().SchemaVersion; got != want {
 		t.Errorf("ManifestVersion() = %q, Manifest().SchemaVersion = %q", got, want)
+	}
+	if got, want := client.ManifestVersion(), readOnDiskManifest(t).SchemaVersion; got != want {
+		t.Errorf("ManifestVersion() = %q, on-disk schema_version = %q", got, want)
 	}
 }
