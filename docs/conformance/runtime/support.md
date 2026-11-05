@@ -1,6 +1,6 @@
 # Runtime Requirements: Support Packages
 
-<!-- seeding: in-progress -->
+<!-- seeding: complete -->
 <!-- packages: types manifest tenancy -->
 
 The runtime support packages: `types` (the §7 type integrations), `manifest` (the runtime-embedded
