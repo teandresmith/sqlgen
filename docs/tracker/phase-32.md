@@ -4,8 +4,10 @@ Status: In Progress
 PRD Sections: 4.6, 4.8, 4.13, 5.3, 8.1.7, 8.2, 8.6, 8.7, 9.8.13, 9.9, 11.1, 13.1, 13.2, 13.4, 25.1, 29.10, 30, 31.3, Appendix A
 
 > **Design.** `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (option D, ruled 2026-10-20) is the
-> source for every sub-item below. Its §6 lists sub-items N.0–N.8, which are 32.0–32.8 here. Its §7
-> records rulings R1–R7, each taking the recommended option from a measured probe (§9.4):
+> source for every sub-item below. Its §6 lists sub-items N.0–N.8, which are 32.0–32.8 here. Its §10
+> behavior contract (retrofitted 2026-11-05) lists, in §10.5, the contract rows each sub-item turns
+> from planned to passing, and §10.2 the regression guards; its §12 records contract rulings Q1–Q5.
+> Its §7 records rulings R1–R7, each taking the recommended option from a measured probe (§9.4):
 > - R1: pinned set = tenant column, child-PK members, members shared with another FK; E1 over
 >   every non-tenant member; every member in the model on both sides.
 > - R2: `Constraint.Match` on PostgreSQL only; under FULL, disconnect only when every member is
@@ -525,12 +527,26 @@ Doc fix applied: the `sortForParity` comment.
 
 ## 32.3 Config, manifest and MCP shapes
 
-**PRD Reference:** Sections 4.8, 4.13, 13.4, 30, 31.3
+**PRD Reference:** Sections 4.8, 4.13, 13.4, 30, 31.3, Appendix B
 
 **Status:** Not Started
 
 ### Tasks
 
+- [ ] First, before any change (design §12 Q3):
+  - register the new design §10.1 IDs in their registry files (`client.md`, `cli/gen.md`,
+    `cli/config.md`, `cli/manifest.md`, `cli/mcp.md`, `runtime/support.md`), each with its planned
+    test name;
+  - add the four `relationships` matrix rows (`composite-o2m`, `composite-belongs-to`,
+    `composite-has-one`, `composite-m2m`) to `cli/gen.md`'s matrix header, with design §10.3's
+    `n/a` cells (Q2);
+  - write the two unguarded design §10.2 tests against today's code; both must pass before any
+    change lands: a single-column FK whose member is a PK member or the tenant column is
+    `create`-only (`gen.nested.single-column-pinned-create-only`), and the nested child input
+    drops a single-column tenant FK's column.
+- [ ] PRD Appendix B gains two rows (design §12 Q5): "FOREIGN KEY `MATCH FULL` enforced"
+  (PostgreSQL yes; MySQL parsed, ignored; SQLite ignored) and "Bind-parameter limit"
+  (65535 / 65535 / 32766). Re-hash the registry's Appendix B anchor.
 - [ ] `config.TableRelationship.FK`, `JunctionLocalFK` and `JunctionReferenceFK`
   (`cmd/sqlgen/config/config.go:722-725`) become a string-or-list type with `UnmarshalYAML`. Decode
   it like `Operations` and `NullableVariant` (`config/config.go:564,630`). A map is rejected
@@ -569,6 +585,8 @@ Doc fix applied: the `sortForParity` comment.
 - [ ] `v1.json` accepts both forms and rejects a map (the existing schema test).
 - [ ] Manifest round-trip (`manifest/load_test.go`) at `0.2.0`.
 - [ ] MCP `find_referencing` dedup with a two-column key and a one-column key to the same target.
+- [ ] The two design §10.2 guards, passing on the code before this sub-item's changes.
+- [ ] Every design §10.5 row for 32.3 passes, and its registry row lists the test.
 
 ### Completion Record
 
@@ -637,6 +655,10 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] The two §4.9 non-PK-UNIQUE schemas compile and load (fail first: the `cannot use
   &comparator.NullableNumber[int32]…` / `cannot use &comparator.NullableID…` errors).
 - [ ] An excluded member on the parent side drops the edge with a warning.
+- [ ] `TestIncrementColumns_ExcludeForeignKeys` and `TestPKStrategyDetection` gain a composite-FK
+  member case, and `gen.increment.fk-excluded` / `gen.pk-strategy.fk-pk-caller` list them (both
+  rows claim the composite case today with single-column tests only, design §9.5).
+- [ ] Every design §10.5 row for 32.4 passes, and its registry row lists the test.
 - [ ] `TestE2EGoldenFiles` green with no golden change.
 
 ### Completion Record
@@ -667,6 +689,11 @@ _Filled in when complete: files changed, commit references, notes._
   NULL member match nothing (R2).
 - [ ] Relationship filters (`EXISTS`): correlate on every pair through the 32.1 `Exists`; lift the
   composite-PK-parent skip (`context_relfilter.go:139`, `len(tc.PKColumns) != 1`).
+- [ ] Conformance schema (design §12 Q1): on every dialect, add a table with a composite FK into
+  `order_items(order_id, product_id)` (a composite-PK target) and one with a composite FK into a
+  UNIQUE pair, with a nullable member and a nullable referenced UNIQUE column. Regenerate the
+  suite's goldens; only the new tables change. The `conformance:` rows of design §10.1 run here
+  and fail first against the staging guard.
 - [ ] Lift the staging guard for reads: a detected edge with more than one pair is generated, and
   a declared one no longer errors. Invert 32.2's staging-guard test. Until 32.6 such an edge is
   nested-ineligible with that reason.
@@ -690,6 +717,9 @@ _Filled in when complete: files changed, commit references, notes._
   nothing and raise no error.
 - [ ] A consumer filter with a soft-delete comparator is ANDed with the tuple filter, not
   replaced (the FIX-359 regression shape at N = 2).
+- [ ] The conformance rows (composite O2O / O2M / M2M loads, NULL members, the relationship
+  filter, a narrowed projection) on every dialect and driver.
+- [ ] Every design §10.5 row for 32.5 passes, and its registry row lists the test.
 - [ ] `TestE2EGoldenFiles` green with no golden change.
 
 ### Completion Record
@@ -704,6 +734,13 @@ _Filled in when complete: files changed, commit references, notes._
 
 ### Tasks
 
+- [ ] `tenancy_postgres` schema (moved from 32.8, so the nested `example:` rows fail first):
+  - a composite tenant FK (`(workspace_id, x_id) → (workspace_id, id)`);
+  - a tenant junction (M2M);
+  - a composite-PK target, read surfaces only;
+  - a `MATCH FULL` composite FK whose members are all free and nullable.
+
+  Regenerate its goldens; only the new tables change.
 - [ ] `nested.go.tmpl` and `context_nested.go`, for single-column-PK parents and targets (R3):
   - connect identifies the target by its PK and loads it through its own tenant-scoped client,
     reading its referenced columns;
@@ -737,6 +774,7 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] Live-database tests (PostgreSQL): a cross-tenant connect fails before the write; a pinned
   mismatch is `ErrAlreadyRelated`, not a raw FK error; MATCH FULL all-NULL disconnect succeeds.
 - [ ] `ErrAlreadyRelated` on a tuple-keyed owner.
+- [ ] Every design §10.5 row for 32.6 passes, and its registry row lists the test.
 - [ ] `TestE2EGoldenFiles` green with no golden change.
 
 ### Completion Record
@@ -751,6 +789,8 @@ _Filled in when complete: files changed, commit references, notes._
 
 ### Tasks
 
+- [ ] The `graphql` example (the only tenanted GraphQL example, design §12 Q4) gains a composite
+  tenant FK; regenerate its goldens, and only the new table's files change.
 - [ ] Relationship fields and filter inputs for edges with more than one pair: field shapes are
   unchanged, and resolvers go through the 32.5 loaders.
 - [ ] Nested connect on a composite-FK edge to a single-column-PK target takes the target ID, as
@@ -769,6 +809,9 @@ _Filled in when complete: files changed, commit references, notes._
 
 - [ ] GraphQL resolver tests for a composite O2M, O2O and M2M edge, and a relationship filter.
 - [ ] A query that selects no key column still loads the edge (field forcing).
+- [ ] `graphql` example: a query over the composite tenant FK returns the same rows as the Go
+  client, under tenancy, and its relationship filter matches on every pair.
+- [ ] Every design §10.5 row for 32.7 passes, and its registry row lists the test.
 
 ### Completion Record
 
@@ -782,12 +825,9 @@ _Filled in when complete: files changed, commit references, notes._
 
 ### Tasks
 
-- [ ] `tenancy_postgres`:
-  - a composite tenant FK (`(workspace_id, x_id) → (workspace_id, id)`), with load, filter and
-    nested tests;
-  - a tenant junction (M2M);
-  - a composite-PK target, read surfaces only;
-  - a connect across tenants that fails before the write.
+- [ ] `tenancy_postgres` (schema landed in 32.6, with the nested and cross-tenant connect
+  tests): load and filter tests over the composite tenant FK, the tenant junction and the
+  composite-PK target, each staying in the tenant.
 - [ ] `mysql` and `sqlite`: one composite FK each, with a load and a filter test.
 - [ ] Regenerate the goldens. Only the new tables' files and manifest entries change.
 - [ ] `TestE2EDatabaseTwin` stays green for the changed examples (detection parity under
@@ -808,6 +848,7 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] The new runtime tests in each example (load, filter, nested where eligible).
 - [ ] `TestE2EGoldenFiles` and `TestE2EDatabaseTwin` green.
 - [ ] The `sqlgen-example` probe result recorded in the Completion Record.
+- [ ] Every design §10.5 row for 32.8 passes, and its registry row lists the test.
 
 ### Completion Record
 

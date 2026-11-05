@@ -4,7 +4,9 @@
 > is 32). Option D: full composite relationships. Rulings R1–R7 settled 2026-10-20 (§7), each
 > from a measured probe (§9).** Verified against source at `bd7783ea` on 2026-10-20; the
 > §6 code references re-checked at `244ce2ee` on 2026-10-21; §9.1 re-verified at `244ce2ee`
-> on 2026-10-22 (32.0), which wrote §4 into the PRD with the five rulings in §7.1.
+> on 2026-10-22 (32.0), which wrote §4 into the PRD with the five rulings in §7.1. §10–§12
+> (behavior contract, definition of done, contract rulings Q1–Q5) retrofitted 2026-11-05 at
+> `716c15e1`, after 32.0–32.2 landed.
 > sqlgen models a relationship as one foreign-key column joined to the target's first
 > primary-key column. A composite foreign key therefore gives no relationship, so the
 > tenant-isolation pattern `TENANT_SCOPED_REFERENCES.md` §1.3 recommends, the composite
@@ -663,3 +665,239 @@ to this checkout). It applies at `bd7783ea` and adds `parser/proto_detect.go` an
 - **R7, config decode.** A `yaml.v3` type with `UnmarshalYAML` decodes `fk: cycle_id`,
   `fk: [workspace_id, cycle_id]` and the block-list form, and rejects a map with
   `cannot unmarshal !!map into []string`.
+
+### 9.5 Contract retrofit (2026-11-05, at `716c15e1`)
+
+Read-only checks behind §10, no probe run:
+
+- **The registry already holds most of the contract.** 32.0 registered the PRD text it wrote,
+  so the composite-FK requirements sit in `docs/conformance/` with empty Tests cells:
+  `config.relationship-fk-length-mismatch*` (§4.13), `gen.nested.composite-key-free-members`,
+  `gen.nested.match-full` (§9.9), `gen.filter.rel-composite-correlation`,
+  `gen.filter.member-any-key` (§11.1), `gen.relationships.joins-referenced-columns`,
+  `gen.relationships.composite-key-edge` (§13.1), `gen.fk-convert.composite-member`,
+  `gen.fk-convert.null-unique-referenced-skipped` (§13.3), `gen.manual.fk-list-by-position`
+  (§13.4), nine `manifest.json.rel.*` rows (§30.4.2), four `mcp.surface.*` rows (§31.3) and four
+  `api.*` rows (§26.4, §26.5.3). §10.1 reuses those IDs, so `/implement` fills their Tests cells
+  rather than adding rows.
+- **Two registry rows claim more than their tests show.** `gen.increment.fk-excluded` (§8.2)
+  and `gen.pk-strategy.fk-pk-caller` (§8.6) both state "a member of a composite FK included",
+  but their tests (`TestIncrementColumns_ExcludeForeignKeys`, `TestPKStrategyDetection/… FK PK …`)
+  build single-column FKs only, and the code still reads `col.FKReference`
+  (`cmd/sqlgen/gen/context_table.go:1282`, `:2097`, `:2118`). §1.2's measured symptom
+  (`TaskIncrementCycleID` generated) therefore still holds at HEAD. §10.1 lists the composite
+  half as planned.
+- **The PRD gives no rows for some behaviors it states.** §13.2 (composite O2O join, tuple
+  O2M and M2M loads, the condition appended rather than replacing), §9.6 (every referenced and
+  FK column unioned into a narrowed projection), §25.1 (`s = C` for a composite key on pgx),
+  §9.9.5–§9.9.8 (pinned check, free-member writes, nested `create` over every member, the tenant
+  mismatch) and §30.4 (`schema_version` `0.2.0`) have no registry row for the composite case.
+  §10.1 adds them as new IDs.
+- **Staging-guard tests are inverted later.** `TestGenerate_CompositeKeyEdgeIsOmitted` and
+  `TestRelationshipFilters_CompositePKParentEmitsNone` pin today's output, and the registry marks
+  both as staging guards. 32.5 replaces them (§10.1).
+- **`tenancy_postgres` generates no GraphQL.** The only tenanted GraphQL example is `graphql`
+  (`tenancy.column: workspace_id`). 32.7's "same rows as the Go client, under tenancy" needs a
+  composite FK there, and 32.8 does not plan one (ruled: the `graphql` example gains one in 32.7, §12 Q4).
+
+## 10. Behavior contract
+
+Retrofitted 2026-11-05 at `716c15e1`, after 32.0–32.2 landed. §10.0 records what has landed;
+§10.1–§10.4 hold what 32.3–32.8 must deliver, following `docs/design/templates/design.md` §6.
+IDs are the registry's own where a row exists (§9.5), and new IDs in the registry's style
+otherwise; the new ones go into the registry at 32.3's start (§10.5).
+
+### 10.0 Landed (32.0–32.2)
+
+| Area | Registry rows | Status |
+|---|---|---|
+| Detection, every §5.3 shape on three dialects plus source parity | `parser.rel.*` (`parser/schema.md` §5.3, the full `relationship-detection` matrix) | passing |
+| Non-key FK warning | `config.fk-references-non-key`, `.message` (`cli/config.md` §4.13) | passing |
+| `Exists` over N pairs, prefixed tuple IN | `cond.exists-pairs.*`, `builder.select-join.prefixed-tuple-in` (`runtime/sql.md`) | passing |
+| Composite-PK batches use tuple IN on MySQL | `artifacts.mutations.composite-pk`, `hard-delete-many.composite-pk` | passing |
+| Chunk size `floor(L / 2 / N)` at N = 1 | `load.chunk-size` (`client.md` §25.1) | passing at N = 1; N = 2 in §10.1 |
+| Excluded link column drops the edge | `config.exclude-columns-removes-link-column*` | passing at N = 1; N = 2 in §10.1 |
+
+### 10.1 New and changed behavior
+
+Every row's PRD text landed at 32.0, so every anchor is existing.
+
+| ID | Requirement | PRD | Applies to | Test | Matrix cell | Status |
+|---|---|---|---|---|---|---|
+| gen.manual.fk-list-by-position | `fk`, `junction_local_fk` and `junction_reference_fk` take a string or a list; a list maps by position onto the referenced table's primary key; a string is a one-item list | §13.4 | all | `unit: cmd/sqlgen/config: TestLoadConfig_RelationshipKeyForms/string`, `/flow list`, `/block list`, `/map is rejected`; `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredKeyListMapsOntoPrimaryKey` | — | planned (32.3) |
+| config.relationship-fk-length-mismatch | A key list whose length is not the referenced primary key's column count is an error, a string into a composite key and an empty list included | §4.13 | all | `unit: cmd/sqlgen/config: TestValidatePostParse_RelationshipKeyLength/fk list too short`, `/junction_local_fk list too long`, `/string into a composite key`, `/empty list` | config-validation: relationship-fk-length-mismatch × fires | planned (32.3) |
+| config.relationship-fk-length-mismatch.message | The error names the relationship, the key, the list and the primary key's columns | §4.13 | all | `unit: cmd/sqlgen/config: TestValidatePostParse_RelationshipKeyLength/fk list too short` | config-validation: relationship-fk-length-mismatch × message | planned (32.3) |
+| config.relationship-fk-length-mismatch.severity | Reported as an error | §4.13 | all | same | config-validation: relationship-fk-length-mismatch × severity | planned (32.3) |
+| config.relationship-fk-length-mismatch.together | Reported with the run's other validation errors | §4.13 | all | `unit: cmd/sqlgen/cli: TestValidate_ReportsEachGenerationRuleWithTheOthers/relationship key list of the wrong length` | config-validation: relationship-fk-length-mismatch × together | planned (32.3) |
+| config.schema.relationship-key-forms | `v1.json` accepts a string or a string list for the three key fields and rejects a map | §4.14 | all | `unit: cmd/sqlgen/config: TestSchemaV1_RelationshipKeyForms/string`, `/list`, `/map is rejected` | — | planned (32.3) |
+| manifest.json.rel.columns-references | `fk.columns` and `fk.references` list the pairs in the FK's declared order, `columns[i]` referencing `references[i]` | §30.4.2 | all | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/composite key in declared order` | — | planned (32.3) |
+| manifest.json.rel.single-column-lists | A single-column edge has one-item `columns` and `references` | §30.4.2 | all | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/single-column key`; `golden: postgres` | — | planned (32.3) |
+| manifest.json.rel.references-target-key | `references` names the target's PK or the UNIQUE columns the FK names | §30.4.2 | all | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/key into a unique constraint` | — | planned (32.3) |
+| manifest.json.rel.references-manual | A manual relationship's `references` is the referenced primary key | §30.4.2 | all | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual relationship` | — | planned (32.3) |
+| manifest.json.rel.junction-local-fk | `junction.local_fk` is `{columns, references, constraint}` into this entity | §30.4.2 | all | `unit: cmd/sqlgen/manifest: TestBuild_M2MJunctionSchema` (extended) | — | planned (32.3) |
+| manifest.json.rel.junction-target-fk | `junction.target_fk` is `{columns, references, constraint}` into the target | §30.4.2 | all | same | — | planned (32.3) |
+| manifest.json.rel.constraint | `constraint` names the FOREIGN KEY the edge came from | §30.4.2 | all | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/detected edge names its constraint` | — | planned (32.3) |
+| manifest.json.rel.constraint-sqlite-unnamed | An unnamed SQLite FK is named `table(columns) → target(columns)` | §30.4.2 | sqlite | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/unnamed sqlite key`; `golden: sqlite` | — | planned (32.3) |
+| manifest.json.rel.constraint-manual-omitted | A manual relationship omits `constraint` | §30.4.2 | all | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual relationship` | — | planned (32.3) |
+| manifest.json.top.schema-version | `schema_version` is `0.2.0` | §30.4, §30.8 | all | `unit: cmd/sqlgen/manifest: TestEmitJSON_SchemaVersion`; `golden: postgres` | — | planned (32.3) |
+| manifest.load.key-lists | The runtime `manifest` package loads a `0.2.0` document's key lists and junction keys | §30.6 | all | `unit: manifest: TestLoad_RelationshipKeyLists` | — | planned (32.3) |
+| mcp.surface.find-referencing.output | `sqlgen_find_referencing` returns `[{entity, relationship_name, kind, fk_columns}]` | §31.3 | all | `unit: cmd/sqlgen/mcp: TestFindReferencing` (extended) | mcp-surface: find-referencing × output | planned (32.3) |
+| mcp.surface.find-referencing.fk-columns-order | `fk_columns` is in the FK's declared order, one item for a single-column key | §31.3 | all | `unit: cmd/sqlgen/mcp: TestFindReferencing/composite key in declared order` | — | planned (32.3) |
+| mcp.surface.find-referencing.fk-columns-whole | Dedup and sort compare `fk_columns` whole: a two-column and a one-column key into one table are two results | §31.3 | all | `unit: cmd/sqlgen/mcp: TestDispatchFindReferencingDedupsByFullTuple/two-column and one-column keys into one table` | — | planned (32.3) |
+| mcp.surface.describe-relationship.references | An FK edge's join shape gives the columns its FK columns reference | §31.3 | all | `unit: cmd/sqlgen/mcp: TestDescribeRelationship_JoinShapeNamesReferencedColumns` | — | planned (32.3) |
+| gen.relationships.joins-referenced-columns | An edge joins the columns its FK references, not the target's PK: a single-column FK to a non-PK UNIQUE column and the PK-override form generate code that compiles and loads | §13.1 | all | `unit: cmd/sqlgen/cli: TestGenerate_EdgeJoinsReferencedColumns/fk to a non-PK unique column`, `/fk into the declared key under a primary-key override` | — | failing at HEAD, measured (§4.9) (32.4) |
+| gen.increment.fk-excluded (composite half) | A member of a composite FK gets no increment operator | §8.2 | all | `unit: cmd/sqlgen/gen: TestIncrementColumns_ExcludeForeignKeys/composite FK member` | — | failing at HEAD (§9.5) (32.4) |
+| gen.pk-strategy.fk-pk-caller (composite half) | A single-column PK that is a member of a composite FK is `caller` | §8.6 | all | `unit: cmd/sqlgen/gen: TestPKStrategyDetection/postgres UUID PK in a composite FK → caller`, `/mysql …`, `/sqlite …` | — | failing at HEAD (§9.5) (32.4) |
+| gen.nested.composite-key-free-members | A member is pinned when it is the tenant column, a child-PK member or a member of another FK; the rewrite verbs write free members only; an edge with no free member is `create`-only, silently | §9.9.2 | all | `unit: cmd/sqlgen/gen: TestNestedEligibility_PinnedAndFreeMembers/tenant column`, `/child primary-key member`, `/member shared with another key`, `/every member pinned keeps create only`, `/free member` | relationships: composite-o2m × nested-mutation | planned (32.4, 32.6) |
+| gen.nested.match-full | Under PostgreSQL `MATCH FULL`, `disconnect` / `clear` need every member free and nullable, and `connect` with a pinned member needs `allow_reparent`; MySQL and SQLite read every key as SIMPLE | §9.9.4 (E8) | postgres (MySQL, SQLite: SIMPLE) | `unit: cmd/sqlgen/gen: TestNestedEligibility_MatchFull/simple with nullable free members`, `/full with a pinned member has no disconnect`, `/full with every member free keeps disconnect`, `/full with a pinned member connects only under allow_reparent`, `/mysql and sqlite read full as simple` | — | planned (32.4) |
+| config.exclude-columns-removes-link-column (composite) | An excluded member of a composite key, on the child or the parent, drops the detected edge with a warning | §4.13 | all | `unit: cmd/sqlgen/gen: TestRelationshipTargets_ExcludedKeyMemberDropsInferredEdge/composite key member on the child`, `/composite key member on the parent` | config-validation: exclude-columns-removes-link-column × fires | planned (32.5: the staging guard drops the edge until then, so the case would pass vacuously) |
+| gen.relationships.composite-key-edge | A composite-FK edge is generated: O2O by a unique subset, O2M otherwise, M2M on a tenant junction | §13.1 | all | `unit: cmd/sqlgen/cli: TestGenerate_CompositeKeyEdgeIsGenerated/composite o2m`, `/composite o2o`, `/chained o2o`, `/tenant junction m2m` (replaces `TestGenerate_CompositeKeyEdgeIsOmitted`) | relationships: composite-o2m × struct-field (and the other composite rows, §10.3) | planned (32.5) |
+| gen.manual.replaces-inferred (composite) | A one-pair manual relationship replaces the composite edge it duplicates, with the warning, so the §1.4 workaround keeps generating | §13.4 | all | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred/declared one-pair edge over a composite foreign key` | — | planned (32.5) |
+| load.o2o-composite-key | An O2O join ANDs one equality per key pair | §13.2 | all | `unit: cmd/sqlgen/gen: TestBuildO2OJoinDetails_CompositeKeyJoinsEveryPair`; `conformance: Get/an O2O through a composite key joins on every pair` | relationships: composite-belongs-to × loader | planned (32.5) |
+| load.o2m-composite-key | An O2M load filters the child with tuple IN over the parent's referenced columns and gives each parent exactly its children | §13.2 | all | `unit: cmd/sqlgen/gen: TestGetTemplate_o2mCompositeKeyLoading/pgx`, `/stdlib`; `conformance: GetMany/a composite foreign key loads each parent's children on every pair` | relationships: composite-o2m × loader | planned (32.5) |
+| load.m2m-composite-key | An M2M load reads the junction by tuple and maps each target to its parents on every key column, in the target query's order | §13.2 | all | `unit: cmd/sqlgen/gen: TestGetTemplate_m2mCompositeKeyLoading`; `conformance: GetMany/an M2M through composite junction keys maps each target to its parents` | relationships: composite-m2m × loader | planned (32.5) |
+| load.key-condition-appended | The key condition is appended to the child query's conditions, so a consumer filter still applies | §13.2 | all | `conformance: GetMany/a consumer filter on a composite edge applies with the key condition` | — | planned (32.5) |
+| gen.fk-convert.composite-member | Every member read off a child is guarded and unwrapped; a child with a NULL member loads under no parent and raises no error | §13.3 | all | `unit: cmd/sqlgen/gen: TestGetTemplate_o2mCompositeKeyLoading/nullable member is guarded`; `conformance: GetMany/a child with a NULL key member loads under no parent` | — | planned (32.5) |
+| gen.fk-convert.null-unique-referenced-skipped | A parent whose referenced UNIQUE column holds NULL is skipped before the query | §13.3 | all | `conformance: GetMany/a parent whose referenced unique key holds NULL loads no children` | — | planned (32.5) |
+| get-many.required-columns-composite-key | A narrowed projection still unions every referenced parent column and every child FK member, so the edge loads | §9.6 | all | `unit: cmd/sqlgen/gen: TestRequiredColumns_compositeKeyMembers`; `conformance: GetMany/a projection without key columns still loads a composite edge` | — | planned (32.5) |
+| load.chunk-size (N = 2) | A two-column key binds at most `floor(L / 2 / 2)` parent keys per statement and loads every child set past one chunk | §25.1 | all | `example: postgres: TestRelationshipLoad_CompositeKeyPastBindLimit`; same in `postgres_stdlib`, `mysql`, `sqlite` | — | planned (32.5) |
+| query-count.composite-o2m-pgx | A composite-key O2M on pgx takes one statement per chunk (`s = C`), not one `= ANY` statement | §25.1 | postgres (pgx) | `unit: cmd/sqlgen/gen: TestGetTemplate_o2mCompositeKeyLoading/pgx`; `example: postgres: TestRelationshipLoad_CompositeKeyPastBindLimit` | — | planned (32.5) |
+| gen.filter.rel-composite-correlation | A relationship filter's `EXISTS` correlates on every key pair | §11.1 | all | `unit: cmd/sqlgen/gen: TestFilterTemplate_CompositeKeyCorrelatesEveryPair`; `conformance: GetMany/a relationship filter through a composite key matches on every pair` | relationships: composite-o2m × filter | planned (32.5) |
+| gen.filter.member-any-key | Every list relationship gets a filter member: a composite-PK parent, an edge into a UNIQUE key, an M2M into a composite-PK target | §11.1 | all | `unit: cmd/sqlgen/gen: TestRelationshipFilters_MemberForAnyKey/composite-PK parent`, `/edge into a unique key`, `/m2m into a composite-PK target` (replaces `TestRelationshipFilters_CompositePKParentEmitsNone`) | relationships: composite-m2m × filter | planned (32.5) |
+| gen.nested.e3-keeps-relationship-filters | A composite-PK parent with no nested surface keeps its relationship filters | §9.9.4 | all | `unit: cmd/sqlgen/gen: TestRelationshipFilters_MemberForAnyKey/composite-PK parent` | — | planned (32.5) |
+| tenant-rel.composite-load-in-tenant | A composite tenant edge's load runs the child's tenant-scoped `GetMany` | §29.10 | all | `example: tenancy_postgres: TestCompositeTenantFK_LoadStaysInTenant` | — | planned (32.8) |
+| gen.nested.child-input-drops-key-members | `<Parent><Edge>CreateInput` drops every member of the traversed key, the tenant column included | §9.9.5 | all | `unit: cmd/sqlgen/gen: TestNestedTemplate_ChildCreateInputDropsEveryKeyMember` | — | planned (32.6) |
+| gen.nested.e1-target-shape (composite) | An edge whose key has a generated member is not write-eligible | §9.9.4 (E1) | all | `unit: cmd/sqlgen/gen: TestNestedEligibility_TargetShapeFailuresAreNotWriteEligible/generated member of a composite key` | — | planned (32.6) |
+| nested.composite-create-sets-every-member | A nested `create` sets every key member from the parent's referenced columns | §9.9.6 | all | `example: tenancy_postgres: TestCreateWithRelated_CreateSetsEveryKeyMemberFromTheParent` | relationships: composite-o2m × nested-mutation | planned (32.6) |
+| nested.composite-create-tenant-mismatch | Under `SkipTenancy`, a nested `create` whose tenant column differs from the parent's is `ErrAlreadyRelated` | §9.9.8 | all | `example: tenancy_postgres: TestCreateWithRelated_TenantMismatchUnderSkipTenancyIsAlreadyRelated` | — | planned (32.6) |
+| nested.composite-connect-pinned-mismatch | A `connect` target whose pinned member differs from the parent's value is `ErrAlreadyRelated` naming it, before any write, `allow_reparent` included | §9.9.6, §9.9.8 | all | `example: tenancy_postgres: TestUpdateWithRelated_PinnedMemberMismatchIsAlreadyRelated` | — | planned (32.6) |
+| nested.composite-connect-writes-free-members | `connect` and `allow_reparent` write the free members only | §9.9.2 | all | `example: tenancy_postgres: TestUpdateWithRelated_ConnectWritesOnlyFreeMembers` | — | planned (32.6) |
+| nested.composite-connect-cross-tenant | Under tenancy, a `connect` naming another tenant's row is `ErrNotFound` before any write | §9.9.10 | all | `example: tenancy_postgres: TestUpdateWithRelated_CrossTenantConnectIsNotFoundBeforeAnyWrite` | — | planned (32.6) |
+| nested.composite-connect-held-elsewhere | A target parented to another row through a composite key is `ErrAlreadyRelated` naming it | §9.9.6 | all | `example: tenancy_postgres: TestUpdateWithRelated_ConnectTargetHeldByAnotherParentIsAlreadyRelated` | — | planned (32.6) |
+| nested.composite-disconnect-nulls-free-members | `disconnect` and `clear` null the free members only; under `MATCH FULL` with every member free, all members become NULL | §9.9.2 | all (FULL: postgres) | `example: tenancy_postgres: TestUpdateWithRelated_DisconnectNullsOnlyFreeMembers`, `TestUpdateWithRelated_MatchFullDisconnectNullsEveryMember` | — | planned (32.6) |
+| nested.junction-key-union | M2M link and unlink write and delete the junction row by both keys' union; unlink needs a junction PK equal to it | §9.9.4 (E5, E11) | all | `unit: cmd/sqlgen/gen: TestNestedEligibility_TenantJunctionUnlinkNeedsPKOverTheUnion/pk equals union`, `/surrogate pk has no unlink`; `example: tenancy_postgres: TestUpdateWithRelated_TenantJunctionLinksAndUnlinksThroughEveryColumn` | relationships: composite-m2m × nested-mutation | planned (32.6) |
+| api.relationship-field.composite-pk | A composite-PK table's edges, and composite-FK edges, are fields on its object type | §26.4 | all | `unit: cmd/sqlgen/gen: TestGraphQLSchema_CompositeKeyRelationshipFields`; `example: graphql: TestCompositeTenantFK_GraphQLMatchesGoClient` | api-generation: relationship-field × composite-pk | planned (32.7) |
+| api.relationship-filter-member.composite-pk | A composite-PK parent's `<T>Filter` input carries relationship filter members | §26.4 | all | `unit: cmd/sqlgen/gen: TestGraphQLSchema_CompositeKeyRelationshipFields/composite-PK parent filter` | api-generation: relationship-filter-member × composite-pk | planned (32.7) |
+| api.filter.relationship-composite-pk-parent | A composite-PK parent's relationship filter member is translated | §26.5.3 | all | `unit: cmd/sqlgen/gen: TestGraphQLFilterTranslation_RelationshipMember/composite-PK parent` | api-generation: relationship-filter × composite-pk | planned (32.7) |
+| api.filter.relationship-composite-fk-edge | A composite-FK edge's relationship filter member is translated | §26.5.3 | all | `unit: cmd/sqlgen/gen: TestGraphQLFilterTranslation_RelationshipMember/composite foreign key`; `example: graphql: TestCompositeTenantFK_GraphQLRelationshipFilter` | — | planned (32.7) |
+| api.composite-edge.key-columns-forced | A GraphQL query selecting no key column still loads a composite edge | §26.5.2, §9.6 | all | `example: graphql: TestCompositeTenantFK_EdgeLoadsWithoutSelectedKeys` | — | planned (32.7) |
+| e2e.composite-tenant-schema | `sqlgen-example` validates, generates, builds and passes its suite with no manual relationships, `Cycle.Tasks` and `Team.Projects` detected | §5.3, §29.10 | postgres | probe, recorded in 32.8's Completion Record (`reference_example_probe_harness`) | — | planned (32.8) |
+
+### 10.2 Regression guards
+
+Each row is an existing behavior on a path 32.3–32.8 rewrites.
+
+| Behavior that must not change | PRD | Guarded by | Status |
+|---|---|---|---|
+| Every existing example's Go output is byte-identical (design §4.9) | §5.3, §13 | `golden: <every example>` (`TestE2EGoldenFiles`) | guarded |
+| Detection and output agree under `database` | §6 | `TestE2EDatabaseTwin` | guarded |
+| A string `fk` / `junction_local_fk` / `junction_reference_fk` means what it does today | §13.4 | `unit: cmd/sqlgen/config: TestLoadConfig_FullConfig`; `unit: cmd/sqlgen/config: TestSchemaV1_acceptsUnexercisedSurface`; `unit: cmd/sqlgen/gen: TestGenerate_RelationshipSideCaseInsensitive` | guarded |
+| A manual relationship replaces a detected one with a warning | §13.4 | `unit: cmd/sqlgen/gen: TestBuildRelationshipContexts_DeclaredReplacesInferred` | guarded |
+| A one-column O2M load uses `IN`, or one `= ANY($1)` statement on pgx | §13.2, §25.1 | `unit: cmd/sqlgen/gen: TestGetTemplate_o2mRelationshipLoading/pgx`, `/stdlib` | guarded |
+| A one-column M2M load scans typed keys and fetches targets by their own key | §13.2 | `unit: cmd/sqlgen/gen: TestGetTemplate_m2mRelationshipLoading`; `TestGetTemplate_m2mJunctionScansTypedKeys`; `TestGetTemplate_m2mTargetFilterUsesTargetPKField` | guarded |
+| A one-pair O2O join, belongs-to and has-one | §13.2 | `unit: cmd/sqlgen/gen: TestBuildO2OJoinDetails_chainedFKOnTarget`; `TestBuildO2OJoinDetails_fkOnTargetParentPKName`; `TestRelationshipsTemplate_resolveO2OJoins` | guarded |
+| An O2M into a composite-PK table filters on its one FK column | §13.2 | `unit: cmd/sqlgen/gen: TestGenerate_O2MIntoCompositePKTable_LoaderFiltersOnFK` | guarded |
+| One-column loads chunk past the bind limit, and a consumer filter is ANDed in | §25.1 | `example: postgres|postgres_stdlib|mysql|sqlite: TestRelationshipLoad_PastBindLimit`, `TestRelationshipLoad_M2MTargetsPastBindLimit` | guarded |
+| One-pair relationship filters, polymorphic filters included | §11.1 | `unit: cmd/sqlgen/gen: TestFilterTemplate_O2MEmitsCorrelatedExists`; `TestFilterTemplate_M2MEmitsJunctionJoin`; `TestDiscriminator_RelationshipFilterBindsTheValue` | guarded |
+| Composite-PK methods and `Filter.PKs` (OR of ANDs) | §8.7, §9.8.13 | `conformance: GetMany/composite keys return only the listed tuples` and the other `*.composite-pk` rows; `unit: cmd/sqlgen/gen: TestFilterTemplate_compositePK_PKsField` | guarded |
+| Loader child reads inherit `SkipCache` / `SkipEvents` / `SkipHooks` and `SkipTenancy` | §13.2, §29.10 | `unit: cmd/sqlgen/gen: TestRelationshipCallOptions`; `TestTenancyTemplate_loadRelationships_propagatesSkipTenancy` | guarded |
+| Fanned-out loads inside a transaction | §18.5 | `conformance: Get/selecting two fanned-out relationships inside a transaction loads both` | guarded |
+| No read mutates the caller's `FieldOptions` | §9.6 | `conformance: GetMany/a read leaves the caller's field options unchanged`; `unit: cmd/sqlgen/gen: TestRequiredColumns_noFieldOptionsMutation` | guarded |
+| A relationship-loaded read bypasses the cache | §27.6 | `example: cache: TestSkip_RelationshipBypass` | guarded |
+| One-column increments and PK strategy for FK columns | §8.2, §8.6 | `unit: cmd/sqlgen/gen: TestIncrementColumns_ExcludeForeignKeys`; `TestPKStrategyDetection` | guarded |
+| One-column nested verbs follow FK nullability; connect splits three ways | §9.9.2, §9.9.6 | `unit: cmd/sqlgen/gen: TestNestedEligibility_VerbSetPerShape`; `conformance: CreateWithRelated/connect naming a post that does not exist returns ErrNotFound …` (`nested.o2m-connect-three-way`) | guarded |
+| A single-column FK whose member is a PK member or the tenant column is `create`-only (`gen.nested.single-column-pinned-create-only`) | §9.9.2 | none | unguarded |
+| The nested child input drops a single-column tenant FK's column (`context_nested.go`) | §9.9.5 | none found; the goldens cover only non-tenant FK edges | unguarded |
+| E1 / E3 keep composite-PK targets and parents out of nested writes, with loaders and manifest entries kept | §9.9.4 | `unit: cmd/sqlgen/gen: TestNestedEligibility_TargetShapeFailuresAreNotWriteEligible/composite-PK target`; `TestNestedEligibility_ListedShapeFailureIsReported/composite-PK parent`; `TestNestedEligibility_CompositePKParentKeepsItsLoaders`; `unit: cmd/sqlgen/manifest: TestBuild_E3CompositePKParentKeepsManifestEntries` | guarded |
+| `find_referencing` dedups by the full tuple | §31.3 | `unit: cmd/sqlgen/mcp: TestDispatchFindReferencingDedupsByFullTuple` | guarded |
+| One-column GraphQL relationship fields, filters and nested inputs | §26.4, §26.5 | `golden: graphql`; `example: graphql: TestSurfacePromises_ChunkedParentSetAddsOneQueryPerChunk` | guarded |
+
+### 10.3 Module matrix cells
+
+**`relationship-detection` (parser), `condition-composition` (runtime).** Complete, filled by
+32.1 and 32.2 (§10.0). No row changes.
+
+**`config-validation` (CLI)**, new row:
+
+| Rule | fires | message | severity | together | schema |
+|---|---|---|---|---|---|
+| `relationship-fk-length-mismatch` | config.relationship-fk-length-mismatch | config.relationship-fk-length-mismatch.message | config.relationship-fk-length-mismatch.severity | config.relationship-fk-length-mismatch.together | n/a: the length is checked against the parsed schema's primary key, which the JSON Schema cannot see (§4.14) |
+
+**`relationships` (CLI)**, four new rows (ruled, §12 Q2):
+
+| Type | struct-field | loader | filter | nested-mutation |
+|---|---|---|---|---|
+| `composite-o2m` | gen.relationships.composite-key-edge | load.o2m-composite-key | gen.filter.rel-composite-correlation | gen.nested.composite-key-free-members |
+| `composite-belongs-to` | gen.relationships.composite-key-edge | load.o2o-composite-key | n/a: filter members are generated for list relationships only (§11.1) | n/a: shape 1 is never nestable (§9.9.1) |
+| `composite-has-one` | gen.relationships.composite-key-edge | load.o2o-composite-key | n/a: filter members are generated for list relationships only (§11.1) | nested.composite-create-sets-every-member |
+| `composite-m2m` | gen.relationships.composite-key-edge | load.m2m-composite-key | gen.filter.member-any-key | nested.junction-key-union |
+
+**`api-generation` (CLI)**, the `composite-pk` column of existing rows:
+
+| Element | composite-pk |
+|---|---|
+| `relationship-field` | api.relationship-field.composite-pk |
+| `relationship-filter-member` | api.relationship-filter-member.composite-pk |
+| `relationship-filter` | api.filter.relationship-composite-pk-parent |
+| `create-with-related`, `update-with-related`, `upsert-with-related`, `nested-inputs` | n/a: E3 keeps composite-PK parents out of nested writes in this phase (§9.9.4, ruling R3) |
+
+**`mcp-surface` (CLI)**: `find-referencing × output` is mcp.surface.find-referencing.output;
+`listed`, `deterministic` and `error` are unchanged and stay on their current rows.
+
+**`manifest-artifacts`, `generated-artifacts`, `client-methods`.** No new artifact or method, so
+no cell changes. The client-methods matrix has no relationship column, so the `load.*` rows carry
+no cell.
+
+### 10.4 Dialect differences
+
+32.3 adds the first two to PRD Appendix B as capabilities (§12, Q5).
+
+| Difference | PostgreSQL | MySQL | SQLite | PRD |
+|---|---|---|---|---|
+| `MATCH FULL` enforced | yes: FULL gates `disconnect` / `clear` / `connect` (gen.nested.match-full) | parsed, ignored: read as SIMPLE | ignored: read as SIMPLE | §9.9.4 (E8) |
+| Bind-parameter limit `L` | 65535 | 65535 | 32766 | §25.1 |
+| Chunk at N = 2 | 16383 | 16383 | 8191 | §25.1 |
+| One-statement O2M | pgx at N = 1 only (`= ANY($1)`); every composite key chunks | never | never | §25.1 |
+| FK to a non-key column | refused at DDL time | warned (8.0; 8.4 with `restrict_fk_on_non_standard_key` off) | warned | §5.3 (landed) |
+
+### 10.5 Contract rows per sub-item
+
+| Sub-item | Turns these §10.1 rows from planned to passing | Also |
+|---|---|---|
+| 32.3 | gen.manual.fk-list-by-position, config.relationship-fk-length-mismatch (×4), config.schema.relationship-key-forms, manifest.json.rel.* (×9), manifest.json.top.schema-version, manifest.load.key-lists, mcp.surface.* (×4) | First task: register the new §10.1 IDs and the four `relationships` matrix rows, and write the two unguarded §10.2 tests against today's code (§12, Q3). PRD Appendix B gains the `MATCH FULL` and bind-limit rows (§12, Q5) |
+| 32.4 | gen.relationships.joins-referenced-columns, gen.increment.fk-excluded (composite), gen.pk-strategy.fk-pk-caller (composite), gen.nested.composite-key-free-members (context), gen.nested.match-full | |
+| 32.5 | config.exclude-columns-removes-link-column (composite), gen.relationships.composite-key-edge, gen.manual.replaces-inferred (composite), load.*, gen.fk-convert.composite-member, gen.fk-convert.null-unique-referenced-skipped, get-many.required-columns-composite-key, load.chunk-size (N = 2), query-count.composite-o2m-pgx, gen.filter.rel-composite-correlation, gen.filter.member-any-key, gen.nested.e3-keeps-relationship-filters | Replaces both staging-guard tests. The conformance schema gains its composite FKs here, on every dialect, so the `conformance:` rows fail first (§12, Q1) |
+| 32.6 | gen.nested.composite-key-free-members (template), gen.nested.child-input-drops-key-members, gen.nested.e1-target-shape (composite), nested.* (×8) | `tenancy_postgres` gains its composite tenant FK, tenant junction and a `MATCH FULL` table here, so the nested `example:` rows fail first |
+| 32.7 | api.* (×5) | The `graphql` example gains a composite tenant FK (§12, Q4) |
+| 32.8 | tenant-rel.composite-load-in-tenant, e2e.composite-tenant-schema | The `tenancy_postgres` composite FK backs the 32.6 `example:` rows, so its schema lands in 32.6, not here; 32.8 adds the `mysql` / `sqlite` composite FKs and the `sqlgen-example` probe |
+
+## 11. Definition of done
+
+Phase 32 closes only when every item below holds:
+
+1. Every §10.1 row has a test that was seen failing before its implementation and now passes on
+   every dialect in its Applies-to column.
+2. Every §10.2 row is guarded, and every guard still passes.
+3. Every §10.3 cell is an ID or a stated `n/a`.
+4. Every PRD edit has landed (32.0, plus 32.3's Appendix B rows), and every §12 question is ruled.
+5. `make check` and `make check-examples` are green, and `make test-integration` too, since the
+   change reaches runtime and driver packages.
+6. Both staging-guard tests are gone, and no `compositeKeyEdge` guard remains in `gen`.
+7. The registry rows in §10.1 carry their tests, and `gen.increment.fk-excluded` and
+   `gen.pk-strategy.fk-pk-caller` list a composite-member test.
+
+## 12. Rulings
+
+### Rulings (settled 2026-11-05)
+
+Each took the recommended option.
+
+| # | Question | Ruling | Evidence |
+|---|---|---|---|
+| Q1 | Where do the cross-dialect read rows (composite O2O / O2M / M2M loads, NULL members, relationship filters) get tested? | **The conformance suite.** Its schema gains a composite FK into `order_items(order_id, product_id)` (a composite-PK target) and one into a UNIQUE pair, on every dialect, in 32.5, so the `conformance:` rows can fail first there. Examples keep the tenancy, pinned-member and bind-limit cases. | CONFORMANCE.md §2 puts generated-client behavior on every dialect in the suite; §4.1's schema has `order_items` already. |
+| Q2 | How do composite edges enter the CLI `relationships` matrix? | **Four new rows**, `composite-o2m`, `composite-belongs-to`, `composite-has-one`, `composite-m2m`, with the existing columns (§10.3). | The parser matrix already names `composite-o2m`; a new column would reshape every row. |
+| Q3 | Where are the two unguarded §10.2 tests written? | **32.3's first task**, with the registration of the new §10.1 IDs. Both must pass on today's code before any change. | Phase 32 is already broken down; a separate sub-item adds bookkeeping for two tests. |
+| Q4 | Where does 32.7's GraphQL-versus-Go comparison run? | **The `graphql` example gains a composite tenant FK** in 32.7. | `graphql` is the only tenanted GraphQL example (§9.5). |
+| Q5 | Do the dialect differences in §10.4 become PRD Appendix B capabilities? | **Yes: two rows**, "FOREIGN KEY `MATCH FULL` enforced" (PostgreSQL yes; MySQL parsed, ignored; SQLite ignored) and "Bind-parameter limit" (65535 / 65535 / 32766), added in 32.3. The pgx one-statement O2M is a driver fact and stays in §25.1. | CONFORMANCE.md §4.4: a dialect difference is a named capability from Appendix B. |
+
+No question is open.
