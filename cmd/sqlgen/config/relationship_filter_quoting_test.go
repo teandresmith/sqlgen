@@ -17,7 +17,7 @@ func mysqlConfig() *config.RootConfig {
 
 func filterRel(filter string) config.TableRelationship {
 	return config.TableRelationship{
-		Name: "Attachments", Type: "o2m", Table: "documents", FK: "entity_id",
+		Name: "Attachments", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"},
 		Filter: filter,
 	}
 }

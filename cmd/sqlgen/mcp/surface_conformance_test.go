@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -435,22 +436,22 @@ func tieStore() *Store {
 		Kind: manifest.EntityKindTable, Name: "C", Table: "c", PK: manifest.PK{Kind: "single"},
 		Relationships: []manifest.Relationship{
 			{Name: "toB", Kind: manifest.RelationshipO2M, TargetEntity: "B"},
-			{Name: "t", Kind: manifest.RelationshipM2O, TargetEntity: "T", FK: &manifest.FK{Table: "c", Column: "t_id"}},
+			{Name: "t", Kind: manifest.RelationshipM2O, TargetEntity: "T", FK: &manifest.FK{Table: "c", Columns: []string{"t_id"}}},
 		},
 	}
 	d := &manifest.Entity{
 		Kind: manifest.EntityKindTable, Name: "D", Table: "d", PK: manifest.PK{Kind: "single"},
 		Relationships: []manifest.Relationship{
 			{Name: "toB", Kind: manifest.RelationshipO2M, TargetEntity: "B"},
-			{Name: "owner", Kind: manifest.RelationshipM2O, TargetEntity: "T", FK: &manifest.FK{Table: "d", Column: "owner_id"}},
-			{Name: "editor", Kind: manifest.RelationshipM2O, TargetEntity: "T", FK: &manifest.FK{Table: "d", Column: "editor_id"}},
+			{Name: "owner", Kind: manifest.RelationshipM2O, TargetEntity: "T", FK: &manifest.FK{Table: "d", Columns: []string{"owner_id"}}},
+			{Name: "editor", Kind: manifest.RelationshipM2O, TargetEntity: "T", FK: &manifest.FK{Table: "d", Columns: []string{"editor_id"}}},
 		},
 	}
 	tt := &manifest.Entity{
 		Kind: manifest.EntityKindTable, Name: "T", Table: "t", PK: manifest.PK{Kind: "single"},
 		Relationships: []manifest.Relationship{
-			{Name: "ds", Kind: manifest.RelationshipO2M, TargetEntity: "D", FK: &manifest.FK{Table: "d", Column: "owner_id"}},
-			{Name: "cs", Kind: manifest.RelationshipO2M, TargetEntity: "C", FK: &manifest.FK{Table: "c", Column: "t_id"}},
+			{Name: "ds", Kind: manifest.RelationshipO2M, TargetEntity: "D", FK: &manifest.FK{Table: "d", Columns: []string{"owner_id"}}},
+			{Name: "cs", Kind: manifest.RelationshipO2M, TargetEntity: "C", FK: &manifest.FK{Table: "c", Columns: []string{"t_id"}}},
 		},
 	}
 	return storeOf(tt, d, c, b, a)
@@ -577,10 +578,11 @@ func TestDispatchCompactGetEntityRetainsIdentity(t *testing.T) {
 		t.Errorf("compact column[0] = %v, want name id, go_type string, db_type uuid", c0)
 	}
 	rels := compact["relationships"].([]any)
-	if fk, _ := rels[0].(map[string]any)["fk"].(map[string]any); fk["column"] != "user_id" || fk["table"] != "posts" {
+	if fk, _ := rels[0].(map[string]any)["fk"].(map[string]any); fmt.Sprint(fk["columns"]) != "[user_id]" || fk["table"] != "posts" {
 		t.Errorf("compact relationships[0].fk = %v, want posts.user_id", fk)
 	}
-	if j, _ := rels[1].(map[string]any)["junction"].(map[string]any); j["local_fk"] != "user_id" || j["target_fk"] != "role_id" {
+	if j, _ := rels[1].(map[string]any)["junction"].(map[string]any); fmt.Sprint(j["local_fk"].(map[string]any)["columns"]) != "[user_id]" ||
+		fmt.Sprint(j["target_fk"].(map[string]any)["columns"]) != "[role_id]" {
 		t.Errorf("compact relationships[1].junction = %v, want user_id/role_id", j)
 	}
 	q := compact["methods"].(map[string]any)["query"].([]any)
@@ -643,7 +645,7 @@ func TestDispatchDescribeRelationshipCarriesFilter(t *testing.T) {
 	post := &manifest.Entity{
 		Kind: manifest.EntityKindTable, Name: "Post", Table: "posts", PK: manifest.PK{Kind: "single"},
 		Relationships: []manifest.Relationship{
-			{Name: "published_comments", Kind: manifest.RelationshipO2M, TargetEntity: "Comment", FK: &manifest.FK{Table: "comments", Column: "post_id"}, Filter: "status = 'published'"},
+			{Name: "published_comments", Kind: manifest.RelationshipO2M, TargetEntity: "Comment", FK: &manifest.FK{Table: "comments", Columns: []string{"post_id"}}, Filter: "status = 'published'"},
 		},
 	}
 	comment := &manifest.Entity{Kind: manifest.EntityKindTable, Name: "Comment", Table: "comments", PK: manifest.PK{Kind: "single"}}
@@ -668,9 +670,9 @@ func TestDispatchFindReferencingDedupsByFullTuple(t *testing.T) {
 	target := &manifest.Entity{
 		Kind: manifest.EntityKindTable, Name: "Target", Table: "targets", PK: manifest.PK{Kind: "single"},
 		Relationships: []manifest.Relationship{
-			{Name: "link", Kind: manifest.RelationshipO2M, TargetEntity: "A", FK: &manifest.FK{Table: "a", Column: "ref_id"}},
-			{Name: "link", Kind: manifest.RelationshipO2M, TargetEntity: "A", FK: &manifest.FK{Table: "a", Column: "ref_id"}},
-			{Name: "link", Kind: manifest.RelationshipM2O, TargetEntity: "A", FK: &manifest.FK{Table: "a", Column: "ref_id"}},
+			{Name: "link", Kind: manifest.RelationshipO2M, TargetEntity: "A", FK: &manifest.FK{Table: "a", Columns: []string{"ref_id"}}},
+			{Name: "link", Kind: manifest.RelationshipO2M, TargetEntity: "A", FK: &manifest.FK{Table: "a", Columns: []string{"ref_id"}}},
+			{Name: "link", Kind: manifest.RelationshipM2O, TargetEntity: "A", FK: &manifest.FK{Table: "a", Columns: []string{"ref_id"}}},
 		},
 	}
 	a := &manifest.Entity{Kind: manifest.EntityKindTable, Name: "A", Table: "a", PK: manifest.PK{Kind: "single"}}
@@ -679,12 +681,35 @@ func TestDispatchFindReferencingDedupsByFullTuple(t *testing.T) {
 		t.Fatalf("findReferencing: %v", err)
 	}
 	want := []Reference{
-		{Entity: "A", RelationshipName: "link", Kind: "m2o", FKColumn: "ref_id"},
-		{Entity: "A", RelationshipName: "link", Kind: "o2m", FKColumn: "ref_id"},
+		{Entity: "A", RelationshipName: "link", Kind: "m2o", FKColumns: []string{"ref_id"}},
+		{Entity: "A", RelationshipName: "link", Kind: "o2m", FKColumns: []string{"ref_id"}},
 	}
 	if diff := cmp.Diff(want, got.References); diff != "" {
 		t.Errorf("references (-want +got):\n%s", diff)
 	}
+
+	// PRD §31.3: fk_columns is compared whole, so a two-column key and the
+	// one-column key that is its prefix are two results.
+	t.Run("two-column and one-column keys into one table", func(t *testing.T) {
+		target := &manifest.Entity{
+			Kind: manifest.EntityKindTable, Name: "Target", Table: "targets", PK: manifest.PK{Kind: "composite"},
+			Relationships: []manifest.Relationship{
+				{Name: "link", Kind: manifest.RelationshipO2M, TargetEntity: "A", FK: &manifest.FK{Table: "a", Columns: []string{"workspace_id", "ref_id"}}},
+				{Name: "link", Kind: manifest.RelationshipO2M, TargetEntity: "A", FK: &manifest.FK{Table: "a", Columns: []string{"workspace_id"}}},
+			},
+		}
+		got, err := findReferencing(&toolDeps{store: storeOf(target, a)}, FindReferencingInput{Table: "targets"})
+		if err != nil {
+			t.Fatalf("findReferencing: %v", err)
+		}
+		want := []Reference{
+			{Entity: "A", RelationshipName: "link", Kind: "o2m", FKColumns: []string{"workspace_id"}},
+			{Entity: "A", RelationshipName: "link", Kind: "o2m", FKColumns: []string{"workspace_id", "ref_id"}},
+		}
+		if diff := cmp.Diff(want, got.References); diff != "" {
+			t.Errorf("references (-want +got):\n%s", diff)
+		}
+	})
 }
 
 // TestDispatchFindJoinPathMaxHopsDefaultAndClamps pins the max_hops default (4) and both clamps on a

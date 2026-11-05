@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/teandresmith/sqlgen/vdev/cmd/sqlgen/manifest/schema/v1.json",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "generated_at": "2026-01-01T00:00:00Z",
   "generator": {
     "name": "sqlgen",
@@ -881,7 +881,12 @@
           "fk": {
             "table": "documents",
             "schema": "public",
-            "column": "entity_id"
+            "columns": [
+              "entity_id"
+            ],
+            "references": [
+              "id"
+            ]
           },
           "filter": "entity_type = 'asset.attachment'"
         },
@@ -892,7 +897,12 @@
           "fk": {
             "table": "documents",
             "schema": "public",
-            "column": "entity_id"
+            "columns": [
+              "entity_id"
+            ],
+            "references": [
+              "id"
+            ]
           },
           "filter": "entity_type = 'asset.invoice'"
         },
@@ -903,8 +913,22 @@
           "junction": {
             "table": "asset_document_links",
             "schema": "public",
-            "local_fk": "asset_id",
-            "target_fk": "document_id"
+            "local_fk": {
+              "columns": [
+                "asset_id"
+              ],
+              "references": [
+                "id"
+              ]
+            },
+            "target_fk": {
+              "columns": [
+                "document_id"
+              ],
+              "references": [
+                "id"
+              ]
+            }
           },
           "filter": "entity_type = 'asset.attachment' AND name LIKE 'link_%'"
         },
@@ -915,7 +939,12 @@
           "fk": {
             "table": "documents",
             "schema": "public",
-            "column": "entity_id"
+            "columns": [
+              "entity_id"
+            ],
+            "references": [
+              "id"
+            ]
           },
           "filter": "entity_type = 'asset.attachment' AND name LIKE 'photo_%'"
         },
@@ -926,7 +955,12 @@
           "fk": {
             "table": "documents",
             "schema": "public",
-            "column": "entity_id"
+            "columns": [
+              "entity_id"
+            ],
+            "references": [
+              "id"
+            ]
           },
           "filter": "entity_type = 'asset.primary' AND name LIKE 'site_%'"
         },
@@ -937,7 +971,12 @@
           "fk": {
             "table": "documents",
             "schema": "public",
-            "column": "entity_id"
+            "columns": [
+              "entity_id"
+            ],
+            "references": [
+              "id"
+            ]
           },
           "filter": "entity_type = 'asset.primary'"
         },
@@ -948,8 +987,24 @@
           "junction": {
             "table": "asset_document_links",
             "schema": "public",
-            "local_fk": "asset_id",
-            "target_fk": "document_id"
+            "local_fk": {
+              "columns": [
+                "asset_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "asset_document_links_asset_id_fkey"
+            },
+            "target_fk": {
+              "columns": [
+                "document_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "asset_document_links_document_id_fkey"
+            }
           }
         }
       ],
@@ -1867,7 +1922,12 @@
           "fk": {
             "table": "notes",
             "schema": "audit",
-            "column": "user_id"
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ]
           }
         }
       ],
@@ -2838,7 +2898,13 @@
           "fk": {
             "table": "products",
             "schema": "public",
-            "column": "category_id"
+            "columns": [
+              "category_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "products_category_id_fkey"
           }
         },
         {
@@ -2848,8 +2914,24 @@
           "junction": {
             "table": "user_categories",
             "schema": "public",
-            "local_fk": "category_id",
-            "target_fk": "user_id"
+            "local_fk": {
+              "columns": [
+                "category_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "user_categories_category_id_fkey"
+            },
+            "target_fk": {
+              "columns": [
+                "user_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "user_categories_user_id_fkey"
+            }
           }
         }
       ],
@@ -4570,8 +4652,24 @@
           "junction": {
             "table": "asset_document_links",
             "schema": "public",
-            "local_fk": "document_id",
-            "target_fk": "asset_id"
+            "local_fk": {
+              "columns": [
+                "document_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "asset_document_links_document_id_fkey"
+            },
+            "target_fk": {
+              "columns": [
+                "asset_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "asset_document_links_asset_id_fkey"
+            }
           }
         }
       ],
@@ -5055,7 +5153,12 @@
           "fk": {
             "table": "notes",
             "schema": "audit",
-            "column": "event_id"
+            "columns": [
+              "event_id"
+            ],
+            "references": [
+              "id"
+            ]
           }
         },
         {
@@ -5065,7 +5168,12 @@
           "fk": {
             "table": "notes",
             "schema": "public",
-            "column": "source_event_id"
+            "columns": [
+              "source_event_id"
+            ],
+            "references": [
+              "id"
+            ]
           }
         }
       ],
@@ -5518,8 +5626,24 @@
           "junction": {
             "table": "host_fingerprints",
             "schema": "public",
-            "local_fk": "fingerprint_digest",
-            "target_fk": "host_addr"
+            "local_fk": {
+              "columns": [
+                "fingerprint_digest"
+              ],
+              "references": [
+                "digest"
+              ],
+              "constraint": "host_fingerprints_fingerprint_digest_fkey"
+            },
+            "target_fk": {
+              "columns": [
+                "host_addr"
+              ],
+              "references": [
+                "addr"
+              ],
+              "constraint": "host_fingerprints_host_addr_fkey"
+            }
           }
         }
       ],
@@ -5962,8 +6086,24 @@
           "junction": {
             "table": "host_fingerprints",
             "schema": "public",
-            "local_fk": "host_addr",
-            "target_fk": "fingerprint_digest"
+            "local_fk": {
+              "columns": [
+                "host_addr"
+              ],
+              "references": [
+                "addr"
+              ],
+              "constraint": "host_fingerprints_host_addr_fkey"
+            },
+            "target_fk": {
+              "columns": [
+                "fingerprint_digest"
+              ],
+              "references": [
+                "digest"
+              ],
+              "constraint": "host_fingerprints_fingerprint_digest_fkey"
+            }
           }
         }
       ],
@@ -7770,7 +7910,13 @@
           "fk": {
             "table": "order_items",
             "schema": "public",
-            "column": "order_id"
+            "columns": [
+              "order_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "order_items_order_id_fkey"
           }
         }
       ],
@@ -9110,7 +9256,13 @@
           "fk": {
             "table": "order_items",
             "schema": "public",
-            "column": "product_id"
+            "columns": [
+              "product_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "order_items_product_id_fkey"
           }
         },
         {
@@ -9120,7 +9272,13 @@
           "fk": {
             "table": "product_tag_labels",
             "schema": "public",
-            "column": "product_id"
+            "columns": [
+              "product_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "product_tag_labels_product_id_fkey"
           }
         }
       ],
@@ -10401,7 +10559,13 @@
           "fk": {
             "table": "profiles",
             "schema": "public",
-            "column": "user_id"
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "profiles_user_id_fkey"
           }
         }
       ],
@@ -11430,7 +11594,12 @@
           "fk": {
             "table": "notes",
             "schema": "audit",
-            "column": "user_id"
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ]
           }
         },
         {
@@ -11440,7 +11609,12 @@
           "fk": {
             "table": "notes",
             "schema": "public",
-            "column": "user_id"
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ]
           }
         },
         {
@@ -11450,7 +11624,12 @@
           "fk": {
             "table": "profiles",
             "schema": "public",
-            "column": "user_id"
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ]
           }
         },
         {
@@ -11460,8 +11639,22 @@
           "junction": {
             "table": "note_watchers",
             "schema": "audit",
-            "local_fk": "user_id",
-            "target_fk": "note_id"
+            "local_fk": {
+              "columns": [
+                "user_id"
+              ],
+              "references": [
+                "id"
+              ]
+            },
+            "target_fk": {
+              "columns": [
+                "note_id"
+              ],
+              "references": [
+                "id"
+              ]
+            }
           }
         },
         {
@@ -11471,8 +11664,24 @@
           "junction": {
             "table": "user_categories",
             "schema": "public",
-            "local_fk": "user_id",
-            "target_fk": "category_id"
+            "local_fk": {
+              "columns": [
+                "user_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "user_categories_user_id_fkey"
+            },
+            "target_fk": {
+              "columns": [
+                "category_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "user_categories_category_id_fkey"
+            }
           }
         },
         {
@@ -11482,7 +11691,13 @@
           "fk": {
             "table": "orders",
             "schema": "public",
-            "column": "user_id"
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "orders_user_id_fkey"
           }
         }
       ],
@@ -14567,7 +14782,13 @@
           "fk": {
             "table": "warehouses",
             "schema": "public",
-            "column": "nullable_ref"
+            "columns": [
+              "nullable_ref"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "warehouses_nullable_ref_fkey"
           }
         }
       ],

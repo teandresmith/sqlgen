@@ -267,7 +267,7 @@ func TestResolvedNamesNestedClaimIsStructural(t *testing.T) {
 			cfg := nameRuleConfig()
 			cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
 			cfg.Tables["users"] = config.TableConfig{Relationships: []config.TableRelationship{{
-				Name: relName, Type: relType, Table: child, FK: "user_id",
+				Name: relName, Type: relType, Table: child, FK: config.KeyColumns{"user_id"},
 			}}}
 			if tt.mutate != nil {
 				tt.mutate(cfg)

@@ -30,7 +30,7 @@ func discriminatorRel(name, value string) config.TableRelationship {
 		Name:  name,
 		Type:  "o2m",
 		Table: "documents",
-		FK:    "entity_id",
+		FK:    config.KeyColumns{"entity_id"},
 		Discriminator: &config.RelationshipDiscriminator{
 			Column: "entity_type",
 			Value:  value,
@@ -89,13 +89,13 @@ func TestValidateRelationships_FilterOrDiscriminatorAloneAccepted(t *testing.T) 
 		{
 			name: "filter alone",
 			rel: config.TableRelationship{
-				Name: "PhotoAttachments", Type: "o2m", Table: "documents", FK: "entity_id",
+				Name: "PhotoAttachments", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"},
 				Filter: "entity_type = 'asset.attachment' AND name LIKE 'photo_%'",
 			},
 		},
 		{
 			name: "neither",
-			rel:  config.TableRelationship{Name: "Documents", Type: "o2m", Table: "documents", FK: "entity_id"},
+			rel:  config.TableRelationship{Name: "Documents", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}},
 		},
 	}
 
@@ -161,7 +161,7 @@ func TestRelationshipDedupKey_DiscriminatorDuplicatesRejected(t *testing.T) {
 			rels: []config.TableRelationship{
 				discriminatorRel("Attachments", "asset.attachment"),
 				{
-					Name: "PhotoAttachments", Type: "o2m", Table: "documents", FK: "entity_id",
+					Name: "PhotoAttachments", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"},
 					Filter: "entity_type = 'asset.attachment'",
 				},
 			},
@@ -706,11 +706,11 @@ func TestValidateDiscriminatorValue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rel := config.TableRelationship{
-				Name: "Attachments", Type: tt.relType, Table: "documents", FK: "entity_id",
+				Name: "Attachments", Type: tt.relType, Table: "documents", FK: config.KeyColumns{"entity_id"},
 				Discriminator: &config.RelationshipDiscriminator{Column: "entity_type", Value: tt.value},
 			}
 			if tt.relType == "m2m" {
-				rel.FK = ""
+				rel.FK = nil
 				rel.Junction = "asset_document_links"
 			}
 

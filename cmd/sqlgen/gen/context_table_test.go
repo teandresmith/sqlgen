@@ -571,9 +571,9 @@ func TestBuildTableContexts_SubCategorizedRelationships(t *testing.T) {
 	in := testInput(schema)
 	in.Config.Tables["asset"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "PrimaryDocument", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-			{Name: "Attachments", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
-			{Name: "Invoices", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.invoice'"},
+			{Name: "PrimaryDocument", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+			{Name: "Attachments", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.attachment'"},
+			{Name: "Invoices", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.invoice'"},
 		},
 	}
 
@@ -1011,7 +1011,7 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 			name: "declared name collides with inferred edge",
 			tableCfg: config.TableConfig{
 				Relationships: []config.TableRelationship{
-					{Name: "Entries", Type: "one_to_many", Table: "entries", FK: "account_id"},
+					{Name: "Entries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}},
 				},
 			},
 			wantFieldNames: []string{"Entries"},
@@ -1026,7 +1026,7 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 			tableCfg: config.TableConfig{
 				ExcludeRelationships: []string{"entries"},
 				Relationships: []config.TableRelationship{
-					{Name: "Entries", Type: "one_to_many", Table: "entries", FK: "account_id"},
+					{Name: "Entries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}},
 				},
 			},
 			wantFieldNames: []string{"Entries"},
@@ -1039,7 +1039,7 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 			name: "declared name distinct from inferred edge",
 			tableCfg: config.TableConfig{
 				Relationships: []config.TableRelationship{
-					{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: "account_id"},
+					{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}},
 				},
 			},
 			wantFieldNames: []string{"Entries", "LedgerEntries"},
@@ -1110,8 +1110,8 @@ func TestValidateResolvedFieldNames_DuplicateRelationshipField(t *testing.T) {
 			// far as config validation is concerned.
 			name: "declared names pascalize onto one field",
 			rels: []config.TableRelationship{
-				{Name: "ledger_entries", Type: "one_to_many", Table: "entries", FK: "account_id", Filter: "kind = 'ledger'"},
-				{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: "account_id", Filter: "kind = 'audit'"},
+				{Name: "ledger_entries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'ledger'"},
+				{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'audit'"},
 			},
 			wantErr:   true,
 			wantNames: []string{"ledger_entries", "LedgerEntries"},
@@ -1124,8 +1124,8 @@ func TestValidateResolvedFieldNames_DuplicateRelationshipField(t *testing.T) {
 			// second notice — and the surviving pair is then rejected.
 			name: "two declared entries both colliding with the inferred edge",
 			rels: []config.TableRelationship{
-				{Name: "Entries", Type: "one_to_many", Table: "entries", FK: "account_id", Filter: "kind = 'ledger'"},
-				{Name: "entries", Type: "one_to_many", Table: "entries", FK: "account_id", Filter: "kind = 'audit'"},
+				{Name: "Entries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'ledger'"},
+				{Name: "entries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'audit'"},
 			},
 			wantErr:     true,
 			wantNames:   []string{"Entries", "entries"},
@@ -1136,8 +1136,8 @@ func TestValidateResolvedFieldNames_DuplicateRelationshipField(t *testing.T) {
 			// §13.7 sub-categorization still works — distinct Go fields.
 			name: "distinct Go fields coexist",
 			rels: []config.TableRelationship{
-				{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: "account_id", Filter: "kind = 'ledger'"},
-				{Name: "AuditEntries", Type: "one_to_many", Table: "entries", FK: "account_id", Filter: "kind = 'audit'"},
+				{Name: "LedgerEntries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'ledger'"},
+				{Name: "AuditEntries", Type: "one_to_many", Table: "entries", FK: config.KeyColumns{"account_id"}, Filter: "kind = 'audit'"},
 			},
 		},
 	}

@@ -424,8 +424,14 @@ func toSchemaTables(schema *parser.Schema) []config.SchemaTable {
 		// uses UniqueGroups to assert PK-coverage and similar invariants that
 		// require unconditional uniqueness — a predicate-gated index can't
 		// satisfy them.
-		var uniqueGroups [][]string
+		var (
+			uniqueGroups [][]string
+			primaryKey   []string
+		)
 		for _, ct := range t.Constraints {
+			if ct.Type == parser.PrimaryKey {
+				primaryKey = slices.Clone(ct.Columns)
+			}
 			if ct.Type == parser.Unique || ct.Type == parser.PrimaryKey {
 				if ct.Type == parser.Unique && ct.Where != "" {
 					continue
@@ -442,6 +448,7 @@ func toSchemaTables(schema *parser.Schema) []config.SchemaTable {
 			Schema:       t.Schema,
 			Columns:      cols,
 			UniqueGroups: uniqueGroups,
+			PrimaryKey:   primaryKey,
 		})
 	}
 	return tables

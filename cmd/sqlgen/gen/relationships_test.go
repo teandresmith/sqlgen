@@ -633,7 +633,7 @@ func TestRelationships_O2OJoinFilterParenthesised(t *testing.T) {
 	for _, dialect := range []config.Dialect{config.DialectPostgres, config.DialectMySQL, config.DialectSQLite} {
 		t.Run(string(dialect), func(t *testing.T) {
 			tc := discriminatorTables(t, dialect, config.TableRelationship{
-				Name: "PrimaryDocument", Type: "one_to_one", Table: "documents", FK: "entity_id",
+				Name: "PrimaryDocument", Type: "one_to_one", Table: "documents", FK: config.KeyColumns{"entity_id"},
 				Filter: "entity_type = 'asset.primary' OR name = 'leak'",
 			})
 			got := executeRelationshipsTemplate(t, tc)
@@ -695,7 +695,7 @@ func TestRelationships_O2OTargetScanAbsorbsJoinMiss(t *testing.T) {
 	detectRelationships(in.Schema)
 	in.Config.Tables["owners"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "Detail", Type: "one_to_one", Table: "details", FK: "owner_id"},
+			{Name: "Detail", Type: "one_to_one", Table: "details", FK: config.KeyColumns{"owner_id"}},
 		},
 	}
 
@@ -752,9 +752,9 @@ func TestRelationships_PolymorphicChildGetsNoParentDispatch(t *testing.T) {
 	parser.DetectRelationships(in.Schema)
 	in.Config.Tables["assets"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "PrimaryDocument", Type: "one_to_one", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-			{Name: "Attachments", Type: "one_to_many", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
-			{Name: "Invoices", Type: "one_to_many", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.invoice'"},
+			{Name: "PrimaryDocument", Type: "one_to_one", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+			{Name: "Attachments", Type: "one_to_many", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.attachment'"},
+			{Name: "Invoices", Type: "one_to_many", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.invoice'"},
 		},
 	}
 	tables, err := gen.BuildTableContextsFromSchema(in.Schema, in.Config)

@@ -624,8 +624,8 @@ func TestEmitJSON_KeyedCollectionsSorted(t *testing.T) {
 	cfg.Extras["Yolk"] = config.ExtraType{Fields: map[string]config.ExtraTypeField{"Size": {Type: "int"}}}
 	cfg.Extras["Bead"] = config.ExtraType{Fields: map[string]config.ExtraTypeField{"Color": {Type: "string"}}}
 	cfg.Tables["zoos"] = config.TableConfig{Relationships: []config.TableRelationship{
-		{Name: "Zebras", Type: "one_to_many", Table: "animals", FK: "zoo_id"},
-		{Name: "Antelopes", Type: "one_to_many", Table: "animals", FK: "home_zoo_id"},
+		{Name: "Zebras", Type: "one_to_many", Table: "animals", FK: config.KeyColumns{"zoo_id"}},
+		{Name: "Antelopes", Type: "one_to_many", Table: "animals", FK: config.KeyColumns{"home_zoo_id"}},
 	}}
 	schema := &parser.Schema{
 		Enums: []parser.Enum{

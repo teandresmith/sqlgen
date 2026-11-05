@@ -41,8 +41,8 @@ func fullEntity() manifest.Entity {
 			{Name: "status", GoField: "Status", GoType: "string", DBType: "text", Nullable: true, Default: "'pending'", DefaultKind: "literal", Comparator: "comparator.String", Comment: ""},
 		},
 		Relationships: []manifest.Relationship{
-			{Name: "Orders", Kind: manifest.RelationshipO2M, TargetEntity: "Order", FK: &manifest.FK{Table: "orders", Column: "user_id"}},
-			{Name: "Roles", Kind: manifest.RelationshipM2M, TargetEntity: "Role", Junction: &manifest.Junction{Table: "user_roles", LocalFK: "user_id", TargetFK: "role_id"}},
+			{Name: "Orders", Kind: manifest.RelationshipO2M, TargetEntity: "Order", FK: &manifest.FK{Table: "orders", Columns: []string{"user_id"}}},
+			{Name: "Roles", Kind: manifest.RelationshipM2M, TargetEntity: "Role", Junction: &manifest.Junction{Table: "user_roles", LocalFK: manifest.JunctionKey{Columns: []string{"user_id"}}, TargetFK: manifest.JunctionKey{Columns: []string{"role_id"}}}},
 		},
 		Methods: manifest.Methods{
 			Query: []manifest.Method{

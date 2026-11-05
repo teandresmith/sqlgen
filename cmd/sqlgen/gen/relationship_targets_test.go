@@ -85,7 +85,7 @@ func TestRelationshipTargets_StructNameOverride(t *testing.T) {
 		cfg.Tables["posts"] = config.TableConfig{StructName: "Article"}
 		cfg.Views["user_stats"] = config.ViewConfig{StructName: "Stat"}
 		cfg.Tables["users"] = config.TableConfig{Relationships: []config.TableRelationship{
-			{Name: "Stats", Type: "one_to_many", Table: "user_stats", FK: "user_id"},
+			{Name: "Stats", Type: "one_to_many", Table: "user_stats", FK: config.KeyColumns{"user_id"}},
 		}}
 	})
 	if err != nil {
@@ -161,7 +161,7 @@ func TestRelationshipTargets_DeclaredEdgeIntoMissingTargetErrors(t *testing.T) {
 			_, err := buildRelTargetUsers(t, func(cfg *config.RootConfig) {
 				cfg.ExcludeTables = tt.exclude
 				cfg.Tables["users"] = config.TableConfig{Relationships: []config.TableRelationship{
-					{Name: "Linked", Type: "one_to_many", Table: tt.table, FK: "user_id"},
+					{Name: "Linked", Type: "one_to_many", Table: tt.table, FK: config.KeyColumns{"user_id"}},
 				}}
 			})
 			// The error names the table, the relationship, the target and the three causes.
@@ -200,7 +200,7 @@ func TestRelationshipTargets_DeclaredEdgeIntoAmbiguousNameErrors(t *testing.T) {
 			input := testInput(schema)
 			input.Config.ExcludeTables = tt.exclude
 			input.Config.Tables["users"] = config.TableConfig{Relationships: []config.TableRelationship{
-				{Name: "Linked", Type: "one_to_many", Table: "posts", FK: "user_id"},
+				{Name: "Linked", Type: "one_to_many", Table: "posts", FK: config.KeyColumns{"user_id"}},
 			}}
 			_, err := gen.BuildTableContexts(input, map[string]bool{"posts": true})
 			want := `"Linked" targets "posts", which names an entity in more than one schema (public, audit); qualify it as one of "public.posts", "audit.posts"`
@@ -273,14 +273,14 @@ func TestRelationshipTargets_QualifiedDeclaredEdgeNamesOneTable(t *testing.T) {
 	input := testInput(twoSchemaSchema())
 	cfg := input.Config
 	cfg.Tables["public.users"] = config.TableConfig{Relationships: []config.TableRelationship{
-		{Name: "AuditPosts", Type: "one_to_many", Table: "audit.posts", FK: "user_id"},
-		{Name: "Posts", Type: "one_to_many", Table: "public.posts", FK: "user_id"},
-		{Name: "AuditProfile", Type: "one_to_one", Table: "audit.profiles", FK: "owner_id"},
+		{Name: "AuditPosts", Type: "one_to_many", Table: "audit.posts", FK: config.KeyColumns{"user_id"}},
+		{Name: "Posts", Type: "one_to_many", Table: "public.posts", FK: config.KeyColumns{"user_id"}},
+		{Name: "AuditProfile", Type: "one_to_one", Table: "audit.profiles", FK: config.KeyColumns{"owner_id"}},
 		{
 			Name: "AuditTags", Type: "many_to_many", Table: "audit.tags",
-			Junction: "audit.user_tags", JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_code",
+			Junction: "audit.user_tags", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_code"},
 		},
-		{Name: "AuditStats", Type: "one_to_many", Table: "audit.stats", FK: "user_id"},
+		{Name: "AuditStats", Type: "one_to_many", Table: "audit.stats", FK: config.KeyColumns{"user_id"}},
 	}}
 	contexts, err := gen.BuildTableContextsFromSchema(input.Schema, cfg)
 	if err != nil {
@@ -370,7 +370,7 @@ func TestRelationshipTargets_QualifiedDeclaredEdgeNamesOneTable(t *testing.T) {
 func TestRelationshipTargets_BareDeclaredEdgeCarriesResolvedSchema(t *testing.T) {
 	users, err := buildRelTargetUsers(t, func(cfg *config.RootConfig) {
 		cfg.Tables["users"] = config.TableConfig{Relationships: []config.TableRelationship{
-			{Name: "Linked", Type: "one_to_many", Table: "posts", FK: "user_id"},
+			{Name: "Linked", Type: "one_to_many", Table: "posts", FK: config.KeyColumns{"user_id"}},
 		}}
 	})
 	if err != nil {
@@ -405,8 +405,8 @@ func TestRelationshipTargets_DuplicateDeclaredEdgeBySpelling(t *testing.T) {
 			name:   "o2m bare and qualified",
 			schema: relTargetSchema,
 			rels: []config.TableRelationship{
-				{Name: "Linked", Type: "one_to_many", Table: "posts", FK: "user_id"},
-				{Name: "LinkedAgain", Type: "one_to_many", Table: "public.posts", FK: "user_id"},
+				{Name: "Linked", Type: "one_to_many", Table: "posts", FK: config.KeyColumns{"user_id"}},
+				{Name: "LinkedAgain", Type: "one_to_many", Table: "public.posts", FK: config.KeyColumns{"user_id"}},
 			},
 			wantErr: `tables.public.users.relationships[1]: duplicate relationship — same target, fk, filter and discriminator as relationships[0] (PRD §13.7.3): "public.posts" and "posts" both name public.posts`,
 		},
@@ -414,8 +414,8 @@ func TestRelationshipTargets_DuplicateDeclaredEdgeBySpelling(t *testing.T) {
 			name:   "o2o and o2m with one discriminator",
 			schema: relTargetSchema,
 			rels: []config.TableRelationship{
-				{Name: "Primary", Type: "one_to_one", Table: "public.posts", FK: "user_id", Discriminator: disc("primary")},
-				{Name: "PrimaryAgain", Type: "one_to_many", Table: "posts", FK: "user_id", Discriminator: disc("primary")},
+				{Name: "Primary", Type: "one_to_one", Table: "public.posts", FK: config.KeyColumns{"user_id"}, Discriminator: disc("primary")},
+				{Name: "PrimaryAgain", Type: "one_to_many", Table: "posts", FK: config.KeyColumns{"user_id"}, Discriminator: disc("primary")},
 			},
 			wantErr: `tables.public.users.relationships[1]: duplicate relationship — same target, fk, filter and discriminator as relationships[0] (PRD §13.7.3): "posts" and "public.posts" both name public.posts`,
 		},
@@ -423,8 +423,8 @@ func TestRelationshipTargets_DuplicateDeclaredEdgeBySpelling(t *testing.T) {
 			name:   "m2m bare and qualified",
 			schema: relTargetSchema,
 			rels: []config.TableRelationship{
-				{Name: "Labels", Type: "many_to_many", Table: "tags", Junction: "user_tags", JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_id"},
-				{Name: "LabelsAgain", Type: "many_to_many", Table: "public.tags", Junction: "user_tags", JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_id"},
+				{Name: "Labels", Type: "many_to_many", Table: "tags", Junction: "user_tags", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"}},
+				{Name: "LabelsAgain", Type: "many_to_many", Table: "public.tags", Junction: "user_tags", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"}},
 			},
 			wantErr: `tables.public.users.relationships[1]: duplicate relationship — same target, fk, filter and discriminator as relationships[0] (PRD §13.7.3): "public.tags" and "tags" both name public.tags`,
 		},
@@ -433,8 +433,8 @@ func TestRelationshipTargets_DuplicateDeclaredEdgeBySpelling(t *testing.T) {
 			name:   "m2m junction bare and qualified",
 			schema: relTargetSchema,
 			rels: []config.TableRelationship{
-				{Name: "Labels", Type: "many_to_many", Table: "tags", Junction: "user_tags", JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_id"},
-				{Name: "LabelsAgain", Type: "many_to_many", Table: "tags", Junction: "public.user_tags", JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_id"},
+				{Name: "Labels", Type: "many_to_many", Table: "tags", Junction: "user_tags", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"}},
+				{Name: "LabelsAgain", Type: "many_to_many", Table: "tags", Junction: "public.user_tags", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"}},
 			},
 			wantErr: `tables.public.users.relationships[1]: duplicate relationship — same target, fk, filter and discriminator as relationships[0] (PRD §13.7.3): "tags" and "tags" both name public.tags through junction public.user_tags`,
 		},
@@ -442,16 +442,16 @@ func TestRelationshipTargets_DuplicateDeclaredEdgeBySpelling(t *testing.T) {
 			name:   "different discriminator values sub-categorize",
 			schema: relTargetSchema,
 			rels: []config.TableRelationship{
-				{Name: "Primary", Type: "one_to_one", Table: "public.posts", FK: "user_id", Discriminator: disc("primary")},
-				{Name: "Secondary", Type: "one_to_one", Table: "posts", FK: "user_id", Discriminator: disc("secondary")},
+				{Name: "Primary", Type: "one_to_one", Table: "public.posts", FK: config.KeyColumns{"user_id"}, Discriminator: disc("primary")},
+				{Name: "Secondary", Type: "one_to_one", Table: "posts", FK: config.KeyColumns{"user_id"}, Discriminator: disc("secondary")},
 			},
 		},
 		{
 			name:   "same name in two schemas is two targets",
 			schema: twoSchemaSchema,
 			rels: []config.TableRelationship{
-				{Name: "Linked", Type: "one_to_many", Table: "public.posts", FK: "user_id"},
-				{Name: "AuditLinked", Type: "one_to_many", Table: "audit.posts", FK: "user_id"},
+				{Name: "Linked", Type: "one_to_many", Table: "public.posts", FK: config.KeyColumns{"user_id"}},
+				{Name: "AuditLinked", Type: "one_to_many", Table: "audit.posts", FK: config.KeyColumns{"user_id"}},
 			},
 		},
 	}
@@ -588,7 +588,7 @@ func TestRelationshipTargets_DeclaredJunctionAmbiguousErrors(t *testing.T) {
 			tt.mutate(input.Schema, input.Config)
 			input.Config.Tables["public.users"] = config.TableConfig{Relationships: []config.TableRelationship{{
 				Name: "AuditTags", Type: "many_to_many", Table: "audit.tags",
-				Junction: tt.junc, JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_code",
+				Junction: tt.junc, JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_code"},
 			}}}
 			_, err := gen.BuildTableContextsFromSchema(input.Schema, input.Config)
 			if tt.wantErr == "" {
@@ -617,7 +617,7 @@ func TestRelationshipTargets_BareDeclaredJunctionNamesOneTable(t *testing.T) {
 	cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
 	cfg.Tables["public.users"] = config.TableConfig{Relationships: []config.TableRelationship{{
 		Name: "AuditTags", Type: "many_to_many", Table: "audit.tags",
-		Junction: "user_tags", JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_code",
+		Junction: "user_tags", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_code"},
 	}}}
 	contexts, err := gen.BuildTableContextsFromSchema(input.Schema, cfg)
 	if err != nil {
@@ -656,7 +656,7 @@ func TestRelationshipTargets_UnknownDeclaredJunctionCarriedAsWritten(t *testing.
 	input := testInput(twoSchemaSchema())
 	input.Config.Tables["public.users"] = config.TableConfig{Relationships: []config.TableRelationship{{
 		Name: "GhostTags", Type: "many_to_many", Table: "audit.tags",
-		Junction: "ghost_links", JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_code",
+		Junction: "ghost_links", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_code"},
 	}}}
 	contexts, err := gen.BuildTableContextsFromSchema(input.Schema, input.Config)
 	if err != nil {
@@ -699,7 +699,7 @@ func TestRelationshipTargets_QualifiedJunctionReadsOnlyItsSchema(t *testing.T) {
 	input.Config.ExcludeTables = []string{"public.user_tags"}
 	input.Config.Tables["public.users"] = config.TableConfig{Relationships: []config.TableRelationship{{
 		Name: "AuditTags", Type: "many_to_many", Table: "audit.tags",
-		Junction: "public.user_tags", JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_code",
+		Junction: "public.user_tags", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_code"},
 	}}}
 	contexts, err := gen.BuildTableContextsFromSchema(input.Schema, input.Config)
 	if err != nil {
@@ -742,7 +742,7 @@ func TestRelationshipTargets_M2MJunctionReferenceGoType(t *testing.T) {
 	input := testInput(schema)
 	input.Config.Tables = map[string]config.TableConfig{"users": {Relationships: []config.TableRelationship{{
 		Name: "Tags", Type: "many_to_many", Table: "tags",
-		Junction: "user_tags", JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_code",
+		Junction: "user_tags", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_code"},
 	}}}}
 	contexts, err := gen.BuildTableContextsFromSchema(input.Schema, input.Config)
 	if err != nil {
@@ -921,26 +921,26 @@ func TestRelationshipTargets_DeclaredExcludedLinkColumnErrors(t *testing.T) {
 	}{
 		{
 			name:    "o2m fk on the related table",
-			rel:     config.TableRelationship{Name: "Tasks", Type: "o2m", Table: "tasks", FK: "cycle_id"},
+			rel:     config.TableRelationship{Name: "Tasks", Type: "o2m", Table: "tasks", FK: config.KeyColumns{"cycle_id"}},
 			exclude: map[string][]string{"tasks": {"cycle_id"}},
 			wantErr: `tables.public.cycles.relationships: "Tasks" links through public.tasks.cycle_id, which ` + "`exclude_columns`" + ` removes from the generated model; keep the column or remove the relationship (PRD §4.13, §13.4)`,
 		},
 		{
 			name:    "o2o fk on the related table",
-			rel:     config.TableRelationship{Name: "LatestTask", Type: "o2o", Table: "tasks", FK: "cycle_id"},
+			rel:     config.TableRelationship{Name: "LatestTask", Type: "o2o", Table: "tasks", FK: config.KeyColumns{"cycle_id"}},
 			exclude: map[string][]string{"tasks": {"cycle_id"}},
 			wantErr: `tables.public.cycles.relationships: "LatestTask" links through public.tasks.cycle_id, which ` + "`exclude_columns`" + ` removes`,
 		},
 		{
 			name:    "o2m fk kept",
-			rel:     config.TableRelationship{Name: "Tasks", Type: "o2m", Table: "tasks", FK: "cycle_id"},
+			rel:     config.TableRelationship{Name: "Tasks", Type: "o2m", Table: "tasks", FK: config.KeyColumns{"cycle_id"}},
 			exclude: map[string][]string{"cycles": {"code"}},
 		},
 		{
 			name: "m2m junction column",
 			rel: config.TableRelationship{
 				Name: "LinkedPosts", Type: "m2m", Table: "posts",
-				Junction: "post_tags", JunctionLocalFK: "tag_id", JunctionReferenceFK: "post_id",
+				Junction: "post_tags", JunctionLocalFK: config.KeyColumns{"tag_id"}, JunctionReferenceFK: config.KeyColumns{"post_id"},
 			},
 			exclude: map[string][]string{"post_tags": {"tag_id"}},
 			wantErr: `tables.public.cycles.relationships: "LinkedPosts" links through public.post_tags.tag_id, which ` + "`exclude_columns`" + ` removes`,

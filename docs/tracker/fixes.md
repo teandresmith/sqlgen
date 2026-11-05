@@ -22,7 +22,48 @@
 ## Open
 
 <!-- fixes:open:begin -->
-_No open fixes._
+### FIX-362
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 8, cmd/sqlgen/gen
+- **Surfaced by:** 32.3 auto-review question, measured 2026-11-05
+
+**Issue.** **`<Table>PK` and `PKColumns` follow column order, not the `PRIMARY KEY (...)` clause
+order PRD §27.5 states.** For `CREATE TABLE cycles (workspace_id bigint NOT NULL, id bigint NOT
+NULL, PRIMARY KEY (id, workspace_id))`, the parsed constraint is `[id workspace_id]` on PostgreSQL,
+MySQL and SQLite, but `TableContext.PKColumns` is `[workspace_id id]` on all three (probe through
+`gen.BuildTableContextsFromSchema`). The `<Table>PK` field order, the composite cache key order
+and `mc.AffectedPKs` therefore disagree with the order §27.5 calls load-bearing. One example has
+this shape: `introspect_sqlite`'s `project_members` declares `PRIMARY KEY (account_id,
+project_id)` with the columns the other way round. Since 32.3, a declared relationship key list
+maps onto the clause order (`gen.resolvedPrimaryKey`), so it is the one reader that already
+follows §27.5.
+
+**Root cause.** With no `primary_key` override, `buildTableColumns`
+(`cmd/sqlgen/gen/context_table.go:360-365`) collects the PK by walking columns and reading
+`PrimaryKey` flags, so it never consults the PRIMARY KEY constraint's `Columns`. Config's
+`resolvedPKColumns` / `pkColumnNames` (`cmd/sqlgen/config/validate.go:1914`, `:2510`) do the same.
+
+**Suggested fix.**
+- In `buildTableColumns`, order `pkColumns` by the declared PRIMARY KEY constraint when its
+  columns are the flagged set, falling back to column order. `resolvedPrimaryKey`
+  (`cmd/sqlgen/gen/relationship_targets.go:119`) does the same lookup, so share it.
+- Give `config.resolvedPKColumns` the same order from `SchemaTable.PrimaryKey` (added in 32.3).
+- Check that SQLite introspection keeps the clause order (`PRAGMA table_info.pk` is the key
+  position) and that `assertSchemaParity` covers it, so `files` and `database` agree.
+- Tests: a `PKColumns` order case on all three dialects under both sources; regenerate and
+  review the `introspect_sqlite` goldens (`ProjectMemberPK` field order, cache keys, manifest
+  `pk.columns`).
+
+**References.**
+- PRD §27.5 "Composite-key ordering invariant" (`docs/PRD.md:13964`); §8.6 `primary_key.columns`
+  "declaration order is load-bearing"; §13.4 (the 32.3 ruling that lists follow the clause order).
+- `docs/design/CACHE.md` §16.
+- `docs/tracker/phase-32.md` 32.3 Completion Record.
+
+**Resolution notes.** _Filled in by /fix resolve._
+
 <!-- fixes:open:end -->
 
 ## Resolved

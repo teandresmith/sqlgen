@@ -44,7 +44,7 @@ func TestValidateResolvedNames_EdgeIntoViewClaimsNestedNames(t *testing.T) {
 			cfg := nameRuleConfig()
 			cfg.Tables = map[string]config.TableConfig{
 				"users": {Relationships: []config.TableRelationship{{
-					Name: tt.relName, Type: tt.relType, Table: "profile_views", FK: "user_id",
+					Name: tt.relName, Type: tt.relType, Table: "profile_views", FK: config.KeyColumns{"user_id"},
 				}}},
 			}
 

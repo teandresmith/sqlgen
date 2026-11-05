@@ -233,7 +233,7 @@ CREATE TABLE users (id uuid PRIMARY KEY, profile_id uuid UNIQUE REFERENCES profi
 `)
 	cfg := baseConfig()
 	cfg.Tables["profiles"] = config.TableConfig{Relationships: []config.TableRelationship{
-		{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "child"},
+		{Name: "User", Type: "o2o", Table: "users", FK: config.KeyColumns{"profile_id"}, Side: "child"},
 	}}
 	profile := emittedEntity(t, emittedManifestJSON(t, schema, cfg), "Profile")
 	rels, _ := profile["relationships"].([]any)

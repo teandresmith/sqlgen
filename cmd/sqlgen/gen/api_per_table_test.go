@@ -195,7 +195,7 @@ func TestAPIObjectType_APIDisabledViewTargetDropped(t *testing.T) {
 		t.Run(fmt.Sprintf("hidden=%v", hidden), func(t *testing.T) {
 			in := apiTestInput(t, relTargetSchema())
 			in.Config.Tables["users"] = config.TableConfig{Relationships: []config.TableRelationship{
-				{Name: "Stats", Type: "one_to_many", Table: "user_stats", FK: "user_id"},
+				{Name: "Stats", Type: "one_to_many", Table: "user_stats", FK: config.KeyColumns{"user_id"}},
 			}}
 			if hidden {
 				in.Config.Views["user_stats"] = config.ViewConfig{API: &config.ViewAPIConfig{Enabled: new(false)}}

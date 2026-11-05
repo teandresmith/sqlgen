@@ -425,3 +425,52 @@ func TestSentinelErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestLoad_RelationshipKeyLists pins PRD §30.6 against the 0.2.0 shape: a
+// relationship's fk and junction keys load as column lists, with their
+// references and constraint.
+func TestLoad_RelationshipKeyLists(t *testing.T) {
+	top := []byte(`{
+  "schema_version": "0.2.0",
+  "entities": [{
+    "kind": "table", "name": "Task", "table": "tasks",
+    "relationships": [
+      {"name": "Cycle", "kind": "o2o", "target_entity": "Cycle",
+       "fk": {"table": "tasks", "columns": ["workspace_id", "cycle_id"], "references": ["workspace_id", "id"], "constraint": "tasks_cycle_same_ws"}},
+      {"name": "Labels", "kind": "m2m", "target_entity": "Label",
+       "junction": {"table": "task_labels",
+         "local_fk": {"columns": ["workspace_id", "task_id"], "references": ["workspace_id", "id"], "constraint": "task_labels_task_fk"},
+         "target_fk": {"columns": ["label_id"], "references": ["id"]}}}
+    ]
+  }]
+}`)
+	var doc manifest.Document
+	entities := map[string]*manifest.Entity{}
+	if err := manifest.LoadInto(top, nil, &doc, entities); err != nil {
+		t.Fatalf("LoadInto: %v", err)
+	}
+	if doc.SchemaVersion != "0.2.0" {
+		t.Errorf("SchemaVersion = %q, want 0.2.0", doc.SchemaVersion)
+	}
+	tasks, ok := entities["tasks"]
+	if !ok {
+		t.Fatalf("no tasks entity; got %v", entities)
+	}
+	want := []manifest.Relationship{
+		{
+			Name: "Cycle", Kind: manifest.RelationshipO2O, TargetEntity: "Cycle",
+			FK: &manifest.FK{Table: "tasks", Columns: []string{"workspace_id", "cycle_id"}, References: []string{"workspace_id", "id"}, Constraint: "tasks_cycle_same_ws"},
+		},
+		{
+			Name: "Labels", Kind: manifest.RelationshipM2M, TargetEntity: "Label",
+			Junction: &manifest.Junction{
+				Table:    "task_labels",
+				LocalFK:  manifest.JunctionKey{Columns: []string{"workspace_id", "task_id"}, References: []string{"workspace_id", "id"}, Constraint: "task_labels_task_fk"},
+				TargetFK: manifest.JunctionKey{Columns: []string{"label_id"}, References: []string{"id"}},
+			},
+		},
+	}
+	if diff := cmp.Diff(want, tasks.Relationships); diff != "" {
+		t.Errorf("relationships (-want +got):\n%s", diff)
+	}
+}

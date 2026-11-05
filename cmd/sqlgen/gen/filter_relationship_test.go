@@ -592,7 +592,7 @@ func TestRelationshipFilters_ColumnComparatorKeepsItsFieldName(t *testing.T) {
 	tables := relFilterTablesOn(t, config.DialectPostgres, func(cfg *config.RootConfig) {
 		cfg.Tables["users"] = config.TableConfig{
 			Relationships: []config.TableRelationship{
-				{Name: "Email", Type: "one_to_many", Table: "orders", FK: "user_id"},
+				{Name: "Email", Type: "one_to_many", Table: "orders", FK: config.KeyColumns{"user_id"}},
 			},
 		}
 	})
@@ -638,10 +638,10 @@ func TestRelationshipFilters_ViewTargetGetsMember(t *testing.T) {
 	detectRelationships(in.Schema)
 	in.Config.Tenancy = &config.TenancyConfig{Enabled: true, Column: "workspace_id", Required: new(true)}
 	in.Config.Tables["users"] = config.TableConfig{Relationships: []config.TableRelationship{
-		{Name: "OrderTotals", Type: "one_to_many", Table: "user_order_totals", FK: "user_id"},
+		{Name: "OrderTotals", Type: "one_to_many", Table: "user_order_totals", FK: config.KeyColumns{"user_id"}},
 		{
 			Name: "Labels", Type: "many_to_many", Table: "category_labels",
-			Junction: "user_categories", JunctionLocalFK: "user_id", JunctionReferenceFK: "category_id",
+			Junction: "user_categories", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"category_id"},
 		},
 	}}
 

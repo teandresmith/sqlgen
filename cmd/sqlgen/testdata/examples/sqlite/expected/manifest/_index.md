@@ -2,7 +2,7 @@
 
 - **Dialect:** sqlite
 - **Generator:** sqlgen dev
-- **Schema version:** 0.1.0
+- **Schema version:** 0.2.0
 
 Features: audit_columns, graphql, soft_delete, views
 

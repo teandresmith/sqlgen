@@ -277,7 +277,7 @@ func TestReservedFieldName_ListRelationship(t *testing.T) {
 		}
 	}
 	o2m := func(name string) config.TableRelationship {
-		return config.TableRelationship{Name: name, Type: "one_to_many", Table: "posts", FK: "user_id"}
+		return config.TableRelationship{Name: name, Type: "one_to_many", Table: "posts", FK: config.KeyColumns{"user_id"}}
 	}
 
 	tests := []struct {
@@ -293,7 +293,7 @@ func TestReservedFieldName_ListRelationship(t *testing.T) {
 			name: "And on a many-to-many relationship",
 			rel: config.TableRelationship{
 				Name: "And", Type: "many_to_many", Table: "groups", Junction: "user_groups",
-				JunctionLocalFK: "user_id", JunctionReferenceFK: "group_id",
+				JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"group_id"},
 			},
 			wantOwner: "UserFilter (field And)",
 		},
@@ -301,7 +301,7 @@ func TestReservedFieldName_ListRelationship(t *testing.T) {
 		{name: "PKs on a one-to-many relationship of a single-PK parent", rel: o2m("PKs")},
 		{
 			name: "And on a one-to-one relationship",
-			rel:  config.TableRelationship{Name: "And", Type: "one_to_one", Table: "badges", FK: "user_id"},
+			rel:  config.TableRelationship{Name: "And", Type: "one_to_one", Table: "badges", FK: config.KeyColumns{"user_id"}},
 		},
 	}
 

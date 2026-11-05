@@ -157,7 +157,7 @@ func TestBuild_MethodsFollowClientInterfaceOrder(t *testing.T) {
 	cfg := baseConfig()
 	cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
 	cfg.Tables["users"] = config.TableConfig{Relationships: []config.TableRelationship{
-		{Name: "Events", Type: "one_to_many", Table: "events", FK: "user_id"},
+		{Name: "Events", Type: "one_to_many", Table: "events", FK: config.KeyColumns{"user_id"}},
 	}}
 	schema := &parser.Schema{
 		Tables: []parser.Table{

@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/teandresmith/sqlgen/vdev/cmd/sqlgen/manifest/schema/v1.json",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "generated_at": "2026-01-01T00:00:00Z",
   "generator": {
     "name": "sqlgen",
@@ -277,7 +277,13 @@
           "target_entity": "Project",
           "fk": {
             "table": "projects",
-            "column": "account_id"
+            "columns": [
+              "account_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "projects(account_id) → accounts(id)"
           }
         },
         {
@@ -286,8 +292,24 @@
           "target_entity": "Project",
           "junction": {
             "table": "project_members",
-            "local_fk": "account_id",
-            "target_fk": "project_id"
+            "local_fk": {
+              "columns": [
+                "account_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "project_members(account_id) → accounts(id)"
+            },
+            "target_fk": {
+              "columns": [
+                "project_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "project_members(project_id) → projects(id)"
+            }
           }
         },
         {
@@ -296,7 +318,13 @@
           "target_entity": "Task",
           "fk": {
             "table": "tasks",
-            "column": "assignee_id"
+            "columns": [
+              "assignee_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "tasks(assignee_id) → accounts(id)"
           }
         }
       ],
@@ -788,8 +816,24 @@
           "target_entity": "Account",
           "junction": {
             "table": "project_members",
-            "local_fk": "project_id",
-            "target_fk": "account_id"
+            "local_fk": {
+              "columns": [
+                "project_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "project_members(project_id) → projects(id)"
+            },
+            "target_fk": {
+              "columns": [
+                "account_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "project_members(account_id) → accounts(id)"
+            }
           }
         },
         {
@@ -798,7 +842,13 @@
           "target_entity": "Task",
           "fk": {
             "table": "tasks",
-            "column": "project_id"
+            "columns": [
+              "project_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "tasks(project_id) → projects(id)"
           }
         }
       ],
@@ -1911,7 +1961,13 @@
           "target_entity": "TaskLabel",
           "fk": {
             "table": "task_labels",
-            "column": "task_id"
+            "columns": [
+              "task_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "task_labels(task_id) → tasks(id)"
           }
         }
       ],

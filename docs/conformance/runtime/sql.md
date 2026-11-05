@@ -355,7 +355,7 @@ The SQL builders and dialects (Appendix A, Appendix B), the comparators and cond
 | lock-clause.skip-locked.sqlite | On SQLite `LockForUpdateSkipLocked` adds no lock clause: `LockClause` returns `""` and neither `BuildSelect` nor `BuildSelectJoin` appends one | `unit: sql: TestDialect_LockClause/sqlite for_update_skip_locked is empty`; `unit: sql: TestBuildSelect_LockModeUnqualified/sqlite for_update_skip_locked emits nothing`; `unit: sql: TestBuildSelectJoin_LockMode/sqlite for_update_skip_locked emits nothing` | sqlite | lock-modes: LockForUpdateSkipLocked × sqlite |
 
 ## §Appendix B Dialect Comparison Matrix
-<!-- prd: Appendix B sha256: cd232691d9e4a7c0 -->
+<!-- prd: Appendix B sha256: 884d6d96fc73f9a2 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

@@ -1059,7 +1059,7 @@ func incrementNestedRenderer(t *testing.T) func(name string) string {
 	cfg := input.Config
 	cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
 	cfg.Tables["accounts"] = config.TableConfig{Relationships: []config.TableRelationship{
-		{Name: "Entries", Type: "one_to_many", Table: "ledger_entries", FK: "account_id"},
+		{Name: "Entries", Type: "one_to_many", Table: "ledger_entries", FK: config.KeyColumns{"account_id"}},
 	}}
 	contexts, err := gen.BuildTableContextsFromSchema(input.Schema, cfg)
 	if err != nil {

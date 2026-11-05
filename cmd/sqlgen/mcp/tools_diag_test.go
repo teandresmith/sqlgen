@@ -80,7 +80,7 @@ func TestValidateManifest(t *testing.T) {
 		if err != nil {
 			t.Fatalf("validateManifest: %v", err)
 		}
-		if !got.Valid || got.SchemaVersion != "0.1.0" || len(got.Errors) != 0 {
+		if !got.Valid || got.SchemaVersion != "0.2.0" || len(got.Errors) != 0 {
 			t.Errorf("expected valid=true, schema_version=0.1.0, no errors; got %+v", got)
 		}
 	})

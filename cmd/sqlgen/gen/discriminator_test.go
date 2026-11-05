@@ -75,14 +75,14 @@ func discriminatorTables(t *testing.T, dialect config.Dialect, rel config.TableR
 // them beside each other is the point of every equivalence test below.
 func filterRel(name, relType string) config.TableRelationship {
 	return config.TableRelationship{
-		Name: name, Type: relType, Table: "documents", FK: "entity_id",
+		Name: name, Type: relType, Table: "documents", FK: config.KeyColumns{"entity_id"},
 		Filter: "entity_type = 'asset.primary'",
 	}
 }
 
 func discRel(name, relType string) config.TableRelationship {
 	return config.TableRelationship{
-		Name: name, Type: relType, Table: "documents", FK: "entity_id",
+		Name: name, Type: relType, Table: "documents", FK: config.KeyColumns{"entity_id"},
 		Discriminator: &config.RelationshipDiscriminator{
 			Column: "entity_type",
 			Value:  "asset.primary",
@@ -157,10 +157,10 @@ func TestDiscriminator_LoaderBindsTheValue(t *testing.T) {
 // a change to one block could silently diverge from the other.
 func TestDiscriminator_M2MLoaderBindsTheValue(t *testing.T) {
 	rel := discRel("LinkedDocs", "many_to_many")
-	rel.FK = ""
+	rel.FK = nil
 	rel.Junction = "asset_document_links"
-	rel.JunctionLocalFK = "asset_id"
-	rel.JunctionReferenceFK = "document_id"
+	rel.JunctionLocalFK = config.KeyColumns{"asset_id"}
+	rel.JunctionReferenceFK = config.KeyColumns{"document_id"}
 
 	tc := discriminatorTables(t, config.DialectPostgres, rel)
 	got := executeGetTemplate(t, tc)
@@ -261,7 +261,7 @@ func TestDiscriminator_SubCategorizedEdgesStayDistinct(t *testing.T) {
 	for _, v := range []string{"asset.primary", "asset.attachment", "asset.invoice"} {
 		name := "Edge" + strings.ToUpper(v[len(v)-1:])
 		rels = append(rels, config.TableRelationship{
-			Name: name, Type: "one_to_many", Table: "documents", FK: "entity_id",
+			Name: name, Type: "one_to_many", Table: "documents", FK: config.KeyColumns{"entity_id"},
 			Discriminator: &config.RelationshipDiscriminator{Column: "entity_type", Value: v},
 		})
 	}
@@ -388,7 +388,7 @@ func TestDiscriminator_ValueTheReadCannotCompareIsRejected(t *testing.T) {
 				relType = "one_to_many"
 			}
 			cfg.Tables["assets"] = config.TableConfig{Relationships: []config.TableRelationship{{
-				Name: "Pinned", Type: relType, Table: "pins", FK: "entity_id",
+				Name: "Pinned", Type: relType, Table: "pins", FK: config.KeyColumns{"entity_id"},
 				Discriminator: &config.RelationshipDiscriminator{Column: "tag", Value: tt.value},
 			}}}
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/teandresmith/sqlgen/vdev/cmd/sqlgen/manifest/schema/v1.json",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "generated_at": "2026-01-01T00:00:00Z",
   "generator": {
     "name": "sqlgen",

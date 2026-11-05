@@ -225,6 +225,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert.field-selection | A `FieldOptions` that selects some columns makes `Upsert` return a partial entity. An empty `&FieldOptions{}` performs the write but skips the entity read and returns `nil` | `conformance: Upsert/returns only the selected columns`; `conformance: Upsert/an empty FieldOptions upserts and returns nil` | all | client-methods: Upsert × field-selection |
 | upsert-many.field-selection | A `FieldOptions` that selects some columns makes `UpsertMany` return partial entities. An empty `&FieldOptions{}` performs the write but skips the entity read and returns `nil` | `conformance: UpsertMany/returns only the selected columns`; `conformance: UpsertMany/an empty FieldOptions upserts and returns nil` | all | client-methods: UpsertMany × field-selection |
 | nested.empty-field-options-returns-nil | An empty `&FieldOptions{}` makes `CreateWithRelated`, `UpdateWithRelated` and `UpsertWithRelated` perform their writes, nested ones included, and return `nil` | `unit: cmd/sqlgen/gen: TestNestedTemplate_EmptyFieldOptionsReturnsNil`; `conformance: CreateWithRelated/an empty FieldOptions writes every edge and returns nil`; `conformance: UpdateWithRelated/an empty FieldOptions performs every write and returns nil`; `conformance: UpsertWithRelated/an empty FieldOptions writes, nested rows included, and returns nil` | all |  |
+| get-many.required-columns-composite-key | A narrowed projection still unions every referenced parent column and every child FK member of a composite key, so the edge loads |  | all |  |
 
 ## §9.6a Lock Modes
 <!-- prd: 9.6a sha256: 35c89472430124e1 -->
@@ -484,6 +485,12 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert-with-related.happy-path | `UpsertWithRelated` upserts the parent through `Upsert` on the given conflict target and runs one update-side block per edge against that parent. On a conflict the existing parent's key is kept and the block behaves as on `UpdateWithRelated` | `conformance: UpsertWithRelated/on a conflict the block runs against the existing parent, whose key is kept`; `conformance: UpsertWithRelated/the same clear-and-connect block inserts the parent, then on a conflict replaces what it gained since` | all | client-methods: UpsertWithRelated × happy-path |
 | upsert-with-related.transaction | `UpsertWithRelated` runs the parent write and every edge in one transaction: a failure on a later edge rolls back the parent write and the earlier edges' writes. Inside a caller's transaction it runs as a savepoint. A failure rolls back only its own writes, a parent write and an earlier edge's `clear` included, and leaves the caller's earlier and later writes in place and the transaction committable. A success commits with the caller and is undone by the caller's rollback | `conformance: UpsertWithRelated/a failure on a later edge rolls back the parent write and the earlier edges`; `conformance: UpsertWithRelated/the same block with a visible tag commits the parent write and every edge`; `conformance: UpsertWithRelated/inside a caller's transaction a failure rolls back to its savepoint and the caller's transaction commits`; `conformance: UpsertWithRelated/inside a caller's transaction a success commits with the caller`; `conformance: UpsertWithRelated/inside a caller's transaction a success is undone by the caller's rollback` | all | client-methods: UpsertWithRelated × transaction |
 | create-with-related.happy-path | `CreateWithRelated` writes the parent, then per edge: a `create` inserts each child with the FK set to the parent (has-one: one child), an O2M or has-one `connect` adopts the named unparented rows and leaves other rows alone, and an M2M `create` and `connect` link exactly the targets named. A connect list longer than the batch size (visibility read, adoption, M2M visibility read), a post create list longer than the posts batch size, and a link set longer than the junction batch size are written in full | `conformance: CreateWithRelated/writes the parent, then creates and connects on every edge`; `conformance: CreateWithRelated/has-one connect adopts the named unparented profile`; `conformance: CreateWithRelated/connect adopts and links every named row across id-list chunks`; `conformance: CreateWithRelated/creates more posts than the posts batch size and links more tags than the junction batch size` | all | client-methods: CreateWithRelated × happy-path |
+| nested.composite-create-tenant-mismatch | Under `SkipTenancy`, a nested `create` whose tenant column differs from the parent's is `ErrAlreadyRelated` |  | all |  |
+| nested.composite-connect-pinned-mismatch | A `connect` target whose pinned member differs from the parent's value is `ErrAlreadyRelated` naming it, before any write, `allow_reparent` included |  | all |  |
+| nested.composite-connect-writes-free-members | `connect` and `allow_reparent` write the free members of a composite key only |  | all |  |
+| nested.composite-connect-cross-tenant | Under tenancy, a `connect` through a composite key naming another tenant's row is `ErrNotFound` before any write |  | all |  |
+| nested.composite-connect-held-elsewhere | A target parented to another row through a composite key is `ErrAlreadyRelated` naming it |  | all |  |
+| nested.composite-disconnect-nulls-free-members | `disconnect` and `clear` null the free members only; under `MATCH FULL` with every member free, every member becomes NULL |  | all |  |
 
 ## §9.9.3 The eligibility matrix
 <!-- prd: 9.9.3 sha256: d7dad5cbe21d98cb -->
@@ -570,6 +577,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | load.m2m-target-key | The M2M target fetch matches the target's own referenced key column against the junction rows, and maps targets to parents on that key | `unit: cmd/sqlgen/gen: TestGetTemplate_m2mTargetFilterUsesTargetPKField/string key`; `unit: cmd/sqlgen/gen: TestGetTemplate_m2mTargetFilterUsesTargetPKField/integer key` | all |  |
 | load.fanout-no-tx-bound | The O2M/M2M loader fan-out sets no concurrency bound of its own, inside a transaction or out | `unit: cmd/sqlgen/gen: TestGetTemplate_relationshipFanOutIsUnbounded` | all |  |
 | load.fanout-in-tx-serializes | Inside a transaction the O2M/M2M loads of one read are dispatched in parallel and the transaction's connection reservation serializes their statements, so a read whose two such loads overlap still loads both | `conformance: Get/selecting two fanned-out relationships inside a transaction loads both` | all |  |
+| load.key-condition-appended | The composite key condition is appended to the child query's conditions, so a consumer filter still applies |  | all |  |
 
 ## §14.1 Offset-Based
 <!-- prd: 14.1 sha256: 49980305eb959c7f -->
@@ -850,6 +858,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | load.chunk-size | Each relationship loader step binds parent keys in chunks of `floor(L / 2 / N)` keys, `L` being 32766 on SQLite and 65535 on MySQL and PostgreSQL: 16383 and 32767 for a single-column key; on PostgreSQL with pgx a one-column O2M FK filter binds every parent key as one array parameter instead | `unit: cmd/sqlgen/gen: TestFuncLoadChunkSize`; `unit: cmd/sqlgen/gen: TestGetTemplate_o2mRelationshipLoading`; `unit: cmd/sqlgen/gen: TestGetTemplate_m2mRelationshipLoading` | all |  |
+| query-count.composite-o2m-pgx | A composite-key O2M on pgx takes one statement per chunk (`s = C`), not one `= ANY` statement |  | postgres, pgx |  |
 
 ## §25.3 Batch Operations
 <!-- prd: 25.3 sha256: 17070ea1e3317227 -->
@@ -931,6 +940,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | tenant-rel.skip-tenancy-propagates | A parent read's `SkipTenancy` is forwarded to the child `GetMany` that loads its O2M relationship | `unit: cmd/sqlgen/gen: TestTenancyTemplate_loadRelationships_propagatesSkipTenancy` | all |  |
+| tenant-rel.composite-load-in-tenant | A composite tenant edge's load runs the child's tenant-scoped `GetMany` |  | all |  |
 
 ## Not applicable
 

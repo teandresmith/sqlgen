@@ -144,7 +144,13 @@
       "fk": {
         "table": "profiles",
         "schema": "public",
-        "column": "user_id"
+        "columns": [
+          "user_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "profiles_user_id_fkey"
       }
     }
   ],

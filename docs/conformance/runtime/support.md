@@ -68,6 +68,7 @@ assertion, `==` with no reflection) and are informative; their behavior is the Â
 | manifest-embed.load-entity-dir | `init()` passes the embedded entities directory to `LoadInto`, which parses every entity file in it and nothing outside it | `unit: manifest: TestLoadInto_SubRootedFS`; `unit: manifest: TestLoadInto_PerEntityLayout`; `example: graphql: TestManifest_EveryEntityRecordIsReachable` | all |  |
 | manifest-embed.layout-agnostic | An entity's record is the same whether the JSON was emitted `single` or `per_entity` | `unit: manifest: TestLoadInto_LayoutAgnostic` | all |  |
 | manifest-embed.marshal-content-equivalent | `json.Marshal(client.Manifest())` is content-equivalent to the on-disk top-level file, `$schema` included; in `single`, `entities[]` comes back in the index form | `unit: manifest: TestDocument_DecodesSchemaURL`; `example: postgres: TestManifest_MarshalIsContentEquivalent`; `example: mysql: TestManifest_MarshalIsContentEquivalent`; `example: sqlite: TestManifest_MarshalIsContentEquivalent`; `example: graphql: TestManifest_MarshalIsContentEquivalent` | all |  |
+| manifest.load.key-lists | The `manifest` package loads a `0.2.0` document's relationship keys: `fk.columns`, `fk.references` and `fk.constraint`, and both junction keys | `unit: manifest: TestLoad_RelationshipKeyLists` | all |  |
 
 The binary-size paragraph is informative. That `embed_in_client` generates the three methods,
 and `false` opts out, are `manifest.cfg.embed-in-client.methods` and

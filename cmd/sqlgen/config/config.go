@@ -704,10 +704,10 @@ type TableRelationship struct {
 	Type                string             `yaml:"type"`
 	Side                string             `yaml:"side"`
 	Table               string             `yaml:"table"`
-	FK                  string             `yaml:"fk"`
+	FK                  KeyColumns         `yaml:"fk"`
 	Junction            string             `yaml:"junction"`
-	JunctionLocalFK     string             `yaml:"junction_local_fk"`
-	JunctionReferenceFK string             `yaml:"junction_reference_fk"`
+	JunctionLocalFK     KeyColumns         `yaml:"junction_local_fk"`
+	JunctionReferenceFK KeyColumns         `yaml:"junction_reference_fk"`
 	Filter              string             `yaml:"filter"`
 	Sort                []RelationshipSort `yaml:"sort"`
 	Description         string             `yaml:"description"`
@@ -717,6 +717,47 @@ type TableRelationship struct {
 	// form that is write-eligible for nested mutations — `filter:` is raw SQL
 	// and therefore not invertible into something a writer could set.
 	Discriminator *RelationshipDiscriminator `yaml:"discriminator"`
+}
+
+// KeyColumns is a relationship key's column list: `fk`, `junction_local_fk` or
+// `junction_reference_fk`. YAML takes a string, a one-item list, or a list
+// that maps by position onto the primary key of the table it references
+// (PRD §13.4). nil means the key is unset; `[]` decodes to an empty, non-nil
+// list, which validation rejects.
+type KeyColumns []string
+
+// UnmarshalYAML handles the dual string/list form of a relationship key.
+func (k *KeyColumns) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		if value.Value == "" {
+			*k = nil
+		} else {
+			*k = KeyColumns{value.Value}
+		}
+		return nil
+	}
+	var cols []string
+	if err := value.Decode(&cols); err != nil {
+		// Returned as is so yaml.v3 collects it; see Operations.UnmarshalYAML.
+		if terr, ok := errors.AsType[*yaml.TypeError](err); ok {
+			return terr
+		}
+		return fmt.Errorf("decoding relationship key: %w", err)
+	}
+	if cols == nil {
+		cols = []string{}
+	}
+	*k = KeyColumns(cols)
+	return nil
+}
+
+// String renders the key as written in YAML: the bare column for one column,
+// a flow list otherwise.
+func (k KeyColumns) String() string {
+	if len(k) == 1 {
+		return k[0]
+	}
+	return "[" + strings.Join(k, ", ") + "]"
 }
 
 // RelationshipDiscriminator is the {column, value} form of a polymorphic edge

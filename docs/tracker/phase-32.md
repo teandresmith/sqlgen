@@ -529,11 +529,11 @@ Doc fix applied: the `sortForParity` comment.
 
 **PRD Reference:** Sections 4.8, 4.13, 13.4, 30, 31.3, Appendix B
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] First, before any change (design §12 Q3):
+- [x] First, before any change (design §12 Q3):
   - register the new design §10.1 IDs in their registry files (`client.md`, `cli/gen.md`,
     `cli/config.md`, `cli/manifest.md`, `cli/mcp.md`, `runtime/support.md`), each with its planned
     test name;
@@ -544,30 +544,30 @@ Doc fix applied: the `sortForParity` comment.
     change lands: a single-column FK whose member is a PK member or the tenant column is
     `create`-only (`gen.nested.single-column-pinned-create-only`), and the nested child input
     drops a single-column tenant FK's column.
-- [ ] PRD Appendix B gains two rows (design §12 Q5): "FOREIGN KEY `MATCH FULL` enforced"
+- [x] PRD Appendix B gains two rows (design §12 Q5): "FOREIGN KEY `MATCH FULL` enforced"
   (PostgreSQL yes; MySQL parsed, ignored; SQLite ignored) and "Bind-parameter limit"
   (65535 / 65535 / 32766). Re-hash the registry's Appendix B anchor.
-- [ ] `config.TableRelationship.FK`, `JunctionLocalFK` and `JunctionReferenceFK`
+- [x] `config.TableRelationship.FK`, `JunctionLocalFK` and `JunctionReferenceFK`
   (`cmd/sqlgen/config/config.go:722-725`) become a string-or-list type with `UnmarshalYAML`. Decode
   it like `Operations` and `NullableVariant` (`config/config.go:564,630`). A map is rejected
   (`cannot unmarshal !!map into []string`, design §9.4 R7).
-- [ ] `cmd/sqlgen/config/schema/v1.json`: `oneOf` string / string array for the three keys; keep
+- [x] `cmd/sqlgen/config/schema/v1.json`: `oneOf` string / string array for the three keys; keep
   the `required: ["fk"]` conditionals.
-- [ ] Validation: a list maps by position onto the resolved PK of the table it references; a
+- [x] Validation: a list maps by position onto the resolved PK of the table it references; a
   length mismatch is an error (the §4.13 row from 32.0). The existing link-key and
   `fk`-placement rules apply to each item.
-- [ ] Manual relationships build `Key` / `JunctionLocal` / `JunctionReference` from the list. A
+- [x] Manual relationships build `Key` / `JunctionLocal` / `JunctionReference` from the list. A
   declared edge with more than one pair hits the staging guard's error until 32.5.
-- [ ] Manifest (`cmd/sqlgen/manifest/types.go`, `manifest/types.go`):
+- [x] Manifest (`cmd/sqlgen/manifest/types.go`, `manifest/types.go`):
   - `fk: {table, schema, columns, references, constraint}`, where `references` records the
     referenced columns;
   - `junction` with column lists;
   - `SchemaVersion` `0.1.0` → `0.2.0` (`cmd/sqlgen/manifest/types.go:19`);
   - the loader in `manifest/load.go` follows;
   - the JSON Schema follows.
-- [ ] MCP `find_referencing` (`cmd/sqlgen/mcp/tools_graph.go:39,80-89,119`): `fk_column` →
+- [x] MCP `find_referencing` (`cmd/sqlgen/mcp/tools_graph.go:39,80-89,119`): `fk_column` →
   `fk_columns`; the dedup key compares the joined list.
-- [ ] Regenerate the manifest goldens once (`make update-golden-e2e`) and review the diff: only
+- [x] Regenerate the manifest goldens once (`make update-golden-e2e`) and review the diff: only
   the `fk` / `junction` shape, `constraint` and `schema_version` change.
 
 ### Acceptance Criteria
@@ -580,17 +580,178 @@ Doc fix applied: the `sortForParity` comment.
 
 ### Tests Required
 
-- [ ] Config decode, table-driven: string, flow list, block list, map rejected, empty list.
-- [ ] Validation: a list length mismatch with the referenced PK → error.
-- [ ] `v1.json` accepts both forms and rejects a map (the existing schema test).
-- [ ] Manifest round-trip (`manifest/load_test.go`) at `0.2.0`.
-- [ ] MCP `find_referencing` dedup with a two-column key and a one-column key to the same target.
-- [ ] The two design §10.2 guards, passing on the code before this sub-item's changes.
-- [ ] Every design §10.5 row for 32.3 passes, and its registry row lists the test.
+- [x] Config decode, table-driven: string, flow list, block list, map rejected, empty list.
+- [x] Validation: a list length mismatch with the referenced PK → error.
+- [x] `v1.json` accepts both forms and rejects a map (the existing schema test).
+- [x] Manifest load (`manifest/load_test.go`) at `0.2.0`.
+- [x] MCP `find_referencing` dedup with a two-column key and a one-column key to the same target.
+- [x] The two design §10.2 guards, passing on the code before this sub-item's changes.
+- [x] Every design §10.5 row for 32.3 passes, and its registry row lists the test.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-11-05 on `design/tenant-composite-fk-relationships`, uncommitted. Verified and
+marked done 2026-11-05 (`/verify 32.3`: all rows pass, no FIX logged).
+
+**Registration first** (design §12 Q3). New §10.1 IDs went into their registry files with empty
+Tests cells, since `req-check` rejects a test name that does not exist yet; this sub-item filled
+its own as the tests landed. A matrix cell is claimed by one row, so design §10.3's reuse of
+`gen.relationships.composite-key-edge` and `load.o2o-composite-key` across cells could not be
+registered as written. `rel.composite-belongs-to.struct-field`, `rel.composite-has-one.struct-field`,
+`rel.composite-m2m.struct-field` and `rel.composite-has-one.loader` take those cells (design §10.3
+updated). The three to-one / belongs-to cells are `n/a` with their PRD reasons.
+`e2e.composite-tenant-schema` is not registered: a probe has no registry test home.
+
+**Regression guards, green before any change** (`cmd/sqlgen/gen/nested_pinned_test.go`):
+- `TestNestedEligibility_SingleColumnPinnedFKIsCreateOnly` (`/child primary-key member`,
+  `/tenant column`). Its first run failed on the fixture, not the code: detection gives only the
+  belongs-to side of `profiles.user_id`, so the has-one edge is now declared.
+- `TestNestedEligibility_ChildInputDropsTenantFKColumn`, registered under
+  `gen.nested.child-input-drops-key-members` (32.6 adds the template test).
+
+**Fail first.**
+- `TestValidatePostParse_RelationshipKeyLength` (4 subtests) returned nil, and
+  `TestSchemaV1_RelationshipKeyForms/list` failed with `expected string, but got array`. Both runs
+  were on the new `KeyColumns` type, before the validator and the schema change.
+- The decode, manifest and MCP tests cannot compile at HEAD, since the types they name (`KeyColumns`,
+  `FK.Columns`, `Reference.FKColumns`) do not exist there. Each was confirmed by mutation instead,
+  and every mutation failed its test:
+  - dedup on the first FK column (`TestDispatchFindReferencingDedupsByFullTuple`);
+  - no constraint, and references read off the local column (`TestBuild_RelationshipKeyShape`,
+    `TestBuild_M2MJunctionSchema`);
+  - `SchemaVersion` back at `0.1.0` (`TestEmitJSON_SchemaVersion`);
+  - reversed positional mapping, and a belongs-to key mapped onto the source PK
+    (`TestBuildRelationshipContexts_DeclaredKeyListMapsOntoPrimaryKey`);
+  - the composite guard disabled (`TestBuildRelationshipContexts_DeclaredCompositeKeyIsAnError`);
+  - the length validator unregistered
+    (`TestValidate_ReportsEachGenerationRuleWithTheOthers/relationship key list of the wrong length`).
+
+**Files.**
+- Config:
+  - `config.go` (`KeyColumns`, string-or-list `UnmarshalYAML`; `[]` decodes non-nil, so it
+    reaches the length rule);
+  - `validate.go` (the required check, per-item fk column checks, `keyDedupComponent`,
+    `validateRelationshipKeyLength`);
+  - `schema/v1.json` (`$defs/relationshipKey`, `oneOf` string / string array).
+- gen:
+  - `RelationshipContext.Key` / `JunctionLocal` / `JunctionReference` (`context.go`). These are
+    data only: the manifest reads them, and 32.4 moves gen's readers onto them;
+  - `relationshipTarget.PK`, the resolved PK in `<Table>PK` order (`relationship_targets.go`);
+  - `declaredKey`, `declaredJunctionKey` and the staging guard `checkDeclaredKeyColumns`
+    (`junction_keys.go`);
+  - `configRelationshipToContext` (`context_table.go`). `applyConfigDeclaredFKs` stamps
+    `FKReference` only for a one-column key.
+- Manifest: `FK{table, schema, columns, references, constraint}` and `JunctionKey` in both type
+  sets (`cmd/sqlgen/manifest/types.go`, `manifest/types.go`), and `SchemaVersion` `0.2.0` in the
+  first, the only one that has the constant;
+  `keyOf` in `builder.go`; `schema/v1.json`; `emit_markdown.go` (a one-column cell is unchanged).
+- MCP: `Reference.FKColumns`, a full-tuple `dedupKey`, and `slices.Compare` in the sort
+  (`tools_graph.go`).
+- Docs: PRD Appendix B (two rows, anchor rehashed), design §10.3, the registry (8 files).
+- Tests: `config/relationship_key_test.go`, `gen/declared_key_test.go`,
+  `gen/nested_pinned_test.go`, `manifest/relationship_key_test.go`, `TestLoad_RelationshipKeyLists`,
+  new MCP subtests, and the fixture migration (`FK: "x"` → `config.KeyColumns{"x"}`, manifest
+  `Column` → `Columns`).
+
+**Behavior.**
+- A declared key maps by position onto the referenced table's resolved PK. That PK is the
+  `primary_key` override in its declared order, else the PK columns in column order, as
+  `buildTableColumns` gives it. An O2M fk and a has-one fk reference the source; a belongs-to fk
+  references the target.
+- A declared key of more than one column is a generation error naming the relationship and the
+  key, "relationships through a composite key are not generated yet". The message carries no
+  sub-item ID (`refs-check`). It is pinned by an unclaimed staging-guard test, as 32.2's is.
+- The length error names the relationship, the key as written, both counts and the PK's columns.
+  An O2O fk references this table when every column is on the related table (has-one), else the
+  related table. An unset junction key is inferred and not checked.
+- Manifest `references` is the referenced columns: the FK's for a detected edge, the PK for a
+  declared one. `constraint` comes from `RelationshipContext.Constraints`. A context with no pairs
+  (hand-built) falls back to its one FK column and `[]`.
+
+**Goldens.** `make update-golden-e2e` changed 38 manifest JSON files (only `fk` / `junction`
+shape, `constraint` and `schema_version`, checked by filtering the diff) and 16 `_index.md`
+files (the schema version line). No Go golden moved. `make update-golden` left gen's goldens
+unchanged. The run also added testcontainers `postgres` lines to the `mysql` and `sqlite`
+`go.sum`; that is unrelated drift, and it was reverted. Unit goldens under
+`cmd/sqlgen/manifest/testdata/golden` and the MCP fixture `cmd/sqlgen/mcp/testdata/manifest_gen.json`
+were updated to the new shape.
+
+**Noted for later.**
+- `TestBuild_E3CompositePKParentKeepsManifestEntries` declares a string `fk` into the
+  composite-PK `user_categories`. Post-parse validation now rejects that config, which the test
+  never runs, so its manifest `references` is the truncated `[user_id]`. Its fixture becomes a
+  two-column key when 32.5 lifts the declared-edge guard.
+
+**Auto-review (sqlgen-reviewer).** It confirmed fail first by unregistering the length rule. Three
+high-confidence findings, all fixed, each with a test that a mutation of the fix fails:
+- H1: an o2o list split across both tables passed, since each column was checked alone.
+  `keySplitAcross` now rejects it (`TestValidatePostParse_O2OKeyOnOneSide`, under
+  `config.relationship-fk-column-misplaced`).
+- H2: the has-one branch was unpinned in gen and in the validator. Added
+  `…DeclaredKeyListMapsOntoPrimaryKey/has-one references this table's key` and
+  `…RelationshipKeyLength/has-one fk references this table`, plus a passing has-one list.
+- H3: `fk: []` passed the required rule and, into a view target, every other rule. The required
+  check is now `len(r.FK) == 0` (`TestValidateRelationships_EmptyKeyIsRequired`).
+
+Doc and test fixes applied inline:
+- the `KeyColumns` doc;
+- "fk list too short" duplicated "string into a composite key", so it is now 2 columns against
+  a 3-column key.
+
+`validateRelationshipFKColumns`'s per-entry body moved to `checkRelationshipFKColumns` to stay
+under cyclop. `docs/conformance/REPORT.md` was regenerated on the dirty tree.
+
+**Ruling (2026-11-05): a key list maps onto the `PRIMARY KEY (...)` clause order**, or onto the
+`primary_key.columns` order when overridden, never onto column order. This follows the reviewer's
+question. A probe showed that the parser keeps the clause order on all three dialects but
+`PKColumns` / `<Table>PK` use column order, which contradicts PRD §27.5. Only `introspect_sqlite`'s
+`project_members` has the two orders differ.
+- `gen.resolvedPrimaryKey` reads the declared PRIMARY KEY constraint when its columns are the
+  resolved set. Config gets the order through the new `SchemaTable.PrimaryKey`, which
+  `cli.toSchemaTables` fills.
+- PRD §4.8 and §13.4 state the order; their anchors and §4's were rehashed.
+- Fail first: `…DeclaredKeyListMapsOntoPrimaryKey/a composite key follows the PRIMARY KEY clause
+  order` got `[workspace_id id]`, and `TestValidatePostParse_RelationshipKeyLengthNamesClauseOrder`
+  named `(workspace_id, id)`.
+- The `<Table>PK` order itself is FIX-362 (tracked). Until it lands, the two orders differ on a
+  table like `project_members`, which cannot use a composite manual key before 32.5.
+
+**Checks.** `make check` green (`refs-check`, `req-check` included). `make check-examples` green,
+run twice: after the main change and after the review fixes.
+
+**Verify (2026-11-05).** The independent reviewer confirmed fail first by truncating `dedupKey`.
+It found three test gaps, all closed inline, each failing under the mutation that showed it:
+- `junction_reference_fk`'s length check was untested: unregistering it passed. Added
+  `…RelationshipKeyLength/junction_reference_fk list too long`.
+- `declaredKeyDDL` keyed every table on `id`, so swapping the junction keys' referenced tables, or
+  pointing an o2m key at the target's PK, passed gen's tests. Its PKs are now `uid`, `post_id` and
+  `tag_id`, and both mutations fail.
+- `gen.nested.child-input-drops-key-members` (32.6's row) claimed the context-level guard test.
+  Its Tests cell is empty again. Design §10.2 lists the guard, and `cli/gen.md` lists it as
+  unclaimed until 32.6.
+
+**Rulings after verify (2026-11-05).**
+- **A declared key with nothing to reference is a loud error**, not a manifest `references: []`.
+  A probe showed that a belongs-to or m2m edge into a view generated with empty referenced pairs,
+  and that the loader fell back to the parent's PK name as the view's key. A view's `@pk` is a
+  key, though. So:
+  - `relationshipTarget.PK` for a view is now its `@pk` columns, in column order, since the
+    parser keeps no `@pk` order;
+  - post-parse validation length-checks a key into a view against that `@pk`, and rejects a
+    belongs-to `fk` or an m2m `junction_reference_fk`, written or inferred, into a view without
+    `@pk`;
+  - the o2o side check now reads a view's columns, so a has-one fk on a view references this
+    table's key.
+
+  The new rule is `config.relationship-key-into-view-without-pk` (PRD §4.13 row; §13.4 sentence)
+  and the new mapping is `gen.manual.fk-list-into-view`. No example has a belongs-to or m2m
+  into a view. Fail first was by mutation: ignoring views, and ignoring `@pk`.
+- **The manifest `v1.json` requires `columns` and `references`** on `fk` and `junctionKey`, so a
+  0.1.0 `{"column": …}` key no longer validates (PRD §30.4.2;
+  `TestSchemaV1_RelationshipKeyRequiresColumnsAndReferences`, all five subtests failing without
+  the `required` lists). The `manifest validate` fixture
+  `cmd/sqlgen/cli/testdata/manifest/valid_single.json` still had a 0.1.0 `fk`, which the stricter
+  schema rejected; it is now 0.2.0.
 
 ## 32.4 Gen contexts — key pairs, pinned and free members, FK membership
 

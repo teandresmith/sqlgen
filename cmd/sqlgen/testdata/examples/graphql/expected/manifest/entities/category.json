@@ -121,7 +121,13 @@
       "fk": {
         "table": "products",
         "schema": "public",
-        "column": "category_id"
+        "columns": [
+          "category_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "products_category_id_fkey"
       }
     },
     {
@@ -131,8 +137,24 @@
       "junction": {
         "table": "user_categories",
         "schema": "public",
-        "local_fk": "category_id",
-        "target_fk": "user_id"
+        "local_fk": {
+          "columns": [
+            "category_id"
+          ],
+          "references": [
+            "id"
+          ],
+          "constraint": "user_categories_category_id_fkey"
+        },
+        "target_fk": {
+          "columns": [
+            "user_id"
+          ],
+          "references": [
+            "id"
+          ],
+          "constraint": "user_categories_user_id_fkey"
+        }
       }
     }
   ],

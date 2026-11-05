@@ -2,6 +2,7 @@ package gen
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -45,6 +46,11 @@ type relationshipTargets struct {
 type relationshipTarget struct {
 	Schema     string // "" in a dialect without schemas
 	StructName string
+	// PK is the entity's resolved primary key, the order a declared key list
+	// maps onto: the primary_key override's columns as declared, else the PK
+	// in its PRIMARY KEY (...) clause order (PRD §13.4). A view's is its @pk
+	// columns in column order, empty without @pk.
+	PK []string
 }
 
 // newRelationshipTargets builds the index from the parsed schema and config
@@ -64,7 +70,7 @@ func newRelationshipTargets(input *GenerateInput, collisions map[string]bool) *r
 		excluded:  make(map[string]map[string]bool),
 	}
 	// add records one parsed entity; structName is "" when it generates nothing.
-	add := func(schema, name, structName string) {
+	add := func(schema, name, structName string, pk []string) {
 		t.schemas[name] = append(t.schemas[name], schema)
 		if len(t.schemas[name]) > 1 {
 			delete(t.bare, name)
@@ -73,7 +79,7 @@ func newRelationshipTargets(input *GenerateInput, collisions map[string]bool) *r
 		if structName == "" {
 			return
 		}
-		target := relationshipTarget{Schema: schema, StructName: structName}
+		target := relationshipTarget{Schema: schema, StructName: structName, PK: pk}
 		if schema != "" {
 			t.qualified[schema+"."+name] = target
 		}
@@ -94,17 +100,61 @@ func newRelationshipTargets(input *GenerateInput, collisions map[string]bool) *r
 		}
 		_, excluded := config.MatchExcludeTablePattern(table.Name, table.Schema, cfg.ExcludeTables)
 		if excluded || !tableHasResolvedPK(cfg, table) {
-			add(table.Schema, table.Name, "")
+			add(table.Schema, table.Name, "", nil)
 			continue
 		}
-		add(table.Schema, table.Name, structNameFor(table.Name, table.Schema, tableCfg.StructName, collisions))
+		add(table.Schema, table.Name, structNameFor(table.Name, table.Schema, tableCfg.StructName, collisions), resolvedPrimaryKey(table, tableCfg))
 	}
 	for i := range input.Schema.Views {
 		view := &input.Schema.Views[i]
 		viewCfg, _ := resolveViewConfig(cfg.Views, view.Schema, view.Name)
-		add(view.Schema, view.Name, structNameFor(view.Name, view.Schema, viewCfg.StructName, collisions))
+		var pk []string
+		for _, c := range view.Columns {
+			if c.PrimaryKey {
+				pk = append(pk, c.Name)
+			}
+		}
+		add(view.Schema, view.Name, structNameFor(view.Name, view.Schema, viewCfg.StructName, collisions), pk)
 	}
 	return t
+}
+
+// resolvedPrimaryKey is the key a declared key list maps onto (PRD §13.4): the
+// override's columns that exist on the table, in declared order, else the PK
+// in its PRIMARY KEY (...) order. A table whose PK columns no declared
+// constraint lists in full falls back to column order.
+func resolvedPrimaryKey(table *parser.Table, tableCfg config.TableConfig) []string {
+	if tableCfg.PrimaryKey == nil || len(tableCfg.PrimaryKey.Columns) == 0 {
+		cols := primaryKeyColumnNames(table)
+		for _, c := range table.Constraints {
+			if c.Type == parser.PrimaryKey && sameColumnSet(c.Columns, cols) {
+				return c.Columns
+			}
+		}
+		return cols
+	}
+	var pk []string
+	for _, name := range tableCfg.PrimaryKey.Columns {
+		if parser.ColumnByName(table, name) != nil {
+			pk = append(pk, name)
+		}
+	}
+	return pk
+}
+
+// sameColumnSet reports whether a and b hold the same column names.
+func sameColumnSet(a, b []string) bool {
+	return len(a) == len(b) && !slices.ContainsFunc(a, func(c string) bool { return !slices.Contains(b, c) })
+}
+
+// primaryKey returns the resolved primary key of the generated entity the name
+// resolves to, or nil.
+func (t *relationshipTargets) primaryKey(schema, name string) []string {
+	target, res := t.resolve(schema, name)
+	if res != targetGenerated {
+		return nil
+	}
+	return target.PK
 }
 
 // targetResolution is what a relationship's target name resolves to.

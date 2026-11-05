@@ -99,7 +99,12 @@
       "fk": {
         "table": "keyed_code_entries",
         "schema": "public",
-        "column": "keyed_code_id"
+        "columns": [
+          "keyed_code_id"
+        ],
+        "references": [
+          "id"
+        ]
       }
     }
   ],

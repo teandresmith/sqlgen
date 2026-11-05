@@ -62,7 +62,7 @@ func TestManifestValidate_Valid(t *testing.T) {
 	if !strings.Contains(stdout, "manifest valid:") {
 		t.Errorf("stdout missing summary: %q", stdout)
 	}
-	for _, want := range []string{"schema_version=0.1.0", "entities=2", "enums=1", "extras=1"} {
+	for _, want := range []string{"schema_version=0.2.0", "entities=2", "enums=1", "extras=1"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("summary missing %q\ngot: %s", want, stdout)
 		}

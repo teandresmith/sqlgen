@@ -426,8 +426,16 @@ func TestBuild_M2MJunctionSchema(t *testing.T) {
 		}
 	}
 	want := map[string]*manifest.Junction{
-		"labels": {Table: "document_labels", Schema: "public", LocalFK: "document_id", TargetFK: "label_id"},
-		"tags":   {Table: "document_labels", Schema: "audit", LocalFK: "document_id", TargetFK: "tag_id"},
+		"labels": {
+			Table: "document_labels", Schema: "public",
+			LocalFK:  manifest.JunctionKey{Columns: []string{"document_id"}, References: []string{"id"}, Constraint: "document_labels(document_id) → documents(id)"},
+			TargetFK: manifest.JunctionKey{Columns: []string{"label_id"}, References: []string{"id"}, Constraint: "document_labels(label_id) → labels(id)"},
+		},
+		"tags": {
+			Table: "document_labels", Schema: "audit",
+			LocalFK:  manifest.JunctionKey{Columns: []string{"document_id"}, References: []string{"id"}, Constraint: "document_labels(document_id) → documents(id)"},
+			TargetFK: manifest.JunctionKey{Columns: []string{"tag_id"}, References: []string{"id"}, Constraint: "document_labels(tag_id) → tags(id)"},
+		},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Document m2m junctions mismatch (-want +got):\n%s", diff)
@@ -476,9 +484,9 @@ func TestBuild_FKSchema(t *testing.T) {
 		}
 	}
 	want := map[string]*manifest.FK{
-		"Document.document_notes": {Table: "document_notes", Schema: "audit", Column: "document_id"},
-		"Product.document_notes":  {Table: "document_notes", Schema: "public", Column: "product_id"},
-		"EventRef.events":         {Table: "event_refs", Schema: "public", Column: "event_id"},
+		"Document.document_notes": {Table: "document_notes", Schema: "audit", Columns: []string{"document_id"}, References: []string{"id"}, Constraint: "document_notes(document_id) → documents(id)"},
+		"Product.document_notes":  {Table: "document_notes", Schema: "public", Columns: []string{"product_id"}, References: []string{"id"}, Constraint: "document_notes(product_id) → products(id)"},
+		"EventRef.events":         {Table: "event_refs", Schema: "public", Columns: []string{"event_id"}, References: []string{"id"}, Constraint: "event_refs(event_id) → events(id)"},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("FK edges mismatch (-want +got):\n%s", diff)
@@ -495,7 +503,7 @@ func TestBuild_O2MFKNotOnTargetStaysOnTarget(t *testing.T) {
 	cfg := baseConfig()
 	cfg.Tables = map[string]config.TableConfig{
 		"users": {Relationships: []config.TableRelationship{
-			{Name: "Notes", Type: "one_to_many", Table: "notes", FK: "email"},
+			{Name: "Notes", Type: "one_to_many", Table: "notes", FK: config.KeyColumns{"email"}},
 		}},
 	}
 	schema := &parser.Schema{
@@ -515,7 +523,7 @@ func TestBuild_O2MFKNotOnTargetStaysOnTarget(t *testing.T) {
 			got = r.FK
 		}
 	}
-	want := &manifest.FK{Table: "notes", Column: "email"}
+	want := &manifest.FK{Table: "notes", Columns: []string{"email"}, References: []string{"id"}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("User.Notes FK mismatch (-want +got):\n%s", diff)
 	}
@@ -1623,7 +1631,7 @@ func TestBuild_O2OSideDisambiguation(t *testing.T) {
 	// switch resolves (OneToOne, SideChild) to "m2o".
 	cfg.Tables["profiles"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "child"},
+			{Name: "User", Type: "o2o", Table: "users", FK: config.KeyColumns{"profile_id"}, Side: "child"},
 		},
 	}
 

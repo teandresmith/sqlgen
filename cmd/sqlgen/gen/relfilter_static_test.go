@@ -224,11 +224,11 @@ func TestRelationshipFilter_UnreadableListFilterFailsGeneration(t *testing.T) {
 	const bad = "name LIKE"
 
 	o2m := func(name, table string) config.TableRelationship {
-		return config.TableRelationship{Name: name, Type: "one_to_many", Table: table, FK: "entity_id"}
+		return config.TableRelationship{Name: name, Type: "one_to_many", Table: table, FK: config.KeyColumns{"entity_id"}}
 	}
 	m2m := config.TableRelationship{
 		Name: "Tags", Type: "many_to_many", Table: "tags",
-		Junction: "asset_tags", JunctionLocalFK: "asset_id", JunctionReferenceFK: "tag_id",
+		Junction: "asset_tags", JunctionLocalFK: config.KeyColumns{"asset_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"},
 	}
 
 	tests := []struct {

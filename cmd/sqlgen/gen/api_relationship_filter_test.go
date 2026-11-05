@@ -504,7 +504,7 @@ func TestValidateGeneration_WiresRelationshipFilters(t *testing.T) {
 			Output:  config.OutputConfig{Driver: "pgx", Dir: "./models", Package: "models"},
 			Tables: map[string]config.TableConfig{
 				"users": {Relationships: []config.TableRelationship{{
-					Name: "PaidOrders", Type: "one_to_many", Table: "orders", FK: "user_id",
+					Name: "PaidOrders", Type: "one_to_many", Table: "orders", FK: config.KeyColumns{"user_id"},
 					Filter: "status = $1",
 				}}},
 			},

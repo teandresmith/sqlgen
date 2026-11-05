@@ -30,11 +30,12 @@ func declaredJunctionKeys(schema *parser.Schema, r config.TableRelationship, sou
 	return local, reference, errors.Join(localErr, refErr)
 }
 
-// junctionKeyColumn resolves one side of declaredJunctionKeys: the override as
-// written, else the column inferred from the linked table (tSchema, tName).
-func junctionKeyColumn(schema *parser.Schema, r config.TableRelationship, source, key, override, tSchema, tName string) (string, error) {
-	if override != "" {
-		return override, nil
+// junctionKeyColumn resolves one side of declaredJunctionKeys: the override's
+// first column, else the column inferred from the linked table (tSchema,
+// tName). checkDeclaredKeyColumns rejects an override of more than one column.
+func junctionKeyColumn(schema *parser.Schema, r config.TableRelationship, source, key string, override config.KeyColumns, tSchema, tName string) (string, error) {
+	if len(override) > 0 {
+		return override[0], nil
 	}
 	if pk := primaryKeyColumnNames(findSchemaTable(schema, tSchema, tName)); len(pk) > 1 {
 		return "", fmt.Errorf(
@@ -69,4 +70,53 @@ func checkDeclaredJunctionKeys(schema *parser.Schema, r config.TableRelationship
 	}
 	_, _, err := declaredJunctionKeys(schema, r, source, targets)
 	return err
+}
+
+// declaredJunctionKey is a junction key's columns: the override as written,
+// else the inferred column, else none.
+func declaredJunctionKey(override config.KeyColumns, resolved string) config.KeyColumns {
+	switch {
+	case len(override) > 0:
+		return override
+	case resolved != "":
+		return config.KeyColumns{resolved}
+	}
+	return nil
+}
+
+// declaredKey maps a declared key's columns by position onto the referenced
+// table's primary key (PRD §13.4). Post-parse validation rejects a list whose
+// length differs from the key's, so a shorter side only truncates the pairs.
+func declaredKey(cols config.KeyColumns, pk []string) []parser.KeyPair {
+	n := min(len(cols), len(pk))
+	if n == 0 {
+		return nil
+	}
+	pairs := make([]parser.KeyPair, n)
+	for i := range n {
+		pairs[i] = parser.KeyPair{Local: cols[i], Referenced: pk[i]}
+	}
+	return pairs
+}
+
+// checkDeclaredKeyColumns rejects a declared key of more than one column until
+// relationships through a composite key generate.
+func checkDeclaredKeyColumns(r config.TableRelationship, source string) error {
+	var errs []error
+	for _, k := range []struct {
+		name string
+		cols config.KeyColumns
+	}{
+		{"fk", r.FK},
+		{"junction_local_fk", r.JunctionLocalFK},
+		{"junction_reference_fk", r.JunctionReferenceFK},
+	} {
+		if len(k.cols) > 1 {
+			errs = append(errs, fmt.Errorf(
+				"tables.%s.relationships: %q declares %s: %s, a key of %d columns; relationships through a composite key are not generated yet (PRD §13.4)",
+				source, r.Name, k.name, k.cols, len(k.cols),
+			))
+		}
+	}
+	return errors.Join(errs...)
 }

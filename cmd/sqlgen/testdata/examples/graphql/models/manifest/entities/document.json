@@ -125,8 +125,24 @@
       "junction": {
         "table": "asset_document_links",
         "schema": "public",
-        "local_fk": "document_id",
-        "target_fk": "asset_id"
+        "local_fk": {
+          "columns": [
+            "document_id"
+          ],
+          "references": [
+            "id"
+          ],
+          "constraint": "asset_document_links_document_id_fkey"
+        },
+        "target_fk": {
+          "columns": [
+            "asset_id"
+          ],
+          "references": [
+            "id"
+          ],
+          "constraint": "asset_document_links_asset_id_fkey"
+        }
       }
     }
   ],

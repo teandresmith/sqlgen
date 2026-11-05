@@ -166,7 +166,13 @@
       "fk": {
         "table": "order_items",
         "schema": "public",
-        "column": "order_id"
+        "columns": [
+          "order_id"
+        ],
+        "references": [
+          "id"
+        ],
+        "constraint": "order_items_order_id_fkey"
       }
     }
   ],

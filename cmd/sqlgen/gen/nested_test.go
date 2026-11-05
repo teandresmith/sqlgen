@@ -148,28 +148,28 @@ func nestedSchema() *parser.Schema {
 
 func nestedUserRelationships() []config.TableRelationship {
 	return []config.TableRelationship{
-		{Name: "Events", Type: "one_to_many", Table: "events", FK: "user_id"},
-		{Name: "Orders", Type: "one_to_many", Table: "orders", FK: "user_id"},
-		{Name: "Profile", Type: "one_to_one", Table: "profiles", FK: "user_id"},
-		{Name: "Bio", Type: "one_to_one", Table: "bios", FK: "user_id"},
-		{Name: "Blobs", Type: "one_to_many", Table: "blobs", FK: "user_id"},
+		{Name: "Events", Type: "one_to_many", Table: "events", FK: config.KeyColumns{"user_id"}},
+		{Name: "Orders", Type: "one_to_many", Table: "orders", FK: config.KeyColumns{"user_id"}},
+		{Name: "Profile", Type: "one_to_one", Table: "profiles", FK: config.KeyColumns{"user_id"}},
+		{Name: "Bio", Type: "one_to_one", Table: "bios", FK: config.KeyColumns{"user_id"}},
+		{Name: "Blobs", Type: "one_to_many", Table: "blobs", FK: config.KeyColumns{"user_id"}},
 		{
 			Name: "Categories", Type: "many_to_many", Table: "categories",
-			Junction: "user_categories", JunctionLocalFK: "user_id", JunctionReferenceFK: "category_id",
+			Junction: "user_categories", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"category_id"},
 		},
 		{
-			Name: "Tagged", Type: "one_to_many", Table: "events", FK: "user_id",
+			Name: "Tagged", Type: "one_to_many", Table: "events", FK: config.KeyColumns{"user_id"},
 			Discriminator: &config.RelationshipDiscriminator{Column: "action", Value: "signup"},
 		},
-		{Name: "Archived", Type: "one_to_many", Table: "events", FK: "user_id", Filter: "action = 'archived'"},
+		{Name: "Archived", Type: "one_to_many", Table: "events", FK: config.KeyColumns{"user_id"}, Filter: "action = 'archived'"},
 		{
 			Name: "NamedTags", Type: "many_to_many", Table: "categories",
-			Junction: "user_categories", JunctionLocalFK: "user_id", JunctionReferenceFK: "category_id",
+			Junction: "user_categories", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"category_id"},
 			Discriminator: &config.RelationshipDiscriminator{Column: "name", Value: "tag"},
 		},
 		{
 			Name: "SoftTags", Type: "many_to_many", Table: "categories",
-			Junction: "user_tags", JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_id",
+			Junction: "user_tags", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"},
 		},
 	}
 }
@@ -370,7 +370,7 @@ func TestNestedEligibility_DiscriminatorTheCreateCannotSetIsIneligible(t *testin
 		cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
 		cfg.Tables["pins"] = config.TableConfig{TypeMap: f.typeMap}
 		tc := config.TableConfig{Relationships: append(nestedUserRelationships(), config.TableRelationship{
-			Name: "Pinned", Type: f.relType, Table: "pins", FK: "user_id",
+			Name: "Pinned", Type: f.relType, Table: "pins", FK: config.KeyColumns{"user_id"},
 			Discriminator: &config.RelationshipDiscriminator{Column: "tag", Value: f.value},
 		})}
 		if listed {
@@ -592,13 +592,13 @@ func TestNestedEligibility_ListedShapeFailureIsReported(t *testing.T) {
 		{
 			name:   "belongs-to edge",
 			table:  "profiles",
-			rel:    config.TableRelationship{Name: "Owner", Type: "one_to_one", Table: "users", FK: "user_id"},
+			rel:    config.TableRelationship{Name: "Owner", Type: "one_to_one", Table: "users", FK: config.KeyColumns{"user_id"}},
 			reason: "the edge is belongs-to",
 		},
 		{
 			name:   "composite-PK parent",
 			table:  "user_categories",
-			rel:    config.TableRelationship{Name: "Events", Type: "one_to_many", Table: "events", FK: "user_id"},
+			rel:    config.TableRelationship{Name: "Events", Type: "one_to_many", Table: "events", FK: config.KeyColumns{"user_id"}},
 			reason: "the parent has a composite primary key",
 		},
 	}
@@ -653,7 +653,7 @@ func TestNestedEligibility_ListedShapeFailureIsReported(t *testing.T) {
 func TestNestedEligibility_CompositePKParentKeepsItsLoaders(t *testing.T) {
 	declared := func(cfg *config.RootConfig) {
 		cfg.Tables["user_categories"] = config.TableConfig{Relationships: []config.TableRelationship{
-			{Name: "Events", Type: "one_to_many", Table: "events", FK: "user_id"},
+			{Name: "Events", Type: "one_to_many", Table: "events", FK: config.KeyColumns{"user_id"}},
 		}}
 	}
 	tc := buildNestedContexts(t, declared)["user_categories"]
@@ -2329,7 +2329,7 @@ func TestNestedEligibility_HasOneUnscopableCreateIsReported(t *testing.T) {
 		input.Resolver = gotype.NewResolver(config.DialectMySQL, true, cfg.Overrides.Types)
 		cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true), Verbs: verbs}
 		tc := config.TableConfig{Relationships: append(nestedUserRelationships(), config.TableRelationship{
-			Name: "Pinned", Type: "one_to_one", Table: "notes", FK: "user_id",
+			Name: "Pinned", Type: "one_to_one", Table: "notes", FK: config.KeyColumns{"user_id"},
 			Discriminator: &config.RelationshipDiscriminator{Column: "kind", Value: "pinned"},
 		})}
 		if listed {
@@ -2499,7 +2499,7 @@ func TestNestedEligibility_TargetShapeFailuresAreNotWriteEligible(t *testing.T) 
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rel := config.TableRelationship{Name: "Slots", Type: "one_to_many", Table: "slots", FK: "user_id"}
+			rel := config.TableRelationship{Name: "Slots", Type: "one_to_many", Table: "slots", FK: config.KeyColumns{"user_id"}}
 			tables := []parser.Table{tt.table}
 
 			users, err := nestedWithExtraEdge(t, tables, rel, false)
@@ -2542,7 +2542,7 @@ func TestNestedEligibility_M2MIntoOpaqueKeyedTargetIsRefused(t *testing.T) {
 	}
 	rel := config.TableRelationship{
 		Name: "LinkedBlobs", Type: "many_to_many", Table: "blobs",
-		Junction: "user_blobs", JunctionLocalFK: "user_id", JunctionReferenceFK: "blob_id",
+		Junction: "user_blobs", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"blob_id"},
 	}
 
 	users, err := nestedWithExtraEdge(t, []parser.Table{junction}, rel, false)

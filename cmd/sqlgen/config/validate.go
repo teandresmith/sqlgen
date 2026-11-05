@@ -506,7 +506,7 @@ func validateRelationshipKeys(tableName string, i int, r TableRelationship, errs
 			"tables.%s.relationships[%d].type: %q is not a valid value (allowed: o2o, one_to_one, o2m, one_to_many, m2m, many_to_many) (PRD §4.8)",
 			tableName, i, r.Type,
 		))
-	case r.FK == "" && !isM2M(r.Type):
+	case len(r.FK) == 0 && !isM2M(r.Type):
 		*errs = append(*errs, fmt.Errorf(
 			"tables.%s.relationships[%d] (%q).fk: required on an o2o or o2m relationship — it names the FK column that creates the link (PRD §4.8 / §4.13)",
 			tableName, i, r.Name,
@@ -629,14 +629,9 @@ func validateRelationshipSortColumns(cfg *RootConfig, tables []SchemaTable, errs
 // that resolution too (PRD §4.13).
 func validateRelationshipFKColumns(cfg *RootConfig, tables []SchemaTable, errs *[]error) {
 	var parsed map[string][]SchemaColumn
-
-	hasColumn := func(cols []SchemaColumn, name string) bool {
-		return slices.ContainsFunc(cols, func(c SchemaColumn) bool { return c.Name == name })
-	}
-
 	for _, tableName := range sortedTableKeys(cfg.Tables) {
 		for i, r := range cfg.Tables[tableName].Relationships {
-			if r.FK == "" || isM2M(r.Type) {
+			if len(r.FK) == 0 || isM2M(r.Type) {
 				continue
 			}
 			if parsed == nil {
@@ -646,27 +641,235 @@ func validateRelationshipFKColumns(cfg *RootConfig, tables []SchemaTable, errs *
 					parsed[qualifiedTableName(t)] = t.Columns
 				}
 			}
-			targetCols, ok := parsed[r.Table]
-			if !ok || hasColumn(targetCols, r.FK) {
-				continue
-			}
-			if !isO2O(r.Type) {
-				*errs = append(*errs, fmt.Errorf(
-					"tables.%s.relationships[%d] (%q).fk: %q is not a column on related table %q (PRD §4.8)",
-					tableName, i, r.Name, r.FK, r.Table,
-				))
-				continue
-			}
-			sourceCols, ok := parsed[tableName]
-			if !ok || hasColumn(sourceCols, r.FK) {
-				continue
-			}
-			*errs = append(*errs, fmt.Errorf(
-				"tables.%s.relationships[%d] (%q).fk: %q is not a column on table %q or on related table %q; an o2o fk is on one of them (PRD §4.8 / §13.1)",
-				tableName, i, r.Name, r.FK, tableName, r.Table,
-			))
+			checkRelationshipFKColumns(tableName, i, r, parsed, errs)
 		}
 	}
+}
+
+// checkRelationshipFKColumns is validateRelationshipFKColumns for one entry.
+func checkRelationshipFKColumns(tableName string, i int, r TableRelationship, parsed map[string][]SchemaColumn, errs *[]error) {
+	hasColumn := func(cols []SchemaColumn, name string) bool {
+		return slices.ContainsFunc(cols, func(c SchemaColumn) bool { return c.Name == name })
+	}
+	targetCols, ok := parsed[r.Table]
+	if !ok {
+		return
+	}
+	sourceCols, sourceOK := parsed[tableName]
+	// An o2o key is on one side (§13.1): every column on the related table,
+	// or every column on this one.
+	if isO2O(r.Type) && sourceOK && keySplitAcross(r.FK, sourceCols, targetCols) {
+		*errs = append(*errs, fmt.Errorf(
+			"tables.%s.relationships[%d] (%q).fk: %s has columns on both table %q and related table %q; an o2o fk is on one of them (PRD §4.8 / §13.1)",
+			tableName, i, r.Name, r.FK, tableName, r.Table,
+		))
+		return
+	}
+	for _, col := range r.FK {
+		if hasColumn(targetCols, col) {
+			continue
+		}
+		if !isO2O(r.Type) {
+			*errs = append(*errs, fmt.Errorf(
+				"tables.%s.relationships[%d] (%q).fk: %q is not a column on related table %q (PRD §4.8)",
+				tableName, i, r.Name, col, r.Table,
+			))
+			continue
+		}
+		if !sourceOK || hasColumn(sourceCols, col) {
+			continue
+		}
+		*errs = append(*errs, fmt.Errorf(
+			"tables.%s.relationships[%d] (%q).fk: %q is not a column on table %q or on related table %q; an o2o fk is on one of them (PRD §4.8 / §13.1)",
+			tableName, i, r.Name, col, tableName, r.Table,
+		))
+	}
+}
+
+// validateRelationshipKeyLength enforces PRD §4.13's key-length rule: `fk`,
+// `junction_local_fk` and `junction_reference_fk` map by position onto the
+// resolved primary key of the table they reference (§13.4), so a list must
+// have that key's column count. A string is a one-item list, so it fails too
+// against a composite key.
+//
+// An o2m `fk` and an m2m `junction_local_fk` reference this table, and an m2m
+// `junction_reference_fk` the related one. An o2o `fk` references this table
+// when every column is on the related one (has-one), and the related table
+// otherwise (belongs-to), as §13.1 derives the side. An unset junction key is
+// inferred, and a table outside the parsed set or without a primary key is
+// left to relationship resolution, as validateRelationshipFKColumns leaves it.
+//
+// A key that references a view maps onto its `@pk` columns. A view without
+// `@pk` has no key to map onto, so a belongs-to or m2m edge into it is an
+// error whether the key is set or inferred.
+func validateRelationshipKeyLength(cfg *RootConfig, tables []SchemaTable, views []SchemaView, errs *[]error) {
+	parsed := make(map[string]SchemaTable, len(tables)*2)
+	for _, t := range tables {
+		parsed[t.Name] = t
+		parsed[qualifiedTableName(t)] = t
+	}
+	viewCols := make(map[string][]SchemaColumn, len(views)*2)
+	for _, v := range views {
+		viewCols[v.Name] = v.Columns
+		viewCols[qualifiedViewName(v)] = v.Columns
+	}
+	for _, tableName := range sortedTableKeys(cfg.Tables) {
+		for i, r := range cfg.Tables[tableName].Relationships {
+			for _, err := range relationshipKeyLengthErrors(cfg, parsed, viewCols, tableName, r) {
+				*errs = append(*errs, fmt.Errorf("tables.%s.relationships[%d] (%q).%w", tableName, i, r.Name, err))
+			}
+		}
+	}
+}
+
+// relationshipKeyLengthErrors is validateRelationshipKeyLength for one entry.
+// A name that is a parsed table is never read as a view.
+func relationshipKeyLengthErrors(cfg *RootConfig, parsed map[string]SchemaTable, viewCols map[string][]SchemaColumn, tableName string, r TableRelationship) []error {
+	var errs []error
+	check := func(key string, cols KeyColumns, referenced string) {
+		if err := checkRelationshipKeyLength(cfg, parsed, key, cols, referenced); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	related, relatedIsTable := parsed[r.Table]
+	relatedViewCols, relatedIsView := viewCols[r.Table]
+	relatedIsView = relatedIsView && !relatedIsTable
+	checkView := func(key string, cols KeyColumns) {
+		if err := checkViewKey(key, cols, r.Table, relatedViewCols); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	switch {
+	case isM2M(r.Type):
+		check("junction_local_fk", r.JunctionLocalFK, tableName)
+		if relatedIsView {
+			checkView("junction_reference_fk", r.JunctionReferenceFK)
+			break
+		}
+		check("junction_reference_fk", r.JunctionReferenceFK, r.Table)
+	case isO2O(r.Type):
+		// Every column on the related table or view makes it has-one, which
+		// references this table; otherwise it is belongs-to.
+		relatedCols := related.Columns
+		if relatedIsView {
+			relatedCols = relatedViewCols
+		}
+		switch {
+		case len(r.FK) > 0 && (relatedIsTable || relatedIsView) && columnsIn(relatedCols, r.FK):
+			check("fk", r.FK, tableName)
+		case relatedIsView:
+			checkView("fk", r.FK)
+		default:
+			check("fk", r.FK, r.Table)
+		}
+	default:
+		check("fk", r.FK, tableName)
+	}
+	return errs
+}
+
+// checkViewKey checks a key into a view against the view's `@pk`: a view
+// without one is an error, and a written key must match its length.
+func checkViewKey(key string, cols KeyColumns, view string, viewCols []SchemaColumn) error {
+	pk := viewPrimaryKey(viewCols)
+	switch {
+	case len(pk) == 0:
+		return keyReferencesViewError(key, view)
+	case cols != nil && len(cols) != len(pk):
+		return keyLengthError(key, cols, view, pk)
+	}
+	return nil
+}
+
+// viewPrimaryKey is a view's `@pk` columns in column order, empty without one.
+func viewPrimaryKey(cols []SchemaColumn) []string {
+	var pk []string
+	for _, c := range cols {
+		if c.PrimaryKey {
+			pk = append(pk, c.Name)
+		}
+	}
+	return pk
+}
+
+// keyReferencesViewError is the error for a key into a view without `@pk`,
+// which has no primary key for it to map onto.
+func keyReferencesViewError(key, view string) error {
+	return fmt.Errorf(
+		"%s: references view %q, which declares no @pk for the key to map onto; a belongs-to or m2m relationship into a view needs one (PRD §4.13 / §13.4)",
+		key, view,
+	)
+}
+
+// checkRelationshipKeyLength compares one key with the resolved primary key of
+// the table it references. An unset key, a table outside parsed and a table
+// without a primary key pass.
+func checkRelationshipKeyLength(cfg *RootConfig, parsed map[string]SchemaTable, key string, cols KeyColumns, referenced string) error {
+	if cols == nil {
+		return nil
+	}
+	table, ok := parsed[referenced]
+	if !ok {
+		return nil
+	}
+	var tc TableConfig
+	if found := findTableConfig(cfg, table); found != nil {
+		tc = *found
+	}
+	pk := resolvedPKColumns(tc, table)
+	if (tc.PrimaryKey == nil || len(tc.PrimaryKey.Columns) == 0) && len(table.PrimaryKey) == len(pk) &&
+		!slices.ContainsFunc(pk, func(c string) bool { return !slices.Contains(table.PrimaryKey, c) }) {
+		// A list maps onto the key in its PRIMARY KEY (...) order (§13.4).
+		pk = table.PrimaryKey
+	}
+	if len(pk) == 0 || len(cols) == len(pk) {
+		return nil
+	}
+	return keyLengthError(key, cols, referenced, pk)
+}
+
+// keyLengthError is the error for a key whose length differs from the primary
+// key it references.
+func keyLengthError(key string, cols KeyColumns, referenced string, pk []string) error {
+	return fmt.Errorf(
+		"%s: %s has %s, but it references the primary key of %q, which has %s (%s); a key list maps by position onto that key (PRD §4.13 / §13.4)",
+		key, cols, pluralColumns(len(cols)), referenced, pluralColumns(len(pk)), strings.Join(pk, ", "),
+	)
+}
+
+// columnsIn reports whether every column of key is one of cols.
+func columnsIn(cols []SchemaColumn, key KeyColumns) bool {
+	for _, c := range key {
+		if !slices.ContainsFunc(cols, func(sc SchemaColumn) bool { return sc.Name == c }) {
+			return false
+		}
+	}
+	return true
+}
+
+// pluralColumns spells a column count: "1 column", "2 columns".
+func pluralColumns(n int) string {
+	if n == 1 {
+		return "1 column"
+	}
+	return fmt.Sprintf("%d columns", n)
+}
+
+// keySplitAcross reports whether every column of key is on a or b, but neither
+// table holds them all. A column on neither is reported per column instead.
+func keySplitAcross(key KeyColumns, a, b []SchemaColumn) bool {
+	on := func(cols []SchemaColumn, name string) bool {
+		return slices.ContainsFunc(cols, func(c SchemaColumn) bool { return c.Name == name })
+	}
+	allA, allB := true, true
+	for _, c := range key {
+		inA, inB := on(a, c), on(b, c)
+		if !inA && !inB {
+			return false
+		}
+		allA, allB = allA && inA, allB && inB
+	}
+	return !allA && !allB
 }
 
 // RelationshipDedupKey returns the §13.7.3 dedup key for a single relationship.
@@ -708,9 +911,17 @@ func RelationshipDedupKey(r TableRelationship) string {
 	const sep = "\x00"
 	disc := discriminatorDedupComponent(r.Discriminator)
 	if isM2M(r.Type) {
-		return "m" + sep + r.Table + sep + r.Junction + sep + r.JunctionLocalFK + sep + r.JunctionReferenceFK + sep + r.Filter + sep + disc
+		return "m" + sep + r.Table + sep + r.Junction + sep + keyDedupComponent(r.JunctionLocalFK) + sep + keyDedupComponent(r.JunctionReferenceFK) + sep + r.Filter + sep + disc
 	}
-	return "x" + sep + r.Table + sep + r.FK + sep + r.Filter + sep + disc
+	return "x" + sep + r.Table + sep + keyDedupComponent(r.FK) + sep + r.Filter + sep + disc
+}
+
+// keyDedupComponent joins a key's columns for RelationshipDedupKey. `\x01`
+// cannot appear in an identifier either, and differs from the field separator,
+// so a list cannot alias into the fields after it; `fk: x` and `fk: [x]` give
+// one component.
+func keyDedupComponent(k KeyColumns) string {
+	return strings.Join(k, "\x01")
 }
 
 // filterHasBareDoubleQuote reports whether a `filter:` predicate contains a
@@ -1554,6 +1765,9 @@ type SchemaTable struct {
 	Schema       string
 	Columns      []SchemaColumn
 	UniqueGroups [][]string
+	// PrimaryKey is the declared PRIMARY KEY constraint's columns in clause
+	// order, empty when the table declares none.
+	PrimaryKey []string
 }
 
 // SchemaView holds the minimal view information needed for post-parse validation.
@@ -1602,6 +1816,7 @@ func ValidatePostParse(cfg *RootConfig, tables []SchemaTable, views []SchemaView
 	validateRelationshipDiscriminators(cfg, tables, &errs)
 	validateRelationshipSortColumns(cfg, tables, &errs)
 	validateRelationshipFKColumns(cfg, tables, &errs)
+	validateRelationshipKeyLength(cfg, tables, views, &errs)
 
 	return warnings, errors.Join(errs...)
 }

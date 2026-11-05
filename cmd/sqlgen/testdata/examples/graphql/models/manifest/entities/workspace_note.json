@@ -170,7 +170,12 @@
       "fk": {
         "table": "workspace_notes",
         "schema": "public",
-        "column": "parent_id"
+        "columns": [
+          "parent_id"
+        ],
+        "references": [
+          "id"
+        ]
       }
     },
     {
@@ -180,7 +185,12 @@
       "fk": {
         "table": "workspace_notes",
         "schema": "public",
-        "column": "parent_id"
+        "columns": [
+          "parent_id"
+        ],
+        "references": [
+          "id"
+        ]
       },
       "filter": "kind = 'draft'"
     }

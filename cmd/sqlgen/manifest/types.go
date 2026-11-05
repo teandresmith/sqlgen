@@ -13,10 +13,10 @@
 package manifest
 
 // SchemaVersion is the JSON-Schema-versioned contract for the emitted manifest
-// document. Held at 0.1.0: the 1.0.0 freeze is deferred until the version
-// bump is greenlit, paired with the schema/v1.json conventions tightening
-// (PRD §30.5).
-const SchemaVersion = "0.1.0"
+// document. 0.2.0 records each relationship's whole key; the 1.0.0 freeze is
+// deferred until the version bump is greenlit, paired with the schema/v1.json
+// conventions tightening (PRD §30.5).
+const SchemaVersion = "0.2.0"
 
 // Document is the top-level manifest envelope serialized into manifest_gen.json
 // (single layout) or as the index file (per-entity layout). See PRD §30.4.
@@ -279,29 +279,45 @@ type Relationship struct {
 	Filter       string    `json:"filter,omitempty"`
 }
 
-// FK names the foreign-key table+column for O2O / O2M / M2O relationships.
-// Table is the table that holds Column: the target for a has-one or has-many
-// edge, the entity's own table for a belongs-to edge.
+// FK names the foreign key behind an O2O / O2M / M2O relationship. Table is
+// the table that holds Columns: the target for a has-one or has-many edge, the
+// entity's own table for a belongs-to edge.
 //
 // Table is the bare name and Schema its schema, split the way Entity splits
 // them (PRD §30.4.2) and omitted when empty, so same-named tables in two
 // schemas stay distinguishable.
+//
+// Columns and References are the key's pairs in the FK's declared order,
+// Columns[i] referencing References[i]. Constraint names the FOREIGN KEY the
+// edge was detected from, and is omitted for a manual relationship.
 type FK struct {
-	Table  string `json:"table"`
-	Schema string `json:"schema,omitempty"`
-	Column string `json:"column"`
+	Table      string   `json:"table"`
+	Schema     string   `json:"schema,omitempty"`
+	Columns    []string `json:"columns"`
+	References []string `json:"references"`
+	Constraint string   `json:"constraint,omitempty"`
 }
 
-// Junction names the M2M junction table and its two FK columns.
+// Junction names the M2M junction table and its two keys: LocalFK into the
+// entity, TargetFK into the target.
 //
 // Table is the bare name and Schema its schema, split the way Entity splits
 // them (PRD §30.4.2) and omitted when empty, so same-named junctions in two
 // schemas stay distinguishable.
 type Junction struct {
-	Table    string `json:"table"`
-	Schema   string `json:"schema,omitempty"`
-	LocalFK  string `json:"local_fk"`
-	TargetFK string `json:"target_fk"`
+	Table    string      `json:"table"`
+	Schema   string      `json:"schema,omitempty"`
+	LocalFK  JunctionKey `json:"local_fk"`
+	TargetFK JunctionKey `json:"target_fk"`
+}
+
+// JunctionKey is one of a junction's two foreign keys, shaped like FK without
+// the table: the junction's columns, the columns they reference, and the
+// constraint, omitted for a manual relationship.
+type JunctionKey struct {
+	Columns    []string `json:"columns"`
+	References []string `json:"references"`
+	Constraint string   `json:"constraint,omitempty"`
 }
 
 // Methods groups generated query and mutation methods on an entity.

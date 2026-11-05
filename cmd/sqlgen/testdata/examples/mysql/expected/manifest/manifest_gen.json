@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/teandresmith/sqlgen/vdev/cmd/sqlgen/manifest/schema/v1.json",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "generated_at": "2026-01-01T00:00:00Z",
   "generator": {
     "name": "sqlgen",
@@ -815,7 +815,12 @@
           "target_entity": "Document",
           "fk": {
             "table": "documents",
-            "column": "entity_id"
+            "columns": [
+              "entity_id"
+            ],
+            "references": [
+              "id"
+            ]
           },
           "filter": "entity_type = 'asset.attachment'"
         },
@@ -825,7 +830,12 @@
           "target_entity": "Document",
           "fk": {
             "table": "documents",
-            "column": "entity_id"
+            "columns": [
+              "entity_id"
+            ],
+            "references": [
+              "id"
+            ]
           },
           "filter": "entity_type = 'asset.invoice'"
         },
@@ -835,8 +845,22 @@
           "target_entity": "Document",
           "junction": {
             "table": "asset_document_links",
-            "local_fk": "asset_id",
-            "target_fk": "document_id"
+            "local_fk": {
+              "columns": [
+                "asset_id"
+              ],
+              "references": [
+                "id"
+              ]
+            },
+            "target_fk": {
+              "columns": [
+                "document_id"
+              ],
+              "references": [
+                "id"
+              ]
+            }
           },
           "filter": "entity_type = 'asset.attachment' AND name LIKE 'link_%'"
         },
@@ -846,7 +870,12 @@
           "target_entity": "Document",
           "fk": {
             "table": "documents",
-            "column": "entity_id"
+            "columns": [
+              "entity_id"
+            ],
+            "references": [
+              "id"
+            ]
           },
           "filter": "entity_type = 'asset.attachment' AND name LIKE 'photo_%'"
         },
@@ -856,7 +885,12 @@
           "target_entity": "Document",
           "fk": {
             "table": "documents",
-            "column": "entity_id"
+            "columns": [
+              "entity_id"
+            ],
+            "references": [
+              "id"
+            ]
           },
           "filter": "entity_type = 'asset.primary' AND name LIKE 'site_%'"
         },
@@ -866,7 +900,12 @@
           "target_entity": "Document",
           "fk": {
             "table": "documents",
-            "column": "entity_id"
+            "columns": [
+              "entity_id"
+            ],
+            "references": [
+              "id"
+            ]
           },
           "filter": "entity_type = 'asset.primary'"
         },
@@ -876,8 +915,24 @@
           "target_entity": "Document",
           "junction": {
             "table": "asset_document_links",
-            "local_fk": "asset_id",
-            "target_fk": "document_id"
+            "local_fk": {
+              "columns": [
+                "asset_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "asset_document_links_ibfk_1"
+            },
+            "target_fk": {
+              "columns": [
+                "document_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "asset_document_links_ibfk_2"
+            }
           }
         }
       ],
@@ -1804,7 +1859,13 @@
           "target_entity": "Product",
           "fk": {
             "table": "products",
-            "column": "category_id"
+            "columns": [
+              "category_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "products_ibfk_1"
           }
         },
         {
@@ -1813,8 +1874,24 @@
           "target_entity": "User",
           "junction": {
             "table": "user_categories",
-            "local_fk": "category_id",
-            "target_fk": "user_id"
+            "local_fk": {
+              "columns": [
+                "category_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "user_categories_ibfk_2"
+            },
+            "target_fk": {
+              "columns": [
+                "user_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "user_categories_ibfk_1"
+            }
           }
         }
       ],
@@ -3017,8 +3094,24 @@
           "target_entity": "Asset",
           "junction": {
             "table": "asset_document_links",
-            "local_fk": "document_id",
-            "target_fk": "asset_id"
+            "local_fk": {
+              "columns": [
+                "document_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "asset_document_links_ibfk_2"
+            },
+            "target_fk": {
+              "columns": [
+                "asset_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "asset_document_links_ibfk_1"
+            }
           }
         }
       ],
@@ -3962,7 +4055,13 @@
           "target_entity": "OrderItem",
           "fk": {
             "table": "order_items",
-            "column": "order_id"
+            "columns": [
+              "order_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "order_items_ibfk_1"
           }
         }
       ],
@@ -5068,7 +5167,13 @@
           "target_entity": "OrderItem",
           "fk": {
             "table": "order_items",
-            "column": "product_id"
+            "columns": [
+              "product_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "order_items_ibfk_2"
           }
         },
         {
@@ -5077,7 +5182,13 @@
           "target_entity": "ProductTagLabel",
           "fk": {
             "table": "product_tag_labels",
-            "column": "product_id"
+            "columns": [
+              "product_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "product_tag_labels_ibfk_1"
           }
         }
       ],
@@ -6326,7 +6437,13 @@
           "target_entity": "User",
           "fk": {
             "table": "profiles",
-            "column": "user_id"
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "profiles_ibfk_1"
           }
         }
       ],
@@ -7970,7 +8087,12 @@
           "target_entity": "Profile",
           "fk": {
             "table": "profiles",
-            "column": "user_id"
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ]
           }
         },
         {
@@ -7979,8 +8101,24 @@
           "target_entity": "Category",
           "junction": {
             "table": "user_categories",
-            "local_fk": "user_id",
-            "target_fk": "category_id"
+            "local_fk": {
+              "columns": [
+                "user_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "user_categories_ibfk_1"
+            },
+            "target_fk": {
+              "columns": [
+                "category_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "user_categories_ibfk_2"
+            }
           }
         },
         {
@@ -7989,7 +8127,13 @@
           "target_entity": "Order",
           "fk": {
             "table": "orders",
-            "column": "user_id"
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "orders_ibfk_1"
           }
         },
         {
@@ -7998,7 +8142,13 @@
           "target_entity": "UserEvent",
           "fk": {
             "table": "user_events",
-            "column": "user_id"
+            "columns": [
+              "user_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "user_events_ibfk_1"
           }
         }
       ],

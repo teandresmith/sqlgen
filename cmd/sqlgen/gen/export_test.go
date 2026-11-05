@@ -5,6 +5,7 @@ import (
 
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/config"
 	"github.com/teandresmith/sqlgen/cmd/sqlgen/gotype"
+	"github.com/teandresmith/sqlgen/parser"
 )
 
 // Test-only export surface. Bridges package-internal helpers to the external
@@ -250,4 +251,19 @@ func ObserveImportFixingForTest(t *testing.T, fn func(filename string)) {
 // so a rendering bug in either is invisible in the other's output.
 func DiscriminatorContextFor(d *config.RelationshipDiscriminator) *DiscriminatorContext {
 	return discriminatorContext(d)
+}
+
+// DeclaredKeyForTest exposes the unexported declaredKey helper so external
+// tests can pin the by-position mapping of a declared key list onto a
+// composite primary key, which the composite-key guard keeps out of the
+// contexts (PRD §13.4).
+func DeclaredKeyForTest(cols config.KeyColumns, pk []string) []parser.KeyPair {
+	return declaredKey(cols, pk)
+}
+
+// ResolvedPrimaryKeyForTest exposes the unexported resolvedPrimaryKey helper
+// so external tests can pin the order a declared key list maps onto
+// (PRD §13.4).
+func ResolvedPrimaryKeyForTest(table *parser.Table, tableCfg config.TableConfig) []string {
+	return resolvedPrimaryKey(table, tableCfg)
 }

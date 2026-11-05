@@ -40,7 +40,7 @@ func nestedE3Schema() *parser.Schema {
 func nestedE3Config() *config.RootConfig {
 	cfg := baseConfig()
 	cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
-	events := []config.TableRelationship{{Name: "Events", Type: "one_to_many", Table: "events", FK: "user_id"}}
+	events := []config.TableRelationship{{Name: "Events", Type: "one_to_many", Table: "events", FK: config.KeyColumns{"user_id"}}}
 	cfg.Tables["users"] = config.TableConfig{Relationships: events}
 	cfg.Tables["user_categories"] = config.TableConfig{Relationships: events}
 	return cfg
@@ -110,7 +110,7 @@ func TestBuild_E3CompositePKParentKeepsManifestEntries(t *testing.T) {
 
 	wantRels := []manifest.Relationship{{
 		Name: "Events", Kind: "o2m", TargetEntity: "Event",
-		FK: &manifest.FK{Table: "events", Column: "user_id"},
+		FK: &manifest.FK{Table: "events", Columns: []string{"user_id"}, References: []string{"user_id"}},
 	}}
 	if diff := cmp.Diff(wantRels, uc.Relationships); diff != "" {
 		t.Errorf("UserCategory relationships (-want +got):\n%s", diff)

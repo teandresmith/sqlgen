@@ -78,7 +78,7 @@ func qvwChildFieldNames(e gen.NestedEdgeContext) []string {
 // that entity.
 func TestRelationshipTargets_BareTableInOneNonPublicSchema(t *testing.T) {
 	users := qvwUsersContext(t, qvwLedgerSchema(), []config.TableRelationship{
-		{Name: "Ledgers", Type: "one_to_many", Table: "ledgers", FK: "user_id"},
+		{Name: "Ledgers", Type: "one_to_many", Table: "ledgers", FK: config.KeyColumns{"user_id"}},
 	}, false)
 	r, ok := relByField(users)["Ledgers"]
 	if !ok {
@@ -123,7 +123,7 @@ func TestRelationshipTargets_BareTableCountsEveryEntity(t *testing.T) {
 			tt.other(schema)
 			input := testInput(schema)
 			input.Config.Tables["public.users"] = config.TableConfig{Relationships: []config.TableRelationship{
-				{Name: "Ledgers", Type: "one_to_many", Table: "ledgers", FK: "user_id"},
+				{Name: "Ledgers", Type: "one_to_many", Table: "ledgers", FK: config.KeyColumns{"user_id"}},
 			}}
 			_, err := gen.BuildTableContextsFromSchema(input.Schema, input.Config)
 			want := `"Ledgers" targets "ledgers", which names an entity in more than one schema (audit, public); qualify it as one of "audit.ledgers", "public.ledgers"`
@@ -140,7 +140,7 @@ func TestRelationshipTargets_BareTableCountsEveryEntity(t *testing.T) {
 func TestRelationshipTargets_NestedSurfaceWritesResolvedTable(t *testing.T) {
 	t.Run("bare name in one non-public schema", func(t *testing.T) {
 		users := qvwUsersContext(t, qvwLedgerSchema(), []config.TableRelationship{
-			{Name: "Ledgers", Type: "one_to_many", Table: "ledgers", FK: "user_id"},
+			{Name: "Ledgers", Type: "one_to_many", Table: "ledgers", FK: config.KeyColumns{"user_id"}},
 		}, true)
 		e := qvwNestedEdge(t, users, "Ledgers")
 		if e.TargetStructName != "Ledger" || e.TargetClientField != "ledgerClient" {
@@ -158,7 +158,7 @@ func TestRelationshipTargets_NestedSurfaceWritesResolvedTable(t *testing.T) {
 	// picks audit's, whose create input has note, not title.
 	t.Run("qualified name beside a same-named public table", func(t *testing.T) {
 		users := qvwUsersContext(t, twoSchemaSchema(), []config.TableRelationship{
-			{Name: "AuditPosts", Type: "one_to_many", Table: "audit.posts", FK: "user_id"},
+			{Name: "AuditPosts", Type: "one_to_many", Table: "audit.posts", FK: config.KeyColumns{"user_id"}},
 		}, true)
 		e := qvwNestedEdge(t, users, "AuditPosts")
 		if e.TargetStructName != "AuditPost" || e.TargetClientField != "auditPostClient" {
@@ -177,7 +177,7 @@ func TestRelationshipTargets_NestedLinkWritesResolvedJunction(t *testing.T) {
 	t.Run("bare name in one non-public schema", func(t *testing.T) {
 		users := qvwUsersContext(t, qvwLedgerSchema(), []config.TableRelationship{{
 			Name: "LinkedLedgers", Type: "many_to_many", Table: "ledgers",
-			Junction: "user_ledgers", JunctionLocalFK: "user_id", JunctionReferenceFK: "ledger_id",
+			Junction: "user_ledgers", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"ledger_id"},
 		}}, true)
 		e := qvwNestedEdge(t, users, "LinkedLedgers")
 		got := []string{e.JunctionStructName, e.JunctionClientField, e.JunctionLocalField, e.JunctionReferenceField}
@@ -197,7 +197,7 @@ func TestRelationshipTargets_NestedLinkWritesResolvedJunction(t *testing.T) {
 		}})
 		users := qvwUsersContext(t, schema, []config.TableRelationship{{
 			Name: "AuditTags", Type: "many_to_many", Table: "audit.tags",
-			Junction: "audit.user_tags", JunctionLocalFK: "user_id", JunctionReferenceFK: "tag_code",
+			Junction: "audit.user_tags", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_code"},
 		}}, true)
 		e := qvwNestedEdge(t, users, "AuditTags")
 		got := []string{e.JunctionStructName, e.JunctionClientField, e.JunctionLocalField, e.JunctionReferenceField}

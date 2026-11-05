@@ -171,7 +171,7 @@ func usersEntity() manifest.Entity {
 				Name:         "Posts",
 				Kind:         "o2m",
 				TargetEntity: "Post",
-				FK:           &manifest.FK{Table: "posts", Column: "author_id"},
+				FK:           &manifest.FK{Table: "posts", Columns: []string{"author_id"}, References: []string{"id"}},
 			},
 		},
 		Methods: manifest.Methods{

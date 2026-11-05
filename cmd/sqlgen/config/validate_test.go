@@ -1949,8 +1949,8 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "duplicate full key (o2o) → error",
 			rels: []config.TableRelationship{
-				{Name: "Primary", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-				{Name: "PrimaryDup", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
+				{Name: "Primary", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+				{Name: "PrimaryDup", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
 			},
 			wantErr:    true,
 			wantSubstr: "PRD §13.7.3",
@@ -1958,8 +1958,8 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "duplicate full key (o2m) → error",
 			rels: []config.TableRelationship{
-				{Name: "Attachments", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
-				{Name: "AttachmentsDup", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
+				{Name: "Attachments", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.attachment'"},
+				{Name: "AttachmentsDup", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.attachment'"},
 			},
 			wantErr:    true,
 			wantSubstr: "PRD §13.7.3",
@@ -1967,8 +1967,8 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "duplicate full key (m2m) → error",
 			rels: []config.TableRelationship{
-				{Name: "Tags", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: "product_id", JunctionReferenceFK: "tag_id"},
-				{Name: "TagsDup", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: "product_id", JunctionReferenceFK: "tag_id"},
+				{Name: "Tags", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: config.KeyColumns{"product_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"}},
+				{Name: "TagsDup", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: config.KeyColumns{"product_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"}},
 			},
 			wantErr:    true,
 			wantSubstr: "PRD §13.7.3",
@@ -1976,33 +1976,33 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "distinct filter on shared prefix (o2m) → allowed",
 			rels: []config.TableRelationship{
-				{Name: "PrimaryDocument", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-				{Name: "Attachments", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
-				{Name: "Invoices", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.invoice'"},
+				{Name: "PrimaryDocument", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+				{Name: "Attachments", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.attachment'"},
+				{Name: "Invoices", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.invoice'"},
 			},
 			wantErr: false,
 		},
 		{
 			name: "distinct filter on m2m shared prefix → allowed",
 			rels: []config.TableRelationship{
-				{Name: "ActiveTags", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: "product_id", JunctionReferenceFK: "tag_id", Filter: "tags.active = true"},
-				{Name: "ArchivedTags", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: "product_id", JunctionReferenceFK: "tag_id", Filter: "tags.active = false"},
+				{Name: "ActiveTags", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: config.KeyColumns{"product_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"}, Filter: "tags.active = true"},
+				{Name: "ArchivedTags", Type: "m2m", Table: "tags", Junction: "product_tags", JunctionLocalFK: config.KeyColumns{"product_id"}, JunctionReferenceFK: config.KeyColumns{"tag_id"}, Filter: "tags.active = false"},
 			},
 			wantErr: false,
 		},
 		{
 			name: "shared prefix, one empty filter, one set → allowed",
 			rels: []config.TableRelationship{
-				{Name: "AllDocuments", Type: "o2m", Table: "documents", FK: "entity_id"},
-				{Name: "Invoices", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.invoice'"},
+				{Name: "AllDocuments", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}},
+				{Name: "Invoices", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.invoice'"},
 			},
 			wantErr: false,
 		},
 		{
 			name: "duplicate name on shared prefix → error (PRD §4.8)",
 			rels: []config.TableRelationship{
-				{Name: "Documents", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-				{Name: "Documents", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
+				{Name: "Documents", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+				{Name: "Documents", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.attachment'"},
 			},
 			wantErr:    true,
 			wantSubstr: "PRD §4.8",
@@ -2010,15 +2010,15 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "single relationship without filter → allowed",
 			rels: []config.TableRelationship{
-				{Name: "Comments", Type: "o2m", Table: "comments", FK: "commentable_id"},
+				{Name: "Comments", Type: "o2m", Table: "comments", FK: config.KeyColumns{"commentable_id"}},
 			},
 			wantErr: false,
 		},
 		{
 			name: "filter strings differing only in whitespace → distinct (byte-equal compare)",
 			rels: []config.TableRelationship{
-				{Name: "A", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type='x'"},
-				{Name: "B", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'x'"},
+				{Name: "A", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type='x'"},
+				{Name: "B", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'x'"},
 			},
 			wantErr: false,
 		},
@@ -2029,8 +2029,8 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 			// intentionally not part of the dedup key.
 			name: "duplicate (target, fk, filter) with mixed o2o/o2m → error",
 			rels: []config.TableRelationship{
-				{Name: "Primary", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-				{Name: "PrimaryO2M", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
+				{Name: "Primary", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+				{Name: "PrimaryO2M", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
 			},
 			wantErr:    true,
 			wantSubstr: "PRD §13.7.3",
@@ -2042,8 +2042,8 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 			// duplicate declarations past validation.
 			name: "duplicate full key across type-synonym variants → error",
 			rels: []config.TableRelationship{
-				{Name: "First", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-				{Name: "Second", Type: "one_to_one", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
+				{Name: "First", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+				{Name: "Second", Type: "one_to_one", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
 			},
 			wantErr:    true,
 			wantSubstr: "PRD §13.7.3",
@@ -2056,7 +2056,7 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 			// no diagnosis.
 			name: "unknown side value → error",
 			rels: []config.TableRelationship{
-				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "chld"},
+				{Name: "User", Type: "o2o", Table: "users", FK: config.KeyColumns{"profile_id"}, Side: "chld"},
 			},
 			wantErr:     true,
 			wantSubstr:  "side",
@@ -2065,14 +2065,14 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "explicit side: parent → allowed",
 			rels: []config.TableRelationship{
-				{Name: "Profile", Type: "o2o", Table: "profiles", FK: "profile_id", Side: "parent"},
+				{Name: "Profile", Type: "o2o", Table: "profiles", FK: config.KeyColumns{"profile_id"}, Side: "parent"},
 			},
 			wantErr: false,
 		},
 		{
 			name: "explicit side: child → allowed",
 			rels: []config.TableRelationship{
-				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "child"},
+				{Name: "User", Type: "o2o", Table: "users", FK: config.KeyColumns{"profile_id"}, Side: "child"},
 			},
 			wantErr: false,
 		},
@@ -2080,7 +2080,7 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 			// parseRelationshipSide folds case, so the validator does too.
 			name: "upper-case side: CHILD → allowed",
 			rels: []config.TableRelationship{
-				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "CHILD"},
+				{Name: "User", Type: "o2o", Table: "users", FK: config.KeyColumns{"profile_id"}, Side: "CHILD"},
 			},
 			wantErr: false,
 		},
@@ -2089,7 +2089,7 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 			// generate the parent side; it must fail here rather than pass.
 			name: "padded side → error",
 			rels: []config.TableRelationship{
-				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: " child "},
+				{Name: "User", Type: "o2o", Table: "users", FK: config.KeyColumns{"profile_id"}, Side: " child "},
 			},
 			wantErr:     true,
 			wantSubstr:  `tables.asset.relationships[0].side: " child " is not a valid value`,
@@ -2098,7 +2098,7 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "trailing-space side → error",
 			rels: []config.TableRelationship{
-				{Name: "User", Type: "o2o", Table: "users", FK: "profile_id", Side: "child "},
+				{Name: "User", Type: "o2o", Table: "users", FK: config.KeyColumns{"profile_id"}, Side: "child "},
 			},
 			wantErr:     true,
 			wantSubstr:  `tables.asset.relationships[0].side: "child " is not a valid value`,
@@ -2107,7 +2107,7 @@ func TestValidatePreParse_Relationships_DedupRules(t *testing.T) {
 		{
 			name: "omitted side → allowed (defaults to parent)",
 			rels: []config.TableRelationship{
-				{Name: "Profile", Type: "o2o", Table: "profiles", FK: "profile_id"},
+				{Name: "Profile", Type: "o2o", Table: "profiles", FK: config.KeyColumns{"profile_id"}},
 			},
 			wantErr: false,
 		},
@@ -2149,25 +2149,25 @@ func TestValidatePreParse_RelationshipType(t *testing.T) {
 		rel     config.TableRelationship
 		wantErr string // empty means the config validates
 	}{
-		{name: "o2o", rel: config.TableRelationship{Name: "Owner", Type: "o2o", Table: "users", FK: "owner_id"}},
-		{name: "one_to_one", rel: config.TableRelationship{Name: "Owner", Type: "one_to_one", Table: "users", FK: "owner_id"}},
-		{name: "o2m", rel: config.TableRelationship{Name: "Documents", Type: "o2m", Table: "documents", FK: "asset_id"}},
-		{name: "one_to_many", rel: config.TableRelationship{Name: "Documents", Type: "one_to_many", Table: "documents", FK: "asset_id"}},
+		{name: "o2o", rel: config.TableRelationship{Name: "Owner", Type: "o2o", Table: "users", FK: config.KeyColumns{"owner_id"}}},
+		{name: "one_to_one", rel: config.TableRelationship{Name: "Owner", Type: "one_to_one", Table: "users", FK: config.KeyColumns{"owner_id"}}},
+		{name: "o2m", rel: config.TableRelationship{Name: "Documents", Type: "o2m", Table: "documents", FK: config.KeyColumns{"asset_id"}}},
+		{name: "one_to_many", rel: config.TableRelationship{Name: "Documents", Type: "one_to_many", Table: "documents", FK: config.KeyColumns{"asset_id"}}},
 		{name: "m2m", rel: config.TableRelationship{Name: "Tags", Type: "m2m", Table: "tags", Junction: "asset_tags"}},
 		{name: "many_to_many", rel: config.TableRelationship{Name: "Tags", Type: "many_to_many", Table: "tags", Junction: "asset_tags"}},
 		{
 			// parseRelationshipType folds case, so the validator does too.
 			name: "upper-case spelling",
-			rel:  config.TableRelationship{Name: "Owner", Type: "O2O", Table: "users", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "Owner", Type: "O2O", Table: "users", FK: config.KeyColumns{"owner_id"}},
 		},
 		{
 			name:    "hyphenated spelling",
-			rel:     config.TableRelationship{Name: "Owner", Type: "one-to-one", Table: "users", FK: "owner_id"},
+			rel:     config.TableRelationship{Name: "Owner", Type: "one-to-one", Table: "users", FK: config.KeyColumns{"owner_id"}},
 			wantErr: `tables.asset.relationships[0].type: "one-to-one" is not a valid value ` + allowed,
 		},
 		{
 			name:    "ratio spelling",
-			rel:     config.TableRelationship{Name: "Documents", Type: "1:n", Table: "documents", FK: "asset_id"},
+			rel:     config.TableRelationship{Name: "Documents", Type: "1:n", Table: "documents", FK: config.KeyColumns{"asset_id"}},
 			wantErr: `tables.asset.relationships[0].type: "1:n" is not a valid value ` + allowed,
 		},
 		{
@@ -2179,13 +2179,13 @@ func TestValidatePreParse_RelationshipType(t *testing.T) {
 			// parseRelationshipType does not trim, so " o2o" would generate an
 			// O2M edge; it must fail here rather than pass.
 			name:    "padded spelling",
-			rel:     config.TableRelationship{Name: "Owner", Type: " o2o", Table: "users", FK: "owner_id"},
+			rel:     config.TableRelationship{Name: "Owner", Type: " o2o", Table: "users", FK: config.KeyColumns{"owner_id"}},
 			wantErr: `tables.asset.relationships[0].type: " o2o" is not a valid value ` + allowed,
 		},
 		{
 			// PRD §4.8 marks `type` required; it no longer defaults to o2m.
 			name:    "missing type",
-			rel:     config.TableRelationship{Name: "Documents", Table: "documents", FK: "asset_id"},
+			rel:     config.TableRelationship{Name: "Documents", Table: "documents", FK: config.KeyColumns{"asset_id"}},
 			wantErr: "tables.asset.relationships[0].type: required " + allowed,
 		},
 	}
@@ -2254,11 +2254,11 @@ func TestValidatePreParse_RelationshipLinkKeyRequired(t *testing.T) {
 		},
 		{
 			name: "o2m with fk",
-			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 		},
 		{
 			name: "o2o with fk",
-			rel:  config.TableRelationship{Name: "Profile", Type: "o2o", Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "Profile", Type: "o2o", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 		},
 		{
 			name: "m2m takes no fk",
@@ -2272,7 +2272,7 @@ func TestValidatePreParse_RelationshipLinkKeyRequired(t *testing.T) {
 		{
 			// An fk does not stand in for the junction: m2m never reads it.
 			name: "many_to_many with fk but no junction",
-			rel:  config.TableRelationship{Name: "Tags", Type: "many_to_many", Table: "tags", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "Tags", Type: "many_to_many", Table: "tags", FK: config.KeyColumns{"owner_id"}},
 			want: []string{`tables.owners.relationships[0] ("Tags")` + junctionRequired},
 		},
 	}
@@ -2316,12 +2316,12 @@ func TestValidatePreParse_RelationshipNameRequired(t *testing.T) {
 	}{
 		{
 			name: "o2o without name",
-			rel:  config.TableRelationship{Type: "o2o", Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Type: "o2o", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 			want: []string{"tables.owners.relationships[0]" + required},
 		},
 		{
 			name: "o2m without name",
-			rel:  config.TableRelationship{Type: "o2m", Table: "owner_profiles", FK: "owner_id", Filter: "bio IS NOT NULL"},
+			rel:  config.TableRelationship{Type: "o2m", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}, Filter: "bio IS NOT NULL"},
 			want: []string{"tables.owners.relationships[0]" + required},
 		},
 		{
@@ -2332,12 +2332,12 @@ func TestValidatePreParse_RelationshipNameRequired(t *testing.T) {
 		{
 			// The name rule does not depend on the type, so both are reported.
 			name: "neither name nor type",
-			rel:  config.TableRelationship{Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 			want: []string{"tables.owners.relationships[0]" + required, "tables.owners.relationships[0].type: required"},
 		},
 		{
 			name: "o2m with name",
-			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 		},
 	}
 	for _, tt := range tests {
@@ -2393,34 +2393,34 @@ func TestValidatePostParse_RelationshipFKColumn(t *testing.T) {
 	}{
 		{
 			name: "o2m fk on the related table",
-			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 		},
 		{
 			name: "o2m fk on this table only",
-			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: "name"},
+			rel:  config.TableRelationship{Name: "Profiles", Type: "o2m", Table: "owner_profiles", FK: config.KeyColumns{"name"}},
 			want: []string{"tables.owners.relationships[0]", `"Profiles"`, `.fk: "name"`, `related table "owner_profiles"`, "PRD §4.8"},
 		},
 		{
 			name: "one_to_many synonym, fk on neither table",
-			rel:  config.TableRelationship{Name: "Profiles", Type: "one_to_many", Table: "owner_profiles", FK: "ghost_id"},
+			rel:  config.TableRelationship{Name: "Profiles", Type: "one_to_many", Table: "owner_profiles", FK: config.KeyColumns{"ghost_id"}},
 			want: []string{"tables.owners.relationships[0]", `.fk: "ghost_id"`, `related table "owner_profiles"`},
 		},
 		{
 			name: "o2o has-one, fk on the related table",
-			rel:  config.TableRelationship{Name: "OwnerProfile", Type: "one_to_one", Table: "owner_profiles", FK: "owner_id"},
+			rel:  config.TableRelationship{Name: "OwnerProfile", Type: "one_to_one", Table: "owner_profiles", FK: config.KeyColumns{"owner_id"}},
 		},
 		{
 			name: "o2o belongs-to, fk on this table",
-			rel:  config.TableRelationship{Name: "Profile", Type: "o2o", Table: "owner_profiles", FK: "profile_id"},
+			rel:  config.TableRelationship{Name: "Profile", Type: "o2o", Table: "owner_profiles", FK: config.KeyColumns{"profile_id"}},
 		},
 		{
 			name: "o2o fk on neither table",
-			rel:  config.TableRelationship{Name: "GhostProfile", Type: "o2o", Table: "owner_profiles", FK: "ghost_id"},
+			rel:  config.TableRelationship{Name: "GhostProfile", Type: "o2o", Table: "owner_profiles", FK: config.KeyColumns{"ghost_id"}},
 			want: []string{"tables.owners.relationships[0]", `"GhostProfile"`, `.fk: "ghost_id"`, `table "owners"`, `related table "owner_profiles"`, "PRD §4.8 / §13.1"},
 		},
 		{
 			name: "m2m fk is not consulted",
-			rel:  config.TableRelationship{Name: "Profiles", Type: "m2m", Table: "owner_profiles", FK: "ghost_id", Junction: "owner_profile_links"},
+			rel:  config.TableRelationship{Name: "Profiles", Type: "m2m", Table: "owner_profiles", FK: config.KeyColumns{"ghost_id"}, Junction: "owner_profile_links"},
 		},
 		{
 			name: "empty fk is not this check's",
@@ -2428,7 +2428,7 @@ func TestValidatePostParse_RelationshipFKColumn(t *testing.T) {
 		},
 		{
 			name: "unparsed target is left to resolution",
-			rel:  config.TableRelationship{Name: "Ghosts", Type: "o2m", Table: "ghosts", FK: "ghost_id"},
+			rel:  config.TableRelationship{Name: "Ghosts", Type: "o2m", Table: "ghosts", FK: config.KeyColumns{"ghost_id"}},
 		},
 	}
 	for _, tt := range tests {

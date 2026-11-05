@@ -410,7 +410,7 @@ func TestValidatePostParse_ReportsEachRuleWithTheOthers(t *testing.T) {
 			name: "relationship fk on neither table",
 			mutate: func(cfg *config.RootConfig) {
 				cfg.Tables["assets"] = config.TableConfig{Relationships: []config.TableRelationship{
-					{Name: "Documents", Type: "o2m", Table: "documents", FK: "ghost_id"},
+					{Name: "Documents", Type: "o2m", Table: "documents", FK: config.KeyColumns{"ghost_id"}},
 				}}
 			},
 			tables: documentsSchema(),

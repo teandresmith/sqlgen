@@ -1387,10 +1387,9 @@ func auditColumnsForTable(tc gen.TableContext, cfg *config.RootConfig) []string 
 //
 // A `discriminator:` compiles to exactly the equality predicate the equivalent
 // `filter:` produced (PRD §13.4.1), so it is reported in the same field and the
-// same spelling rather than as a second, structurally different key. Two
-// reasons: the manifest's JSON Schema is frozen at schema_version 0.1.0 (PRD
-// §30.4) and gains no field for this, and a reader of the manifest wants the
-// predicate the edge applies — not which of two config spellings expressed it.
+// same spelling rather than as a second, structurally different key: a
+// reader of the manifest wants the predicate the edge applies, not which of
+// two config spellings expressed it.
 // Reporting it here is also what keeps migrating an edge between the two forms
 // invisible to the manifest.
 //
@@ -1426,17 +1425,20 @@ func buildRelationships(tc gen.TableContext, allTables []gen.TableContext) []Rel
 			if r.Type == parser.OneToOne && !r.FKOnTarget {
 				fkTable, fkSchema = tc.TableName, tc.Schema
 			}
+			key := keyOf(r.Key, r.FKColumn, constraintAt(r.Constraints, 0))
 			rel.FK = &FK{
-				Table:  fkTable,
-				Schema: fkSchema,
-				Column: r.FKColumn,
+				Table:      fkTable,
+				Schema:     fkSchema,
+				Columns:    key.Columns,
+				References: key.References,
+				Constraint: key.Constraint,
 			}
 		case parser.ManyToMany:
 			rel.Junction = &Junction{
 				Table:    r.JunctionTable,
 				Schema:   r.JunctionSchema,
-				LocalFK:  r.JunctionLocalFK,
-				TargetFK: r.JunctionReferenceFK,
+				LocalFK:  keyOf(r.JunctionLocal, r.JunctionLocalFK, constraintAt(r.Constraints, 0)),
+				TargetFK: keyOf(r.JunctionReference, r.JunctionReferenceFK, constraintAt(r.Constraints, 1)),
 			}
 		}
 		out = append(out, rel)
@@ -1444,6 +1446,34 @@ func buildRelationships(tc gen.TableContext, allTables []gen.TableContext) []Rel
 	_ = allTables
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// keyOf renders an edge's key pairs as the manifest's column lists, in the
+// FK's declared order (PRD §30.4.2). A context with no pairs, a hand-built
+// one, falls back to its one FK column and no references. Post-parse
+// validation rejects a declared key with nothing to reference (§4.13).
+func keyOf(pairs []parser.KeyPair, column, constraint string) JunctionKey {
+	key := JunctionKey{Columns: []string{}, References: []string{}, Constraint: constraint}
+	if len(pairs) == 0 {
+		if column != "" {
+			key.Columns = []string{column}
+		}
+		return key
+	}
+	for _, p := range pairs {
+		key.Columns = append(key.Columns, p.Local)
+		key.References = append(key.References, p.Referenced)
+	}
+	return key
+}
+
+// constraintAt is the i-th constraint an edge came from, or "" for a declared
+// edge, which has none.
+func constraintAt(constraints []string, i int) string {
+	if i < len(constraints) {
+		return constraints[i]
+	}
+	return ""
 }
 
 func relationshipKind(t parser.RelationshipType, side parser.RelationshipSide) string {

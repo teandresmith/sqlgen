@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -19,18 +21,18 @@ func TestFindReferencing(t *testing.T) {
 			name:  "users referenced by posts FK and both m2m junction sides",
 			table: "users",
 			want: []Reference{
-				{Entity: "Post", RelationshipName: "posts", Kind: "o2m", FKColumn: "user_id"},
+				{Entity: "Post", RelationshipName: "posts", Kind: "o2m", FKColumns: []string{"user_id"}},
 				// Both m2m relationships over user_roles reference users.
-				{Entity: "Role", RelationshipName: "roles", Kind: "m2m", FKColumn: "user_id"},
-				{Entity: "Role", RelationshipName: "users", Kind: "m2m", FKColumn: "user_id"},
+				{Entity: "Role", RelationshipName: "roles", Kind: "m2m", FKColumns: []string{"user_id"}},
+				{Entity: "Role", RelationshipName: "users", Kind: "m2m", FKColumns: []string{"user_id"}},
 			},
 		},
 		{
 			name:  "posts referenced by comments FK from both relationship sides",
 			table: "posts",
 			want: []Reference{
-				{Entity: "Comment", RelationshipName: "comments", Kind: "o2m", FKColumn: "post_id"},
-				{Entity: "Comment", RelationshipName: "post", Kind: "m2o", FKColumn: "post_id"},
+				{Entity: "Comment", RelationshipName: "comments", Kind: "o2m", FKColumns: []string{"post_id"}},
+				{Entity: "Comment", RelationshipName: "post", Kind: "m2o", FKColumns: []string{"post_id"}},
 			},
 		},
 		{
@@ -50,6 +52,60 @@ func TestFindReferencing(t *testing.T) {
 			}
 		})
 	}
+
+	// PRD §31.3: fk_columns is the FK's column list in its declared order.
+	t.Run("composite key in declared order", func(t *testing.T) {
+		cycle := &manifest.Entity{
+			Kind: manifest.EntityKindTable, Name: "Cycle", Table: "cycles", PK: manifest.PK{Kind: "composite"},
+			Relationships: []manifest.Relationship{{
+				Name: "tasks", Kind: manifest.RelationshipO2M, TargetEntity: "Task",
+				FK: &manifest.FK{Table: "tasks", Columns: []string{"workspace_id", "cycle_id"}, References: []string{"workspace_id", "id"}},
+			}},
+		}
+		task := &manifest.Entity{Kind: manifest.EntityKindTable, Name: "Task", Table: "tasks", PK: manifest.PK{Kind: "single"}}
+		got, err := findReferencing(&toolDeps{store: storeOf(cycle, task)}, FindReferencingInput{Table: "cycles"})
+		if err != nil {
+			t.Fatalf("findReferencing: %v", err)
+		}
+		want := []Reference{{Entity: "Task", RelationshipName: "tasks", Kind: "o2m", FKColumns: []string{"workspace_id", "cycle_id"}}}
+		if diff := cmp.Diff(want, got.References); diff != "" {
+			t.Errorf("references mismatch (-want +got):\n%s", diff)
+		}
+		raw, err := json.Marshal(got)
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		const wantJSON = `{"references":[{"entity":"Task","relationship_name":"tasks","kind":"o2m","fk_columns":["workspace_id","cycle_id"]}]}`
+		if string(raw) != wantJSON {
+			t.Errorf("output = %s, want %s", raw, wantJSON)
+		}
+	})
+}
+
+// TestDescribeRelationship_JoinShapeNamesReferencedColumns pins PRD §31.3: an
+// FK edge's join shape gives the columns its FK columns reference, pair by
+// pair.
+func TestDescribeRelationship_JoinShapeNamesReferencedColumns(t *testing.T) {
+	cycle := &manifest.Entity{
+		Kind: manifest.EntityKindTable, Name: "Cycle", Table: "cycles", PK: manifest.PK{Kind: "composite"},
+		Relationships: []manifest.Relationship{{
+			Name: "tasks", Kind: manifest.RelationshipO2M, TargetEntity: "Task",
+			FK: &manifest.FK{Table: "tasks", Columns: []string{"workspace_id", "cycle_id"}, References: []string{"workspace_id", "id"}, Constraint: "tasks_cycle_fk"},
+		}},
+	}
+	task := &manifest.Entity{Kind: manifest.EntityKindTable, Name: "Task", Table: "tasks", PK: manifest.PK{Kind: "single"}}
+	got, err := describeRelationship(&toolDeps{store: storeOf(cycle, task)}, DescribeRelationshipInput{Entity: "Cycle", Relationship: "tasks", Compact: true})
+	if err != nil {
+		t.Fatalf("describeRelationship: %v", err)
+	}
+	raw, err := json.Marshal(got.FK)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	const want = `{"table":"tasks","columns":["workspace_id","cycle_id"],"references":["workspace_id","id"],"constraint":"tasks_cycle_fk"}`
+	if string(raw) != want {
+		t.Errorf("fk = %s, want %s", raw, want)
+	}
 }
 
 // TestFindReferencingKindTiebreak pins the sort order for two references that
@@ -64,8 +120,8 @@ func TestFindReferencingKindTiebreak(t *testing.T) {
 		Relationships: []manifest.Relationship{
 			// FK lives on a (not targets) → referenced table is targets, reporting
 			// entity is A, name "link", col ref_id — identical but for Kind.
-			{Name: "link", Kind: manifest.RelationshipO2M, TargetEntity: "A", FK: &manifest.FK{Table: "a", Column: "ref_id"}},
-			{Name: "link", Kind: manifest.RelationshipM2O, TargetEntity: "A", FK: &manifest.FK{Table: "a", Column: "ref_id"}},
+			{Name: "link", Kind: manifest.RelationshipO2M, TargetEntity: "A", FK: &manifest.FK{Table: "a", Columns: []string{"ref_id"}}},
+			{Name: "link", Kind: manifest.RelationshipM2O, TargetEntity: "A", FK: &manifest.FK{Table: "a", Columns: []string{"ref_id"}}},
 		},
 	}
 	a := &manifest.Entity{
@@ -81,8 +137,8 @@ func TestFindReferencingKindTiebreak(t *testing.T) {
 	}
 	// m2o sorts before o2m lexicographically on the Kind tiebreak.
 	want := []Reference{
-		{Entity: "A", RelationshipName: "link", Kind: "m2o", FKColumn: "ref_id"},
-		{Entity: "A", RelationshipName: "link", Kind: "o2m", FKColumn: "ref_id"},
+		{Entity: "A", RelationshipName: "link", Kind: "m2o", FKColumns: []string{"ref_id"}},
+		{Entity: "A", RelationshipName: "link", Kind: "o2m", FKColumns: []string{"ref_id"}},
 	}
 	if diff := cmp.Diff(want, first.References); diff != "" {
 		t.Errorf("kind-tiebreak order mismatch (-want +got):\n%s", diff)
@@ -106,15 +162,15 @@ func TestFindReferencingSameNamedTablesAcrossSchemas(t *testing.T) {
 	user := &manifest.Entity{
 		Kind: manifest.EntityKindTable, Name: "User", Table: "users", Schema: "public", PK: manifest.PK{Kind: "single"},
 		Relationships: []manifest.Relationship{
-			{Name: "audit_users", Kind: manifest.RelationshipO2M, TargetEntity: "AuditUser", FK: &manifest.FK{Table: "users", Schema: "audit", Column: "user_id"}},
+			{Name: "audit_users", Kind: manifest.RelationshipO2M, TargetEntity: "AuditUser", FK: &manifest.FK{Table: "users", Schema: "audit", Columns: []string{"user_id"}}},
 		},
 	}
 	auditUser := &manifest.Entity{
 		Kind: manifest.EntityKindTable, Name: "AuditUser", Table: "users", Schema: "audit", PK: manifest.PK{Kind: "single"},
 		Relationships: []manifest.Relationship{
-			{Name: "user", Kind: manifest.RelationshipM2O, TargetEntity: "User", FK: &manifest.FK{Table: "users", Schema: "audit", Column: "user_id"}},
+			{Name: "user", Kind: manifest.RelationshipM2O, TargetEntity: "User", FK: &manifest.FK{Table: "users", Schema: "audit", Columns: []string{"user_id"}}},
 			// No FK.Schema: the bare-name fallback places the column on this table.
-			{Name: "editor", Kind: manifest.RelationshipM2O, TargetEntity: "User", FK: &manifest.FK{Table: "users", Column: "editor_id"}},
+			{Name: "editor", Kind: manifest.RelationshipM2O, TargetEntity: "User", FK: &manifest.FK{Table: "users", Columns: []string{"editor_id"}}},
 		},
 	}
 	store := NewStore("/fixture/manifest_gen.json", nil)
@@ -126,9 +182,9 @@ func TestFindReferencingSameNamedTablesAcrossSchemas(t *testing.T) {
 		t.Fatalf("findReferencing: %v", err)
 	}
 	want := []Reference{
-		{Entity: "AuditUser", RelationshipName: "audit_users", Kind: "o2m", FKColumn: "user_id"},
-		{Entity: "AuditUser", RelationshipName: "editor", Kind: "m2o", FKColumn: "editor_id"},
-		{Entity: "AuditUser", RelationshipName: "user", Kind: "m2o", FKColumn: "user_id"},
+		{Entity: "AuditUser", RelationshipName: "audit_users", Kind: "o2m", FKColumns: []string{"user_id"}},
+		{Entity: "AuditUser", RelationshipName: "editor", Kind: "m2o", FKColumns: []string{"editor_id"}},
+		{Entity: "AuditUser", RelationshipName: "user", Kind: "m2o", FKColumns: []string{"user_id"}},
 	}
 	if diff := cmp.Diff(want, got.References); diff != "" {
 		t.Errorf("references mismatch (-want +got):\n%s", diff)
@@ -148,7 +204,7 @@ func TestDescribeRelationship(t *testing.T) {
 			Relationship: "roles",
 			Kind:         "m2m",
 			TargetEntity: "Role",
-			Junction:     &manifest.Junction{Table: "user_roles", LocalFK: "user_id", TargetFK: "role_id"},
+			Junction:     &manifest.Junction{Table: "user_roles", LocalFK: manifest.JunctionKey{Columns: []string{"user_id"}}, TargetFK: manifest.JunctionKey{Columns: []string{"role_id"}}},
 			Target:       &EntitySummary{Name: "Role", Table: "roles", PKKind: "single", FeaturesSummary: ""},
 		}
 		if diff := cmp.Diff(want, got); diff != "" {
@@ -164,7 +220,7 @@ func TestDescribeRelationship(t *testing.T) {
 		if got.Target != nil {
 			t.Errorf("expected target summary dropped in compact mode, got %+v", got.Target)
 		}
-		if got.FK == nil || got.FK.Column != "user_id" {
+		if got.FK == nil || !slices.Equal(got.FK.Columns, []string{"user_id"}) {
 			t.Errorf("expected FK join shape retained, got %+v", got.FK)
 		}
 	})

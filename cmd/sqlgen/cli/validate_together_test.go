@@ -18,6 +18,7 @@ func TestValidate_ReportsEachGenerationRuleWithTheOthers(t *testing.T) {
 	tests := []struct {
 		name    string
 		schema  string
+		views   string // an input.views annotation file, when set
 		extra   string
 		want    []string
 		notWant []string
@@ -69,6 +70,21 @@ func TestValidate_ReportsEachGenerationRuleWithTheOthers(t *testing.T) {
 				"CREATE TABLE organization_users (organization_id bigint REFERENCES organizations(id), user_id bigint REFERENCES users(id),\n" +
 				"  PRIMARY KEY (organization_id, user_id));",
 			want: []string{`two detected relationships are both named "organization_users"`},
+		},
+		{
+			name: "relationship key list of the wrong length",
+			schema: "CREATE TABLE cycles (workspace_id bigint, id bigint, PRIMARY KEY (workspace_id, id));\n" +
+				"CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_id bigint NOT NULL);",
+			extra: "tables:\n  cycles:\n    relationships:\n      - name: Tasks\n        type: o2m\n        table: tasks\n        fk: cycle_id\n",
+			want:  []string{`("Tasks").fk: cycle_id has 1 column, but it references the primary key of "cycles"`},
+		},
+		{
+			name: "relationship key into a view",
+			schema: "CREATE TABLE cycles (id bigint PRIMARY KEY, name text NOT NULL);\n" +
+				"CREATE TABLE tasks (id bigint PRIMARY KEY, cycle_id bigint NOT NULL);",
+			views: "CREATE VIEW cycle_names AS SELECT c.id AS cycle_ref, c.name FROM cycles c;\n",
+			extra: "tables:\n  tasks:\n    relationships:\n      - name: CycleName\n        type: o2o\n        table: cycle_names\n        fk: cycle_id\n",
+			want:  []string{`("CycleName").fk: references view "cycle_names"`},
 		},
 		{
 			name:   "column name override colliding with another field",
@@ -127,6 +143,9 @@ func TestValidate_ReportsEachGenerationRuleWithTheOthers(t *testing.T) {
 			}
 			writeValidateConfig(t, cfgPath, sqlDir, filepath.Join(dir, "output"), tt.extra)
 			writeSQLFile(t, sqlDir, partnerSQL+tt.schema)
+			if tt.views != "" {
+				addInputViews(t, cfgPath, filepath.Join(dir, "views"), tt.views)
+			}
 
 			stdout, stderr, err := executeCommand("validate", "--config", cfgPath)
 			if err == nil {
@@ -143,5 +162,25 @@ func TestValidate_ReportsEachGenerationRuleWithTheOthers(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// addInputViews writes view as an annotation file under viewDir and lists the
+// directory in the config's input.views.
+func addInputViews(t *testing.T, cfgPath, viewDir, view string) {
+	t.Helper()
+	if err := os.MkdirAll(viewDir, 0o750); err != nil {
+		t.Fatalf("creating views dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(viewDir, "view.sql"), []byte(view), 0o600); err != nil {
+		t.Fatalf("writing view file: %v", err)
+	}
+	content, err := os.ReadFile(cfgPath) //nolint:gosec // test code, path is from controlled test dir
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+	updated := strings.Replace(string(content), "output:\n", "  views:\n    - \""+viewDir+"\"\noutput:\n", 1)
+	if err := os.WriteFile(cfgPath, []byte(updated), 0o600); err != nil { //nolint:gosec // test code, path is from controlled test dir
+		t.Fatalf("writing config: %v", err)
 	}
 }

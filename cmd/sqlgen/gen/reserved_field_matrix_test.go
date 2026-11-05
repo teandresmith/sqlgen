@@ -126,12 +126,12 @@ func rfmBuildRelationship(t *testing.T, tt rfmCase) error {
 		rel := config.TableRelationship{Name: tt.reserved}
 		switch tt.item {
 		case "relationship":
-			rel.Type, rel.Table, rel.FK = "one_to_one", "badges", "user_id"
+			rel.Type, rel.Table, rel.FK = "one_to_one", "badges", config.KeyColumns{"user_id"}
 		case "o2m":
-			rel.Type, rel.Table, rel.FK = "one_to_many", "posts", "user_id"
+			rel.Type, rel.Table, rel.FK = "one_to_many", "posts", config.KeyColumns{"user_id"}
 		case "m2m":
 			rel.Type, rel.Table, rel.Junction = "many_to_many", "groups", "user_groups"
-			rel.JunctionLocalFK, rel.JunctionReferenceFK = "user_id", "group_id"
+			rel.JunctionLocalFK, rel.JunctionReferenceFK = config.KeyColumns{"user_id"}, config.KeyColumns{"group_id"}
 		}
 		input.Config.Tables["users"] = config.TableConfig{Relationships: []config.TableRelationship{rel}}
 	} else {

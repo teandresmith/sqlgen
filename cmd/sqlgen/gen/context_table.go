@@ -1588,7 +1588,7 @@ func mergeDeclaredRelationships(
 			errs = append(errs, errors.Join(targetErr, junctionErr))
 			continue
 		}
-		if err := checkDeclaredJunctionKeys(schema, r, qualifiedName, targets); err != nil {
+		if err := errors.Join(checkDeclaredJunctionKeys(schema, r, qualifiedName, targets), checkDeclaredKeyColumns(r, qualifiedName)); err != nil {
 			errs = append(errs, err)
 			continue
 		}
@@ -1687,6 +1687,9 @@ func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets
 		TargetStructName:    targetStruct,
 		FKColumn:            fkCol,
 		Constraints:         constraints,
+		Key:                 r.Key,
+		JunctionLocal:       r.JunctionLocal,
+		JunctionReference:   r.JunctionReference,
 		FKOnTarget:          fkColumnOnTarget(schema, r.Type, tSchema, tName, fkCol),
 		JunctionTable:       jName,
 		JunctionSchema:      jSchema,
@@ -1735,9 +1738,28 @@ func configRelationshipToContext(schema *parser.Schema, r config.TableRelationsh
 	// loader, the relationship filter, the FK metadata and the nested link
 	// step name one table. Callers run checkDeclaredJunction first.
 	cjSchema, cjName, _ := targets.resolveJunction(r.Junction)
-	var localFK, referenceFK string
+	sourcePK := targets.primaryKey(splitQualifiedName(source))
+	var (
+		key, junctionLocal, junctionReference []parser.KeyPair
+		fkCol, localFK, referenceFK           string
+		fkOnTarget                            bool
+	)
 	if relType == parser.ManyToMany {
 		localFK, referenceFK, _ = declaredJunctionKeys(schema, r, source, targets)
+		junctionLocal = declaredKey(declaredJunctionKey(r.JunctionLocalFK, localFK), sourcePK)
+		junctionReference = declaredKey(declaredJunctionKey(r.JunctionReferenceFK, referenceFK), target.PK)
+	} else if len(r.FK) > 0 {
+		// Callers reject a declared key of more than one column
+		// (checkDeclaredKeyColumns), so the FK is its first column.
+		fkCol = r.FK[0]
+		fkOnTarget = fkColumnOnTarget(schema, relType, target.Schema, tName, fkCol)
+		// An O2M FK, and a has-one O2O FK, is on the target and references
+		// this table; a belongs-to FK references the target.
+		referenced := target.PK
+		if relType == parser.OneToMany || fkOnTarget {
+			referenced = sourcePK
+		}
+		key = declaredKey(r.FK, referenced)
 	}
 	return RelationshipContext{
 		Name:                r.Name,
@@ -1746,8 +1768,11 @@ func configRelationshipToContext(schema *parser.Schema, r config.TableRelationsh
 		TargetTable:         tName,
 		TargetSchema:        target.Schema,
 		TargetStructName:    target.StructName,
-		FKColumn:            r.FK,
-		FKOnTarget:          fkColumnOnTarget(schema, relType, target.Schema, tName, r.FK),
+		FKColumn:            fkCol,
+		Key:                 key,
+		JunctionLocal:       junctionLocal,
+		JunctionReference:   junctionReference,
+		FKOnTarget:          fkOnTarget,
 		JunctionTable:       cjName,
 		JunctionSchema:      cjSchema,
 		JunctionLocalFK:     localFK,
@@ -3066,8 +3091,10 @@ func applyConfigDeclaredFKs(schema *parser.Schema, cfg *config.RootConfig) {
 	for parentKey, tblCfg := range cfg.Tables {
 		parentSchema, parentName := splitQualifiedName(parentKey)
 		for _, rel := range tblCfg.Relationships {
-			if rel.Table != "" && rel.FK != "" {
-				markSyntheticFK(schema, rel.Table, rel.FK, parentSchema, parentName)
+			// FKReference types a single column (PRD §4.6), so a key of
+			// several columns stamps none.
+			if rel.Table != "" && len(rel.FK) == 1 {
+				markSyntheticFK(schema, rel.Table, rel.FK[0], parentSchema, parentName)
 			}
 		}
 	}

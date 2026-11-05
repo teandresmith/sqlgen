@@ -77,8 +77,8 @@ func fixtureEntities() []*manifest.Entity {
 			{Name: "email", GoField: "Email", GoType: "string", DBType: "text", Unique: true, Comment: "the login email", Check: "email <> ''", DefaultKind: "none"},
 		},
 		Relationships: []manifest.Relationship{
-			{Name: "posts", Kind: manifest.RelationshipO2M, TargetEntity: "Post", FK: &manifest.FK{Table: "posts", Column: "user_id"}},
-			{Name: "roles", Kind: manifest.RelationshipM2M, TargetEntity: "Role", Junction: &manifest.Junction{Table: "user_roles", LocalFK: "user_id", TargetFK: "role_id"}},
+			{Name: "posts", Kind: manifest.RelationshipO2M, TargetEntity: "Post", FK: &manifest.FK{Table: "posts", Columns: []string{"user_id"}}},
+			{Name: "roles", Kind: manifest.RelationshipM2M, TargetEntity: "Role", Junction: &manifest.Junction{Table: "user_roles", LocalFK: manifest.JunctionKey{Columns: []string{"user_id"}}, TargetFK: manifest.JunctionKey{Columns: []string{"role_id"}}}},
 		},
 		Methods: manifest.Methods{
 			Query: []manifest.Method{
@@ -102,7 +102,7 @@ func fixtureEntities() []*manifest.Entity {
 			{Name: "user_id", GoField: "UserID", GoType: "string", DBType: "uuid"},
 		},
 		Relationships: []manifest.Relationship{
-			{Name: "comments", Kind: manifest.RelationshipO2M, TargetEntity: "Comment", FK: &manifest.FK{Table: "comments", Column: "post_id"}},
+			{Name: "comments", Kind: manifest.RelationshipO2M, TargetEntity: "Comment", FK: &manifest.FK{Table: "comments", Columns: []string{"post_id"}}},
 		},
 		Methods: manifest.Methods{
 			Query: []manifest.Method{
@@ -118,7 +118,7 @@ func fixtureEntities() []*manifest.Entity {
 		Columns: []manifest.Column{{Name: "id", GoField: "ID", GoType: "string", DBType: "uuid", PK: true}},
 		Relationships: []manifest.Relationship{
 			// Back-edge to Post — exercises the join-path cycle guard.
-			{Name: "post", Kind: manifest.RelationshipM2O, TargetEntity: "Post", FK: &manifest.FK{Table: "comments", Column: "post_id"}},
+			{Name: "post", Kind: manifest.RelationshipM2O, TargetEntity: "Post", FK: &manifest.FK{Table: "comments", Columns: []string{"post_id"}}},
 		},
 		Filter: manifest.Filter{Type: "CommentFilter"},
 		Sort:   manifest.Sort{Type: "CommentSort"},
@@ -128,7 +128,7 @@ func fixtureEntities() []*manifest.Entity {
 		PK:      manifest.PK{Kind: "single", Columns: []manifest.PKColumn{{Name: "id", GoField: "ID", GoType: "string"}}},
 		Columns: []manifest.Column{{Name: "id", GoField: "ID", GoType: "string", DBType: "uuid", PK: true}},
 		Relationships: []manifest.Relationship{
-			{Name: "users", Kind: manifest.RelationshipM2M, TargetEntity: "User", Junction: &manifest.Junction{Table: "user_roles", LocalFK: "role_id", TargetFK: "user_id"}},
+			{Name: "users", Kind: manifest.RelationshipM2M, TargetEntity: "User", Junction: &manifest.Junction{Table: "user_roles", LocalFK: manifest.JunctionKey{Columns: []string{"role_id"}}, TargetFK: manifest.JunctionKey{Columns: []string{"user_id"}}}},
 		},
 		Filter: manifest.Filter{Type: "RoleFilter"},
 		Sort:   manifest.Sort{Type: "RoleSort"},

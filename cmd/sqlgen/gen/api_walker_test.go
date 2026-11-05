@@ -488,9 +488,9 @@ func TestWalker_SubCategorizedRelationships(t *testing.T) {
 	in := apiTestInput(t, schema)
 	in.Config.Tables["assets"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "PrimaryDocument", Type: "o2o", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.primary'"},
-			{Name: "Attachments", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.attachment'"},
-			{Name: "Invoices", Type: "o2m", Table: "documents", FK: "entity_id", Filter: "entity_type = 'asset.invoice'"},
+			{Name: "PrimaryDocument", Type: "o2o", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.primary'"},
+			{Name: "Attachments", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.attachment'"},
+			{Name: "Invoices", Type: "o2m", Table: "documents", FK: config.KeyColumns{"entity_id"}, Filter: "entity_type = 'asset.invoice'"},
 		},
 	}
 

@@ -10,7 +10,7 @@ import (
 // given static sort (PRD §4.8).
 func sortRel(relType string, sort ...config.RelationshipSort) config.TableRelationship {
 	return config.TableRelationship{
-		Name: "Attachments", Type: relType, Table: "documents", FK: "entity_id",
+		Name: "Attachments", Type: relType, Table: "documents", FK: config.KeyColumns{"entity_id"},
 		Sort: sort,
 	}
 }
@@ -19,7 +19,7 @@ func sortRel(relType string, sort ...config.RelationshipSort) config.TableRelati
 // not an fk (PRD §4.8), so it carries one and no fk.
 func m2mSortRel(sort ...config.RelationshipSort) config.TableRelationship {
 	r := sortRel("m2m", sort...)
-	r.FK, r.Junction = "", "asset_documents"
+	r.FK, r.Junction = nil, "asset_documents"
 	return r
 }
 

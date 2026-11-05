@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/teandresmith/sqlgen/vdev/cmd/sqlgen/manifest/schema/v1.json",
-  "schema_version": "0.1.0",
+  "schema_version": "0.2.0",
   "generated_at": "2026-01-01T00:00:00Z",
   "generator": {
     "name": "sqlgen",
@@ -303,7 +303,13 @@
           "fk": {
             "table": "invoices",
             "schema": "billing",
-            "column": "account_id"
+            "columns": [
+              "account_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "invoices_account_id_fkey"
           }
         },
         {
@@ -313,7 +319,13 @@
           "fk": {
             "table": "projects",
             "schema": "public",
-            "column": "account_id"
+            "columns": [
+              "account_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "projects_account_id_fkey"
           }
         },
         {
@@ -323,7 +335,13 @@
           "fk": {
             "table": "tasks",
             "schema": "public",
-            "column": "assignee_id"
+            "columns": [
+              "assignee_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "tasks_assignee_id_fkey"
           }
         }
       ],
@@ -1296,7 +1314,13 @@
           "fk": {
             "table": "tasks",
             "schema": "public",
-            "column": "project_id"
+            "columns": [
+              "project_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "tasks_project_id_fkey"
           }
         }
       ],
@@ -2135,7 +2159,13 @@
           "fk": {
             "table": "task_labels",
             "schema": "public",
-            "column": "task_id"
+            "columns": [
+              "task_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "task_labels_task_id_fkey"
           }
         }
       ],

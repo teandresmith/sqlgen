@@ -127,7 +127,12 @@
       "fk": {
         "table": "documents",
         "schema": "public",
-        "column": "entity_id"
+        "columns": [
+          "entity_id"
+        ],
+        "references": [
+          "id"
+        ]
       },
       "filter": "entity_type = 'asset.attachment'"
     },
@@ -138,7 +143,12 @@
       "fk": {
         "table": "documents",
         "schema": "public",
-        "column": "entity_id"
+        "columns": [
+          "entity_id"
+        ],
+        "references": [
+          "id"
+        ]
       },
       "filter": "entity_type = 'asset.invoice'"
     },
@@ -149,8 +159,22 @@
       "junction": {
         "table": "asset_document_links",
         "schema": "public",
-        "local_fk": "asset_id",
-        "target_fk": "document_id"
+        "local_fk": {
+          "columns": [
+            "asset_id"
+          ],
+          "references": [
+            "id"
+          ]
+        },
+        "target_fk": {
+          "columns": [
+            "document_id"
+          ],
+          "references": [
+            "id"
+          ]
+        }
       },
       "filter": "entity_type = 'asset.attachment' AND name LIKE 'link_%'"
     },
@@ -161,7 +185,12 @@
       "fk": {
         "table": "documents",
         "schema": "public",
-        "column": "entity_id"
+        "columns": [
+          "entity_id"
+        ],
+        "references": [
+          "id"
+        ]
       },
       "filter": "entity_type = 'asset.attachment' AND name LIKE 'photo_%'"
     },
@@ -172,7 +201,12 @@
       "fk": {
         "table": "documents",
         "schema": "public",
-        "column": "entity_id"
+        "columns": [
+          "entity_id"
+        ],
+        "references": [
+          "id"
+        ]
       },
       "filter": "entity_type = 'asset.primary' AND name LIKE 'site_%'"
     },
@@ -183,7 +217,12 @@
       "fk": {
         "table": "documents",
         "schema": "public",
-        "column": "entity_id"
+        "columns": [
+          "entity_id"
+        ],
+        "references": [
+          "id"
+        ]
       },
       "filter": "entity_type = 'asset.primary'"
     },
@@ -194,8 +233,24 @@
       "junction": {
         "table": "asset_document_links",
         "schema": "public",
-        "local_fk": "asset_id",
-        "target_fk": "document_id"
+        "local_fk": {
+          "columns": [
+            "asset_id"
+          ],
+          "references": [
+            "id"
+          ],
+          "constraint": "asset_document_links_asset_id_fkey"
+        },
+        "target_fk": {
+          "columns": [
+            "document_id"
+          ],
+          "references": [
+            "id"
+          ],
+          "constraint": "asset_document_links_document_id_fkey"
+        }
       }
     }
   ],

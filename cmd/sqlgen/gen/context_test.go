@@ -583,7 +583,7 @@ func TestConfigDeclaredFKDoesNotDemoteSurrogatePK(t *testing.T) {
 	input := testInput(schema)
 	input.Config.Tables["orders"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "Customer", Type: "o2o", Table: "customers", FK: "customer_id"},
+			{Name: "Customer", Type: "o2o", Table: "customers", FK: config.KeyColumns{"customer_id"}},
 		},
 	}
 
@@ -2280,7 +2280,7 @@ func TestBuildTableContexts_relationshipFKOnTarget(t *testing.T) {
 				Name:  "PrimaryDocument",
 				Type:  "one_to_one",
 				Table: "documents",
-				FK:    "entity_id",
+				FK:    config.KeyColumns{"entity_id"},
 				Discriminator: &config.RelationshipDiscriminator{
 					Column: "entity_type",
 					Value:  "asset.primary",
@@ -2409,7 +2409,7 @@ func TestBuildO2OJoinDetails_chainedFKOnTarget(t *testing.T) {
 	input := testInput(schema)
 	input.Config.Tables["public.customers"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "PrimaryAddress", Type: "one_to_one", Table: "addresses", FK: "customer_id"},
+			{Name: "PrimaryAddress", Type: "one_to_one", Table: "addresses", FK: config.KeyColumns{"customer_id"}},
 		},
 	}
 	detectRelationships(input.Schema)
@@ -2484,12 +2484,12 @@ func TestBuildO2OJoinDetails_fkOnTargetParentPKName(t *testing.T) {
 	input := testInput(schema)
 	input.Config.Tables["public.users"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "Profile", Type: "one_to_one", Table: "profiles", FK: "owner_id"},
+			{Name: "Profile", Type: "one_to_one", Table: "profiles", FK: config.KeyColumns{"owner_id"}},
 		},
 	}
 	input.Config.Tables["public.profiles"] = config.TableConfig{
 		Relationships: []config.TableRelationship{
-			{Name: "Badge", Type: "one_to_one", Table: "badges", FK: "profile_id"},
+			{Name: "Badge", Type: "one_to_one", Table: "badges", FK: config.KeyColumns{"profile_id"}},
 		},
 	}
 	detectRelationships(input.Schema)

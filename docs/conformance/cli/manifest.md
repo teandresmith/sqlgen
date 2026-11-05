@@ -7,7 +7,7 @@
 The generated manifest (§30): configuration, the emitted artifacts, the JSON shape, versioning, extended schema metadata and the `manifest` subcommands. The runtime-embedded manifest (§30.6) is in `runtime/support.md`. The `manifest-artifacts` matrix has one row per §30.3 artifact, the GraphQL breadcrumb pair included; `emitted` is the artifact written when the manifest is enabled and its own gate is on, `gated` not written when that gate is off, `removed-when-disabled` gone after the next `generate` once `enabled` flips to false, `ownership` the overwrite and removal guard (the breadcrumb provenance marker, the manifest directory's anchors), and `deterministic` byte-identical across two runs with `--manifest-timestamp` pinned.
 
 ## §30 Manifest
-<!-- prd: 30 sha256: d647ca9d22599468 -->
+<!-- prd: 30 sha256: ca919ac4909ac61c -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -250,7 +250,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.art.graph.pointer-doc-comments | The graph breadcrumb's third pointer is the doc comments on the generated resolver, walker and middleware Go files in that directory | `golden: graphql` | all |  |
 
 ## §30.4 JSON Schema
-<!-- prd: 30.4 sha256: 1c3d3692364806d2 -->
+<!-- prd: 30.4 sha256: 49e4d3f3f2e1a778 -->
 
 ### Single layout
 
@@ -280,7 +280,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.top.schema-url-tagged-release | `$schema` is the GitHub raw URL of the latest tagged release | `unit: cmd/sqlgen/manifest: TestEmitJSON_SchemaURLNamesTheTaggedRelease/release 0.42.0`; `unit: cmd/sqlgen/manifest: TestEmitJSON_SchemaURLNamesTheTaggedRelease/release 1.3.7` | all |  |
 | manifest.json.top.schema-url-immutable | The `$schema` URL is immutable per version | | all |  |
 | manifest.json.top.conforms | An emitted manifest validates against the JSON Schema for its `schema_version`: the single document, the per-entity index and every per-entity record | `unit: cmd/sqlgen/manifest: TestEmitJSON_ValidatesAgainstSchema/single`; `unit: cmd/sqlgen/manifest: TestEmitJSON_ValidatesAgainstSchema/per_entity`; `unit: cmd/sqlgen/cli: TestManifestValidate_E2EExamples` | all |  |
-| manifest.json.top.schema-version | `schema_version` is a semver string | `unit: cmd/sqlgen/cli: TestManifestValidate_E2EExamples` | all |  |
+| manifest.json.top.schema-version | `schema_version` is a semver string, `0.2.0` for the shape that records each relationship's whole key | `unit: cmd/sqlgen/cli: TestManifestValidate_E2EExamples`; `unit: cmd/sqlgen/manifest: TestEmitJSON_SchemaVersion`; `golden: postgres` | all | |
 | manifest.json.top.generated-at-rfc3339 | Without `--manifest-timestamp`, `generated_at` is an RFC3339 timestamp | `unit: cmd/sqlgen/cli: TestResolveManifestTimestamp` | all |  |
 | manifest.json.top.generated-at-rfc3339.pinned | With `--manifest-timestamp` set, `generated_at` is still an RFC3339 timestamp | `unit: cmd/sqlgen/cli: TestGenerate_PinnedManifestTimestampIsGeneratedAt` | all |  |
 | manifest.json.top.timestamp-flag-rfc3339 | A `--manifest-timestamp` value that is not RFC3339 is a usage error (exit 2) naming the flag | `unit: cmd/sqlgen/cli: TestGenerate_ManifestTimestampMustBeRFC3339` | all |  |
@@ -373,7 +373,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.conv.omittable.json-behavior | `omittable.json_behavior` is the PRD's "Marshals to the wrapped value when set; omitted when unset (omitzero semantics on the wrapper, via IsZero)" | `unit: cmd/sqlgen/manifest: TestBuild_ConventionsMirrorRuntimeSurface` | all |  |
 
 ## §30.4.2 Entity shape
-<!-- prd: 30.4.2 sha256: 1738798b7f9e1de2 -->
+<!-- prd: 30.4.2 sha256: 4e9080c9177c36e6 -->
 
 ### Entity fields
 
@@ -474,15 +474,16 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.json.rel.junction-table | `junction.table` names the M2M junction | `unit: cmd/sqlgen/manifest: TestBuild_M2MRelationship`; `unit: cmd/sqlgen/manifest: TestBuild_M2MJunctionSchema` | all |  |
 | manifest.json.rel.fk-schema | `fk.table` is the bare name, with `schema` beside it when sqlgen resolved one | `unit: cmd/sqlgen/manifest: TestBuild_FKSchema` | all |  |
 | manifest.json.rel.junction-schema | `junction.table` is the bare name, with `schema` beside it when sqlgen resolved one | `unit: cmd/sqlgen/manifest: TestBuild_M2MJunctionSchema` | all |  |
-| manifest.json.rel.columns-references | `fk.columns` and `fk.references` list the key's pairs in the foreign key's declared order, `columns[i]` referencing `references[i]` | | all |  |
-| manifest.json.rel.single-column-lists | A single-column edge has one-item `columns` and `references` lists | | all |  |
-| manifest.json.rel.references-target-key | `references` names the referenced columns: the target's primary key or one of its UNIQUE constraints | | all |  |
-| manifest.json.rel.references-manual | For a manual relationship `references` is the referenced primary key | | all |  |
-| manifest.json.rel.junction-local-fk | `junction.local_fk` is the junction's key into this entity (`columns`, `references`, `constraint`) | | all |  |
-| manifest.json.rel.junction-target-fk | `junction.target_fk` is the junction's key into the target (`columns`, `references`, `constraint`) | | all |  |
-| manifest.json.rel.constraint | `constraint` names the FOREIGN KEY constraint the edge was detected from | | all |  |
-| manifest.json.rel.constraint-sqlite-unnamed | An unnamed SQLite foreign key is named `table(columns) → target(columns)` | | sqlite |  |
-| manifest.json.rel.constraint-manual-omitted | A manual relationship omits `constraint` | | all |  |
+| manifest.json.rel.columns-references | `fk.columns` and `fk.references` list the key's pairs in the foreign key's declared order, `columns[i]` referencing `references[i]` | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/composite key in declared order` | all |  |
+| manifest.json.rel.single-column-lists | A single-column edge has one-item `columns` and `references` lists | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/single-column key`; `golden: postgres` | all |  |
+| manifest.json.rel.references-target-key | `references` names the referenced columns: the target's primary key or one of its UNIQUE constraints | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/key into a unique constraint` | all |  |
+| manifest.json.rel.references-manual | For a manual relationship `references` is the referenced primary key | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual relationship` | all |  |
+| manifest.json.rel.junction-local-fk | `junction.local_fk` is the junction's key into this entity (`columns`, `references`, `constraint`) | `unit: cmd/sqlgen/manifest: TestBuild_M2MJunctionSchema` | all |  |
+| manifest.json.rel.junction-target-fk | `junction.target_fk` is the junction's key into the target (`columns`, `references`, `constraint`) | `unit: cmd/sqlgen/manifest: TestBuild_M2MJunctionSchema` | all |  |
+| manifest.json.rel.constraint | `constraint` names the FOREIGN KEY constraint the edge was detected from | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/detected edge names its constraint` | all |  |
+| manifest.json.rel.constraint-sqlite-unnamed | An unnamed SQLite foreign key is named `table(columns) → target(columns)` | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/unnamed sqlite key`; `golden: sqlite` | sqlite |  |
+| manifest.json.rel.constraint-manual-omitted | A manual relationship omits `constraint` | `unit: cmd/sqlgen/manifest: TestBuild_RelationshipKeyShape/manual relationship` | all |  |
+| manifest.json.rel.columns-references-required | `columns` and `references` are always present, and `schema/v1.json` requires them on every `fk` and junction key | `unit: cmd/sqlgen/manifest: TestSchemaV1_RelationshipKeyRequiresColumnsAndReferences/fk without columns`; `unit: cmd/sqlgen/manifest: TestSchemaV1_RelationshipKeyRequiresColumnsAndReferences/fk without references`; `unit: cmd/sqlgen/manifest: TestSchemaV1_RelationshipKeyRequiresColumnsAndReferences/0.1.0 fk column`; `unit: cmd/sqlgen/manifest: TestSchemaV1_RelationshipKeyRequiresColumnsAndReferences/junction local_fk without columns`; `unit: cmd/sqlgen/manifest: TestSchemaV1_RelationshipKeyRequiresColumnsAndReferences/junction target_fk without references` | all |  |
 
 ### `methods[]`
 

@@ -301,6 +301,14 @@ type RelationshipContext struct {
 	// from: its own for O2O / O2M, the junction's two for M2M. Empty for a
 	// declared edge.
 	Constraints []string
+	// Key is an O2O / O2M edge's pairs in the FK's declared order, each an FK
+	// column and the column it references: the FK's referenced columns for a
+	// detected edge, the referenced table's primary key for a declared one
+	// (PRD §13.4). JunctionLocal / JunctionReference are an M2M junction's
+	// keys into the parent and the target.
+	Key               []parser.KeyPair
+	JunctionLocal     []parser.KeyPair
+	JunctionReference []parser.KeyPair
 	// FKFieldName is the Go field name for the FK column (e.g., "ProductID").
 	// The FK column lives on the *target* table for O2M edges, so this is
 	// resolved cross-table in wireRelationshipFKMetadata rather than derived

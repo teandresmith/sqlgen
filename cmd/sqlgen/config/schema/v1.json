@@ -472,15 +472,22 @@
           ]
         },
         "table": { "type": "string", "description": "Target table." },
-        "fk": { "type": "string", "description": "Foreign-key column that creates the link. Required for o2o and o2m; m2m links through its junction instead." },
+        "fk": { "$ref": "#/$defs/relationshipKey", "description": "Foreign-key column or columns that create the link. Required for o2o and o2m; m2m links through its junction instead. A list maps by position onto the primary key of the table it references." },
         "junction": { "type": "string", "description": "Junction table that links the two. Required for m2m." },
-        "junction_local_fk": { "type": "string", "description": "Junction column pointing at this table." },
-        "junction_reference_fk": { "type": "string", "description": "Junction column pointing at the target table." },
+        "junction_local_fk": { "$ref": "#/$defs/relationshipKey", "description": "Junction column or columns pointing at this table's primary key." },
+        "junction_reference_fk": { "$ref": "#/$defs/relationshipKey", "description": "Junction column or columns pointing at the target table's primary key." },
         "filter": { "type": "string", "description": "Additional SQL predicate applied when loading. Raw SQL, so not invertible — a `filter:` edge is readable but never write-eligible for nested mutations. Mutually exclusive with `discriminator`. Write bare identifiers and single-quoted values (entity_type = 'asset.primary'): on MySQL a double-quoted token is a string literal, not an identifier, so \"entity_type\" = 'asset.primary' compares two constants and matches no rows — quote MySQL identifiers with backticks. Rejected at codegen on MySQL." },
         "discriminator": { "$ref": "#/$defs/relationshipDiscriminator" },
         "sort": { "type": "array", "description": "Default ordering applied by the O2M / M2M loader when the caller passes no Sorts. Rejected on an o2o relationship, which is loaded by a LEFT JOIN in the parent query.", "items": { "$ref": "#/$defs/relationshipSort" } },
         "description": { "type": "string", "description": "Go doc comment on the generated field." }
       }
+    },
+    "relationshipKey": {
+      "description": "A relationship key: one column, or a list mapped by position onto the referenced table's primary key. A string is a one-item list.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
     },
     "relationshipTypeLinkedByFK": {
       "type": "string",
