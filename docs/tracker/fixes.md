@@ -140,88 +140,6 @@ at the shapes the acceptance criteria name.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-368
-
-- **Status:** Open
-- **Severity:** blocking
-- **Origin:** phase 32, cmd/sqlgen/gen
-- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe; ruled by the user the same day
-- **Vetted:** corrected at `e48ece8b` (2026-11-06)
-
-**Issue.** **An M2M `connect` under `SkipTenancy` to a target in another workspace is a raw FK
-violation, not `ErrAlreadyRelated`.** Measured on `tenancy_postgres`: `foreign_key constraint
-violation … task_labels_workspace_id_label_id_fkey`, attributed to `link` with no id. PRD §9.9.6's
-pinned rule says "a key with several columns" without limiting itself to O2M, and the user ruled that
-the rule covers a column both junction keys share.
-
-**Root cause.** `junctionLinks` (`cmd/sqlgen/gen/context_nested.go`) gives a shared column the parent's
-value and skips the reference side's pair, so nothing compares the target's own value. The M2M
-visibility read selects only the primary key and `TargetReadFields`.
-
-**Suggested fix.**
-- **Ruled 2026-11-06:** read each column the two keys share off the target in the M2M visibility read
-  and refuse a mismatch with `ErrAlreadyRelated` naming the target, attributed to `connect`, before the
-  link step, `allow_reparent` having no bearing.
-- Rewrite the PRD §9.9.6 junction paragraph, which the user accepted on these terms: drop "the
-  junction's own foreign keys refuse a target that disagrees", which this ruling replaces and which is
-  false on SQLite without `PRAGMA foreign_keys=ON`. Update the §9.9.8 row and the Completion Record's
-  M2M note.
-- Add a live test under `SkipTenancy` asserting the sentinel, the attribution, the id and an unchanged
-  junction. It must fail first with the raw FK error.
-
-- The check is not gated on `SkipTenancy`, since the ruled text is unconditional, so it also fires for a
-  shared parent under tenancy. That `connect` moves from `link` with no id to `connect` naming the id, and
-  `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated` moves to the new `Template.Stamps` fixture, since
-  on `Template.Labels` neither verb reaches `link` any more. The reverse
-  edges (`Label.Tasks`, `Label.Templates`) get the same check from the same site.
-- PRD §9.9.2 gains one sentence pointing to §9.9.6, since "An M2M edge has no pinned members" is silent on
-  this. Update the 32.6 Completion Record's M2M note (`docs/tracker/phase-32.md:1188-1190`), which still says
-  a raw FK violation and that the pinned rule covers O2M and has-one only.
-- Prototype results, run at `e48ece8b` on 2026-11-06 (the ruled `connect` half only): reproduced on
-  tenancy_postgres, `Labels: link: upsert many task_labels: ... foreign_key constraint violation on constraint
-  task_labels_workspace_id_label_id_fkey` with edge=Labels verb=link id=<nil>. A `sqlite3 :memory:` composite
-  FK with no PRAGMA accepted a dangling row, confirming the PRD claim is false there. Prototype:
-  `resolveJunctionSharedRead` builds `JunctionSharedAgrees` and `JunctionSharedFields`, the visibility read
-  selects them, and the check runs in caller id order, `ErrNotFound` first; a NULL on the target disagrees.
-  Gates: `go test -race ./gen/...`, `golangci-lint`, tenancy_postgres suite and lint, `make update-golden`,
-  `make update-golden-e2e`, `make req-check`, `make refs-check` green. Fail-first: removing the check fails
-  `TestUpdateWithRelated_ConnectSharedJunctionColumnMismatchIsAlreadyRelated` with the raw FK error and
-  `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated` with `attribution = Labels link, want Labels
-  connect`; not selecting the field fails with `error names 4, want 5`; dropping it from the template and
-  removing the target-key guard each fail their unit test; the existing suite passes without the fix. Golden
-  churn: tenancy_postgres +0/~2 (36 lines each); other examples none. FIX-364's PRD hunk at `docs/PRD.md:7909`
-  needs a hand merge with this patch, and its conformance hashes clear with `make req-rehash`. Patch:
-  `.claude/prototypes/FIX-368.patch`.
-- The user ruled on 2026-11-06: option (A). A nested M2M `create` whose created target disagrees on a shared
-  column is refused with `ErrAlreadyRelated`, attributed to `create`, no id. This reverses the `link`
-  attribution in PRD §9.9.6 and §9.9.8.
-
-- Ruled-option results, run at `e48ece8b` on 2026-11-06: the M2M `create` selects `JunctionSharedFields` and
-  refuses after `CreateMany` with `ErrAlreadyRelated`, attributed to `create`, no id. **The link step's
-  `tenancy.ErrMismatch` mapping stays reachable and is kept.** Measured live: it fires on three shapes, with the
-  tenant column in the parent's key only on a tenanted target, in the target's key only on a shared target, and
-  shared on a shared parent and shared target that agree against the resolver; each gives `<Edge>: link: sqlgen:
-  already related to another row`. Only the shared column on the target's tenant column (`Template.Labels`) is
-  closed by the new checks. New shared `stamps` and `template_stamps` keep `link` under live test. PRD §9.9.2,
-  §9.9.6, §9.9.8, new row `nested.m2m-create-shared-column-mismatch`, `nested.composite-create-tenant-mismatch`
-  reworded to "key-set tenant column differs from the resolved tenant", design `:775`. Gates: `go test -race
-  ./gen/...`, `TestE2EGoldenFiles`, tenancy_postgres suite and lint, `make update-golden`, `make
-  update-golden-e2e`, `make req-check`, `make refs-check` green. Fail-first: removing the `create` check fails
-  with `attribution = Labels link, want Labels create` and, under `SkipTenancy`, the raw FK error; removing the
-  `create` selection gives a false refusal; removing the link mapping fails with the raw `tenant on mutation
-  input does not match resolved tenant`; removing the `connect` check fails with `error names <nil>, want 6`; the
-  existing suite passes without the fix. Golden churn: tenancy_postgres +4/~12 in `expected/`, mirrored in
-  `models/`; no other example moves. FIX-369 no longer applies cleanly over this: hand-merge `context_nested.go`,
-  `main_test.go`, `nested_composite_test.go`, `PRD.md`, `cli/gen.md` and `client.md`, add its verbs to the
-  reworded §9.9.8 row, and move its `Labels: link` test to Stamps. This supersedes the patch line above. Patch:
-  `.claude/prototypes/FIX-368.patch` (43 files).
-
-**References.**
-- PRD §9.9.6, §9.9.8.
-- Registry: `nested.composite-connect-pinned-mismatch`, `nested.junction-key-union`.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-369
 
 - **Status:** Open
@@ -628,6 +546,90 @@ mismatch), `:1016` (composite no-op) and `:1018` (single-column no-op), with the
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-368
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe; ruled by the user the same day
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **An M2M `connect` under `SkipTenancy` to a target in another workspace is a raw FK
+violation, not `ErrAlreadyRelated`.** Measured on `tenancy_postgres`: `foreign_key constraint
+violation … task_labels_workspace_id_label_id_fkey`, attributed to `link` with no id. PRD §9.9.6's
+pinned rule says "a key with several columns" without limiting itself to O2M, and the user ruled that
+the rule covers a column both junction keys share.
+
+**Root cause.** `junctionLinks` (`cmd/sqlgen/gen/context_nested.go`) gives a shared column the parent's
+value and skips the reference side's pair, so nothing compares the target's own value. The M2M
+visibility read selects only the primary key and `TargetReadFields`.
+
+**Suggested fix.**
+- **Ruled 2026-11-06:** read each column the two keys share off the target in the M2M visibility read
+  and refuse a mismatch with `ErrAlreadyRelated` naming the target, attributed to `connect`, before the
+  link step, `allow_reparent` having no bearing.
+- Rewrite the PRD §9.9.6 junction paragraph, which the user accepted on these terms: drop "the
+  junction's own foreign keys refuse a target that disagrees", which this ruling replaces and which is
+  false on SQLite without `PRAGMA foreign_keys=ON`. Update the §9.9.8 row and the Completion Record's
+  M2M note.
+- Add a live test under `SkipTenancy` asserting the sentinel, the attribution, the id and an unchanged
+  junction. It must fail first with the raw FK error.
+
+- The check is not gated on `SkipTenancy`, since the ruled text is unconditional, so it also fires for a
+  shared parent under tenancy. That `connect` moves from `link` with no id to `connect` naming the id, and
+  `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated` moves to the new `Template.Stamps` fixture, since
+  on `Template.Labels` neither verb reaches `link` any more. The reverse
+  edges (`Label.Tasks`, `Label.Templates`) get the same check from the same site.
+- PRD §9.9.2 gains one sentence pointing to §9.9.6, since "An M2M edge has no pinned members" is silent on
+  this. Update the 32.6 Completion Record's M2M note (`docs/tracker/phase-32.md:1188-1190`), which still says
+  a raw FK violation and that the pinned rule covers O2M and has-one only.
+- Prototype results, run at `e48ece8b` on 2026-11-06 (the ruled `connect` half only): reproduced on
+  tenancy_postgres, `Labels: link: upsert many task_labels: ... foreign_key constraint violation on constraint
+  task_labels_workspace_id_label_id_fkey` with edge=Labels verb=link id=<nil>. A `sqlite3 :memory:` composite
+  FK with no PRAGMA accepted a dangling row, confirming the PRD claim is false there. Prototype:
+  `resolveJunctionSharedRead` builds `JunctionSharedAgrees` and `JunctionSharedFields`, the visibility read
+  selects them, and the check runs in caller id order, `ErrNotFound` first; a NULL on the target disagrees.
+  Gates: `go test -race ./gen/...`, `golangci-lint`, tenancy_postgres suite and lint, `make update-golden`,
+  `make update-golden-e2e`, `make req-check`, `make refs-check` green. Fail-first: removing the check fails
+  `TestUpdateWithRelated_ConnectSharedJunctionColumnMismatchIsAlreadyRelated` with the raw FK error and
+  `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated` with `attribution = Labels link, want Labels
+  connect`; not selecting the field fails with `error names 4, want 5`; dropping it from the template and
+  removing the target-key guard each fail their unit test; the existing suite passes without the fix. Golden
+  churn: tenancy_postgres +0/~2 (36 lines each); other examples none. FIX-364's PRD hunk at `docs/PRD.md:7909`
+  needs a hand merge with this patch, and its conformance hashes clear with `make req-rehash`. Patch:
+  `.claude/prototypes/FIX-368.patch`.
+- The user ruled on 2026-11-06: option (A). A nested M2M `create` whose created target disagrees on a shared
+  column is refused with `ErrAlreadyRelated`, attributed to `create`, no id. This reverses the `link`
+  attribution in PRD §9.9.6 and §9.9.8.
+
+- Ruled-option results, run at `e48ece8b` on 2026-11-06: the M2M `create` selects `JunctionSharedFields` and
+  refuses after `CreateMany` with `ErrAlreadyRelated`, attributed to `create`, no id. **The link step's
+  `tenancy.ErrMismatch` mapping stays reachable and is kept.** Measured live: it fires on three shapes, with the
+  tenant column in the parent's key only on a tenanted target, in the target's key only on a shared target, and
+  shared on a shared parent and shared target that agree against the resolver; each gives `<Edge>: link: sqlgen:
+  already related to another row`. Only the shared column on the target's tenant column (`Template.Labels`) is
+  closed by the new checks. New shared `stamps` and `template_stamps` keep `link` under live test. PRD §9.9.2,
+  §9.9.6, §9.9.8, new row `nested.m2m-create-shared-column-mismatch`, `nested.composite-create-tenant-mismatch`
+  reworded to "key-set tenant column differs from the resolved tenant", design `:775`. Gates: `go test -race
+  ./gen/...`, `TestE2EGoldenFiles`, tenancy_postgres suite and lint, `make update-golden`, `make
+  update-golden-e2e`, `make req-check`, `make refs-check` green. Fail-first: removing the `create` check fails
+  with `attribution = Labels link, want Labels create` and, under `SkipTenancy`, the raw FK error; removing the
+  `create` selection gives a false refusal; removing the link mapping fails with the raw `tenant on mutation
+  input does not match resolved tenant`; removing the `connect` check fails with `error names <nil>, want 6`; the
+  existing suite passes without the fix. Golden churn: tenancy_postgres +4/~12 in `expected/`, mirrored in
+  `models/`; no other example moves. FIX-369 no longer applies cleanly over this: hand-merge `context_nested.go`,
+  `main_test.go`, `nested_composite_test.go`, `PRD.md`, `cli/gen.md` and `client.md`, add its verbs to the
+  reworded §9.9.8 row, and move its `Labels: link` test to Stamps. This supersedes the patch line above. Patch:
+  `.claude/prototypes/FIX-368.patch` (43 files).
+
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): the prototype's NULL guard on a shared column, now unreachable because FIX-365 (`855738ce`) makes both sides' referenced columns NOT NULL under E1 → drop the guard and rewrite its test to the two-bindings half, because the option was prototyped with gates green, no example's generated output differs (the guard renders empty for a NOT NULL column unless a `column_map` type binds it to a pointer, where it would only restate a non-nil value), it touches no public surface, and neither the PRD nor a ruling states the NULL case. The implementer and the `/verify` reviewer recommend it independently; the reviewer probed nullable, wrapper, pointer and excluded columns.
+
+**References.**
+- PRD §9.9.2, §9.9.6, §9.9.8.
+- Registry: `nested.composite-connect-pinned-mismatch`, `nested.junction-key-union`, `nested.m2m-create-shared-column-mismatch`.
+
+**Resolution notes.** Applied the vetted prototype with `git apply --3way`. `context_nested.go` applied clean; `main_test.go` kept FIX-364's `task_reviewers` and `reviewers`; the `nested.junction-key-union` row kept FIX-364's test; the anchors were rehashed (§9.9, §9.9.6) rather than merged. `connect` and `create` on an M2M edge compare each column both junction keys share against the parent's value before the link step and refuse a difference with `ErrAlreadyRelated`: `connect` names the id, `create` has none and rolls back. The link step's `tenancy.ErrMismatch` mapping stays, under live test on the new `Stamps` edge. One divergence from the prototype, in meaning: FIX-365 landed E1 over the M2M reference key, so a NULL on either side is unreachable; `resolveJunctionSharedRead` drops the guard and `TestNestedTemplate_JunctionSharedColumnGuardsNull` became `TestNestedTemplate_JunctionSharedColumnAcrossBindings` (see the auto-accept above). The comparison runs in Go, so a shared string column differing only in case is refused on the case-insensitive collations where the database's FK would accept it; the user accepted this under FIX-373's limit, and FIX-373's §9.9.6 paragraph carries the sentence. The 32.6 Completion Record's M2M note is updated, `create` included. Fail-first on the final code: without the `connect` check, `attribution = Labels link, want Labels connect` and, under `SkipTenancy`, the raw FK error; without the `create` check, `attribution = Labels link, want Labels create` and the raw FK error. Gates: `make check` ok, `make check-examples` ok, `make req-check` and `make refs-check` ok. Golden churn matches the vet: tenancy_postgres +4/~12 in `expected/`, mirrored in `models/`, no other example. `/verify` doc corrections: the three unit tests of the shared-column check moved from `nested.junction-key-union` to `nested.composite-connect-pinned-mismatch`, §9.9.2 says "compared" rather than "checked as a pinned member is", and the design doc's rows follow the registry.
+
 
 ### FIX-364
 

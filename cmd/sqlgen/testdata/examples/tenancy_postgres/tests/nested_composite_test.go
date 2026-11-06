@@ -658,9 +658,37 @@ func TestUpdateWithRelated_LinkStepReadsTheTargetsReferencedColumn(t *testing.T)
 	}
 }
 
-// A shared parent's column and the resolver disagree on the junction's tenant
-// column, so the link row is bound to two keys.
+// Two shared tables agree on the junction's tenant column and the resolver does
+// not, so no comparison before the link step sees it and the link row is bound
+// to two keys. `create` and `connect` alike reach `link` (PRD §9.9.6).
 func TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated(t *testing.T) {
+	resetDB(t)
+	env := newTenantEnv(t)
+	ctx := context.Background()
+
+	template, err := env.clientA.Templates().Create(ctx, &models.CreateTemplateInput{OwnerWorkspace: tenantB, Name: "b's"})
+	if err != nil {
+		t.Fatalf("create template: %v", err)
+	}
+	stamp, err := env.clientA.Stamps().Create(ctx, &models.CreateStampInput{OwnerWorkspace: tenantB, Name: "b's"})
+	if err != nil {
+		t.Fatalf("create stamp: %v", err)
+	}
+
+	_, err = env.clientA.Templates().UpdateWithRelated(ctx, template.ID, &models.UpdateTemplateWithRelatedInput{
+		Stamps: &models.TemplateStampsUpdateNested{Connect: []int64{stamp.ID}},
+	})
+	assertNestedError(t, err, models.ErrAlreadyRelated, "Stamps", "link", nil)
+
+	_, err = env.clientA.Templates().UpdateWithRelated(ctx, template.ID, &models.UpdateTemplateWithRelatedInput{
+		Stamps: &models.TemplateStampsUpdateNested{Create: []*models.CreateStampInput{{OwnerWorkspace: tenantB, Name: "created"}}},
+	})
+	assertNestedError(t, err, models.ErrAlreadyRelated, "Stamps", "link", nil)
+}
+
+// `connect` compares a shared column before the link step, so under a shared
+// parent a target of the resolved tenant stops there.
+func TestUpdateWithRelated_ConnectUnderSharedParentMismatchIsAlreadyRelated(t *testing.T) {
 	resetDB(t)
 	env := newTenantEnv(t)
 	ctx := context.Background()
@@ -674,7 +702,107 @@ func TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated(t *testing.T) {
 	_, err = env.clientA.Templates().UpdateWithRelated(ctx, template.ID, &models.UpdateTemplateWithRelatedInput{
 		Labels: &models.TemplateLabelsUpdateNested{Connect: []int64{label.ID}},
 	})
-	assertNestedError(t, err, models.ErrAlreadyRelated, "Labels", "link", nil)
+	assertNestedError(t, err, models.ErrAlreadyRelated, "Labels", "connect", label.ID)
+}
+
+// A created target is compared on a shared column as a connected one is, and is
+// refused before the link step with no id, since it never existed for the caller
+// (PRD §9.9.6). It covers both ways to disagree: tenancy setting the target under
+// a shared parent, and a caller's value under SkipTenancy.
+func TestUpdateWithRelated_CreateSharedJunctionColumnMismatchIsAlreadyRelated(t *testing.T) {
+	resetDB(t)
+	env := newTenantEnv(t)
+	ctx := context.Background()
+
+	count := func(table string) int {
+		t.Helper()
+		var n int
+		if err := testPool.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		return n
+	}
+	assertRefused := func(t *testing.T, err error) {
+		t.Helper()
+		assertNestedError(t, err, models.ErrAlreadyRelated, "Labels", "create", nil)
+		if nested, ok := errors.AsType[*models.NestedMutationError](err); ok && nested.ID != nil {
+			t.Errorf("error names %v, want no id", nested.ID)
+		}
+		if got := count("labels"); got != 0 {
+			t.Errorf("labels after the refusal = %d, want 0", got)
+		}
+		if got := count("task_labels") + count("template_labels"); got != 0 {
+			t.Errorf("links after the refusal = %d, want 0", got)
+		}
+	}
+
+	template, err := env.clientA.Templates().Create(ctx, &models.CreateTemplateInput{OwnerWorkspace: tenantB, Name: "b's"})
+	if err != nil {
+		t.Fatalf("create template: %v", err)
+	}
+	_, err = env.clientA.Templates().UpdateWithRelated(ctx, template.ID, &models.UpdateTemplateWithRelatedInput{
+		Labels: &models.TemplateLabelsUpdateNested{Create: []*models.CreateLabelInput{{Name: "set by tenancy"}}},
+	})
+	assertRefused(t, err)
+
+	task := mkTask(t, env.clientA, "t")
+	_, err = env.clientA.Tasks().UpdateWithRelated(ctx, task.ID, &models.UpdateTaskWithRelatedInput{
+		Labels: &models.TaskLabelsUpdateNested{Create: []*models.CreateLabelInput{
+			{WorkspaceID: omittable.Set(tenantB), Name: "set by the caller"},
+		}},
+	}, skipTenancy)
+	assertRefused(t, err)
+
+	// The check reads the created row's own value: a match still links.
+	if _, err := env.clientA.Tasks().UpdateWithRelated(ctx, task.ID, &models.UpdateTaskWithRelatedInput{
+		Labels: &models.TaskLabelsUpdateNested{Create: []*models.CreateLabelInput{{Name: "matching"}}},
+	}); err != nil {
+		t.Fatalf("create matching label: %v", err)
+	}
+	if got := count("task_labels"); got != 1 {
+		t.Errorf("links after a matching create = %d, want 1", got)
+	}
+}
+
+// The visibility read cannot hide the target under SkipTenancy, so without the
+// check the link row reaches the junction's foreign key, or, where the database
+// does not enforce one, links another workspace's label (PRD §9.9.6).
+func TestUpdateWithRelated_ConnectSharedJunctionColumnMismatchIsAlreadyRelated(t *testing.T) {
+	resetDB(t)
+	env := newTenantEnv(t)
+	ctx := context.Background()
+
+	task := mkTask(t, env.clientA, "t")
+	own := mkLabel(t, env.clientA, "own")
+	foreign := mkLabel(t, env.clientB, "foreign")
+
+	links := func() int {
+		t.Helper()
+		var n int
+		if err := testPool.QueryRow(ctx, "SELECT count(*) FROM task_labels WHERE task_id = $1", task.ID).Scan(&n); err != nil {
+			t.Fatalf("count links: %v", err)
+		}
+		return n
+	}
+
+	// `own` first: the refusal comes before the link step, so neither links.
+	_, err := env.clientA.Tasks().UpdateWithRelated(ctx, task.ID, &models.UpdateTaskWithRelatedInput{
+		Labels: &models.TaskLabelsUpdateNested{Connect: []int64{own.ID, foreign.ID}},
+	}, skipTenancy)
+	assertNestedError(t, err, models.ErrAlreadyRelated, "Labels", "connect", foreign.ID)
+	if got := links(); got != 0 {
+		t.Errorf("links after the refusal = %d, want 0", got)
+	}
+
+	// The check reads the target's own value: a match still links.
+	if _, err := env.clientA.Tasks().UpdateWithRelated(ctx, task.ID, &models.UpdateTaskWithRelatedInput{
+		Labels: &models.TaskLabelsUpdateNested{Connect: []int64{own.ID}},
+	}, skipTenancy); err != nil {
+		t.Fatalf("connect own label: %v", err)
+	}
+	if got := links(); got != 1 {
+		t.Errorf("links after connect = %d, want 1", got)
+	}
 }
 
 // The same mismatch on a one-column key is the same error (PRD §9.9.8).

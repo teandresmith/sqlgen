@@ -259,6 +259,13 @@
       "file": "entities/sprint.json"
     },
     {
+      "name": "Stamp",
+      "table": "stamps",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/stamp.json"
+    },
+    {
       "name": "Task",
       "table": "tasks",
       "schema": "public",
@@ -299,6 +306,13 @@
       "schema": "public",
       "kind": "table",
       "file": "entities/template_label.json"
+    },
+    {
+      "name": "TemplateStamp",
+      "table": "template_stamps",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/template_stamp.json"
     },
     {
       "name": "TemplateStep",

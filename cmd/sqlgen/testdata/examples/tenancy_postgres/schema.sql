@@ -153,6 +153,24 @@ CREATE TABLE template_labels (
     FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id)
 );
 
+-- A tenant junction between two shared tables: the keys agree on workspace_id,
+-- and only tenancy's own check can find that the resolver does not.
+CREATE TABLE stamps (
+    id BIGSERIAL PRIMARY KEY,
+    owner_workspace UUID NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (owner_workspace, id)
+);
+
+CREATE TABLE template_stamps (
+    workspace_id UUID NOT NULL,
+    template_id BIGINT NOT NULL,
+    stamp_id BIGINT NOT NULL,
+    PRIMARY KEY (workspace_id, template_id, stamp_id),
+    FOREIGN KEY (workspace_id, template_id) REFERENCES templates (owner_workspace, id),
+    FOREIGN KEY (workspace_id, stamp_id) REFERENCES stamps (owner_workspace, id)
+);
+
 -- A single-column FK on the tenant column, from a shared parent.
 CREATE TABLE workspaces (
     id UUID PRIMARY KEY,

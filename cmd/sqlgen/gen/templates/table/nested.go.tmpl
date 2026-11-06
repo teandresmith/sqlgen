@@ -640,15 +640,27 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 		}
 		// No traversed FK to elide on an M2M target — the parent's key goes
 		// into the junction row below — so this is the target's own create
+{{- if .JunctionSharedFields }}
+		// input verbatim. The selection is what the link step and the shared
+		// column comparison below need.
+{{- else }}
 		// input verbatim. The PK-only selection is what the link step needs.
+{{- end }}
 		created, err := c.{{ .TargetClientField }}.CreateMany(ctx, nested.Create, func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
 			nestedChildOptions(o, options)
-			o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true{{ range .TargetReadFields }}, {{ . }}: true{{ end }}}
+			o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true{{ range .TargetReadFields }}, {{ . }}: true{{ end }}{{ range .JunctionSharedFields }}, {{ . }}: true{{ end }}}
 		})
 		if err != nil {
 			return nestedError({{ printf "%q" .FieldName }}, "create", nil, err)
 		}
 		for _, row := range created {
+{{- if .JunctionSharedAgrees }}
+			if !({{ .JunctionSharedAgrees }}) {
+				// The link row takes this column from the parent, so the new row
+				// could not be linked. Returning rolls it back with the rest.
+				return nestedError({{ printf "%q" .FieldName }}, "create", nil, ErrAlreadyRelated)
+			}
+{{- end }}
 			targetIDs = append(targetIDs, row.{{ .TargetPKFieldName }})
 {{- if .TargetReadFields }}
 			targetRows[row.{{ .TargetPKFieldName }}] = row
@@ -664,6 +676,9 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 	// than a junction row nobody can ever read.
 	if len(connectIDs) > 0 {
 		found := make(map[{{ .ConnectIDGoType }}]bool, len(connectIDs))
+{{- if .JunctionSharedAgrees }}
+		agrees := make(map[{{ .ConnectIDGoType }}]bool, len(connectIDs))
+{{- end }}
 		// Chunked at c.batchSize. A single statement over the caller's
 		// whole list hits a bind-parameter ceiling that is dialect-dependent
 		// and lowest on SQLite (32766), and every dialect's error for it names
@@ -699,7 +714,7 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 */}}
 			}, func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
 				nestedChildOptions(o, options)
-				o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true{{ range .TargetReadFields }}, {{ . }}: true{{ end }}}
+				o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true{{ range .TargetReadFields }}, {{ . }}: true{{ end }}{{ range .JunctionSharedFields }}, {{ . }}: true{{ end }}}
 				// Deliberately unlocked: this validates caller input at call time,
 				// it does not promise the target is still visible at commit.
 				o.LockMode = sql.LockNone
@@ -709,6 +724,9 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 			}
 			for _, row := range visible {
 				found[row.{{ .TargetPKFieldName }}] = true
+{{- if .JunctionSharedAgrees }}
+				agrees[row.{{ .TargetPKFieldName }}] = {{ .JunctionSharedAgrees }}
+{{- end }}
 {{- if .TargetReadFields }}
 				targetRows[row.{{ .TargetPKFieldName }}] = row
 {{- end }}
@@ -718,6 +736,13 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 			if !found[tid] {
 				return nestedError({{ printf "%q" .FieldName }}, "connect", tid, ErrNotFound)
 			}
+{{- if .JunctionSharedAgrees }}
+			if !agrees[tid] {
+				// Both junction keys hold this column and the link row takes it
+				// from the parent, so this target is bound to another key.
+				return nestedError({{ printf "%q" .FieldName }}, "connect", tid, ErrAlreadyRelated)
+			}
+{{- end }}
 		}
 		targetIDs = append(targetIDs, connectIDs...)
 	}
@@ -749,8 +774,8 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 			o.FieldOptions = &{{ .JunctionStructName }}FieldOptions{}
 		}); err != nil {
 {{- if .TenantKeyMember }}
-			// The key sets the tenant column from the parent and tenancy sets it
-			// from the resolver: disagreeing, the two bind this row to two keys.
+			// A key sets the tenant column and tenancy sets it from the resolver:
+			// disagreeing, the two bind this row to two keys.
 			if errors.Is(err, tenancy.ErrMismatch) {
 				err = ErrAlreadyRelated
 			}

@@ -16700,15 +16700,21 @@ func (c *labelClient) applyLabelTasksNested(ctx context.Context, parent *Label, 
 		}
 		// No traversed FK to elide on an M2M target — the parent's key goes
 		// into the junction row below — so this is the target's own create
-		// input verbatim. The PK-only selection is what the link step needs.
+		// input verbatim. The selection is what the link step and the shared
+		// column comparison below need.
 		created, err := c.taskClient.CreateMany(ctx, nested.Create, func(o *CallOptions[TaskFieldOptions]) {
 			nestedChildOptions(o, options)
-			o.FieldOptions = &TaskFieldOptions{ID: true}
+			o.FieldOptions = &TaskFieldOptions{ID: true, WorkspaceID: true}
 		})
 		if err != nil {
 			return nestedError("Tasks", "create", nil, err)
 		}
 		for _, row := range created {
+			if !(row.WorkspaceID.String() == parent.WorkspaceID.String()) {
+				// The link row takes this column from the parent, so the new row
+				// could not be linked. Returning rolls it back with the rest.
+				return nestedError("Tasks", "create", nil, ErrAlreadyRelated)
+			}
 			targetIDs = append(targetIDs, row.ID)
 		}
 	}
@@ -16719,6 +16725,7 @@ func (c *labelClient) applyLabelTasksNested(ctx context.Context, parent *Label, 
 	// than a junction row nobody can ever read.
 	if len(connectIDs) > 0 {
 		found := make(map[int64]bool, len(connectIDs))
+		agrees := make(map[int64]bool, len(connectIDs))
 		// Chunked at c.batchSize. A single statement over the caller's
 		// whole list hits a bind-parameter ceiling that is dialect-dependent
 		// and lowest on SQLite (32766), and every dialect's error for it names
@@ -16740,7 +16747,7 @@ func (c *labelClient) applyLabelTasksNested(ctx context.Context, parent *Label, 
 				Limit: new(0),
 			}, func(o *CallOptions[TaskFieldOptions]) {
 				nestedChildOptions(o, options)
-				o.FieldOptions = &TaskFieldOptions{ID: true}
+				o.FieldOptions = &TaskFieldOptions{ID: true, WorkspaceID: true}
 				// Deliberately unlocked: this validates caller input at call time,
 				// it does not promise the target is still visible at commit.
 				o.LockMode = sql.LockNone
@@ -16750,11 +16757,17 @@ func (c *labelClient) applyLabelTasksNested(ctx context.Context, parent *Label, 
 			}
 			for _, row := range visible {
 				found[row.ID] = true
+				agrees[row.ID] = row.WorkspaceID.String() == parent.WorkspaceID.String()
 			}
 		}
 		for _, tid := range connectIDs {
 			if !found[tid] {
 				return nestedError("Tasks", "connect", tid, ErrNotFound)
+			}
+			if !agrees[tid] {
+				// Both junction keys hold this column and the link row takes it
+				// from the parent, so this target is bound to another key.
+				return nestedError("Tasks", "connect", tid, ErrAlreadyRelated)
 			}
 		}
 		targetIDs = append(targetIDs, connectIDs...)
@@ -16782,8 +16795,8 @@ func (c *labelClient) applyLabelTasksNested(ctx context.Context, parent *Label, 
 			nestedChildOptions(o, options)
 			o.FieldOptions = &TaskLabelFieldOptions{}
 		}); err != nil {
-			// The key sets the tenant column from the parent and tenancy sets it
-			// from the resolver: disagreeing, the two bind this row to two keys.
+			// A key sets the tenant column and tenancy sets it from the resolver:
+			// disagreeing, the two bind this row to two keys.
 			if errors.Is(err, tenancy.ErrMismatch) {
 				err = ErrAlreadyRelated
 			}
@@ -16900,15 +16913,21 @@ func (c *labelClient) applyLabelTemplatesNested(ctx context.Context, parent *Lab
 		}
 		// No traversed FK to elide on an M2M target — the parent's key goes
 		// into the junction row below — so this is the target's own create
-		// input verbatim. The PK-only selection is what the link step needs.
+		// input verbatim. The selection is what the link step and the shared
+		// column comparison below need.
 		created, err := c.templateClient.CreateMany(ctx, nested.Create, func(o *CallOptions[TemplateFieldOptions]) {
 			nestedChildOptions(o, options)
-			o.FieldOptions = &TemplateFieldOptions{ID: true}
+			o.FieldOptions = &TemplateFieldOptions{ID: true, OwnerWorkspace: true}
 		})
 		if err != nil {
 			return nestedError("Templates", "create", nil, err)
 		}
 		for _, row := range created {
+			if !(row.OwnerWorkspace.String() == parent.WorkspaceID.String()) {
+				// The link row takes this column from the parent, so the new row
+				// could not be linked. Returning rolls it back with the rest.
+				return nestedError("Templates", "create", nil, ErrAlreadyRelated)
+			}
 			targetIDs = append(targetIDs, row.ID)
 		}
 	}
@@ -16919,6 +16938,7 @@ func (c *labelClient) applyLabelTemplatesNested(ctx context.Context, parent *Lab
 	// than a junction row nobody can ever read.
 	if len(connectIDs) > 0 {
 		found := make(map[int64]bool, len(connectIDs))
+		agrees := make(map[int64]bool, len(connectIDs))
 		// Chunked at c.batchSize. A single statement over the caller's
 		// whole list hits a bind-parameter ceiling that is dialect-dependent
 		// and lowest on SQLite (32766), and every dialect's error for it names
@@ -16940,7 +16960,7 @@ func (c *labelClient) applyLabelTemplatesNested(ctx context.Context, parent *Lab
 				Limit: new(0),
 			}, func(o *CallOptions[TemplateFieldOptions]) {
 				nestedChildOptions(o, options)
-				o.FieldOptions = &TemplateFieldOptions{ID: true}
+				o.FieldOptions = &TemplateFieldOptions{ID: true, OwnerWorkspace: true}
 				// Deliberately unlocked: this validates caller input at call time,
 				// it does not promise the target is still visible at commit.
 				o.LockMode = sql.LockNone
@@ -16950,11 +16970,17 @@ func (c *labelClient) applyLabelTemplatesNested(ctx context.Context, parent *Lab
 			}
 			for _, row := range visible {
 				found[row.ID] = true
+				agrees[row.ID] = row.OwnerWorkspace.String() == parent.WorkspaceID.String()
 			}
 		}
 		for _, tid := range connectIDs {
 			if !found[tid] {
 				return nestedError("Templates", "connect", tid, ErrNotFound)
+			}
+			if !agrees[tid] {
+				// Both junction keys hold this column and the link row takes it
+				// from the parent, so this target is bound to another key.
+				return nestedError("Templates", "connect", tid, ErrAlreadyRelated)
 			}
 		}
 		targetIDs = append(targetIDs, connectIDs...)
@@ -16982,8 +17008,8 @@ func (c *labelClient) applyLabelTemplatesNested(ctx context.Context, parent *Lab
 			nestedChildOptions(o, options)
 			o.FieldOptions = &TemplateLabelFieldOptions{}
 		}); err != nil {
-			// The key sets the tenant column from the parent and tenancy sets it
-			// from the resolver: disagreeing, the two bind this row to two keys.
+			// A key sets the tenant column and tenancy sets it from the resolver:
+			// disagreeing, the two bind this row to two keys.
 			if errors.Is(err, tenancy.ErrMismatch) {
 				err = ErrAlreadyRelated
 			}
@@ -29548,15 +29574,21 @@ func (c *reviewerClient) applyReviewerTasksNested(ctx context.Context, parent *R
 		}
 		// No traversed FK to elide on an M2M target — the parent's key goes
 		// into the junction row below — so this is the target's own create
-		// input verbatim. The PK-only selection is what the link step needs.
+		// input verbatim. The selection is what the link step and the shared
+		// column comparison below need.
 		created, err := c.taskClient.CreateMany(ctx, nested.Create, func(o *CallOptions[TaskFieldOptions]) {
 			nestedChildOptions(o, options)
-			o.FieldOptions = &TaskFieldOptions{ID: true}
+			o.FieldOptions = &TaskFieldOptions{ID: true, WorkspaceID: true}
 		})
 		if err != nil {
 			return nestedError("Tasks", "create", nil, err)
 		}
 		for _, row := range created {
+			if !(row.WorkspaceID.String() == parent.WorkspaceID.String()) {
+				// The link row takes this column from the parent, so the new row
+				// could not be linked. Returning rolls it back with the rest.
+				return nestedError("Tasks", "create", nil, ErrAlreadyRelated)
+			}
 			targetIDs = append(targetIDs, row.ID)
 		}
 	}
@@ -29567,6 +29599,7 @@ func (c *reviewerClient) applyReviewerTasksNested(ctx context.Context, parent *R
 	// than a junction row nobody can ever read.
 	if len(connectIDs) > 0 {
 		found := make(map[int64]bool, len(connectIDs))
+		agrees := make(map[int64]bool, len(connectIDs))
 		// Chunked at c.batchSize. A single statement over the caller's
 		// whole list hits a bind-parameter ceiling that is dialect-dependent
 		// and lowest on SQLite (32766), and every dialect's error for it names
@@ -29588,7 +29621,7 @@ func (c *reviewerClient) applyReviewerTasksNested(ctx context.Context, parent *R
 				Limit: new(0),
 			}, func(o *CallOptions[TaskFieldOptions]) {
 				nestedChildOptions(o, options)
-				o.FieldOptions = &TaskFieldOptions{ID: true}
+				o.FieldOptions = &TaskFieldOptions{ID: true, WorkspaceID: true}
 				// Deliberately unlocked: this validates caller input at call time,
 				// it does not promise the target is still visible at commit.
 				o.LockMode = sql.LockNone
@@ -29598,11 +29631,17 @@ func (c *reviewerClient) applyReviewerTasksNested(ctx context.Context, parent *R
 			}
 			for _, row := range visible {
 				found[row.ID] = true
+				agrees[row.ID] = row.WorkspaceID.String() == parent.WorkspaceID.String()
 			}
 		}
 		for _, tid := range connectIDs {
 			if !found[tid] {
 				return nestedError("Tasks", "connect", tid, ErrNotFound)
+			}
+			if !agrees[tid] {
+				// Both junction keys hold this column and the link row takes it
+				// from the parent, so this target is bound to another key.
+				return nestedError("Tasks", "connect", tid, ErrAlreadyRelated)
 			}
 		}
 		targetIDs = append(targetIDs, connectIDs...)
@@ -29630,8 +29669,8 @@ func (c *reviewerClient) applyReviewerTasksNested(ctx context.Context, parent *R
 			nestedChildOptions(o, options)
 			o.FieldOptions = &TaskReviewerFieldOptions{}
 		}); err != nil {
-			// The key sets the tenant column from the parent and tenancy sets it
-			// from the resolver: disagreeing, the two bind this row to two keys.
+			// A key sets the tenant column and tenancy sets it from the resolver:
+			// disagreeing, the two bind this row to two keys.
 			if errors.Is(err, tenancy.ErrMismatch) {
 				err = ErrAlreadyRelated
 			}
@@ -36869,6 +36908,3120 @@ type GetSprintsInput struct {
 	Limit  *int          `json:"limit"`
 	Offset *int          `json:"offset"`
 	Sorts  []sql.Sort    `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type Stamp struct {
+	ID             int64     `db:"id" json:"id"`
+	OwnerWorkspace uuid.UUID `db:"owner_workspace" json:"owner_workspace"`
+	Name           string    `db:"name" json:"name"`
+
+	// Templates - many-to-many relationship with the templates table.
+	Templates []*Template `db:"-" json:"templates"`
+}
+
+// StampClient provides type-safe operations for the stamps table.
+type StampClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single stamp by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error)
+
+	// GetMany returns stamps matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetStampsInput, opts ...func(*CallOptions[StampFieldOptions])) ([]*Stamp, error)
+
+	// Exists returns true if a stamp with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[StampFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any stamp matches the given filter.
+	ExistsWhere(ctx context.Context, filter *StampFilter, opts ...func(*CallOptions[StampFieldOptions])) (bool, error)
+
+	// Count returns the number of stamps matching the given filter.
+	Count(ctx context.Context, filter *StampFilter, opts ...func(*CallOptions[StampFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new stamp and returns the created entity.
+	Create(ctx context.Context, input *CreateStampInput, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error)
+
+	// CreateMany inserts multiple stamps in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateStampInput, opts ...func(*CallOptions[StampFieldOptions])) ([]*Stamp, error)
+
+	// Update partially updates a stamp by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateStampInput, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error)
+
+	// UpdateMany updates multiple stamps and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateStampItem, opts ...func(*CallOptions[StampFieldOptions])) ([]*Stamp, error)
+
+	// UpdateWhere updates all stamps matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *StampFilter, input *UpdateStampInput, opts ...func(*CallOptions[StampFieldOptions])) ([]*Stamp, error)
+
+	// Upsert inserts a stamp or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateStampInput, target StampConflictTarget, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error)
+
+	// UpsertMany inserts or updates multiple stamps in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateStampInput, target StampConflictTarget, opts ...func(*CallOptions[StampFieldOptions])) ([]*Stamp, error)
+
+	// CreateWithRelated creates a stamp together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateStampWithRelatedInput, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error)
+
+	// UpdateWithRelated updates a stamp together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdateStampWithRelatedInput, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error)
+
+	// UpsertWithRelated inserts or updates a stamp together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertStampWithRelatedInput, target StampConflictTarget, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a stamp from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[StampFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple stamps from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[StampFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all stamps matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *StampFilter, opts ...func(*CallOptions[StampFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of stamps with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[StampFilter], opts ...func(*CallOptions[StampFieldOptions])) (*PaginateResult[Stamp], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of stamps.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[StampFilter], opts ...func(*CallOptions[StampFieldOptions])) (*Connection[Stamp], error)
+
+	// Stream returns an iterator over stamps matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamStampsInput, opts ...func(*CallOptions[StreamStampFieldOptions])) iter.Seq2[*Stamp, error]
+}
+
+// stampClient implements the StampClient interface.
+type stampClient struct {
+	querier              database.Querier
+	dialect              sql.Dialect
+	table                sql.Table
+	batchSize            int
+	queryLimit           int
+	pageSize             int
+	cursorKeys           []string
+	strictUpdates        bool
+	mutationHooks        []hook.MutationHook
+	queryHooks           []hook.QueryHook
+	panicHandler         hook.PanicHandler
+	callbackMode         database.CallbackMode
+	tenantResolver       tenancy.TenantResolver[uuid.UUID]
+	templatesDefaultSort []sql.Sort
+	templateClient       *templateClient
+	templateStampClient  *templateStampClient
+}
+
+// newStampClient creates a new stampClient.
+func newStampClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *stampClient {
+	return &stampClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "stamps"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *stampClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *stampClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// resolveTenant reads the operation's tenant from tenantValue and applies THIS
+// table's tenancy.required setting to it, returning the value, a bool
+// indicating whether tenancy should be applied to this call, and any resolver
+// error. The split matters: tenantValue's answer is shared across every client
+// the operation touches, while the apply bool below is this table's alone
+// (required is a per-table setting). The apply bool encodes the
+// tenancy.required semantic:
+//
+//   - Non-zero resolver return → apply=true; callers AND the filter into the
+//     WHERE (reads), verify-match against caller-supplied tenant (mutations),
+//     and auto-set the tenant column on INSERT.
+//   - Zero resolver return (resolver returned (zero, nil) or is nil) under
+//     tenancy.required:true → apply=false, err=tenancy.ErrMissing. The op
+//     fails closed before the DB round-trip.
+//   - Zero resolver return under tenancy.required:false → apply=false, err=nil.
+//     The op silently becomes cross-tenant: no filter append, no verify-match,
+//     no auto-set. This is the "missing tenant skips the filter" path
+//     — always-off rather than a silent zero-value write.
+//   - Resolver returns a non-nil error → apply=false, err propagated.
+//
+// Required-at-codegen determinism: the required:true vs required:false branch
+// is picked at template-expansion time per-table, from the table's resolved
+// tenancy config. Runtime callers observe a stable behavior per table.
+//
+// explicit carries CallOptions.Tenant (the explicit-tenant resolution
+// mode): when non-nil, tenancy behaves as normal resolution with
+// the resolver replaced by this constant — filter, auto-set, and verify-match
+// all apply. Precedence over SkipTenancy is normalized in
+// resolveCallOptions, so callers gate on SkipTenancy exactly as before. The
+// pointer distinguishes set from unset; a set zero value is honored verbatim.
+func (c *stampClient) resolveTenant(ctx context.Context, explicit *uuid.UUID) (uuid.UUID, bool, error) {
+	if explicit != nil {
+		return *explicit, true, nil
+	}
+	var zero uuid.UUID
+	v, err := c.tenantValue(ctx)
+	if err != nil {
+		return zero, false, err
+	}
+	if v == zero {
+		return zero, false, nil
+	}
+	return v, true, nil
+}
+
+// tenantValue returns the tenant the user resolver reports for this operation,
+// invoking it at most once per logical operation.
+//
+// It answers the table-independent half of the question and stops there: what
+// the resolver said. The tenancy.required reading of that answer — zero means
+// ErrMissing, or zero means skip the filter — belongs to resolveTenant above,
+// because `required` is a per-table setting while this value is
+// shared across every client the operation touches.
+//
+// Keeping the two apart is load-bearing rather than tidy. The ctx cache is
+// keyed on the tenant type alone, so it is one slot for the whole package;
+// caching the reading instead of the answer let whichever table resolved first
+// impose its `required` on the rest, and a required:false table handing
+// apply=false to a required:true one is a fail-open. A nil resolver
+// yields the zero value and the same per-table branch a zero return takes.
+func (c *stampClient) tenantValue(ctx context.Context) (uuid.UUID, error) {
+	// Short-circuit: an entry point for this logical operation — a chaining
+	// mutation (Create, Update, Upsert, …) or a nested method's hoist — already
+	// resolved and stashed the value via tenancy.WithResolvedTenant. Lookup
+	// uses the same comparable T as the resolver, so collisions across entity
+	// clients with different tenant types are impossible.
+	if v, ok := tenancy.CachedTenant[uuid.UUID](ctx); ok {
+		return v, nil
+	}
+	if c.tenantResolver == nil {
+		var zero uuid.UUID
+		return zero, nil
+	}
+	return c.tenantResolver(ctx)
+}
+
+// filterOptions resolves the FilterOption set this client's filters need to
+// compile their relationship members. A relationship filter is a
+// read of the related table, so the target's tenant predicate goes inside the
+// EXISTS subquery — otherwise the filter would be a cross-tenant existence
+// probe on rows the caller cannot otherwise see.
+//
+// The resolve is gated on filter, not performed unconditionally, because the
+// option set is read only by the EXISTS helpers: a filter that sets no
+// relationship member compiles identically with or without it. Resolving anyway
+// would import the tenant's failure modes into calls that have no tenanted
+// component at all — on a shared table the outer WHERE is
+// never tenant-scoped, so a resolver that reports a missing tenant as an error
+// would reject every read that legitimately runs before a tenant is selected.
+//
+// Beyond that gate, nil is the correct answer in exactly the cases where the
+// table's own WHERE gets no tenant filter either: SkipTenancy, and a zero
+// resolver result under tenancy.required:false. The subquery is then unscoped
+// by the same decision that leaves the outer statement unscoped.
+func (c *stampClient) filterOptions(ctx context.Context, filter *StampFilter, skipTenancy bool, explicit *uuid.UUID) ([]FilterOption, error) {
+	if skipTenancy || !filter.usesRelationshipFilter() {
+		return nil, nil
+	}
+	tenant, apply, err := c.resolveTenant(ctx, explicit)
+	if err != nil {
+		return nil, err
+	}
+	if !apply {
+		return nil, nil
+	}
+	return []FilterOption{WithFilterTenant(tenant)}, nil
+}
+
+// stampAllColumns is the column list for full-entity reads, sorted for determinism.
+var stampAllColumns = []string{"id", "name", "owner_workspace"}
+
+// scanStamps scans rows into Stamp entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanStamps(rows database.Rows, columns []string) ([]*Stamp, error) {
+	var result []*Stamp
+	for rows.Next() {
+		s := &Stamp{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &s.ID
+			case "owner_workspace":
+				targets[idx] = &s.OwnerWorkspace
+			case "name":
+				targets[idx] = &s.Name
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan stamp: %w", err)
+		}
+
+		result = append(result, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stamp rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single stamp by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *stampClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get stamp: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableStamps, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[StampFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[StampFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		stamps, err := c.GetMany(ctx, &GetStampsInput{
+			Filter: &StampFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(stamps) == 0 {
+			return nil, ErrNotFound
+		}
+		return stamps[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get stamp: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Stamp), nil
+}
+
+// GetMany returns stamps matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *stampClient) GetMany(ctx context.Context, input *GetStampsInput, opts ...func(*CallOptions[StampFieldOptions])) ([]*Stamp, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetStampsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get many stamps: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableStamps, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := stampAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "owner_workspace", "id")
+				}
+			}
+		}
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect, filterOpts...)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var stamps []*Stamp
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		stamps, err = scanStamps(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, stamps, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return stamps, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many stamps: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Stamp), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the owner_workspace and id columns into a narrowed projection when one is:
+// loadRelationships maps every child back through s.OwnerWorkspace and s.ID, which
+// an unselected column would leave at its zero value.
+func (fo *StampFieldOptions) loadsRelationships() bool {
+	if fo.Templates != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache, SkipEvents, SkipTenancy and Tenant. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// A child that fell back to the ctx resolver instead of the parent's explicit
+// Tenant would read the two halves of one row set under two tenants, and on the
+// explicit-tenant bootstrap path, where ctx carries no tenant at all, fail with
+// tenancy.ErrMissing while the parent succeeded.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *stampClient) loadRelationships(ctx context.Context, conn database.Querier, stamps []*Stamp, options CallOptions[StampFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Templates != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			stampKeyed := make([]*Stamp, 0, len(stamps))
+			stampKeys := make([][]any, 0, len(stamps))
+			for _, s := range stamps {
+				stampKeyed = append(stampKeyed, s)
+				stampKeys = append(stampKeys, []any{s.OwnerWorkspace, s.ID})
+			}
+
+			sorts := fo.Templates.Sorts
+			if len(sorts) == 0 {
+				sorts = c.templatesDefaultSort
+			}
+
+			// The three steps run once per chunk of 4000 parent keys:
+			// within half the dialect's bind-parameter limit, leaving the rest for
+			// the relationship's filters.
+			for start := 0; start < len(stampKeys); start += 4000 {
+				chunk := stampKeys[start:min(start+4000, len(stampKeys))]
+
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[[2]string][][2]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "public", Name: "template_stamps"}, sql.SelectOptions{
+						Columns:    []string{"workspace_id", "stamp_id", "template_id"},
+						Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "stamp_id"}, chunk)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load stamp templates junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load stamp templates junction columns: %w", err)
+					}
+
+					for junctionRows.Next() {
+						var key0 uuid.UUID
+						var key1 int64
+						var key2 int64
+						ptrs := make([]any, len(junctionCols))
+						for i, col := range junctionCols {
+							switch col {
+							case "workspace_id":
+								ptrs[i] = &key0
+							case "stamp_id":
+								ptrs[i] = &key1
+							case "template_id":
+								ptrs[i] = &key2
+							}
+						}
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan stamp templates junction: %w", err)
+						}
+						parentID, targetID := [2]string{key0.String(), fmt.Sprint(key1)}, [2]string{key0.String(), fmt.Sprint(key2)}
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate stamp templates junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "stamp_id"}, chunk),
+				})
+				conditions := []sql.Condition{
+					sql.TupleInSubquery(c.dialect, []string{"owner_workspace", "id"}, sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("workspace_id") + ", j." + c.dialect.QuoteIdentifier("template_id") + "" +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "public", Name: "template_stamps"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &TemplateFilter{}
+				if fo.Templates.Filter != nil {
+					filter.And = append(filter.And, fo.Templates.Filter)
+				}
+
+				relatedTemplates, err := c.templateClient.GetMany(ctx, &GetTemplatesInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its referenced columns, so
+					// the fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"owner_workspace", "id"},
+				}, func(co *CallOptions[TemplateFieldOptions]) {
+					co.FieldOptions = fo.Templates.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+					co.SkipTenancy = options.SkipTenancy
+					co.Tenant = options.Tenant
+				})
+				if err != nil {
+					return fmt.Errorf("load stamp templates: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts order each parent's slice.
+				parentsByTarget := make(map[[2]string][]int, len(relatedTemplates))
+				for i := start; i < start+len(chunk); i++ {
+					parent := stampKeyed[i]
+					for _, tID := range parentToTargetIDs[[2]string{parent.OwnerWorkspace.String(), fmt.Sprint(parent.ID)}] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedTemplates {
+					for _, i := range parentsByTarget[[2]string{t.OwnerWorkspace.String(), fmt.Sprint(t.ID)}] {
+						stampKeyed[i].Templates = append(stampKeyed[i].Templates, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new stamp and returns the created entity.
+func (c *stampClient) Create(ctx context.Context, input *CreateStampInput, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateStampInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create stamp: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableStamps, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"owner_workspace", "name"}
+		args := []any{input.OwnerWorkspace, input.Name}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[StampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create stamp: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Stamp), nil
+}
+
+// CreateMany inserts multiple stamps in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *stampClient) CreateMany(ctx context.Context, inputs []*CreateStampInput, opts ...func(*CallOptions[StampFieldOptions])) ([]*Stamp, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many stamps: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableStamps, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Stamp{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"owner_workspace", "name"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.OwnerWorkspace,
+					input.Name,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetStampsInput{
+			Filter: &StampFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[StampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many stamps: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Stamp), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *stampClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *stampClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan stamp id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a stamp by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *stampClient) Update(ctx context.Context, id int64, input *UpdateStampInput, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update stamp: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableStamps, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.OwnerWorkspace.Get(); ok {
+			setClauses["owner_workspace"] = v
+		}
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[StampFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[StampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update stamp: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Stamp), nil
+}
+
+// UpdateStampItem pairs a primary key with an update input for batch updates.
+type UpdateStampItem struct {
+	ID    int64             `json:"id"`
+	Input *UpdateStampInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple stamps and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
+func (c *stampClient) UpdateMany(ctx context.Context, items []UpdateStampItem, opts ...func(*CallOptions[StampFieldOptions])) ([]*Stamp, error) {
+	// UpdateStampItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many stamps: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableStamps, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Stamp{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateStampItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			var queuedItems []UpdateStampItem
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if v, ok := item.Input.OwnerWorkspace.Get(); ok {
+					setClauses["owner_workspace"] = v
+				}
+				if v, ok := item.Input.Name.Get(); ok {
+					setClauses["name"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.ID)
+					continue
+				}
+
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
+				allIDs = append(allIDs, item.ID)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close batch: %w", err)
+					}
+				} else {
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_stamp", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("item %v rows affected: %w", queuedItems[i].ID, err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
+						}
+						return nil
+					}); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetStampsInput{
+			Filter: &StampFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[StampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many stamps: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Stamp), nil
+}
+
+// UpdateWhere updates all stamps matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *stampClient) UpdateWhere(ctx context.Context, filter *StampFilter, input *UpdateStampInput, opts ...func(*CallOptions[StampFieldOptions])) ([]*Stamp, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update stamps where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableStamps, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		conds := filter.ToConditions(c.dialect, filterOpts...)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.OwnerWorkspace.Get(); ok {
+			setClauses["owner_workspace"] = v
+		}
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetStampsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[StampFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated stamp id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetStampsInput{
+			Filter: &StampFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[StampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update stamps where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Stamp), nil
+}
+
+// HardDelete permanently removes a stamp from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *stampClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[StampFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableStamps, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete stamp: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple stamps from the database.
+func (c *stampClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[StampFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableStamps, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted stamp key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many stamps: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all stamps matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *stampClient) HardDeleteWhere(ctx context.Context, filter *StampFilter, opts ...func(*CallOptions[StampFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableStamps, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		conds := filter.ToConditions(c.dialect, filterOpts...)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted stamp id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete stamps where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *stampClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// StampConflictTarget identifies a unique constraint for upsert conflict detection.
+type StampConflictTarget int
+
+const (
+	StampConflictOwnerWorkspaceID StampConflictTarget = iota // UNIQUE (owner_workspace, id)
+	StampConflictPK                                          // PRIMARY KEY (id)
+)
+
+// stampConflictColumns maps each conflict target to its column set.
+var stampConflictColumns = map[StampConflictTarget][]string{
+	StampConflictOwnerWorkspaceID: {"owner_workspace", "id"},
+	StampConflictPK:               {"id"},
+}
+
+// Upsert inserts a stamp or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *stampClient) Upsert(ctx context.Context, input *CreateStampInput, target StampConflictTarget, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateStampInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert stamp: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableStamps, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"owner_workspace", "name"}
+		args := []any{input.OwnerWorkspace, input.Name}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := stampConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[StampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert stamp: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Stamp), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *stampClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *stampClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple stamps in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// stamps.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *stampClient) UpsertMany(ctx context.Context, inputs []*CreateStampInput, target StampConflictTarget, opts ...func(*CallOptions[StampFieldOptions])) ([]*Stamp, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many stamps: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableStamps, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Stamp{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"owner_workspace", "name"}
+		conflictColumns := stampConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateStampInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.OwnerWorkspace,
+				input.Name,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateStampInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetStampsInput{
+			Filter: &StampFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[StampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many stamps: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Stamp), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// stamps.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *stampClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level stampConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanStamps
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanStamps(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = stampColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// stampColumnValue returns one column's value off a scanned
+// Stamp, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanStamps.
+func stampColumnValue(s *Stamp, column string) any {
+	switch column {
+	case "id":
+		return s.ID
+	case "owner_workspace":
+		return s.OwnerWorkspace
+	case "name":
+		return s.Name
+	}
+	return nil
+}
+
+// CreateStampWithRelatedInput holds the fields for creating a stamps record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateStampWithRelatedInput struct {
+	// Stamp holds the parent's own columns — identical to the input Create accepts.
+	Stamp CreateStampInput `json:"stamp"`
+
+	// Templates - many-to-many relationship with the templates table.
+	Templates *StampTemplatesCreateNested `json:"templates,omitempty"`
+}
+
+// UpdateStampWithRelatedInput holds the fields for updating a stamps record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateStampWithRelatedInput struct {
+	// Stamp holds the parent's own columns — identical to the input Update accepts.
+	Stamp UpdateStampInput `json:"stamp"`
+
+	// Templates - many-to-many relationship with the templates table.
+	Templates *StampTemplatesUpdateNested `json:"templates,omitempty"`
+}
+
+// UpsertStampWithRelatedInput holds the fields for upserting a stamps record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateStampInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertStampWithRelatedInput struct {
+	// Stamp holds the parent's own columns — identical to the input Upsert accepts.
+	Stamp CreateStampInput `json:"stamp"`
+
+	// Templates - many-to-many relationship with the templates table.
+	Templates *StampTemplatesUpdateNested `json:"templates,omitempty"`
+}
+
+// StampTemplatesCreateNested is the create-side verb block for Stamp.Templates.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type StampTemplatesCreateNested struct {
+	Create  []*CreateTemplateInput `json:"create,omitempty"`
+	Connect []int64                `json:"connect,omitempty"`
+}
+
+// StampTemplatesUpdateNested is the update-side verb block for Stamp.Templates,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type StampTemplatesUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool                   `json:"clear,omitempty"`
+	Create     []*CreateTemplateInput `json:"create,omitempty"`
+	Connect    []int64                `json:"connect,omitempty"`
+	Disconnect []int64                `json:"disconnect,omitempty"`
+}
+
+// stampTemplatesNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func stampTemplatesNestedFromCreate(n *StampTemplatesCreateNested) *StampTemplatesUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &StampTemplatesUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// stampNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+// The columns the edges' keys reference are forced on too: the nested writes
+// copy them, so a narrowed selection must not leave them zero.
+func stampNestedParentFieldOptions(fo *StampFieldOptions) *StampFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.Templates = nil
+	scalars.ID = true
+	scalars.OwnerWorkspace = true
+	return &scalars
+}
+
+// stampNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func stampNestedSelectsRelationship(fo *StampFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.Templates != nil
+}
+
+// nestedResolvedTenantCtx resolves the tenant once for a whole nested write,
+// before the transaction opens, so every inner call inherits it off ctx instead
+// of re-invoking the user resolver: the tenant resolves at most once per
+// mutation, nested children included. The inner writes route through other
+// entity clients, and the stash each of them makes is scoped to its own
+// hook-handler ctx — it never escapes back here, so without this hoist a
+// two-edge nested write resolved three to ten times.
+//
+// Only the raw resolver value is cached. No tenancy.required branch is taken
+// here, which is what lets a *shared* parent hoist for a tenanted child: each
+// inner call still applies its own table's required setting to the value.
+// Hoisting a decision instead would hand this table's reading of a zero
+// resolver to children configured fail-closed.
+//
+// The other two resolution modes need no hoist and get none: SkipTenancy
+// resolves nothing anywhere, and an explicit tenant already reaches every inner
+// call through nestedChildOptions and short-circuits ahead of the cache.
+func (c *stampClient) nestedResolvedTenantCtx(ctx context.Context, options CallOptions[StampFieldOptions]) (context.Context, error) {
+	if options.SkipTenancy || options.Tenant != nil {
+		return ctx, nil
+	}
+	resolvedTenant, err := c.tenantValue(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return tenancy.WithResolvedTenant(ctx, resolvedTenant), nil
+}
+
+// CreateWithRelated creates a stamp together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *stampClient) CreateWithRelated(ctx context.Context, input *CreateStampWithRelatedInput, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create stamp with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	// The gate is "some client this method reaches resolves a tenant", not "an
+	// edge target is tenanted": the parent's own terminal re-read resolves
+	// too when the caller selected a relationship.
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("create stamp with related: resolve tenant: %w", err)
+	}
+
+	var result *Stamp
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err = database.WithTransaction(ctx, c.querier, "create_stamp_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.Stamp, func(o *CallOptions[StampFieldOptions]) {
+			*o = options
+			o.FieldOptions = stampNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyStampTemplatesNested(ctx, parent, stampTemplatesNestedFromCreate(input.Templates), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if stampNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[StampFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create stamp with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a stamp together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *stampClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdateStampWithRelatedInput, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update stamp with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("update stamp with related: resolve tenant: %w", err)
+	}
+
+	var result *Stamp
+	err = database.WithTransaction(ctx, c.querier, "update_stamp_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.Stamp, func(o *CallOptions[StampFieldOptions]) {
+			*o = options
+			o.FieldOptions = stampNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyStampTemplatesNested(ctx, parent, input.Templates, options); err != nil {
+			return err
+		}
+
+		if stampNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[StampFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update stamp with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a stamp together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *stampClient) UpsertWithRelated(ctx context.Context, input *UpsertStampWithRelatedInput, target StampConflictTarget, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert stamp with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("upsert stamp with related: resolve tenant: %w", err)
+	}
+
+	var result *Stamp
+	err = database.WithTransaction(ctx, c.querier, "upsert_stamp_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.Stamp, target, func(o *CallOptions[StampFieldOptions]) {
+			*o = options
+			o.FieldOptions = stampNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyStampTemplatesNested(ctx, parent, input.Templates, options); err != nil {
+			return err
+		}
+
+		if stampNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[StampFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert stamp with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applyStampTemplatesNested applies the Stamp.Templates block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// link, disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *stampClient) applyStampTemplatesNested(ctx context.Context, parent *Stamp, nested *StampTemplatesUpdateNested, options CallOptions[StampFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("Templates", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	pid0 := parent.OwnerWorkspace.String()
+	pid1 := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if err := c.templateStampClient.HardDeleteWhere(ctx, &TemplateStampFilter{
+			WorkspaceID: &comparator.ID{Eq: new(pid0)},
+			StampID:     &comparator.Number[int64]{Eq: new(pid1)},
+		}, func(o *CallOptions[TemplateStampFieldOptions]) {
+			nestedChildOptions(o, options)
+		}); err != nil {
+			return nestedError("Templates", "clear", nil, err)
+		}
+	}
+
+	targetIDs := make([]int64, 0, len(nested.Create)+len(connectIDs))
+
+	if len(nested.Create) > 0 {
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Templates", "create", nil, ErrNilInput)
+			}
+		}
+		// No traversed FK to elide on an M2M target — the parent's key goes
+		// into the junction row below — so this is the target's own create
+		// input verbatim. The selection is what the link step and the shared
+		// column comparison below need.
+		created, err := c.templateClient.CreateMany(ctx, nested.Create, func(o *CallOptions[TemplateFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &TemplateFieldOptions{ID: true, OwnerWorkspace: true}
+		})
+		if err != nil {
+			return nestedError("Templates", "create", nil, err)
+		}
+		for _, row := range created {
+			if !(row.OwnerWorkspace.String() == parent.OwnerWorkspace.String()) {
+				// The link row takes this column from the parent, so the new row
+				// could not be linked. Returning rolls it back with the rest.
+				return nestedError("Templates", "create", nil, ErrAlreadyRelated)
+			}
+			targetIDs = append(targetIDs, row.ID)
+		}
+	}
+
+	// The junction FK proves existence, not visibility. Reading through the
+	// target's OWN client applies its tenant filter, soft-delete default and
+	// access rules, so a target in another tenant is NOT_FOUND here rather
+	// than a junction row nobody can ever read.
+	if len(connectIDs) > 0 {
+		found := make(map[int64]bool, len(connectIDs))
+		agrees := make(map[int64]bool, len(connectIDs))
+		// Chunked at c.batchSize. A single statement over the caller's
+		// whole list hits a bind-parameter ceiling that is dialect-dependent
+		// and lowest on SQLite (32766), and every dialect's error for it names
+		// no table, column, edge or verb, so it cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.templateClient.GetMany(ctx, &GetTemplatesInput{
+				Filter: &TemplateFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TemplateFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &TemplateFieldOptions{ID: true, OwnerWorkspace: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Templates", "connect", nil, err)
+			}
+			for _, row := range visible {
+				found[row.ID] = true
+				agrees[row.ID] = row.OwnerWorkspace.String() == parent.OwnerWorkspace.String()
+			}
+		}
+		for _, tid := range connectIDs {
+			if !found[tid] {
+				return nestedError("Templates", "connect", tid, ErrNotFound)
+			}
+			if !agrees[tid] {
+				// Both junction keys hold this column and the link row takes it
+				// from the parent, so this target is bound to another key.
+				return nestedError("Templates", "connect", tid, ErrAlreadyRelated)
+			}
+		}
+		targetIDs = append(targetIDs, connectIDs...)
+	}
+
+	// link — UpsertMany, not CreateMany: re-adding an existing link is a set
+	// operation whose answer is "linked", and CreateMany raises a primary-key
+	// violation on it. The junction is a pure link table, so this compiles to
+	// ON CONFLICT DO NOTHING on every dialect.
+	if len(targetIDs) > 0 {
+		links := make([]*CreateTemplateStampInput, 0, len(targetIDs))
+		seen := make(map[int64]bool, len(targetIDs))
+		for _, tid := range targetIDs {
+			if seen[tid] {
+				continue
+			}
+			seen[tid] = true
+			links = append(links, &CreateTemplateStampInput{
+				WorkspaceID: parent.OwnerWorkspace,
+				StampID:     parent.ID,
+				TemplateID:  tid,
+			})
+		}
+		if _, err := c.templateStampClient.UpsertMany(ctx, links, TemplateStampConflictPK, func(o *CallOptions[TemplateStampFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &TemplateStampFieldOptions{}
+		}); err != nil {
+			// A key sets the tenant column and tenancy sets it from the resolver:
+			// disagreeing, the two bind this row to two keys.
+			if errors.Is(err, tenancy.ErrMismatch) {
+				err = ErrAlreadyRelated
+			}
+			return nestedError("Templates", "link", nil, err)
+		}
+	}
+
+	// disconnect — no visibility read. The junction key embeds the
+	// parent, so a caller can only ever delete its own links, and a miss is a
+	// no-op. A hard delete is correct because the junction carries no
+	// soft-delete column; one that did would emit no unlink verb at all,
+	// since the read loader's junction query has no soft-delete predicate and
+	// would keep showing the link.
+	if len(disconnectIDs) > 0 {
+		pks := make([]TemplateStampPK, 0, len(disconnectIDs))
+		unlinking := make(map[int64]bool, len(disconnectIDs))
+		for _, tid := range disconnectIDs {
+			if unlinking[tid] {
+				continue
+			}
+			unlinking[tid] = true
+			pks = append(pks, TemplateStampPK{
+				WorkspaceID: parent.OwnerWorkspace,
+				StampID:     parent.ID,
+				TemplateID:  tid,
+			})
+		}
+		// Chunked at c.batchSize; a composite key binds two parameters
+		// per row, so the ceiling arrives at half the id count.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			if err := c.templateStampClient.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[TemplateStampFieldOptions]) {
+				nestedChildOptions(o, options)
+			}); err != nil {
+				return nestedError("Templates", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a stamp with the given primary key exists.
+func (c *stampClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[StampFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableStamps, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists stamp: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any stamp matches the given filter.
+func (c *stampClient) ExistsWhere(ctx context.Context, filter *StampFilter, opts ...func(*CallOptions[StampFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableStamps, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect, filterOpts...)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists stamps where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of stamps matching the given filter.
+// A nil filter counts all stamps.
+func (c *stampClient) Count(ctx context.Context, filter *StampFilter, opts ...func(*CallOptions[StampFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableStamps, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect, filterOpts...)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count stamps: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of stamps with total count for offset-based pagination.
+// A nil filter paginates all stamps.
+func (c *stampClient) Paginate(ctx context.Context, input PaginateInput[StampFilter], opts ...func(*CallOptions[StampFieldOptions])) (*PaginateResult[Stamp], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate stamps: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableStamps, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[StampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		stamps, err := c.GetMany(ctx, &GetStampsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[Stamp]{
+			Items:      stamps,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate stamps: %w", err)
+	}
+	return result.(*PaginateResult[Stamp]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of stamps.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *stampClient) Connection(ctx context.Context, input ConnectionInput[StampFilter], opts ...func(*CallOptions[StampFieldOptions])) (*Connection[Stamp], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection stamps: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableStamps, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[StampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeStampCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeStampCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		stamps, err := c.GetMany(ctx, &GetStampsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(stamps) > limit
+		if hasMore {
+			stamps = stamps[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(stamps)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Stamp], len(stamps))
+		for i, row := range stamps {
+			cursor, err := encodeStampCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Stamp]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Stamp]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection stamps: %w", err)
+	}
+	return result.(*Connection[Stamp]), nil
+}
+
+// encodeStampCursor encodes cursor key values as a base64 JSON string.
+func encodeStampCursor(keys []string, s *Stamp) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = s.ID
+		case "owner_workspace":
+			out["owner_workspace"] = s.OwnerWorkspace
+		case "name":
+			out["name"] = s.Name
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode stamp cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeStampCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeStampCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Stamp
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamStampsInput holds query parameters for streaming stamps records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamStampsInput struct {
+	Filter *StampFilter `json:"filter"`
+	Sorts  []sql.Sort   `json:"sorts"`
+}
+
+// StreamStampFieldOptions controls scalar column selection for stamps streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamStampFieldOptions struct {
+	ID             bool `json:"id"`
+	OwnerWorkspace bool `json:"owner_workspace"`
+	Name           bool `json:"name"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamStampFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.OwnerWorkspace {
+		cols = append(cols, "owner_workspace")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamStampFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.OwnerWorkspace {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	return false
+}
+
+// scanStampRow scans a single row into a Stamp entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanStampRow(rows database.Rows, columns []string) (*Stamp, error) {
+	s := &Stamp{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &s.ID
+		case "owner_workspace":
+			targets[idx] = &s.OwnerWorkspace
+		case "name":
+			targets[idx] = &s.Name
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan stamp: %w", err)
+	}
+
+	return s, nil
+}
+
+// Stream returns an iterator over stamps matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *stampClient) Stream(ctx context.Context, input *StreamStampsInput, opts ...func(*CallOptions[StreamStampFieldOptions])) iter.Seq2[*Stamp, error] {
+	return func(yield func(*Stamp, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamStampsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream stamps: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *Stamp, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream stamps: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableStamps, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := stampAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			// A relationship filter compiles to a correlated EXISTS carrying the
+			// *target's* tenant predicate, so the tenant is
+			// resolved before the conditions are built rather than appended after them.
+			filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
+			if filterErr != nil {
+				emit(nil, filterErr)
+				return nil, nil
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect, filterOpts...)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				s, err := scanStampRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(s, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate stamp rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream stamps: %w", err))
+		}
+	}
+}
+
+// StampFilter provides type-safe filtering for the stamps table.
+type StampFilter struct {
+	ID             *comparator.Number[int64] `json:"id"`
+	Name           *comparator.String        `json:"name"`
+	OwnerWorkspace *comparator.ID            `json:"owner_workspace"`
+	Templates      *TemplateFilter           `json:"templates"`
+	And            []*StampFilter            `json:"and"`
+	Or             []*StampFilter            `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *StampFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Name != nil {
+		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	if f.OwnerWorkspace != nil {
+		conds = append(conds, f.OwnerWorkspace.Parse(dialect.QuoteIdentifier("owner_workspace"), dialect)...)
+	}
+
+	if f.Templates != nil {
+		conds = append(conds, stampTemplatesFilterExists(f.Templates, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// usesRelationshipFilter reports whether f sets at least one relationship
+// member, directly or through and / or.
+//
+// The FilterOption set ToConditions takes is read only by the EXISTS helpers
+// below, so a filter with no relationship member ignores it entirely and
+// compiles to byte-identical SQL either way. The client's filterOptions
+// consults this before resolving a tenant, which is what keeps a read that has
+// no tenanted component from failing closed: on a shared table the outer WHERE
+// is never tenant-scoped, so a resolver that reports a missing tenant as an
+// error would otherwise reject reads that legitimately run before any tenant
+// is selected.
+func (f *StampFilter) usesRelationshipFilter() bool {
+	if f == nil {
+		return false
+	}
+	if f.Templates != nil {
+		return true
+	}
+	for _, sub := range f.And {
+		if sub.usesRelationshipFilter() {
+			return true
+		}
+	}
+	for _, sub := range f.Or {
+		if sub.usesRelationshipFilter() {
+			return true
+		}
+	}
+	return false
+}
+
+// stampTemplatesFilterExists compiles a TemplateFilter set on the
+// Templates relationship into a correlated EXISTS over templates, joined through the template_stamps junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func stampTemplatesFilterExists(f *TemplateFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "public", Name: "template_stamps"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "public", Name: "templates"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("owner_workspace") + " = " + jn + "." + dialect.QuoteIdentifier("workspace_id") +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("id") + " = " + jn + "." + dialect.QuoteIdentifier("template_id") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("workspace_id") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + jn + "." + dialect.QuoteIdentifier("stamp_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists([]string{"owner_workspace", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// StampFieldOptions controls column selection and relationship loading for stamps queries.
+type StampFieldOptions struct {
+	ID             bool                         `json:"id"`
+	OwnerWorkspace bool                         `json:"owner_workspace"`
+	Name           bool                         `json:"name"`
+	Templates      *TemplateRelationshipOptions `json:"templates"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StampFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.OwnerWorkspace {
+		cols = append(cols, "owner_workspace")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *StampFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":             "id",
+		"OwnerWorkspace": "owner_workspace",
+		"Name":           "name",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *StampFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.OwnerWorkspace {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	if fo.Templates != nil {
+		return true
+	}
+	return false
+}
+
+// CreateStampInput holds the fields for creating a stamps record.
+type CreateStampInput struct {
+	OwnerWorkspace uuid.UUID `json:"owner_workspace"`
+	Name           string    `json:"name"`
+}
+
+// UpdateStampInput holds the fields for updating a stamps record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateStampInput struct {
+	OwnerWorkspace omittable.Value[uuid.UUID] `json:"owner_workspace,omitzero"`
+	Name           omittable.Value[string]    `json:"name,omitzero"`
+}
+
+// GetStampsInput holds query parameters for retrieving stamps records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetStampsInput struct {
+	Filter *StampFilter `json:"filter"`
+	Limit  *int         `json:"limit"`
+	Offset *int         `json:"offset"`
+	Sorts  []sql.Sort   `json:"sorts"`
 	// conditions holds additional SQL conditions injected by internal callers
 	// (e.g., Connection keyset conditions). Not part of the public API.
 	conditions []sql.Condition
@@ -47161,15 +50314,21 @@ func (c *taskClient) applyTaskLabelsNested(ctx context.Context, parent *Task, ne
 		}
 		// No traversed FK to elide on an M2M target — the parent's key goes
 		// into the junction row below — so this is the target's own create
-		// input verbatim. The PK-only selection is what the link step needs.
+		// input verbatim. The selection is what the link step and the shared
+		// column comparison below need.
 		created, err := c.labelClient.CreateMany(ctx, nested.Create, func(o *CallOptions[LabelFieldOptions]) {
 			nestedChildOptions(o, options)
-			o.FieldOptions = &LabelFieldOptions{ID: true}
+			o.FieldOptions = &LabelFieldOptions{ID: true, WorkspaceID: true}
 		})
 		if err != nil {
 			return nestedError("Labels", "create", nil, err)
 		}
 		for _, row := range created {
+			if !(row.WorkspaceID.String() == parent.WorkspaceID.String()) {
+				// The link row takes this column from the parent, so the new row
+				// could not be linked. Returning rolls it back with the rest.
+				return nestedError("Labels", "create", nil, ErrAlreadyRelated)
+			}
 			targetIDs = append(targetIDs, row.ID)
 		}
 	}
@@ -47180,6 +50339,7 @@ func (c *taskClient) applyTaskLabelsNested(ctx context.Context, parent *Task, ne
 	// than a junction row nobody can ever read.
 	if len(connectIDs) > 0 {
 		found := make(map[int64]bool, len(connectIDs))
+		agrees := make(map[int64]bool, len(connectIDs))
 		// Chunked at c.batchSize. A single statement over the caller's
 		// whole list hits a bind-parameter ceiling that is dialect-dependent
 		// and lowest on SQLite (32766), and every dialect's error for it names
@@ -47201,7 +50361,7 @@ func (c *taskClient) applyTaskLabelsNested(ctx context.Context, parent *Task, ne
 				Limit: new(0),
 			}, func(o *CallOptions[LabelFieldOptions]) {
 				nestedChildOptions(o, options)
-				o.FieldOptions = &LabelFieldOptions{ID: true}
+				o.FieldOptions = &LabelFieldOptions{ID: true, WorkspaceID: true}
 				// Deliberately unlocked: this validates caller input at call time,
 				// it does not promise the target is still visible at commit.
 				o.LockMode = sql.LockNone
@@ -47211,11 +50371,17 @@ func (c *taskClient) applyTaskLabelsNested(ctx context.Context, parent *Task, ne
 			}
 			for _, row := range visible {
 				found[row.ID] = true
+				agrees[row.ID] = row.WorkspaceID.String() == parent.WorkspaceID.String()
 			}
 		}
 		for _, tid := range connectIDs {
 			if !found[tid] {
 				return nestedError("Labels", "connect", tid, ErrNotFound)
+			}
+			if !agrees[tid] {
+				// Both junction keys hold this column and the link row takes it
+				// from the parent, so this target is bound to another key.
+				return nestedError("Labels", "connect", tid, ErrAlreadyRelated)
 			}
 		}
 		targetIDs = append(targetIDs, connectIDs...)
@@ -47243,8 +50409,8 @@ func (c *taskClient) applyTaskLabelsNested(ctx context.Context, parent *Task, ne
 			nestedChildOptions(o, options)
 			o.FieldOptions = &TaskLabelFieldOptions{}
 		}); err != nil {
-			// The key sets the tenant column from the parent and tenancy sets it
-			// from the resolver: disagreeing, the two bind this row to two keys.
+			// A key sets the tenant column and tenancy sets it from the resolver:
+			// disagreeing, the two bind this row to two keys.
 			if errors.Is(err, tenancy.ErrMismatch) {
 				err = ErrAlreadyRelated
 			}
@@ -47335,15 +50501,21 @@ func (c *taskClient) applyTaskReviewersNested(ctx context.Context, parent *Task,
 		}
 		// No traversed FK to elide on an M2M target — the parent's key goes
 		// into the junction row below — so this is the target's own create
-		// input verbatim. The PK-only selection is what the link step needs.
+		// input verbatim. The selection is what the link step and the shared
+		// column comparison below need.
 		created, err := c.reviewerClient.CreateMany(ctx, nested.Create, func(o *CallOptions[ReviewerFieldOptions]) {
 			nestedChildOptions(o, options)
-			o.FieldOptions = &ReviewerFieldOptions{ID: true}
+			o.FieldOptions = &ReviewerFieldOptions{ID: true, WorkspaceID: true}
 		})
 		if err != nil {
 			return nestedError("Reviewers", "create", nil, err)
 		}
 		for _, row := range created {
+			if !(row.WorkspaceID.String() == parent.WorkspaceID.String()) {
+				// The link row takes this column from the parent, so the new row
+				// could not be linked. Returning rolls it back with the rest.
+				return nestedError("Reviewers", "create", nil, ErrAlreadyRelated)
+			}
 			targetIDs = append(targetIDs, row.ID)
 		}
 	}
@@ -47354,6 +50526,7 @@ func (c *taskClient) applyTaskReviewersNested(ctx context.Context, parent *Task,
 	// than a junction row nobody can ever read.
 	if len(connectIDs) > 0 {
 		found := make(map[int64]bool, len(connectIDs))
+		agrees := make(map[int64]bool, len(connectIDs))
 		// Chunked at c.batchSize. A single statement over the caller's
 		// whole list hits a bind-parameter ceiling that is dialect-dependent
 		// and lowest on SQLite (32766), and every dialect's error for it names
@@ -47375,7 +50548,7 @@ func (c *taskClient) applyTaskReviewersNested(ctx context.Context, parent *Task,
 				Limit: new(0),
 			}, func(o *CallOptions[ReviewerFieldOptions]) {
 				nestedChildOptions(o, options)
-				o.FieldOptions = &ReviewerFieldOptions{ID: true}
+				o.FieldOptions = &ReviewerFieldOptions{ID: true, WorkspaceID: true}
 				// Deliberately unlocked: this validates caller input at call time,
 				// it does not promise the target is still visible at commit.
 				o.LockMode = sql.LockNone
@@ -47385,11 +50558,17 @@ func (c *taskClient) applyTaskReviewersNested(ctx context.Context, parent *Task,
 			}
 			for _, row := range visible {
 				found[row.ID] = true
+				agrees[row.ID] = row.WorkspaceID.String() == parent.WorkspaceID.String()
 			}
 		}
 		for _, tid := range connectIDs {
 			if !found[tid] {
 				return nestedError("Reviewers", "connect", tid, ErrNotFound)
+			}
+			if !agrees[tid] {
+				// Both junction keys hold this column and the link row takes it
+				// from the parent, so this target is bound to another key.
+				return nestedError("Reviewers", "connect", tid, ErrAlreadyRelated)
 			}
 		}
 		targetIDs = append(targetIDs, connectIDs...)
@@ -47417,8 +50596,8 @@ func (c *taskClient) applyTaskReviewersNested(ctx context.Context, parent *Task,
 			nestedChildOptions(o, options)
 			o.FieldOptions = &TaskReviewerFieldOptions{}
 		}); err != nil {
-			// The key sets the tenant column from the parent and tenancy sets it
-			// from the resolver: disagreeing, the two bind this row to two keys.
+			// A key sets the tenant column and tenancy sets it from the resolver:
+			// disagreeing, the two bind this row to two keys.
 			if errors.Is(err, tenancy.ErrMismatch) {
 				err = ErrAlreadyRelated
 			}
@@ -50725,6 +53904,2302 @@ type GetTemplateLabelsInput struct {
 	requiredColumns []string
 }
 
+// TemplateStampPK - composite primary key for the template_stamps table.
+type TemplateStampPK struct {
+	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
+	TemplateID  int64     `db:"template_id" json:"template_id"`
+	StampID     int64     `db:"stamp_id" json:"stamp_id"`
+}
+type TemplateStamp struct {
+	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
+	TemplateID  int64     `db:"template_id" json:"template_id"`
+	StampID     int64     `db:"stamp_id" json:"stamp_id"`
+}
+
+// TemplateStampClient provides type-safe operations for the template_stamps table.
+type TemplateStampClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single templateStamp by primary key.
+	Get(ctx context.Context, pk TemplateStampPK, opts ...func(*CallOptions[TemplateStampFieldOptions])) (*TemplateStamp, error)
+
+	// GetMany returns template_stamps matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetTemplateStampsInput, opts ...func(*CallOptions[TemplateStampFieldOptions])) ([]*TemplateStamp, error)
+
+	// Exists returns true if a templateStamp with the given primary key exists.
+	Exists(ctx context.Context, pk TemplateStampPK, opts ...func(*CallOptions[TemplateStampFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any templateStamp matches the given filter.
+	ExistsWhere(ctx context.Context, filter *TemplateStampFilter, opts ...func(*CallOptions[TemplateStampFieldOptions])) (bool, error)
+
+	// Count returns the number of template_stamps matching the given filter.
+	Count(ctx context.Context, filter *TemplateStampFilter, opts ...func(*CallOptions[TemplateStampFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new templateStamp and returns the created entity.
+	Create(ctx context.Context, input *CreateTemplateStampInput, opts ...func(*CallOptions[TemplateStampFieldOptions])) (*TemplateStamp, error)
+
+	// CreateMany inserts multiple template_stamps in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateTemplateStampInput, opts ...func(*CallOptions[TemplateStampFieldOptions])) ([]*TemplateStamp, error)
+
+	// Update partially updates a templateStamp by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, pk TemplateStampPK, input *UpdateTemplateStampInput, opts ...func(*CallOptions[TemplateStampFieldOptions])) (*TemplateStamp, error)
+
+	// UpdateMany updates multiple template_stamps and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateTemplateStampItem, opts ...func(*CallOptions[TemplateStampFieldOptions])) ([]*TemplateStamp, error)
+
+	// UpdateWhere updates all template_stamps matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *TemplateStampFilter, input *UpdateTemplateStampInput, opts ...func(*CallOptions[TemplateStampFieldOptions])) ([]*TemplateStamp, error)
+
+	// Upsert inserts a templateStamp or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateTemplateStampInput, target TemplateStampConflictTarget, opts ...func(*CallOptions[TemplateStampFieldOptions])) (*TemplateStamp, error)
+
+	// UpsertMany inserts or updates multiple template_stamps in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateTemplateStampInput, target TemplateStampConflictTarget, opts ...func(*CallOptions[TemplateStampFieldOptions])) ([]*TemplateStamp, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a templateStamp from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, pk TemplateStampPK, opts ...func(*CallOptions[TemplateStampFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple template_stamps from the database.
+	HardDeleteMany(ctx context.Context, pks []TemplateStampPK, opts ...func(*CallOptions[TemplateStampFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all template_stamps matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *TemplateStampFilter, opts ...func(*CallOptions[TemplateStampFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of template_stamps with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[TemplateStampFilter], opts ...func(*CallOptions[TemplateStampFieldOptions])) (*PaginateResult[TemplateStamp], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of template_stamps.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[TemplateStampFilter], opts ...func(*CallOptions[TemplateStampFieldOptions])) (*Connection[TemplateStamp], error)
+
+	// Stream returns an iterator over template_stamps matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamTemplateStampsInput, opts ...func(*CallOptions[StreamTemplateStampFieldOptions])) iter.Seq2[*TemplateStamp, error]
+}
+
+// templateStampClient implements the TemplateStampClient interface.
+type templateStampClient struct {
+	querier        database.Querier
+	dialect        sql.Dialect
+	table          sql.Table
+	batchSize      int
+	queryLimit     int
+	pageSize       int
+	cursorKeys     []string
+	strictUpdates  bool
+	mutationHooks  []hook.MutationHook
+	queryHooks     []hook.QueryHook
+	panicHandler   hook.PanicHandler
+	tenantResolver tenancy.TenantResolver[uuid.UUID]
+}
+
+// newTemplateStampClient creates a new templateStampClient.
+func newTemplateStampClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *templateStampClient {
+	return &templateStampClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "template_stamps"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"workspace_id", "template_id", "stamp_id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *templateStampClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *templateStampClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// resolveTenant reads the operation's tenant from tenantValue and applies THIS
+// table's tenancy.required setting to it, returning the value, a bool
+// indicating whether tenancy should be applied to this call, and any resolver
+// error. The split matters: tenantValue's answer is shared across every client
+// the operation touches, while the apply bool below is this table's alone
+// (required is a per-table setting). The apply bool encodes the
+// tenancy.required semantic:
+//
+//   - Non-zero resolver return → apply=true; callers AND the filter into the
+//     WHERE (reads), verify-match against caller-supplied tenant (mutations),
+//     and auto-set the tenant column on INSERT.
+//   - Zero resolver return (resolver returned (zero, nil) or is nil) under
+//     tenancy.required:true → apply=false, err=tenancy.ErrMissing. The op
+//     fails closed before the DB round-trip.
+//   - Zero resolver return under tenancy.required:false → apply=false, err=nil.
+//     The op silently becomes cross-tenant: no filter append, no verify-match,
+//     no auto-set. This is the "missing tenant skips the filter" path
+//     — always-off rather than a silent zero-value write.
+//   - Resolver returns a non-nil error → apply=false, err propagated.
+//
+// Required-at-codegen determinism: the required:true vs required:false branch
+// is picked at template-expansion time per-table, from the table's resolved
+// tenancy config. Runtime callers observe a stable behavior per table.
+//
+// explicit carries CallOptions.Tenant (the explicit-tenant resolution
+// mode): when non-nil, tenancy behaves as normal resolution with
+// the resolver replaced by this constant — filter, auto-set, and verify-match
+// all apply. Precedence over SkipTenancy is normalized in
+// resolveCallOptions, so callers gate on SkipTenancy exactly as before. The
+// pointer distinguishes set from unset; a set zero value is honored verbatim.
+func (c *templateStampClient) resolveTenant(ctx context.Context, explicit *uuid.UUID) (uuid.UUID, bool, error) {
+	if explicit != nil {
+		return *explicit, true, nil
+	}
+	var zero uuid.UUID
+	v, err := c.tenantValue(ctx)
+	if err != nil {
+		return zero, false, err
+	}
+	if v == zero {
+		return zero, false, tenancy.ErrMissing
+	}
+	return v, true, nil
+}
+
+// tenantValue returns the tenant the user resolver reports for this operation,
+// invoking it at most once per logical operation.
+//
+// It answers the table-independent half of the question and stops there: what
+// the resolver said. The tenancy.required reading of that answer — zero means
+// ErrMissing, or zero means skip the filter — belongs to resolveTenant above,
+// because `required` is a per-table setting while this value is
+// shared across every client the operation touches.
+//
+// Keeping the two apart is load-bearing rather than tidy. The ctx cache is
+// keyed on the tenant type alone, so it is one slot for the whole package;
+// caching the reading instead of the answer let whichever table resolved first
+// impose its `required` on the rest, and a required:false table handing
+// apply=false to a required:true one is a fail-open. A nil resolver
+// yields the zero value and the same per-table branch a zero return takes.
+func (c *templateStampClient) tenantValue(ctx context.Context) (uuid.UUID, error) {
+	// Short-circuit: an entry point for this logical operation — a chaining
+	// mutation (Create, Update, Upsert, …) or a nested method's hoist — already
+	// resolved and stashed the value via tenancy.WithResolvedTenant. Lookup
+	// uses the same comparable T as the resolver, so collisions across entity
+	// clients with different tenant types are impossible.
+	if v, ok := tenancy.CachedTenant[uuid.UUID](ctx); ok {
+		return v, nil
+	}
+	if c.tenantResolver == nil {
+		var zero uuid.UUID
+		return zero, nil
+	}
+	return c.tenantResolver(ctx)
+}
+
+// templateStampAllColumns is the column list for full-entity reads, sorted for determinism.
+var templateStampAllColumns = []string{"stamp_id", "template_id", "workspace_id"}
+
+// scanTemplateStamps scans rows into TemplateStamp entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanTemplateStamps(rows database.Rows, columns []string) ([]*TemplateStamp, error) {
+	var result []*TemplateStamp
+	for rows.Next() {
+		t := &TemplateStamp{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "workspace_id":
+				targets[idx] = &t.WorkspaceID
+			case "template_id":
+				targets[idx] = &t.TemplateID
+			case "stamp_id":
+				targets[idx] = &t.StampID
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan template_stamp: %w", err)
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate template_stamp rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single template_stamp by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *templateStampClient) Get(ctx context.Context, pk TemplateStampPK, opts ...func(*CallOptions[TemplateStampFieldOptions])) (*TemplateStamp, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get template_stamp: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableTemplateStamps, Schema: "public",
+		PK: pk, CallOptions: options,
+	}
+	// Resolve tenant once at the entity-method boundary so the
+	// cache read-through hook can build a tenant-scoped key. The terminal
+	// (and the internal GetMany) sees the same value via q.Tenant. apply=false
+	// under tenancy.required:false + zero resolver skips both qctx.Tenant and
+	// the verify-match (cross-tenant read).
+	if !options.SkipTenancy {
+		resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nil, fmt.Errorf("get template_stamp: resolve tenant: %w", err)
+		}
+		if apply {
+			// Tenant-in-PK verify-match. The tenant column is part of
+			// the composite primary key, so the caller supplies it explicitly on
+			// TemplateStampPK; the runtime verifies it matches the resolved tenant
+			// before any DB round-trip. No auto-fill — mismatch returns ErrMismatch.
+			if pk.WorkspaceID != resolvedTenant {
+				return nil, fmt.Errorf("get template_stamp: %w", tenancy.ErrMismatch)
+			}
+			qctx.Tenant = resolvedTenant
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[TemplateStampFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[TemplateStampFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		templateStamps, err := c.GetMany(ctx, &GetTemplateStampsInput{
+			Filter: &TemplateStampFilter{
+				WorkspaceID: &comparator.ID{Eq: new(pk.WorkspaceID.String())},
+				TemplateID:  &comparator.Number[int64]{Eq: new(pk.TemplateID)},
+				StampID:     &comparator.Number[int64]{Eq: new(pk.StampID)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(templateStamps) == 0 {
+			return nil, ErrNotFound
+		}
+		return templateStamps[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get template_stamp: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*TemplateStamp), nil
+}
+
+// GetMany returns template_stamps matching the given filter, field selection, and sort criteria.
+func (c *templateStampClient) GetMany(ctx context.Context, input *GetTemplateStampsInput, opts ...func(*CallOptions[TemplateStampFieldOptions])) ([]*TemplateStamp, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetTemplateStampsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get many template_stamps: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableTemplateStamps, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := templateStampAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter — append tenant = resolved to WHERE.
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// filter (cross-tenant read).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var templateStamps []*TemplateStamp
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		templateStamps, err = scanTemplateStamps(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return templateStamps, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many template_stamps: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TemplateStamp), nil
+}
+
+// Create inserts a new template_stamp and returns the created entity.
+func (c *templateStampClient) Create(ctx context.Context, input *CreateTemplateStampInput, opts ...func(*CallOptions[TemplateStampFieldOptions])) (*TemplateStamp, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateTemplateStampInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create template_stamp: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableTemplateStamps, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"workspace_id", "template_id", "stamp_id"}
+		args := []any{input.WorkspaceID, input.TemplateID, input.StampID}
+		// Tenant-in-PK verify-match. The tenant column is part of
+		// the composite primary key and is a required field on CreateInput, so
+		// it was already appended to columns/args via the required-fields head
+		// above. Here we only verify the caller-supplied value matches the
+		// resolved tenant; mismatch returns ErrMismatch before the DB round-trip.
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// verify-match (cross-tenant write; caller-supplied value is used as-is).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal Get/GetMany (and any nested
+			// resolveTenant inside the chain) reuses this value instead of
+			// re-invoking the user resolver — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if input.WorkspaceID != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash resolved tenant on MutationContext so the cache hook
+				// builds tenant-scoped keys without re-invoking the resolver
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns: columns,
+			Values:  args,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, err
+		}
+
+		m.AffectedPKs = []any{TemplateStampPK{WorkspaceID: input.WorkspaceID, TemplateID: input.TemplateID, StampID: input.StampID}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, TemplateStampPK{WorkspaceID: input.WorkspaceID, TemplateID: input.TemplateID, StampID: input.StampID}, func(o *CallOptions[TemplateStampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create template_stamp: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*TemplateStamp), nil
+}
+
+// CreateMany inserts multiple template_stamps in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *templateStampClient) CreateMany(ctx context.Context, inputs []*CreateTemplateStampInput, opts ...func(*CallOptions[TemplateStampFieldOptions])) ([]*TemplateStamp, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many template_stamps: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableTemplateStamps, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*TemplateStamp{}, nil
+		}
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// (and the per-input verify-match short-circuits via the cache)
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allPKs []TemplateStampPK
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"workspace_id", "template_id", "stamp_id"}
+			var valueRows [][]any
+			for _, input := range batch {
+				// Tenant-in-PK verify-match for each input in the batch.
+				// input.WorkspaceID is a required plain field, so no
+				// auto-fill happens; the caller supplied it and we verify it here.
+				// applyTenancy is false under SkipTenancy OR under required:false
+				// + zero resolver — caller-supplied tenant is accepted as-is.
+				if applyTenancy && input.WorkspaceID != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+
+				valueRows = append(valueRows, []any{
+					input.WorkspaceID,
+					input.TemplateID,
+					input.StampID,
+				})
+			}
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:   columns,
+				ValueRows: valueRows,
+			})
+			_, err := conn.Exec(ctx, query, queryArgs...)
+			if err != nil {
+				return nil, err
+			}
+			for _, input := range batch {
+				allPKs = append(allPKs, TemplateStampPK{WorkspaceID: input.WorkspaceID, TemplateID: input.TemplateID, StampID: input.StampID})
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		return c.GetMany(ctx, &GetTemplateStampsInput{
+			Filter: &TemplateStampFilter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[TemplateStampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many template_stamps: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TemplateStamp), nil
+}
+
+// Update partially updates a template_stamp by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *templateStampClient) Update(ctx context.Context, pk TemplateStampPK, input *UpdateTemplateStampInput, opts ...func(*CallOptions[TemplateStampFieldOptions])) (*TemplateStamp, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update template_stamp: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableTemplateStamps, Schema: "public",
+		PK: pk, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Tenancy mismatch check before any SQL build. applyTenancy
+		// is false under SkipTenancy OR under required:false + zero resolver —
+		// in the second case the WHERE below also drops the tenant predicate.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Tenant-in-PK verify-match. The tenant column is part of
+				// the composite primary key on TemplateStampPK; the caller supplies
+				// it explicitly, and we reject any mismatch before the DB round-trip.
+				// No input-side check — tenant column is excluded from UpdateInput when
+				// it lives in the PK.
+				if pk.WorkspaceID != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, pk, func(o *CallOptions[TemplateStampFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+		updateConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"workspace_id", "template_id", "stamp_id"},
+			[]any{pk.WorkspaceID, pk.TemplateID, pk.StampID})
+		if applyTenancy {
+			updateConds = append(updateConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: updateConds,
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{pk}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, pk, func(o *CallOptions[TemplateStampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update template_stamp: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*TemplateStamp), nil
+}
+
+// UpdateTemplateStampItem pairs a primary key with an update input for batch updates.
+type UpdateTemplateStampItem struct {
+	PK    TemplateStampPK           `json:"pk"`
+	Input *UpdateTemplateStampInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple template_stamps and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
+func (c *templateStampClient) UpdateMany(ctx context.Context, items []UpdateTemplateStampItem, opts ...func(*CallOptions[TemplateStampFieldOptions])) ([]*TemplateStamp, error) {
+	// UpdateTemplateStampItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many template_stamps: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableTemplateStamps, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*TemplateStamp{}, nil
+		}
+
+		// Resolve the tenant once; per-item mismatch checks use the same value.
+		// applyTenancy=false under SkipTenancy OR under required:false + zero
+		// resolver — the per-item verify-match and per-row WHERE both drop.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the per-item verify-match short-circuits via the
+			// cache and the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				for _, item := range items {
+					// Tenant-in-PK verify-match per item in the batch.
+					// No input-side check — tenant column excluded from UpdateInput
+					// when it lives in the PK.
+					if item.PK.WorkspaceID != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allPKs []TemplateStampPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateTemplateStampItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			var queuedItems []UpdateTemplateStampItem
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allPKs = append(allPKs, item.PK)
+					continue
+				}
+				itemConds := sql.BuildCompositePKConditions(c.dialect,
+					[]string{"workspace_id", "template_id", "stamp_id"},
+					[]any{item.PK.WorkspaceID, item.PK.TemplateID, item.PK.StampID})
+				if applyTenancy {
+					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: itemConds,
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
+				allPKs = append(allPKs, item.PK)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].PK, err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close batch: %w", err)
+					}
+				} else {
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_template_stamp", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("item %v: %w", queuedItems[i].PK, err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("item %v rows affected: %w", queuedItems[i].PK, err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
+						}
+						return nil
+					}); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetTemplateStampsInput{
+			Filter: &TemplateStampFilter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[TemplateStampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many template_stamps: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TemplateStamp), nil
+}
+
+// UpdateWhere updates all template_stamps matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *templateStampClient) UpdateWhere(ctx context.Context, filter *TemplateStampFilter, input *UpdateTemplateStampInput, opts ...func(*CallOptions[TemplateStampFieldOptions])) ([]*TemplateStamp, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update template_stamps where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableTemplateStamps, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Tenancy filter + mismatch check. applyTenancy=false
+		// under SkipTenancy OR under required:false + zero resolver — the
+		// filter is not AND'd and the SET-clause tenant override below fires
+		// (only meaningful when the tenant column is NOT in the PK; when it
+		// is, the column is excluded from UpdateInputFields entirely).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetTemplateStampsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[TemplateStampFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING — get affected composite PKs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"workspace_id", "template_id", "stamp_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var pks []TemplateStampPK
+		for rows.Next() {
+			var pk TemplateStampPK
+			if err := rows.Scan(&pk.WorkspaceID, &pk.TemplateID, &pk.StampID); err != nil {
+				return nil, fmt.Errorf("scan updated template_stamp pk: %w", err)
+			}
+			pks = append(pks, pk)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(pks) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(pks)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetTemplateStampsInput{
+			Filter: &TemplateStampFilter{PKs: pks},
+			Limit:  new(0),
+		}, func(o *CallOptions[TemplateStampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update template_stamps where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TemplateStamp), nil
+}
+
+// HardDelete permanently removes a template_stamp from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *templateStampClient) HardDelete(ctx context.Context, pk TemplateStampPK, opts ...func(*CallOptions[TemplateStampFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableTemplateStamps, Schema: "public",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		hardConds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"workspace_id", "template_id", "stamp_id"},
+			[]any{pk.WorkspaceID, pk.TemplateID, pk.StampID})
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				// Tenant-in-PK verify-match.
+				if pk.WorkspaceID != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: hardConds,
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete template_stamp: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple template_stamps from the database.
+func (c *templateStampClient) HardDeleteMany(ctx context.Context, pks []TemplateStampPK, opts ...func(*CallOptions[TemplateStampFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableTemplateStamps, Schema: "public",
+		Input: pks, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var scopeConds []sql.Condition
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				// Tenant-in-PK verify-match per item in the batch.
+				for i := range pks {
+					if pks[i].WorkspaceID != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+				}
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[TemplateStampPK]struct{}, len(pks))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.WorkspaceID, pk.TemplateID, pk.StampID}
+			}
+			hardConds := []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "template_id", "stamp_id"}, pkValues),
+			}
+			hardConds = append(hardConds, scopeConds...)
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"workspace_id", "template_id", "stamp_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[TemplateStampPK]struct{}, end-start)
+			for rows.Next() {
+				var rowPK TemplateStampPK
+				if err := rows.Scan(&rowPK.WorkspaceID, &rowPK.TemplateID, &rowPK.StampID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted template_stamp key: %w", err)
+				}
+				batchKeys[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many template_stamps: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all template_stamps matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *templateStampClient) HardDeleteWhere(ctx context.Context, filter *TemplateStampFilter, opts ...func(*CallOptions[TemplateStampFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableTemplateStamps, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// DELETE with RETURNING — get affected composite PKs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"workspace_id", "template_id", "stamp_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var pks []TemplateStampPK
+		for rows.Next() {
+			var pk TemplateStampPK
+			if err := rows.Scan(&pk.WorkspaceID, &pk.TemplateID, &pk.StampID); err != nil {
+				return nil, fmt.Errorf("scan deleted template_stamp pk: %w", err)
+			}
+			pks = append(pks, pk)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(pks)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete template_stamps where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *templateStampClient) recordWrittenKeys(written map[TemplateStampPK]struct{}, listed []TemplateStampPK, rowKeys map[TemplateStampPK]struct{}) {
+	found := make(map[TemplateStampPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// TemplateStampConflictTarget identifies a unique constraint for upsert conflict detection.
+type TemplateStampConflictTarget int
+
+const (
+	TemplateStampConflictPK TemplateStampConflictTarget = iota // PRIMARY KEY (workspace_id, template_id, stamp_id)
+)
+
+// templateStampConflictColumns maps each conflict target to its column set.
+var templateStampConflictColumns = map[TemplateStampConflictTarget][]string{
+	TemplateStampConflictPK: {"workspace_id", "template_id", "stamp_id"},
+}
+
+// Upsert inserts a template_stamp or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *templateStampClient) Upsert(ctx context.Context, input *CreateTemplateStampInput, target TemplateStampConflictTarget, opts ...func(*CallOptions[TemplateStampFieldOptions])) (*TemplateStamp, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateTemplateStampInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert template_stamp: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableTemplateStamps, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"workspace_id", "template_id", "stamp_id"}
+		args := []any{input.WorkspaceID, input.TemplateID, input.StampID}
+		// Tenant-in-PK verify-match. input.WorkspaceID
+		// is a required field (already appended to columns/args above).
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// verify-match (cross-tenant write; caller-supplied value used as-is).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// (single-resolve).
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if input.WorkspaceID != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := templateStampConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "workspace_id", "template_id", "stamp_id", "workspace_id"))
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns:             columns,
+			Values:              args,
+			UpsertConflictKeys:  conflictColumns,
+			UpsertUpdateColumns: updateColumns,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, err
+		}
+
+		m.AffectedPKs = []any{TemplateStampPK{WorkspaceID: input.WorkspaceID, TemplateID: input.TemplateID, StampID: input.StampID}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, TemplateStampPK{WorkspaceID: input.WorkspaceID, TemplateID: input.TemplateID, StampID: input.StampID}, func(o *CallOptions[TemplateStampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert template_stamp: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*TemplateStamp), nil
+}
+
+// UpsertMany inserts or updates multiple template_stamps in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+func (c *templateStampClient) UpsertMany(ctx context.Context, inputs []*CreateTemplateStampInput, target TemplateStampConflictTarget, opts ...func(*CallOptions[TemplateStampFieldOptions])) ([]*TemplateStamp, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many template_stamps: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableTemplateStamps, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*TemplateStamp{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"workspace_id", "template_id", "stamp_id"}
+		conflictColumns := templateStampConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "workspace_id", "template_id", "stamp_id", "workspace_id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateTemplateStampInput, 0, len(inputs))
+		rowPKs := make([]TemplateStampPK, 0, len(inputs))
+		for _, input := range inputs {
+			// Tenant-in-PK verify-match for each input in the batch.
+			// input.WorkspaceID is a required plain field, so no
+			// auto-fill happens; the caller supplied it and we verify it here.
+			// applyTenancy is false under SkipTenancy OR under required:false
+			// + zero resolver — caller-supplied tenant is accepted as-is.
+			if applyTenancy && input.WorkspaceID != resolvedTenant {
+				return nil, tenancy.ErrMismatch
+			}
+
+			valueRows = append(valueRows, []any{
+				input.WorkspaceID,
+				input.TemplateID,
+				input.StampID,
+			})
+			rowInputs = append(rowInputs, input)
+			rowPKs = append(rowPKs, TemplateStampPK{WorkspaceID: input.WorkspaceID, TemplateID: input.TemplateID, StampID: input.StampID})
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateTemplateStampInput, 0, len(rowInputs))
+			dedupedPKs := make([]TemplateStampPK, 0, len(rowPKs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedPKs[j] = rowPKs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedPKs = append(dedupedPKs, rowPKs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowPKs = dedupedPKs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(rowPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		written, err := c.GetMany(ctx, &GetTemplateStampsInput{
+			Filter: &TemplateStampFilter{PKs: rowPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[TemplateStampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowPKs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many template_stamps: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TemplateStamp), nil
+}
+
+// Exists returns true if a template_stamp with the given primary key exists.
+func (c *templateStampClient) Exists(ctx context.Context, pk TemplateStampPK, opts ...func(*CallOptions[TemplateStampFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableTemplateStamps, Schema: "public",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"workspace_id", "template_id", "stamp_id"},
+			[]any{pk.WorkspaceID, pk.TemplateID, pk.StampID})
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips both the verify-match and the filter append.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				// Tenant-in-PK verify-match.
+				if pk.WorkspaceID != resolvedTenant {
+					return false, tenancy.ErrMismatch
+				}
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists template_stamp: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any template_stamp matches the given filter.
+func (c *templateStampClient) ExistsWhere(ctx context.Context, filter *TemplateStampFilter, opts ...func(*CallOptions[TemplateStampFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableTemplateStamps, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant probe).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists template_stamps where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of template_stamps matching the given filter.
+// A nil filter counts all template_stamps.
+func (c *templateStampClient) Count(ctx context.Context, filter *TemplateStampFilter, opts ...func(*CallOptions[TemplateStampFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableTemplateStamps, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant count).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count template_stamps: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of template_stamps with total count for offset-based pagination.
+// A nil filter paginates all template_stamps.
+func (c *templateStampClient) Paginate(ctx context.Context, input PaginateInput[TemplateStampFilter], opts ...func(*CallOptions[TemplateStampFieldOptions])) (*PaginateResult[TemplateStamp], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate template_stamps: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableTemplateStamps, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[TemplateStampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		templateStamps, err := c.GetMany(ctx, &GetTemplateStampsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[TemplateStamp]{
+			Items:      templateStamps,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate template_stamps: %w", err)
+	}
+	return result.(*PaginateResult[TemplateStamp]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of template_stamps.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *templateStampClient) Connection(ctx context.Context, input ConnectionInput[TemplateStampFilter], opts ...func(*CallOptions[TemplateStampFieldOptions])) (*Connection[TemplateStamp], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection template_stamps: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableTemplateStamps, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[TemplateStampFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeTemplateStampCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeTemplateStampCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		templateStamps, err := c.GetMany(ctx, &GetTemplateStampsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(templateStamps) > limit
+		if hasMore {
+			templateStamps = templateStamps[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(templateStamps)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[TemplateStamp], len(templateStamps))
+		for i, row := range templateStamps {
+			cursor, err := encodeTemplateStampCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[TemplateStamp]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[TemplateStamp]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection template_stamps: %w", err)
+	}
+	return result.(*Connection[TemplateStamp]), nil
+}
+
+// encodeTemplateStampCursor encodes cursor key values as a base64 JSON string.
+func encodeTemplateStampCursor(keys []string, t *TemplateStamp) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "workspace_id":
+			out["workspace_id"] = t.WorkspaceID
+		case "template_id":
+			out["template_id"] = t.TemplateID
+		case "stamp_id":
+			out["stamp_id"] = t.StampID
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode template_stamp cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeTemplateStampCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeTemplateStampCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row TemplateStamp
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "workspace_id":
+			err = json.Unmarshal(raw[key], &row.WorkspaceID)
+			out[key] = row.WorkspaceID
+		case "template_id":
+			err = json.Unmarshal(raw[key], &row.TemplateID)
+			out[key] = row.TemplateID
+		case "stamp_id":
+			err = json.Unmarshal(raw[key], &row.StampID)
+			out[key] = row.StampID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamTemplateStampsInput holds query parameters for streaming template_stamps records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamTemplateStampsInput struct {
+	Filter *TemplateStampFilter `json:"filter"`
+	Sorts  []sql.Sort           `json:"sorts"`
+}
+
+// StreamTemplateStampFieldOptions controls scalar column selection for template_stamps streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamTemplateStampFieldOptions struct {
+	WorkspaceID bool `json:"workspace_id"`
+	TemplateID  bool `json:"template_id"`
+	StampID     bool `json:"stamp_id"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamTemplateStampFieldOptions) Columns() []string {
+	var cols []string
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.TemplateID {
+		cols = append(cols, "template_id")
+	}
+	if fo.StampID {
+		cols = append(cols, "stamp_id")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamTemplateStampFieldOptions) HasSelectedColumns() bool {
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.TemplateID {
+		return true
+	}
+	if fo.StampID {
+		return true
+	}
+	return false
+}
+
+// scanTemplateStampRow scans a single row into a TemplateStamp entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanTemplateStampRow(rows database.Rows, columns []string) (*TemplateStamp, error) {
+	t := &TemplateStamp{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "workspace_id":
+			targets[idx] = &t.WorkspaceID
+		case "template_id":
+			targets[idx] = &t.TemplateID
+		case "stamp_id":
+			targets[idx] = &t.StampID
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan template_stamp: %w", err)
+	}
+
+	return t, nil
+}
+
+// Stream returns an iterator over template_stamps matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *templateStampClient) Stream(ctx context.Context, input *StreamTemplateStampsInput, opts ...func(*CallOptions[StreamTemplateStampFieldOptions])) iter.Seq2[*TemplateStamp, error] {
+	return func(yield func(*TemplateStamp, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamTemplateStampsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream template_stamps: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *TemplateStamp, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream template_stamps: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableTemplateStamps, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := templateStampAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					emit(nil, fmt.Errorf("resolve tenant: %w", err))
+					return nil, nil
+				}
+				if apply {
+					conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				t, err := scanTemplateStampRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(t, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate template_stamp rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream template_stamps: %w", err))
+		}
+	}
+}
+
+// TemplateStampFilter provides type-safe filtering for the template_stamps table.
+type TemplateStampFilter struct {
+	StampID     *comparator.Number[int64] `json:"stamp_id"`
+	TemplateID  *comparator.Number[int64] `json:"template_id"`
+	WorkspaceID *comparator.ID            `json:"workspace_id"`
+	PKs         []TemplateStampPK         `json:"pks"`
+	And         []*TemplateStampFilter    `json:"and"`
+	Or          []*TemplateStampFilter    `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *TemplateStampFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.StampID != nil {
+		conds = append(conds, f.StampID.Parse(dialect.QuoteIdentifier("stamp_id"), dialect)...)
+	}
+
+	if f.TemplateID != nil {
+		conds = append(conds, f.TemplateID.Parse(dialect.QuoteIdentifier("template_id"), dialect)...)
+	}
+
+	if f.WorkspaceID != nil {
+		conds = append(conds, f.WorkspaceID.Parse(dialect.QuoteIdentifier("workspace_id"), dialect)...)
+	}
+
+	if len(f.PKs) > 0 {
+		var pkConds []sql.Condition
+		for _, pk := range f.PKs {
+			pkConds = append(pkConds, sql.And(
+				sql.Condition{Clause: dialect.QuoteIdentifier("workspace_id") + " = $", Value: pk.WorkspaceID},
+				sql.Condition{Clause: dialect.QuoteIdentifier("template_id") + " = $", Value: pk.TemplateID},
+				sql.Condition{Clause: dialect.QuoteIdentifier("stamp_id") + " = $", Value: pk.StampID},
+			))
+		}
+		conds = append(conds, sql.Or(pkConds...))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// TemplateStampFieldOptions controls column selection and relationship loading for template_stamps queries.
+type TemplateStampFieldOptions struct {
+	WorkspaceID bool `json:"workspace_id"`
+	TemplateID  bool `json:"template_id"`
+	StampID     bool `json:"stamp_id"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *TemplateStampFieldOptions) Columns() []string {
+	var cols []string
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.TemplateID {
+		cols = append(cols, "template_id")
+	}
+	if fo.StampID {
+		cols = append(cols, "stamp_id")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *TemplateStampFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"WorkspaceID": "workspace_id",
+		"TemplateID":  "template_id",
+		"StampID":     "stamp_id",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *TemplateStampFieldOptions) HasSelectedColumns() bool {
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.TemplateID {
+		return true
+	}
+	if fo.StampID {
+		return true
+	}
+	return false
+}
+
+// CreateTemplateStampInput holds the fields for creating a template_stamps record.
+type CreateTemplateStampInput struct {
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	TemplateID  int64     `json:"template_id"`
+	StampID     int64     `json:"stamp_id"`
+}
+
+// UpdateTemplateStampInput holds the fields for updating a template_stamps record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateTemplateStampInput struct {
+}
+
+// GetTemplateStampsInput holds query parameters for retrieving template_stamps records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetTemplateStampsInput struct {
+	Filter *TemplateStampFilter `json:"filter"`
+	Limit  *int                 `json:"limit"`
+	Offset *int                 `json:"offset"`
+	Sorts  []sql.Sort           `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 type TemplateStep struct {
 	ID          int64     `db:"id" json:"id"`
 	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
@@ -53485,6 +58960,8 @@ type Template struct {
 
 	// Labels - many-to-many relationship with the labels table.
 	Labels []*Label `db:"-" json:"labels"`
+	// Stamps - many-to-many relationship with the stamps table.
+	Stamps []*Stamp `db:"-" json:"stamps"`
 	// TemplateSteps - one-to-many relationship with the template_steps table.
 	TemplateSteps []*TemplateStep `db:"-" json:"template_steps"`
 }
@@ -53610,9 +59087,12 @@ type templateClient struct {
 	tenantResolver           tenancy.TenantResolver[uuid.UUID]
 	templateStepsDefaultSort []sql.Sort
 	labelsDefaultSort        []sql.Sort
+	stampsDefaultSort        []sql.Sort
 	labelClient              *labelClient
+	stampClient              *stampClient
 	templateStepClient       *templateStepClient
 	templateLabelClient      *templateLabelClient
+	templateStampClient      *templateStampClient
 }
 
 // newTemplateClient creates a new templateClient.
@@ -53985,6 +59465,9 @@ func (fo *TemplateFieldOptions) loadsRelationships() bool {
 	if fo.Labels != nil {
 		return true
 	}
+	if fo.Stamps != nil {
+		return true
+	}
 	return false
 }
 
@@ -54223,6 +59706,147 @@ func (c *templateClient) loadRelationships(ctx context.Context, conn database.Qu
 				for _, t := range relatedLabels {
 					for _, i := range parentsByTarget[[2]string{t.WorkspaceID.String(), fmt.Sprint(t.ID)}] {
 						templateKeyed[i].Labels = append(templateKeyed[i].Labels, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	if fo.Stamps != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			templateKeyed := make([]*Template, 0, len(templates))
+			templateKeys := make([][]any, 0, len(templates))
+			for _, t := range templates {
+				templateKeyed = append(templateKeyed, t)
+				templateKeys = append(templateKeys, []any{t.OwnerWorkspace, t.ID})
+			}
+
+			sorts := fo.Stamps.Sorts
+			if len(sorts) == 0 {
+				sorts = c.stampsDefaultSort
+			}
+
+			// The three steps run once per chunk of 4000 parent keys:
+			// within half the dialect's bind-parameter limit, leaving the rest for
+			// the relationship's filters.
+			for start := 0; start < len(templateKeys); start += 4000 {
+				chunk := templateKeys[start:min(start+4000, len(templateKeys))]
+
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[[2]string][][2]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "public", Name: "template_stamps"}, sql.SelectOptions{
+						Columns:    []string{"workspace_id", "template_id", "stamp_id"},
+						Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "template_id"}, chunk)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load template stamps junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load template stamps junction columns: %w", err)
+					}
+
+					for junctionRows.Next() {
+						var key0 uuid.UUID
+						var key1 int64
+						var key2 int64
+						ptrs := make([]any, len(junctionCols))
+						for i, col := range junctionCols {
+							switch col {
+							case "workspace_id":
+								ptrs[i] = &key0
+							case "template_id":
+								ptrs[i] = &key1
+							case "stamp_id":
+								ptrs[i] = &key2
+							}
+						}
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan template stamps junction: %w", err)
+						}
+						parentID, targetID := [2]string{key0.String(), fmt.Sprint(key1)}, [2]string{key0.String(), fmt.Sprint(key2)}
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate template stamps junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "template_id"}, chunk),
+				})
+				conditions := []sql.Condition{
+					sql.TupleInSubquery(c.dialect, []string{"owner_workspace", "id"}, sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("workspace_id") + ", j." + c.dialect.QuoteIdentifier("stamp_id") + "" +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "public", Name: "template_stamps"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &StampFilter{}
+				if fo.Stamps.Filter != nil {
+					filter.And = append(filter.And, fo.Stamps.Filter)
+				}
+
+				relatedStamps, err := c.stampClient.GetMany(ctx, &GetStampsInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its referenced columns, so
+					// the fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"owner_workspace", "id"},
+				}, func(co *CallOptions[StampFieldOptions]) {
+					co.FieldOptions = fo.Stamps.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+					co.SkipTenancy = options.SkipTenancy
+					co.Tenant = options.Tenant
+				})
+				if err != nil {
+					return fmt.Errorf("load template stamps: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts order each parent's slice.
+				parentsByTarget := make(map[[2]string][]int, len(relatedStamps))
+				for i := start; i < start+len(chunk); i++ {
+					parent := templateKeyed[i]
+					for _, tID := range parentToTargetIDs[[2]string{parent.OwnerWorkspace.String(), fmt.Sprint(parent.ID)}] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedStamps {
+					for _, i := range parentsByTarget[[2]string{t.OwnerWorkspace.String(), fmt.Sprint(t.ID)}] {
+						templateKeyed[i].Stamps = append(templateKeyed[i].Stamps, t)
 					}
 				}
 			}
@@ -55395,6 +61019,9 @@ type CreateTemplateWithRelatedInput struct {
 	// Labels - many-to-many relationship with the labels table.
 	Labels *TemplateLabelsCreateNested `json:"labels,omitempty"`
 
+	// Stamps - many-to-many relationship with the stamps table.
+	Stamps *TemplateStampsCreateNested `json:"stamps,omitempty"`
+
 	// TemplateSteps - one-to-many relationship with the template_steps table.
 	TemplateSteps *TemplateTemplateStepsCreateNested `json:"template_steps,omitempty"`
 }
@@ -55411,6 +61038,9 @@ type UpdateTemplateWithRelatedInput struct {
 
 	// Labels - many-to-many relationship with the labels table.
 	Labels *TemplateLabelsUpdateNested `json:"labels,omitempty"`
+
+	// Stamps - many-to-many relationship with the stamps table.
+	Stamps *TemplateStampsUpdateNested `json:"stamps,omitempty"`
 
 	// TemplateSteps - one-to-many relationship with the template_steps table.
 	TemplateSteps *TemplateTemplateStepsUpdateNested `json:"template_steps,omitempty"`
@@ -55432,6 +61062,9 @@ type UpsertTemplateWithRelatedInput struct {
 
 	// Labels - many-to-many relationship with the labels table.
 	Labels *TemplateLabelsUpdateNested `json:"labels,omitempty"`
+
+	// Stamps - many-to-many relationship with the stamps table.
+	Stamps *TemplateStampsUpdateNested `json:"stamps,omitempty"`
 
 	// TemplateSteps - one-to-many relationship with the template_steps table.
 	TemplateSteps *TemplateTemplateStepsUpdateNested `json:"template_steps,omitempty"`
@@ -55476,6 +61109,50 @@ func templateLabelsNestedFromCreate(n *TemplateLabelsCreateNested) *TemplateLabe
 		return nil
 	}
 	return &TemplateLabelsUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// TemplateStampsCreateNested is the create-side verb block for Template.Stamps.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type TemplateStampsCreateNested struct {
+	Create  []*CreateStampInput `json:"create,omitempty"`
+	Connect []int64             `json:"connect,omitempty"`
+}
+
+// TemplateStampsUpdateNested is the update-side verb block for Template.Stamps,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type TemplateStampsUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool                `json:"clear,omitempty"`
+	Create     []*CreateStampInput `json:"create,omitempty"`
+	Connect    []int64             `json:"connect,omitempty"`
+	Disconnect []int64             `json:"disconnect,omitempty"`
+}
+
+// templateStampsNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func templateStampsNestedFromCreate(n *TemplateStampsCreateNested) *TemplateStampsUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &TemplateStampsUpdateNested{
 		Create:  n.Create,
 		Connect: n.Connect,
 	}
@@ -55535,6 +61212,7 @@ func templateNestedParentFieldOptions(fo *TemplateFieldOptions) *TemplateFieldOp
 	}
 	scalars := *fo
 	scalars.Labels = nil
+	scalars.Stamps = nil
 	scalars.TemplateSteps = nil
 	scalars.ID = true
 	scalars.OwnerWorkspace = true
@@ -55549,7 +61227,7 @@ func templateNestedSelectsRelationship(fo *TemplateFieldOptions) bool {
 	if fo == nil {
 		return false
 	}
-	return fo.Labels != nil || fo.TemplateSteps != nil
+	return fo.Labels != nil || fo.Stamps != nil || fo.TemplateSteps != nil
 }
 
 // nestedResolvedTenantCtx resolves the tenant once for a whole nested write,
@@ -55631,6 +61309,10 @@ func (c *templateClient) CreateWithRelated(ctx context.Context, input *CreateTem
 			return err
 		}
 
+		if err := c.applyTemplateStampsNested(ctx, parent, templateStampsNestedFromCreate(input.Stamps), options); err != nil {
+			return err
+		}
+
 		if err := c.applyTemplateTemplateStepsNested(ctx, parent, templateTemplateStepsNestedFromCreate(input.TemplateSteps), options); err != nil {
 			return err
 		}
@@ -55701,6 +61383,10 @@ func (c *templateClient) UpdateWithRelated(ctx context.Context, id int64, input 
 			return err
 		}
 
+		if err := c.applyTemplateStampsNested(ctx, parent, input.Stamps, options); err != nil {
+			return err
+		}
+
 		if err := c.applyTemplateTemplateStepsNested(ctx, parent, input.TemplateSteps, options); err != nil {
 			return err
 		}
@@ -55759,6 +61445,10 @@ func (c *templateClient) UpsertWithRelated(ctx context.Context, input *UpsertTem
 		result = parent
 
 		if err := c.applyTemplateLabelsNested(ctx, parent, input.Labels, options); err != nil {
+			return err
+		}
+
+		if err := c.applyTemplateStampsNested(ctx, parent, input.Stamps, options); err != nil {
 			return err
 		}
 
@@ -55863,15 +61553,21 @@ func (c *templateClient) applyTemplateLabelsNested(ctx context.Context, parent *
 		}
 		// No traversed FK to elide on an M2M target — the parent's key goes
 		// into the junction row below — so this is the target's own create
-		// input verbatim. The PK-only selection is what the link step needs.
+		// input verbatim. The selection is what the link step and the shared
+		// column comparison below need.
 		created, err := c.labelClient.CreateMany(ctx, nested.Create, func(o *CallOptions[LabelFieldOptions]) {
 			nestedChildOptions(o, options)
-			o.FieldOptions = &LabelFieldOptions{ID: true}
+			o.FieldOptions = &LabelFieldOptions{ID: true, WorkspaceID: true}
 		})
 		if err != nil {
 			return nestedError("Labels", "create", nil, err)
 		}
 		for _, row := range created {
+			if !(row.WorkspaceID.String() == parent.OwnerWorkspace.String()) {
+				// The link row takes this column from the parent, so the new row
+				// could not be linked. Returning rolls it back with the rest.
+				return nestedError("Labels", "create", nil, ErrAlreadyRelated)
+			}
 			targetIDs = append(targetIDs, row.ID)
 		}
 	}
@@ -55882,6 +61578,7 @@ func (c *templateClient) applyTemplateLabelsNested(ctx context.Context, parent *
 	// than a junction row nobody can ever read.
 	if len(connectIDs) > 0 {
 		found := make(map[int64]bool, len(connectIDs))
+		agrees := make(map[int64]bool, len(connectIDs))
 		// Chunked at c.batchSize. A single statement over the caller's
 		// whole list hits a bind-parameter ceiling that is dialect-dependent
 		// and lowest on SQLite (32766), and every dialect's error for it names
@@ -55903,7 +61600,7 @@ func (c *templateClient) applyTemplateLabelsNested(ctx context.Context, parent *
 				Limit: new(0),
 			}, func(o *CallOptions[LabelFieldOptions]) {
 				nestedChildOptions(o, options)
-				o.FieldOptions = &LabelFieldOptions{ID: true}
+				o.FieldOptions = &LabelFieldOptions{ID: true, WorkspaceID: true}
 				// Deliberately unlocked: this validates caller input at call time,
 				// it does not promise the target is still visible at commit.
 				o.LockMode = sql.LockNone
@@ -55913,11 +61610,17 @@ func (c *templateClient) applyTemplateLabelsNested(ctx context.Context, parent *
 			}
 			for _, row := range visible {
 				found[row.ID] = true
+				agrees[row.ID] = row.WorkspaceID.String() == parent.OwnerWorkspace.String()
 			}
 		}
 		for _, tid := range connectIDs {
 			if !found[tid] {
 				return nestedError("Labels", "connect", tid, ErrNotFound)
+			}
+			if !agrees[tid] {
+				// Both junction keys hold this column and the link row takes it
+				// from the parent, so this target is bound to another key.
+				return nestedError("Labels", "connect", tid, ErrAlreadyRelated)
 			}
 		}
 		targetIDs = append(targetIDs, connectIDs...)
@@ -55945,8 +61648,8 @@ func (c *templateClient) applyTemplateLabelsNested(ctx context.Context, parent *
 			nestedChildOptions(o, options)
 			o.FieldOptions = &TemplateLabelFieldOptions{}
 		}); err != nil {
-			// The key sets the tenant column from the parent and tenancy sets it
-			// from the resolver: disagreeing, the two bind this row to two keys.
+			// A key sets the tenant column and tenancy sets it from the resolver:
+			// disagreeing, the two bind this row to two keys.
 			if errors.Is(err, tenancy.ErrMismatch) {
 				err = ErrAlreadyRelated
 			}
@@ -55982,6 +61685,219 @@ func (c *templateClient) applyTemplateLabelsNested(ctx context.Context, parent *
 				nestedChildOptions(o, options)
 			}); err != nil {
 				return nestedError("Labels", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// applyTemplateStampsNested applies the Template.Stamps block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// link, disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *templateClient) applyTemplateStampsNested(ctx context.Context, parent *Template, nested *TemplateStampsUpdateNested, options CallOptions[TemplateFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("Stamps", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	pid0 := parent.OwnerWorkspace.String()
+	pid1 := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if err := c.templateStampClient.HardDeleteWhere(ctx, &TemplateStampFilter{
+			WorkspaceID: &comparator.ID{Eq: new(pid0)},
+			TemplateID:  &comparator.Number[int64]{Eq: new(pid1)},
+		}, func(o *CallOptions[TemplateStampFieldOptions]) {
+			nestedChildOptions(o, options)
+		}); err != nil {
+			return nestedError("Stamps", "clear", nil, err)
+		}
+	}
+
+	targetIDs := make([]int64, 0, len(nested.Create)+len(connectIDs))
+
+	if len(nested.Create) > 0 {
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Stamps", "create", nil, ErrNilInput)
+			}
+		}
+		// No traversed FK to elide on an M2M target — the parent's key goes
+		// into the junction row below — so this is the target's own create
+		// input verbatim. The selection is what the link step and the shared
+		// column comparison below need.
+		created, err := c.stampClient.CreateMany(ctx, nested.Create, func(o *CallOptions[StampFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &StampFieldOptions{ID: true, OwnerWorkspace: true}
+		})
+		if err != nil {
+			return nestedError("Stamps", "create", nil, err)
+		}
+		for _, row := range created {
+			if !(row.OwnerWorkspace.String() == parent.OwnerWorkspace.String()) {
+				// The link row takes this column from the parent, so the new row
+				// could not be linked. Returning rolls it back with the rest.
+				return nestedError("Stamps", "create", nil, ErrAlreadyRelated)
+			}
+			targetIDs = append(targetIDs, row.ID)
+		}
+	}
+
+	// The junction FK proves existence, not visibility. Reading through the
+	// target's OWN client applies its tenant filter, soft-delete default and
+	// access rules, so a target in another tenant is NOT_FOUND here rather
+	// than a junction row nobody can ever read.
+	if len(connectIDs) > 0 {
+		found := make(map[int64]bool, len(connectIDs))
+		agrees := make(map[int64]bool, len(connectIDs))
+		// Chunked at c.batchSize. A single statement over the caller's
+		// whole list hits a bind-parameter ceiling that is dialect-dependent
+		// and lowest on SQLite (32766), and every dialect's error for it names
+		// no table, column, edge or verb, so it cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.stampClient.GetMany(ctx, &GetStampsInput{
+				Filter: &StampFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[StampFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &StampFieldOptions{ID: true, OwnerWorkspace: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Stamps", "connect", nil, err)
+			}
+			for _, row := range visible {
+				found[row.ID] = true
+				agrees[row.ID] = row.OwnerWorkspace.String() == parent.OwnerWorkspace.String()
+			}
+		}
+		for _, tid := range connectIDs {
+			if !found[tid] {
+				return nestedError("Stamps", "connect", tid, ErrNotFound)
+			}
+			if !agrees[tid] {
+				// Both junction keys hold this column and the link row takes it
+				// from the parent, so this target is bound to another key.
+				return nestedError("Stamps", "connect", tid, ErrAlreadyRelated)
+			}
+		}
+		targetIDs = append(targetIDs, connectIDs...)
+	}
+
+	// link — UpsertMany, not CreateMany: re-adding an existing link is a set
+	// operation whose answer is "linked", and CreateMany raises a primary-key
+	// violation on it. The junction is a pure link table, so this compiles to
+	// ON CONFLICT DO NOTHING on every dialect.
+	if len(targetIDs) > 0 {
+		links := make([]*CreateTemplateStampInput, 0, len(targetIDs))
+		seen := make(map[int64]bool, len(targetIDs))
+		for _, tid := range targetIDs {
+			if seen[tid] {
+				continue
+			}
+			seen[tid] = true
+			links = append(links, &CreateTemplateStampInput{
+				WorkspaceID: parent.OwnerWorkspace,
+				TemplateID:  parent.ID,
+				StampID:     tid,
+			})
+		}
+		if _, err := c.templateStampClient.UpsertMany(ctx, links, TemplateStampConflictPK, func(o *CallOptions[TemplateStampFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &TemplateStampFieldOptions{}
+		}); err != nil {
+			// A key sets the tenant column and tenancy sets it from the resolver:
+			// disagreeing, the two bind this row to two keys.
+			if errors.Is(err, tenancy.ErrMismatch) {
+				err = ErrAlreadyRelated
+			}
+			return nestedError("Stamps", "link", nil, err)
+		}
+	}
+
+	// disconnect — no visibility read. The junction key embeds the
+	// parent, so a caller can only ever delete its own links, and a miss is a
+	// no-op. A hard delete is correct because the junction carries no
+	// soft-delete column; one that did would emit no unlink verb at all,
+	// since the read loader's junction query has no soft-delete predicate and
+	// would keep showing the link.
+	if len(disconnectIDs) > 0 {
+		pks := make([]TemplateStampPK, 0, len(disconnectIDs))
+		unlinking := make(map[int64]bool, len(disconnectIDs))
+		for _, tid := range disconnectIDs {
+			if unlinking[tid] {
+				continue
+			}
+			unlinking[tid] = true
+			pks = append(pks, TemplateStampPK{
+				WorkspaceID: parent.OwnerWorkspace,
+				TemplateID:  parent.ID,
+				StampID:     tid,
+			})
+		}
+		// Chunked at c.batchSize; a composite key binds two parameters
+		// per row, so the ceiling arrives at half the id count.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			if err := c.templateStampClient.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[TemplateStampFieldOptions]) {
+				nestedChildOptions(o, options)
+			}); err != nil {
+				return nestedError("Stamps", "disconnect", nil, err)
 			}
 		}
 	}
@@ -56545,6 +62461,7 @@ type TemplateFilter struct {
 	Name           *comparator.String        `json:"name"`
 	OwnerWorkspace *comparator.ID            `json:"owner_workspace"`
 	Labels         *LabelFilter              `json:"labels"`
+	Stamps         *StampFilter              `json:"stamps"`
 	TemplateSteps  *TemplateStepFilter       `json:"template_steps"`
 	And            []*TemplateFilter         `json:"and"`
 	Or             []*TemplateFilter         `json:"or"`
@@ -56579,6 +62496,10 @@ func (f *TemplateFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption)
 
 	if f.Labels != nil {
 		conds = append(conds, templateLabelsFilterExists(f.Labels, dialect, opts))
+	}
+
+	if f.Stamps != nil {
+		conds = append(conds, templateStampsFilterExists(f.Stamps, dialect, opts))
 	}
 
 	if f.TemplateSteps != nil {
@@ -56632,6 +62553,9 @@ func (f *TemplateFilter) usesRelationshipFilter() bool {
 		return false
 	}
 	if f.Labels != nil {
+		return true
+	}
+	if f.Stamps != nil {
 		return true
 	}
 	if f.TemplateSteps != nil {
@@ -56698,6 +62622,47 @@ func templateLabelsFilterExists(f *LabelFilter, dialect sql.Dialect, opts []Filt
 	return sql.Exists([]string{"owner_workspace", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
 }
 
+// templateStampsFilterExists compiles a StampFilter set on the
+// Stamps relationship into a correlated EXISTS over stamps, joined through the template_stamps junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func templateStampsFilterExists(f *StampFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "public", Name: "template_stamps"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "public", Name: "stamps"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("owner_workspace") + " = " + jn + "." + dialect.QuoteIdentifier("workspace_id") +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("id") + " = " + jn + "." + dialect.QuoteIdentifier("stamp_id") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("workspace_id") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + jn + "." + dialect.QuoteIdentifier("template_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists([]string{"owner_workspace", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
 // templateTemplateStepsFilterExists compiles a TemplateStepFilter set on the
 // TemplateSteps relationship into a correlated EXISTS over template_steps.
 //
@@ -56748,6 +62713,7 @@ type TemplateFieldOptions struct {
 	OwnerWorkspace bool                             `json:"owner_workspace"`
 	Name           bool                             `json:"name"`
 	Labels         *LabelRelationshipOptions        `json:"labels"`
+	Stamps         *StampRelationshipOptions        `json:"stamps"`
 	TemplateSteps  *TemplateStepRelationshipOptions `json:"template_steps"`
 }
 
@@ -56791,10 +62757,20 @@ func (fo *TemplateFieldOptions) HasSelectedColumns() bool {
 	if fo.Labels != nil {
 		return true
 	}
+	if fo.Stamps != nil {
+		return true
+	}
 	if fo.TemplateSteps != nil {
 		return true
 	}
 	return false
+}
+
+// StampRelationshipOptions controls loading options for Stamp relationships.
+type StampRelationshipOptions struct {
+	FieldOptions *StampFieldOptions `json:"field_options"`
+	Filter       *StampFilter       `json:"filter"`
+	Sorts        []sql.Sort         `json:"sorts"`
 }
 
 // TemplateStepRelationshipOptions controls loading options for TemplateStep relationships.

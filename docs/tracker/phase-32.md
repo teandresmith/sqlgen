@@ -1185,9 +1185,10 @@ edge was already refused; it asserts the verb set after the lift.
   is held apart, since a NULL member and an empty string stringify alike. A free member's NULL makes
   a row unparented only when every free member is NULL, matching the adoption's `IS NULL` guard; a
   partly NULL key is `ErrAlreadyRelated`, or adopted under `allow_reparent`.
-- **M2M.** A column in both keys takes the parent's value (PRD §9.9.6, added here). Under `SkipTenancy`
-  a target in another workspace is then a raw FK violation on `link`, not `ErrAlreadyRelated`: no
-  tenancy-set value disagrees, and the PRD's pinned rule covers O2M and has-one only.
+- **M2M.** A column in both keys takes the parent's value (PRD §9.9.6, added here). `connect` and `create`
+  compare the target's own value with the parent's before the link step and refuse a difference with
+  `ErrAlreadyRelated`, attributed to the verb, `connect` naming the id and `create` with none (FIX-368).
+  Under `SkipTenancy` a target in another workspace is refused this way, not by the junction's foreign key.
 - **32.4's note on an M2M into a UNIQUE column is lifted.** `create` and `connect` read the column off
   the target. `disconnect` reads no target, so it is lost and reported for a listed edge.
   `TestNestedEligibility_M2MIntoAUniqueKeyIsNotWriteEligible` became
@@ -1226,7 +1227,7 @@ was not run; it is due at 32.8.
 - The mapping extends to the M2M link step (PRD §9.9.6, §9.9.8). Failed first with the raw
   `tenant on mutation input does not match` error; `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated`.
 
-**Rulings from `/verify 32.6` (2026-11-06, each took the recommended option; FIX-364 has landed; FIX-368 and FIX-369 are open).**
+**Rulings from `/verify 32.6` (2026-11-06, each took the recommended option; FIX-364 and FIX-368 have landed; FIX-369 is open).**
 - A surrogate-PK junction's link targets the UNIQUE equal to the key union, and without one the edge
   is refused under E13 (FIX-364).
 - An M2M `connect` under `SkipTenancy` runs a pinned check on a column both keys share, and a mismatch

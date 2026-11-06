@@ -955,6 +955,12 @@ type NestedEdgeContext struct {
 	// TargetReadFields are the target's fields the link step needs beyond its
 	// primary key, so `create` and `connect` read them back.
 	TargetReadFields []string
+	// JunctionSharedAgrees is the condition that a `row` read back by `connect`
+	// or `create` holds the parent's value in every column both junction keys
+	// share, empty when the keys share none. JunctionSharedFields are the fields
+	// it reads beyond the target's primary key (PRD §9.9.6).
+	JunctionSharedAgrees string
+	JunctionSharedFields []string
 	// JunctionPKStructName and JunctionPKFields spell the `<Junction>PK` values
 	// an M2M `disconnect` hands HardDeleteMany (PRD §9.9.6). The junction's
 	// primary key has to be exactly the union of its two keys for the value to

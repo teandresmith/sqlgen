@@ -168,6 +168,24 @@ func TestNestedTemplate_CompositeKeyExecutor(t *testing.T) {
 			},
 		},
 		{
+			name: "m2m connect compares the column both keys share",
+			got:  teams,
+			wants: []string{
+				"o.FieldOptions = &LabelFieldOptions{ ID: true, WorkspaceID: true}",
+				"agrees[row.ID] = fmt.Sprint(row.WorkspaceID) == fmt.Sprint(parent.WorkspaceID)",
+				"if !agrees[tid] {",
+				`return nestedError("Labels", "connect", tid, ErrAlreadyRelated)`,
+			},
+		},
+		{
+			name: "m2m create compares the column both keys share",
+			got:  teams,
+			wants: []string{
+				"if !(fmt.Sprint(row.WorkspaceID) == fmt.Sprint(parent.WorkspaceID)) {",
+				`return nestedError("Labels", "create", nil, ErrAlreadyRelated)`,
+			},
+		},
+		{
 			name: "m2m disconnect deletes by the union",
 			got:  teams,
 			wants: []string{
@@ -187,6 +205,46 @@ func TestNestedTemplate_CompositeKeyExecutor(t *testing.T) {
 			assertRendered(t, tt.got, tt.wants, tt.absent)
 		})
 	}
+}
+
+// The two sides of a shared junction column may bind to different Go types.
+func TestNestedTemplate_JunctionSharedColumnAcrossBindings(t *testing.T) {
+	const ddl = `
+CREATE TABLE teams (id bigint PRIMARY KEY, region_id bigint NOT NULL, UNIQUE (region_id, id));
+CREATE TABLE labels (id bigint PRIMARY KEY, region_id integer NOT NULL, UNIQUE (region_id, id));
+CREATE TABLE team_labels (
+	region_id bigint NOT NULL,
+	team_id bigint NOT NULL,
+	label_id bigint NOT NULL,
+	PRIMARY KEY (region_id, team_id, label_id),
+	FOREIGN KEY (region_id, team_id) REFERENCES teams (region_id, id),
+	FOREIGN KEY (region_id, label_id) REFERENCES labels (region_id, id)
+);`
+	got := executorOf(t, renderNested(t, keyMembersContexts(t, config.DialectPostgres, ddl, nil)["teams"]), "applyTeamLabelsNested")
+	assertRendered(t, got, []string{
+		"agrees[row.ID] = fmt.Sprint(row.RegionID) == fmt.Sprint(parent.RegionID)",
+	}, nil)
+}
+
+// A shared column may reference the target's primary key, which the visibility
+// read already selects; naming it twice would not compile.
+func TestNestedTemplate_JunctionSharedColumnOnTheTargetKey(t *testing.T) {
+	const ddl = `
+CREATE TABLE teams (id bigint PRIMARY KEY, region_id bigint NOT NULL, UNIQUE (region_id, id));
+CREATE TABLE labels (id bigint PRIMARY KEY, code text NOT NULL, UNIQUE (id, code));
+CREATE TABLE team_labels (
+	region_id bigint NOT NULL,
+	team_id bigint NOT NULL,
+	label_code text NOT NULL,
+	PRIMARY KEY (region_id, team_id, label_code),
+	FOREIGN KEY (region_id, team_id) REFERENCES teams (region_id, id),
+	FOREIGN KEY (region_id, label_code) REFERENCES labels (id, code)
+);`
+	got := executorOf(t, renderNested(t, keyMembersContexts(t, config.DialectPostgres, ddl, nil)["teams"]), "applyTeamLabelsNested")
+	assertRendered(t, got, []string{
+		"agrees[row.ID] = fmt.Sprint(row.ID) == fmt.Sprint(parent.RegionID)",
+		"o.FieldOptions = &LabelFieldOptions{ ID: true, Code: true}",
+	}, []string{"Code: true, ID: true"})
 }
 
 // The parent write selects every column an edge's key references, whatever the

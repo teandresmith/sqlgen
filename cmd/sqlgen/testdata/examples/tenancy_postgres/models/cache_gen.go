@@ -30,12 +30,14 @@ const fingerprintProject = "cce3e94c"
 const fingerprintReviewer = "6da96b4c"
 const fingerprintSite = "ea1427e2"
 const fingerprintSprint = "4bd9698d"
+const fingerprintStamp = "44954920"
 const fingerprintTask = "0edb5138"
 const fingerprintTaskBadge = "cc6db23f"
 const fingerprintTaskLabel = "28070e57"
 const fingerprintTaskReviewer = "8754cce4"
 const fingerprintTemplate = "91c0fe08"
 const fingerprintTemplateLabel = "2e330fb5"
+const fingerprintTemplateStamp = "c1f4f893"
 const fingerprintTemplateStep = "891f2663"
 const fingerprintWorkspace = "81f4ae9c"
 const fingerprintWorkspaceNote = "1dc5f577"
@@ -365,6 +367,10 @@ func (c *Cache) handleInvalidation(ctx context.Context, signal cache.Invalidatio
 		}
 		return c.invalidateAffectedTenanted(ctx, signal.Table, tenants, signal.PKs)
 	case TableTemplateLabels:
+		// Tenant lives inside the primary key — each signal PK carries it,
+		// so the receive side is precise even without a tenant stamp.
+		return c.invalidateAffectedTenanted(ctx, signal.Table, nil, signal.PKs)
+	case TableTemplateStamps:
 		// Tenant lives inside the primary key — each signal PK carries it,
 		// so the receive side is precise even without a tenant stamp.
 		return c.invalidateAffectedTenanted(ctx, signal.Table, nil, signal.PKs)
@@ -3375,6 +3381,261 @@ func (c *Cache) hydrateSprint(tenant uuid.UUID, pk int64, next hook.QueryHandler
 	}()
 }
 
+// keyForStamp builds the cache key for Stamp by PK.
+func (c *Cache) keyForStamp(pk int64) string {
+	return cache.BuildKey(c.prefix, "public", "stamps", fingerprintStamp, pk)
+}
+
+// ttlForStamp returns the resolved TTL for Stamp cache entries.
+func (c *Cache) ttlForStamp() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipStamp reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipStamp(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*StampFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	if typed.Templates != nil {
+		return true
+	}
+	return false
+}
+
+// fullParentFieldOptionsStamp returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsStamp() *StampFieldOptions {
+	return &StampFieldOptions{
+		ID:             true,
+		OwnerWorkspace: true,
+		Name:           true,
+	}
+}
+
+// readThroughStamp implements the cache read-through path for Stamp:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughStamp(ctx context.Context, pk int64, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForStamp(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*Stamp](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableStamps, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableStamps, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableStamps)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableStamps)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableStamps)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateStamp(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*Stamp](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*Stamp)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForStamp())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableStamps, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableStamps, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableStamps)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setStamp caches a full Stamp entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setStamp(ctx context.Context, entity *Stamp) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForStamp(entity.ID)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForStamp())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableStamps, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableStamps, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableStamps)
+	}
+}
+
+// hydrateStamp launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateStamp(pk int64, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForStamp(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableStamps)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableStamps,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[StampFieldOptions]{
+				FieldOptions: fullParentFieldOptionsStamp(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableStamps, err)
+			}
+			return
+		}
+		entity, ok := result.(*Stamp)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableStamps, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableStamps, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForStamp())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableStamps, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableStamps, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableStamps, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableStamps)
+			c.metrics.HydrationComplete(schema, TableStamps, nil)
+		}
+	}()
+}
+
 // keyForTask builds the cache key for Task by PK.
 // Tenanted form: tenant: segment lands before fingerprint:
 // so per-tenant pattern invalidation works with a single trailing wildcard.
@@ -4476,6 +4737,9 @@ func hasAnyRelationshipTemplate(fo any) bool {
 	if typed.Labels != nil {
 		return true
 	}
+	if typed.Stamps != nil {
+		return true
+	}
 	if typed.TemplateSteps != nil {
 		return true
 	}
@@ -4983,6 +5247,282 @@ func (c *Cache) hydrateTemplateLabel(tenant uuid.UUID, pk TemplateLabelPK, next 
 		if c.metrics != nil {
 			c.metrics.Set(schema, TableTemplateLabels)
 			c.metrics.HydrationComplete(schema, TableTemplateLabels, nil)
+		}
+	}()
+}
+
+// keyForTemplateStamp builds the cache key for TemplateStamp with composite PK.
+// The []any is constructed in DDL PRIMARY KEY column order inside this one
+// function — call sites never reorder (key-order invariant).
+// Tenanted form: tenant: segment is emitted before fingerprint:
+// so the per-tenant trailing-wildcard pattern (BuildTenantTablePattern)
+// matches every fingerprint generation in one pass.
+func (c *Cache) keyForTemplateStamp(tenant uuid.UUID, pk TemplateStampPK) string {
+	return cache.BuildCompositeTenantKey(c.prefix, "public", "template_stamps", fingerprintTemplateStamp, tenant, []any{
+		pk.WorkspaceID,
+		pk.TemplateID,
+		pk.StampID,
+	})
+}
+
+// ttlForTemplateStamp returns the resolved TTL for TemplateStamp cache entries.
+func (c *Cache) ttlForTemplateStamp() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipTemplateStamp reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipTemplateStamp(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*TemplateStampFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	_ = typed
+	return false
+}
+
+// fullParentFieldOptionsTemplateStamp returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsTemplateStamp() *TemplateStampFieldOptions {
+	return &TemplateStampFieldOptions{
+		WorkspaceID: true,
+		TemplateID:  true,
+		StampID:     true,
+	}
+}
+
+// readThroughTemplateStamp implements the cache read-through path for TemplateStamp:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+// Tenanted: tenant comes from q.Tenant — resolved once at the entity-method
+// boundary and reused here without re-invoking TenantResolver.
+func (c *Cache) readThroughTemplateStamp(ctx context.Context, tenant uuid.UUID, pk TemplateStampPK, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForTemplateStamp(tenant, pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*TemplateStamp](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableTemplateStamps, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableTemplateStamps, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableTemplateStamps)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableTemplateStamps)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableTemplateStamps)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateTemplateStamp(tenant, pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*TemplateStamp](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*TemplateStamp)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForTemplateStamp())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableTemplateStamps, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableTemplateStamps, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableTemplateStamps)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setTemplateStamp caches a full TemplateStamp entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+// Tenanted: tenant is supplied by the mutation hook from the row itself —
+// the PK struct when the tenant is part of the primary key, the structurally
+// captured m.AffectedTenants value otherwise — never the resolver, so
+// SkipTenancy creates write through under the correct key.
+func (c *Cache) setTemplateStamp(ctx context.Context, tenant uuid.UUID, entity *TemplateStamp) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForTemplateStamp(tenant, TemplateStampPK{
+		WorkspaceID: entity.WorkspaceID,
+		TemplateID:  entity.TemplateID,
+		StampID:     entity.StampID,
+	})
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForTemplateStamp())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableTemplateStamps, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableTemplateStamps, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableTemplateStamps)
+	}
+}
+
+// hydrateTemplateStamp launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+// Tenanted: tenant comes from the readThrough caller — resolved once at the
+// entity-method boundary, threaded through both the cache key and the
+// hydration QueryContext.Tenant.
+func (c *Cache) hydrateTemplateStamp(tenant uuid.UUID, pk TemplateStampPK, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForTemplateStamp(tenant, pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableTemplateStamps)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableTemplateStamps,
+			Schema: schema,
+			PK:     pk,
+			Tenant: tenant,
+			CallOptions: CallOptions[TemplateStampFieldOptions]{
+				FieldOptions: fullParentFieldOptionsTemplateStamp(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTemplateStamps, err)
+			}
+			return
+		}
+		entity, ok := result.(*TemplateStamp)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTemplateStamps, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTemplateStamps, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForTemplateStamp())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableTemplateStamps, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableTemplateStamps, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTemplateStamps, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableTemplateStamps)
+			c.metrics.HydrationComplete(schema, TableTemplateStamps, nil)
 		}
 	}()
 }
@@ -6078,6 +6618,12 @@ func (c *Cache) InvalidateMany(ctx context.Context, table hook.TableName, pks []
 // touches no backend, so its errors are the caller's to report.
 func (c *Cache) keysFor(table hook.TableName, pks []any) ([]string, error) {
 	switch table {
+	case TableStamps:
+		keys, err := cache.KeysFromAny(pks, c.keyForStamp)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
 	case TableTaskBadges:
 		keys, err := cache.KeysFromAny(pks, c.keyForTaskBadge)
 		if err != nil {
@@ -6125,6 +6671,8 @@ func (c *Cache) keysFor(table hook.TableName, pks []any) ([]string, error) {
 	case TableTaskReviewers:
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
 	case TableTemplateLabels:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	case TableTemplateStamps:
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
 	case TableTemplateSteps:
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
@@ -6338,6 +6886,16 @@ func (c *Cache) invalidateAffectedTenanted(ctx context.Context, table hook.Table
 			}
 			keys = append(keys, c.keyForTemplateLabel(pk.WorkspaceID, pk))
 		}
+	case TableTemplateStamps:
+		// Tenant lives inside the primary key — read it from each PK
+		// value; no parallel carrier is written for this shape.
+		for _, rawPK := range pks {
+			pk, ok := rawPK.(TemplateStampPK)
+			if !ok {
+				return c.invalidateTenantedFallback(ctx, table, fmt.Sprintf("unexpected PK type %T", rawPK))
+			}
+			keys = append(keys, c.keyForTemplateStamp(pk.WorkspaceID, pk))
+		}
 	case TableTemplateSteps:
 		if len(tenants) < len(pks) {
 			return c.invalidateTenantedFallback(ctx, table, "captured tenant carrier missing")
@@ -6440,6 +6998,8 @@ func cacheRelationFor(table hook.TableName) (schema, name string, ok bool) {
 		return "public", "sites", true
 	case TableSprints:
 		return "public", "sprints", true
+	case TableStamps:
+		return "public", "stamps", true
 	case TableTasks:
 		return "public", "tasks", true
 	case TableTaskBadges:
@@ -6452,6 +7012,8 @@ func cacheRelationFor(table hook.TableName) (schema, name string, ok bool) {
 		return "public", "templates", true
 	case TableTemplateLabels:
 		return "public", "template_labels", true
+	case TableTemplateStamps:
+		return "public", "template_stamps", true
 	case TableTemplateSteps:
 		return "public", "template_steps", true
 	case TableWorkspaces:
@@ -6736,6 +7298,12 @@ func (c *Cache) QueryHook() hook.QueryHook {
 					return next(ctx, q)
 				}
 				return c.readThroughSprint(ctx, tenant, pk, q, next)
+			case TableStamps:
+				pk, ok := q.PK.(int64)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughStamp(ctx, pk, q, next)
 			case TableTasks:
 				pk, ok := q.PK.(int64)
 				if !ok {
@@ -6808,6 +7376,21 @@ func (c *Cache) QueryHook() hook.QueryHook {
 					return next(ctx, q)
 				}
 				return c.readThroughTemplateLabel(ctx, tenant, pk, q, next)
+			case TableTemplateStamps:
+				pk, ok := q.PK.(TemplateStampPK)
+				if !ok {
+					return next(ctx, q)
+				}
+				// Tenanted table: tenant must be resolved by the entity
+				// method and threaded via q.Tenant. A nil/wrong-type
+				// Tenant means the caller bypassed tenant resolution
+				// (e.g. SkipTenancy = true) — fall through to the DB
+				// rather than risking a cross-tenant cache hit.
+				tenant, ok := q.Tenant.(uuid.UUID)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughTemplateStamp(ctx, tenant, pk, q, next)
 			case TableTemplateSteps:
 				pk, ok := q.PK.(int64)
 				if !ok {
@@ -7057,6 +7640,10 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 						}
 					}
 				}
+			case TableStamps:
+				if entity, ok := result.(*Stamp); ok {
+					c.setStamp(ctx, entity)
+				}
 			case TableTasks:
 				if entity, ok := result.(*Task); ok {
 					// Tenant sourced from the structural capture —
@@ -7106,6 +7693,13 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 					// (full) entity's PK field; partial results are gated
 					// by fieldOptsSet above.
 					c.setTemplateLabel(ctx, entity.WorkspaceID, entity)
+				}
+			case TableTemplateStamps:
+				if entity, ok := result.(*TemplateStamp); ok {
+					// Tenant lives in the primary key — read it from the
+					// (full) entity's PK field; partial results are gated
+					// by fieldOptsSet above.
+					c.setTemplateStamp(ctx, entity.WorkspaceID, entity)
 				}
 			case TableTemplateSteps:
 				if entity, ok := result.(*TemplateStep); ok {
@@ -7378,6 +7972,12 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 						}
 					}
 				}
+			case TableStamps:
+				if entities, ok := result.([]*Stamp); ok {
+					for _, entity := range entities {
+						c.setStamp(ctx, entity)
+					}
+				}
 			case TableTasks:
 				if entities, ok := result.([]*Task); ok {
 					// GetMany result order is not guaranteed to match
@@ -7446,6 +8046,14 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 						// Tenant lives in the primary key — read it from
 						// each (full) entity's PK field.
 						c.setTemplateLabel(ctx, entity.WorkspaceID, entity)
+					}
+				}
+			case TableTemplateStamps:
+				if entities, ok := result.([]*TemplateStamp); ok {
+					for _, entity := range entities {
+						// Tenant lives in the primary key — read it from
+						// each (full) entity's PK field.
+						c.setTemplateStamp(ctx, entity.WorkspaceID, entity)
 					}
 				}
 			case TableTemplateSteps:
@@ -7606,6 +8214,10 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 				// Tenanted tables rebuild each key from the row's own
 				// captured tenant — never a cross-tenant clear.
 				return c.invalidateAffectedTenanted(ctx, table, affectedTenants, affected)
+			case TableTemplateStamps:
+				// Tenanted tables rebuild each key from the row's own
+				// captured tenant — never a cross-tenant clear.
+				return c.invalidateAffectedTenanted(ctx, table, affectedTenants, affected)
 			case TableTemplateSteps:
 				// Tenanted tables rebuild each key from the row's own
 				// captured tenant — never a cross-tenant clear.
@@ -7736,6 +8348,8 @@ func hasAnyRelationshipFieldOptions(table hook.TableName, callOpts any) bool {
 		return hasAnyRelationshipSite(fo)
 	case TableSprints:
 		return hasAnyRelationshipSprint(fo)
+	case TableStamps:
+		return hasAnyRelationshipStamp(fo)
 	case TableTasks:
 		return hasAnyRelationshipTask(fo)
 	case TableTaskBadges:
@@ -7748,6 +8362,8 @@ func hasAnyRelationshipFieldOptions(table hook.TableName, callOpts any) bool {
 		return hasAnyRelationshipTemplate(fo)
 	case TableTemplateLabels:
 		return hasAnyRelationshipTemplateLabel(fo)
+	case TableTemplateStamps:
+		return hasAnyRelationshipTemplateStamp(fo)
 	case TableTemplateSteps:
 		return hasAnyRelationshipTemplateStep(fo)
 	case TableWorkspaces:

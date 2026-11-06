@@ -272,6 +272,28 @@ func (s SprintSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "workspace_id", Direction: direction}
 }
 
+// StampSorter provides type-safe sort helpers for the Stamp entity.
+// Each method returns a sql.Sort for the corresponding column.
+type StampSorter struct{}
+
+// NewStampSorter returns a new StampSorter.
+func NewStampSorter() StampSorter { return StampSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s StampSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s StampSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// OwnerWorkspace returns a sort for the owner_workspace column in the given direction.
+func (s StampSorter) OwnerWorkspace(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "owner_workspace", Direction: direction}
+}
+
 // TaskSorter provides type-safe sort helpers for the Task entity.
 // Each method returns a sql.Sort for the corresponding column.
 type TaskSorter struct{}
@@ -416,6 +438,28 @@ func (s TemplateLabelSorter) TemplateID(direction sql.SortDirection) sql.Sort {
 
 // WorkspaceID returns a sort for the workspace_id column in the given direction.
 func (s TemplateLabelSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// TemplateStampSorter provides type-safe sort helpers for the TemplateStamp entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TemplateStampSorter struct{}
+
+// NewTemplateStampSorter returns a new TemplateStampSorter.
+func NewTemplateStampSorter() TemplateStampSorter { return TemplateStampSorter{} }
+
+// StampID returns a sort for the stamp_id column in the given direction.
+func (s TemplateStampSorter) StampID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "stamp_id", Direction: direction}
+}
+
+// TemplateID returns a sort for the template_id column in the given direction.
+func (s TemplateStampSorter) TemplateID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "template_id", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s TemplateStampSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "workspace_id", Direction: direction}
 }
 

@@ -1184,8 +1184,8 @@ func junctionKeyPairs(rel RelationshipContext, parentKey ColumnContext, target *
 }
 
 // junctionLinks lists the union of a junction's two keys. A column in both
-// takes the parent's value: the junction's own foreign keys refuse a target
-// that disagrees.
+// takes the parent's value, and `connect` and `create` refuse a target that
+// disagrees (resolveJunctionSharedRead).
 func junctionLinks(local, reference []parser.KeyPair, parents []ColumnContext, target *TableContext, fields []InputFieldContext) []junctionLink {
 	links := make([]junctionLink, 0, len(local)+len(reference))
 	seen := make(map[string]bool, len(local))
@@ -1210,6 +1210,32 @@ func junctionLinks(local, reference []parser.KeyPair, parents []ColumnContext, t
 		links = append(links, link)
 	}
 	return links
+}
+
+// resolveJunctionSharedRead fills what `connect` and `create` need to compare
+// each column both junction keys share with the target's own value (PRD
+// §9.9.6). The link row takes such a column from the parent, so without this
+// nothing reads the target's side, and only a foreign key the database enforces
+// would notice. Neither side can be NULL: the edge's referenced columns are NOT
+// NULL (PRD §9.9.4).
+func resolveJunctionSharedRead(edge *NestedEdgeContext, local, reference []parser.KeyPair, parents []ColumnContext, target *TableContext, resolver *gotype.Resolver) {
+	loadKey := funcFKLoadKey(resolver)
+	var agrees []string
+	for _, p := range reference {
+		i := slices.IndexFunc(local, func(l parser.KeyPair) bool { return l.Local == p.Local })
+		if i < 0 {
+			continue
+		}
+		col, ok := columnBySQLName(target.Columns, p.Referenced)
+		if !ok {
+			continue
+		}
+		if col.Name != target.PKColumns[0].Name {
+			edge.JunctionSharedFields = append(edge.JunctionSharedFields, col.FieldName)
+		}
+		agrees = append(agrees, loadKey(col.GoType, "row."+col.FieldName)+" == "+loadKey(parents[i].GoType, "parent."+parents[i].FieldName))
+	}
+	edge.JunctionSharedAgrees = strings.Join(agrees, " && ")
 }
 
 // resolveNestedM2M fills the shape-4 half: the junction the link rows go
@@ -1296,6 +1322,7 @@ func resolveNestedM2M(
 			edge.TargetReadFields = append(edge.TargetReadFields, strings.TrimPrefix(link.source, "row."))
 		}
 	}
+	resolveJunctionSharedRead(edge, local, reference, parents, target, resolver)
 	edge.ConnectIDGoType = target.PKColumns[0].GoType
 	// An M2M `connect` writes its link row through the junction's own
 	// UpsertMany and is unlinked again through its HardDelete surface; the

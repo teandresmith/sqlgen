@@ -97,12 +97,14 @@ type Client struct {
 	reviewer           *reviewerClient
 	site               *siteClient
 	sprint             *sprintClient
+	stamp              *stampClient
 	task               *taskClient
 	taskBadge          *taskBadgeClient
 	taskLabel          *taskLabelClient
 	taskReviewer       *taskReviewerClient
 	template           *templateClient
 	templateLabel      *templateLabelClient
+	templateStamp      *templateStampClient
 	templateStep       *templateStepClient
 	workspace          *workspaceClient
 	workspaceLineTotal *workspaceLineTotalClient
@@ -148,12 +150,14 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		reviewer:           newReviewerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		site:               newSiteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		sprint:             newSprintClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		stamp:              newStampClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		task:               newTaskClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		taskBadge:          newTaskBadgeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		taskLabel:          newTaskLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		taskReviewer:       newTaskReviewerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		template:           newTemplateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		templateLabel:      newTemplateLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		templateStamp:      newTemplateStampClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		templateStep:       newTemplateStepClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		workspace:          newWorkspaceClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		workspaceLineTotal: newWorkspaceLineTotalClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -196,11 +200,13 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.reviewer.tenantResolver = options.tenantResolver
 	c.site.tenantResolver = options.tenantResolver
 	c.sprint.tenantResolver = options.tenantResolver
+	c.stamp.tenantResolver = options.tenantResolver
 	c.task.tenantResolver = options.tenantResolver
 	c.taskLabel.tenantResolver = options.tenantResolver
 	c.taskReviewer.tenantResolver = options.tenantResolver
 	c.template.tenantResolver = options.tenantResolver
 	c.templateLabel.tenantResolver = options.tenantResolver
+	c.templateStamp.tenantResolver = options.tenantResolver
 	c.templateStep.tenantResolver = options.tenantResolver
 	c.workspace.tenantResolver = options.tenantResolver
 	c.workspaceLineTotal.tenantResolver = options.tenantResolver
@@ -218,6 +224,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.milestone.callbackMode = options.callbackMode
 	c.reviewer.callbackMode = options.callbackMode
 	c.sprint.callbackMode = options.callbackMode
+	c.stamp.callbackMode = options.callbackMode
 	c.task.callbackMode = options.callbackMode
 	c.template.callbackMode = options.callbackMode
 	c.workspace.callbackMode = options.callbackMode
@@ -237,6 +244,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.reviewer.taskClient = c.task
 	c.reviewer.taskReviewerClient = c.taskReviewer
 	c.sprint.taskClient = c.task
+	c.stamp.templateClient = c.template
+	c.stamp.templateStampClient = c.templateStamp
 	c.task.badgeClient = c.badge
 	c.task.labelClient = c.label
 	c.task.reviewerClient = c.reviewer
@@ -245,7 +254,9 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.task.taskReviewerClient = c.taskReviewer
 	c.template.templateStepClient = c.templateStep
 	c.template.labelClient = c.label
+	c.template.stampClient = c.stamp
 	c.template.templateLabelClient = c.templateLabel
+	c.template.templateStampClient = c.templateStamp
 	c.workspace.workspaceNoteClient = c.workspaceNote
 	c.zone.siteClient = c.site
 
@@ -312,6 +323,11 @@ func (c *Client) Sprints() SprintClient {
 	return c.sprint
 }
 
+// Stamps returns the StampClient for Stamp operations.
+func (c *Client) Stamps() StampClient {
+	return c.stamp
+}
+
 // Tasks returns the TaskClient for Task operations.
 func (c *Client) Tasks() TaskClient {
 	return c.task
@@ -340,6 +356,11 @@ func (c *Client) Templates() TemplateClient {
 // TemplateLabels returns the TemplateLabelClient for TemplateLabel operations.
 func (c *Client) TemplateLabels() TemplateLabelClient {
 	return c.templateLabel
+}
+
+// TemplateStamps returns the TemplateStampClient for TemplateStamp operations.
+func (c *Client) TemplateStamps() TemplateStampClient {
+	return c.templateStamp
 }
 
 // TemplateSteps returns the TemplateStepClient for TemplateStep operations.

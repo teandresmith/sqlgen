@@ -134,6 +134,37 @@
       }
     },
     {
+      "name": "stamps",
+      "kind": "m2m",
+      "target_entity": "Stamp",
+      "junction": {
+        "table": "template_stamps",
+        "schema": "public",
+        "local_fk": {
+          "columns": [
+            "workspace_id",
+            "template_id"
+          ],
+          "references": [
+            "owner_workspace",
+            "id"
+          ],
+          "constraint": "template_stamps_workspace_id_template_id_fkey"
+        },
+        "target_fk": {
+          "columns": [
+            "workspace_id",
+            "stamp_id"
+          ],
+          "references": [
+            "owner_workspace",
+            "id"
+          ],
+          "constraint": "template_stamps_workspace_id_stamp_id_fkey"
+        }
+      }
+    },
+    {
       "name": "template_steps",
       "kind": "o2m",
       "target_entity": "TemplateStep",
@@ -428,7 +459,7 @@
           "ErrNestedVerbConflict",
           "ErrConstraintViolation"
         ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Labels, TemplateSteps), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Labels, Stamps, TemplateSteps), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
       },
       {
         "name": "UpdateWithRelated",
@@ -449,7 +480,7 @@
           "ErrNestedVerbConflict",
           "ErrConstraintViolation"
         ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Labels, TemplateSteps), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Labels, Stamps, TemplateSteps), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
       },
       {
         "name": "UpsertWithRelated",
@@ -470,7 +501,7 @@
           "ErrNestedVerbConflict",
           "ErrConstraintViolation"
         ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Labels, TemplateSteps), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Labels, Stamps, TemplateSteps), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
       },
       {
         "name": "HardDelete",
