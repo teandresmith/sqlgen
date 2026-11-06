@@ -1015,7 +1015,7 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 {{- end }}
 			case {{ .OwnerAllHeld }} && cur == want:
 {{- else }}
-			case {{ .FKOwnerGuard }} && {{ .FKOwnerKey }} == parent.{{ .ParentKeyField }}:
+			case {{ .FKOwnerGuard }} && {{ .FKOwnerIsParent }}:
 {{- end }}
 				// Already ours — the requested end state holds, so this is a
 				// no-op rather than a conflict.

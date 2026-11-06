@@ -834,9 +834,6 @@ type NestedEdgeContext struct {
 	// Both are empty on M2M, whose verbs never rewrite a member.
 	PinnedMembers []string
 	FreeMembers   []string
-	// ParentKeyField is the parent's Go field for the column the key
-	// references, the PK field unless the key references a UNIQUE column.
-	ParentKeyField string
 	// ParentKeyFields are the parent's Go fields for every column the key
 	// references, which the executor reads off the parent write's result.
 	ParentKeyFields []string
@@ -904,13 +901,13 @@ type NestedEdgeContext struct {
 	// (PRD §4.8 / §9.9.6). O2M and has-one only; an M2M connect adds a link
 	// rather than moving one.
 	AllowReparent bool
-	// FKOwnerGoType / FKOwnerGuard / FKOwnerKey read a one-column FK back off a
-	// visibility-read row: the model column's Go type, the non-null guard, and
-	// the unwrapped value to compare against the parent's key. A nullable FK
-	// is always a pointer or a Null wrapper, so the guard is never empty.
-	FKOwnerGoType string
-	FKOwnerGuard  string
-	FKOwnerKey    string
+	// FKOwnerGoType / FKOwnerGuard / FKOwnerIsParent read a one-column FK back
+	// off a visibility-read row: the model column's Go type, the non-null guard,
+	// and the condition that the row names this parent's key. A nullable FK is
+	// always a pointer or a Null wrapper, so the guard is never empty.
+	FKOwnerGoType   string
+	FKOwnerGuard    string
+	FKOwnerIsParent string
 	// OwnerMembers read a composite key back off a visibility-read row into its
 	// `[N]string` tuple. Stringifying keeps a binary or network key comparable.
 	//
@@ -1002,9 +999,9 @@ type NestedKeyMemberContext struct {
 type NestedScopeTerm struct {
 	FilterField string
 	// ParentVar is the local the executor binds ParentKeyExpr to: the parent's
-	// referenced column in the comparator's element type, a string on the
-	// comparator.ID family, the key's own Go type on comparator.Number and
-	// comparator.Opaque (PRD §11.2). FilterExpr reads that local.
+	// referenced column in the comparator's element type, a string on
+	// comparator.ID and comparator.String, the key's own value on every other
+	// family (PRD §11.2). FilterExpr reads that local.
 	ParentVar     string
 	ParentKeyExpr string
 	FilterExpr    string

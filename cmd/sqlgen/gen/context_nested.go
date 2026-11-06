@@ -494,7 +494,6 @@ func buildNestedEdge(
 		TargetPKFieldName: target.PKColumns[0].FieldName,
 		TargetPKGoType:    target.PKColumns[0].GoType,
 		AllowReparent:     entry.AllowReparent,
-		ParentKeyField:    parentKey.FieldName,
 	}
 	edge.TargetPKIsString = funcPKIsStringType(target.PKColumns[0].GoType)
 	for _, key := range nestedParentKeys(tc, rel) {
@@ -904,7 +903,7 @@ func nestedParentScope(columns []string, parents []ColumnContext, fields []Filte
 		terms = append(terms, NestedScopeTerm{
 			FilterField:   ff.FieldName,
 			ParentVar:     v,
-			ParentKeyExpr: nestedParentKeyExpr(parents[i].GoType, parents[i]),
+			ParentKeyExpr: nestedParentKeyExpr(ff.ComparatorType, parents[i]),
 			FilterExpr:    expr,
 		})
 	}
@@ -1043,7 +1042,7 @@ func resolveNestedAdoption(
 		}
 	}
 
-	if reason := resolveNestedOwnerRead(edge, rel, resolver); reason != "" {
+	if reason := resolveNestedOwnerRead(edge, rel, parents[0], resolver); reason != "" {
 		return dropConnect(reason)
 	}
 
@@ -1088,7 +1087,7 @@ func resolveNestedAdoption(
 // always a pointer or a Null wrapper, so the guard is non-empty in every
 // reachable case, and an empty one would emit a guard that is always true
 // rather than a split.
-func resolveNestedOwnerRead(edge *NestedEdgeContext, rel RelationshipContext, resolver *gotype.Resolver) string {
+func resolveNestedOwnerRead(edge *NestedEdgeContext, rel RelationshipContext, parentKey ColumnContext, resolver *gotype.Resolver) string {
 	if edge.CompositeKey {
 		if column := resolveNestedOwnerTuple(edge, rel, resolver); column != "" {
 			return fmt.Sprintf("the traversed FK column %q carries no null guard for the three-way adoption split", column)
@@ -1098,11 +1097,23 @@ func resolveNestedOwnerRead(edge *NestedEdgeContext, rel RelationshipContext, re
 	ext := resolver.DeriveScalarExtraction(rel.FKColumnGoType)
 	edge.FKOwnerGoType = rel.FKColumnGoType
 	edge.FKOwnerGuard = strings.ReplaceAll(ext.GuardExpr, "$v", "cur")
-	edge.FKOwnerKey = strings.ReplaceAll(ext.UnwrapExpr, "$v", "cur")
+	edge.FKOwnerIsParent = nestedOwnerIsParentExpr(strings.ReplaceAll(ext.UnwrapExpr, "$v", "cur"), parentKey)
 	if edge.FKOwnerGuard == "" {
 		return fmt.Sprintf("the traversed FK column binds to %s on the target entity, which carries no null guard for the three-way adoption split", rel.FKColumnGoType)
 	}
 	return ""
+}
+
+// nestedOwnerIsParentExpr compares a row's unwrapped key with the parent's. A
+// time key compares as an instant: `==` on a time.Time also compares the zone
+// pointer, which differs between two rows read back with the same non-hour
+// offset.
+func nestedOwnerIsParentExpr(key string, parentKey ColumnContext) string {
+	parent := nestedKeyValueExpr(parentKey.GoType, "parent."+parentKey.FieldName)
+	if parentKey.GoType == "time.Time" || parentKey.GoType == "types.DateTime" {
+		return key + ".Equal(" + parent + ")"
+	}
+	return key + " == " + parent
 }
 
 // resolveNestedOwnerTuple fills the expressions that read a composite key off a
@@ -1503,7 +1514,7 @@ func nestedAssignExpr(goType string, required bool, pkGoType, parentExpr string,
 	case "*" + pkGoType:
 		return "omittable.Set(&" + parentExpr + ")"
 	}
-	lit := nullWrapperLiteral(inner, parentExpr, resolver)
+	lit := nullWrapperLiteral(inner, nestedKeyValueExpr(pkGoType, parentExpr), resolver)
 	if lit == "" {
 		return ""
 	}
@@ -1646,11 +1657,11 @@ func nestedNullFilterExpr(comparatorType string) string {
 	// against all of them, and naming three was a narrower rule than the fact
 	// it encodes.
 	//
-	// No schema reaches the other members through an FK: applyConfigDeclaredFKs
-	// stamps a synthetic FKReference on every config-declared `fk:`, so an
-	// edge's traversed column always classifies as a key and lands on the ID,
-	// Number or Opaque family. The widening is therefore defensive; what makes
-	// a residual miss loud rather than silent is the per-verb diagnostic the
+	// A one-column FK lands on Enum when its column is an enum, and otherwise on
+	// the ID, Number or Opaque family, because applyConfigDeclaredFKs stamps a synthetic FKReference on every
+	// config-declared `fk:` and the column classifies as a key. A composite-key
+	// member classifies by its column and can land on the others. What makes a
+	// residual miss loud rather than silent is the per-verb diagnostic the
 	// caller returns, not this list.
 	base := strings.TrimPrefix(comparatorType, "*")
 	if strings.HasPrefix(base, "comparator.Nullable") {
@@ -1671,25 +1682,26 @@ func nestedNullFilterExpr(comparatorType string) string {
 // comparator.JSONB, comparator.Slice), which drops the verb rather than
 // emitting an unlink with no scope.
 func nestedEqFilterExpr(comparatorType, valueExpr string) string {
-	base := strings.TrimPrefix(comparatorType, "*")
-	inner, nullable := strings.CutPrefix(base, "comparator.Nullable")
-	family := inner
-	if !nullable {
-		family = strings.TrimPrefix(base, "comparator.")
-	}
-	if name, _, generic := strings.Cut(family, "["); generic {
-		family = name
-	}
-	switch family {
+	switch nestedComparatorFamily(comparatorType) {
 	case "Bool", "Enum", "ID", "Number", "Opaque", "String", "Time":
 	default:
 		return ""
 	}
+	base := strings.TrimPrefix(comparatorType, "*")
+	inner, nullable := strings.CutPrefix(base, "comparator.Nullable")
 	if !nullable {
 		return fmt.Sprintf("&%s{Eq: new(%s)}", base, valueExpr)
 	}
 	embedded, _, _ := strings.Cut(inner, "[")
 	return fmt.Sprintf("&%s{%s: comparator.%s{Eq: new(%s)}}", base, embedded, inner, valueExpr)
+}
+
+// nestedComparatorFamily names a filter field's comparator family, without the
+// pointer, the Nullable prefix or a type argument.
+func nestedComparatorFamily(comparatorType string) string {
+	family := strings.TrimPrefix(strings.TrimPrefix(comparatorType, "*"), "comparator.")
+	family, _, _ = strings.Cut(strings.TrimPrefix(family, "Nullable"), "[")
+	return family
 }
 
 // comparatorOperandLiteral spells a Go source literal in the operand type a
@@ -1713,18 +1725,29 @@ func comparatorOperandLiteral(comparatorType, literal string) string {
 	return arg + "(" + literal + ")"
 }
 
-// nestedParentKeyExpr converts the parent's primary key into the element type
-// the FK's comparator takes — a string on the comparator.ID family, the key's
-// own Go type on comparator.Number and comparator.Opaque (PRD §11.2).
+// nestedParentKeyExpr spells the parent's referenced column in the operand type
+// of the comparator filtering the key member: a string on comparator.ID and
+// comparator.String, the column's own value on every other family (PRD §11.2).
 //
-// fkGoType is the FK's *value* type as the relationship builder resolved it,
-// which is the parent's key type by construction; it is what decides the
-// family, exactly as it does for the read loader's `IN` term.
-func nestedParentKeyExpr(fkGoType string, parentKey ColumnContext) string {
-	if funcPKIsStringType(strings.TrimPrefix(fkGoType, "*")) {
-		return funcFKToString(parentKey, "parent."+parentKey.FieldName)
+// The filter field decides, not the parent's Go type. A key member classifies
+// by the column holding it, so an enum, timestamp or boolean member need not
+// land on the family a primary key of that type would.
+func nestedParentKeyExpr(comparatorType string, parentKey ColumnContext) string {
+	expr := "parent." + parentKey.FieldName
+	switch nestedComparatorFamily(comparatorType) {
+	case "ID", "String":
+		return funcFKToString(parentKey, expr)
 	}
-	return "parent." + parentKey.FieldName
+	return nestedKeyValueExpr(parentKey.GoType, expr)
+}
+
+// nestedKeyValueExpr reads a key column as the value comparator.Time and
+// types.NullDateTime hold: types.DateTime embeds a time.Time and is not one.
+func nestedKeyValueExpr(goType, expr string) string {
+	if goType == "types.DateTime" {
+		return expr + ".Time"
+	}
+	return expr
 }
 
 // nestedNullAssignExpr renders the right-hand side that sets a nullable FK to

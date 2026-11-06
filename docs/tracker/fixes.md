@@ -23,90 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-363
-
-- **Status:** Open
-- **Severity:** blocking
-- **Origin:** phase 32, cmd/sqlgen/gen
-- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe reproduced by the parent
-- **Vetted:** corrected at `e48ece8b` (2026-11-06)
-
-**Issue.** **A composite key with an enum, timestamp or boolean member generates a package that
-does not compile.** PRD §9.9.3 makes a nullable composite key eligible for `connect`, `disconnect`
-and `clear`, and §9.9.4 E1 only refuses a binding the emitter cannot construct. With
-`kinded_kids (kind kind, parent_id integer, FOREIGN KEY (kind, parent_id) REFERENCES kinded (kind, id))`
-on PostgreSQL / pgx, `sqlgen generate` succeeds and `go build` fails:
-`out/models_gen.go:1864:78: cannot use new(pid0) (value of type *string) as *Kind value in struct literal`,
-and the same at two more sites. The same error is measured on `*time.Time` and `*bool` on PostgreSQL
-(pgx and stdlib), MySQL and SQLite. SQLite also gives `cannot use parent.K (variable of struct type
-types.DateTime) as "time".Time value in struct literal` at the create and connect assignments. The enum
-failure is PostgreSQL only: a MySQL inline `enum` member compiles. `bytea`, `inet`, `numeric`, `interval`,
-`uuid` and `double precision` compile. Lifting the staging guard is what exposes this:
-a project with `nested_mutations` on and such a key built before 32.6.
-
-**Root cause.** `nestedParentScope` (`cmd/sqlgen/gen/context_nested.go:907`) renders `pidN` through
-`nestedParentKeyExpr` (`:1723`), which picks the stringified form from
-`funcPKIsStringType(goType)`. That test puts these types in the ID family, but the member's filter
-field is `comparator.Enum`, `Time` or `Bool`, whose `Eq` takes the real type. A one-column
-timestamp or boolean key on PostgreSQL lands on `comparator.ID`, which matches; a one-column enum FK fails
-at these sites too, but such a schema already fails without nested writes.
-`TestGenerate_CompositeKeyNestedWritersCompile` has only integer and varchar members, and
-`tenancy_postgres` adds only UUID, bigint and text.
-
-**Suggested fix.**
-- `nestedParentScope` passes `ff.ComparatorType`, and `nestedParentKeyExpr` stringifies only on the ID and
-  String families, otherwise using the column's own value. Add `nestedComparatorFamily`, shared with
-  `nestedEqFilterExpr`.
-- Add `nestedKeyValueExpr`, which unwraps `types.DateTime` to `.Time`, used by the scope term and by
-  `nestedAssignExpr`'s Null-wrapper arm.
-- `TestGenerate_CompositeKeyNestedWritersCompile` gains enum, timestamp and boolean members per dialect.
-  Add `TestNestedParentKeyExpr`, which runs under `-short`, where the build test is skipped.
-- Corrected from the original: the comparator decision alone is not enough, since SQLite needs the
-  `types.DateTime` unwrap at two sites to meet this entry's own test.
-- The owner tuple does not share the root cause: no comparator is involved, and enum, timestamp and bool
-  compile and pass live.
-- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced with a `generate` plus `go build` probe, e.g.
-  `out/models_gen.go:1863:78: cannot use new(pid0) (value of type *string) as *Kind value in struct literal`.
-  Live `Eq` confirmed through throwaway examples (create, connect, repeat connect, held, wrong-parent
-  disconnect, disconnect, clear, checked with raw SQL): PostgreSQL pgx enum, timestamptz, bool, and pinned
-  enum and timestamp; MySQL 8.0 datetime(6), bool, pinned datetime; SQLite datetime, bool, pinned datetime.
-  Gates: `go test -race -timeout=30m ./gen/... ./cli/...`, `make update-golden`, `make update-golden-e2e`,
-  `golangci-lint` and gofumpt green. Fail-first: reverting the comparator decision fails
-  `TestNestedParentKeyExpr/enum` (`= "fmt.Sprint(parent.K)", want "parent.K"`) and the postgres/pgx build
-  (`cannot use new(pid0) (value of type *string) as *Sort value in struct literal`); removing the unwrap from
-  the scope term fails `TestNestedParentKeyExpr/sqlite_datetime` and the sqlite build; removing it from
-  `nestedAssignExpr` fails the sqlite build (`cannot use parent.K ... as "time".Time`); the existing suite
-  passes without the fix. Golden churn: none (`make update-golden-e2e` also adds two unrelated go.sum lines,
-  reverted and not in the patch). An earlier `./cli` run hit the default 10-minute mark while run alongside
-  other jobs; `make check` timing should be watched. Has-one is not exercised: neither probe schema reached
-  the failing term. Patch: `.claude/prototypes/FIX-363.patch`.
-
-- The user ruled on 2026-11-06: widen this entry to the one-column SQLite datetime FK, which has the same
-  `types.DateTime` cause at a different site, the `{{ .FKOwnerKey }} == parent.{{ .ParentKeyField }}` template
-  line. Measured with this patch applied: `out/models_gen.go:2029:34: invalid operation: cur.Time == parent.K
-  (mismatched types "time".Time and types.DateTime)`; a `datetime` PK target fails the same way at `:1890:34`.
-  Nested off builds.
-
-- Fold-in result, run at `e48ece8b` on 2026-11-06: `ParentKeyField` and `FKOwnerKey` go, replaced by
-  `FKOwnerIsParent`, rendered by `nestedOwnerIsParentExpr`; the template line is `case {{ .FKOwnerGuard }} &&
-  {{ .FKOwnerIsParent }}:`. A `types.DateTime` parent renders `cur.Time.Equal(parent.K.Time)`, not `==`, which
-  compiles but compares the zone pointer: a held row stored at `+05:30` gave a false `already related to
-  another row`. A self-reference shape is covered too. Tests: `TestGenerate_SQLiteDatetimeFKNestedWritersCompile`
-  (unique target, PK target, self-reference) and `TestNestedOwnerIsParentExpr`. Gates: `go test -race
-  -timeout=30m ./gen/... ./cli/...`, `make update-golden`, `make update-golden-e2e`, `golangci-lint`, gofumpt
-  green; a live SQLite probe with seven stored forms was a no-op for this parent and `ErrAlreadyRelated` for
-  another. Fail-first: removing the branch fails all three build subtests with `mismatched types`; `==` fails
-  `TestNestedOwnerIsParentExpr/sqlite_datetime`; the existing suite passes without it. Golden churn: none. This
-  fixes compilation only: such a key still fails at runtime (FIX-371). Line ref: `nestedParentScope` is at
-  `:889`, `:907` is its `ParentKeyExpr` line. Has-one reaches this line under an explicit `one_to_one` config.
-  Patch: `.claude/prototypes/FIX-363.patch` (5 files, +190/-49).
-
-**References.**
-- PRD §9.9.3, §9.9.4 (E1).
-- Registry: `gen.nested.composite-key-free-members`.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-364
 
 - **Status:** Open
@@ -834,6 +750,101 @@ mismatch), `:1016` (composite no-op) and `:1018` (single-column no-op), with the
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-363
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe reproduced by the parent
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **A composite key with an enum, timestamp or boolean member generates a package that
+does not compile.** PRD §9.9.3 makes a nullable composite key eligible for `connect`, `disconnect`
+and `clear`, and §9.9.4 E1 only refuses a binding the emitter cannot construct. With
+`kinded_kids (kind kind, parent_id integer, FOREIGN KEY (kind, parent_id) REFERENCES kinded (kind, id))`
+on PostgreSQL / pgx, `sqlgen generate` succeeds and `go build` fails:
+`out/models_gen.go:1864:78: cannot use new(pid0) (value of type *string) as *Kind value in struct literal`,
+and the same at two more sites. The same error is measured on `*time.Time` and `*bool` on PostgreSQL
+(pgx and stdlib), MySQL and SQLite. SQLite also gives `cannot use parent.K (variable of struct type
+types.DateTime) as "time".Time value in struct literal` at the create and connect assignments. The enum
+failure is PostgreSQL only: a MySQL inline `enum` member compiles. `bytea`, `inet`, `numeric`, `interval`,
+`uuid` and `double precision` compile. Lifting the staging guard is what exposes this:
+a project with `nested_mutations` on and such a key built before 32.6.
+
+**Root cause.** `nestedParentScope` (`cmd/sqlgen/gen/context_nested.go:906`) renders `pidN` through
+`nestedParentKeyExpr` (`:1735`), which picks the stringified form from
+`funcPKIsStringType(goType)`. That test puts these types in the ID family, but the member's filter
+field is `comparator.Enum`, `Time` or `Bool`, whose `Eq` takes the real type. A one-column
+timestamp or boolean key on PostgreSQL lands on `comparator.ID`, which matches; a one-column enum FK fails
+at these sites too, but such a schema already fails without nested writes.
+`TestGenerate_CompositeKeyNestedWritersCompile` has only integer and varchar members, and
+`tenancy_postgres` adds only UUID, bigint and text.
+
+**Suggested fix.**
+- `nestedParentScope` passes `ff.ComparatorType`, and `nestedParentKeyExpr` stringifies only on the ID and
+  String families, otherwise using the column's own value. Add `nestedComparatorFamily`, shared with
+  `nestedEqFilterExpr`.
+- Add `nestedKeyValueExpr`, which unwraps `types.DateTime` to `.Time`, used by the scope term and by
+  `nestedAssignExpr`'s Null-wrapper arm.
+- `TestGenerate_CompositeKeyNestedWritersCompile` gains enum, timestamp and boolean members per dialect.
+  Add `TestNestedParentKeyExpr`, which runs under `-short`, where the build test is skipped.
+- Corrected from the original: the comparator decision alone is not enough, since SQLite needs the
+  `types.DateTime` unwrap at two sites to meet this entry's own test.
+- The owner tuple does not share the root cause: no comparator is involved, and enum, timestamp and bool
+  compile and pass live.
+- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced with a `generate` plus `go build` probe, e.g.
+  `out/models_gen.go:1863:78: cannot use new(pid0) (value of type *string) as *Kind value in struct literal`.
+  Live `Eq` confirmed through throwaway examples (create, connect, repeat connect, held, wrong-parent
+  disconnect, disconnect, clear, checked with raw SQL): PostgreSQL pgx enum, timestamptz, bool, and pinned
+  enum and timestamp; MySQL 8.0 datetime(6), bool, pinned datetime; SQLite datetime, bool, pinned datetime.
+  Gates: `go test -race -timeout=30m ./gen/... ./cli/...`, `make update-golden`, `make update-golden-e2e`,
+  `golangci-lint` and gofumpt green. Fail-first: reverting the comparator decision fails
+  `TestNestedParentKeyExpr/enum` (`= "fmt.Sprint(parent.K)", want "parent.K"`) and the postgres/pgx build
+  (`cannot use new(pid0) (value of type *string) as *Sort value in struct literal`); removing the unwrap from
+  the scope term fails `TestNestedParentKeyExpr/sqlite_datetime` and the sqlite build; removing it from
+  `nestedAssignExpr` fails the sqlite build (`cannot use parent.K ... as "time".Time`); the existing suite
+  passes without the fix. Golden churn: none (`make update-golden-e2e` also adds two unrelated go.sum lines,
+  reverted and not in the patch). An earlier `./cli` run hit the default 10-minute mark while run alongside
+  other jobs; `make check` timing should be watched. Has-one is not exercised: neither probe schema reached
+  the failing term. Patch: `.claude/prototypes/FIX-363.patch`.
+
+- The user ruled on 2026-11-06: widen this entry to the one-column SQLite datetime FK, which has the same
+  `types.DateTime` cause at a different site, the `{{ .FKOwnerKey }} == parent.{{ .ParentKeyField }}` template
+  line. Measured with this patch applied: `out/models_gen.go:2029:34: invalid operation: cur.Time == parent.K
+  (mismatched types "time".Time and types.DateTime)`; a `datetime` PK target fails the same way at `:1890:34`.
+  Nested off builds.
+
+- Fold-in result, run at `e48ece8b` on 2026-11-06: `ParentKeyField` and `FKOwnerKey` go, replaced by
+  `FKOwnerIsParent`, rendered by `nestedOwnerIsParentExpr`; the template line is `case {{ .FKOwnerGuard }} &&
+  {{ .FKOwnerIsParent }}:`. A `types.DateTime` parent renders `cur.Time.Equal(parent.K.Time)`, not `==`, which
+  compiles but compares the zone pointer: a held row stored at `+05:30` gave a false `already related to
+  another row`. A self-reference shape is covered too. Tests: `TestGenerate_SQLiteDatetimeFKNestedWritersCompile`
+  (unique target, PK target, self-reference) and `TestNestedOwnerIsParentExpr`. Gates: `go test -race
+  -timeout=30m ./gen/... ./cli/...`, `make update-golden`, `make update-golden-e2e`, `golangci-lint`, gofumpt
+  green; a live SQLite probe with seven stored forms was a no-op for this parent and `ErrAlreadyRelated` for
+  another. Fail-first: removing the branch fails all three build subtests with `mismatched types`; `==` fails
+  `TestNestedOwnerIsParentExpr/sqlite_datetime`; the existing suite passes without it. Golden churn: none. This
+  fixes compilation only: such a key still fails at runtime (FIX-371). Line ref: `nestedParentScope` is at
+  `:888`, `:906` is its `ParentKeyExpr` line. Has-one reaches this line under an explicit `one_to_one` config.
+  Patch: `.claude/prototypes/FIX-363.patch` (5 files, +190/-49).
+
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): does the connect split compare a
+  plain `time.Time` key by instant too → yes, `.Equal` for `time.Time` as for `types.DateTime`, because it was
+  prototyped with gates green, no golden changes, no public surface changes, and it reverses no ruling or PRD
+  statement.
+
+**References.**
+- PRD §9.9.3, §9.9.4 (E1).
+- Registry: `gen.nested.composite-key-free-members`, `gen.nested.e1-target-shape`.
+
+**Resolution notes.** Applied the vetted prototype clean at `8362ac1d` (fresh against `e48ece8b`). `nestedParentKeyExpr` now takes the filter field's comparator and stringifies only on the ID and String families, through the new `nestedComparatorFamily` shared with `nestedEqFilterExpr`. `nestedKeyValueExpr` unwraps `types.DateTime` to `.Time` at the scope term and in `nestedAssignExpr`'s Null-wrapper arm. `ParentKeyField` and `FKOwnerKey` are gone: `FKOwnerIsParent`, rendered by `nestedOwnerIsParentExpr`, carries the connect split's comparison and uses `.Equal` for a `types.DateTime` parent. Tests: `TestGenerate_CompositeKeyNestedWritersCompile` gains enum, timestamp and boolean members per dialect; new `TestGenerate_TimeFKNestedWritersCompile`, `TestNestedParentKeyExpr` and `TestNestedOwnerIsParentExpr`. Beyond the prototype: the three new tests are claimed in `docs/conformance/cli/gen.md`, on `gen.nested.composite-key-free-members` and `rel.o2m.nested-mutation`, because `make req-check` refused them unclaimed. Fail-first re-run on the final code: reverting the comparator decision, either unwrap, or the `.Equal` branch each fails as the entry records. The `/verify` review moved those claims to
+`gen.nested.e1-target-shape`, whose "the emitter can construct from the parent column" is what they prove, and listed
+`TestNestedOwnerIsParentExpr` as Unclaimed. Also inline from that review: `.Equal` now covers a plain `time.Time`
+parent (the auto-accept above; the vet's `TestGenerate_SQLiteDatetimeFKNestedWritersCompile` became `TestGenerate_TimeFKNestedWritersCompile`, which also builds it on PostgreSQL pgx and stdlib and on MySQL), new
+`TestNestedAssignExpr_NullWrapperValue` keeps the `nestedAssignExpr` unwrap covered under `-short`, the
+`nestedNullFilterExpr` comment no longer says every FK lands on the ID, Number or Opaque family, and this entry's line
+refs are current. Golden churn: none. A one-column SQLite datetime key now compiles but still fails at runtime (FIX-371).
+
 ### FIX-362
 
 - **Status:** Resolved

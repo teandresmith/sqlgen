@@ -258,7 +258,8 @@ CREATE TABLE tasks (id integer PRIMARY KEY, cycle_id integer REFERENCES cycles(i
 }
 
 // A composite-key edge's nested writers compile on every dialect and layout,
-// with a text key member, whose comparator differs from an integer's.
+// with text, enum, timestamp and boolean key members, whose comparators differ
+// from an integer's and take the member's own type or a string.
 func TestGenerate_CompositeKeyNestedWritersCompile(t *testing.T) {
 	const schema = `CREATE TABLE cycles (id integer PRIMARY KEY, workspace_id integer NOT NULL, slug varchar(40) NOT NULL,
   UNIQUE (workspace_id, id), UNIQUE (slug, id));
@@ -271,7 +272,12 @@ CREATE TABLE labels (id integer PRIMARY KEY, workspace_id integer NOT NULL, UNIQ
 CREATE TABLE task_labels (workspace_id integer NOT NULL, task_id integer NOT NULL, label_id integer NOT NULL,
   PRIMARY KEY (workspace_id, task_id, label_id),
   FOREIGN KEY (workspace_id, task_id) REFERENCES tasks (workspace_id, id),
-  FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id));`
+  FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id));
+`
+	const member = `CREATE TABLE %[1]ss (id integer PRIMARY KEY, workspace_id integer NOT NULL, k %[2]s NOT NULL, UNIQUE (k, id));
+CREATE TABLE %[1]s_kids (id integer PRIMARY KEY, workspace_id integer NOT NULL, k %[2]s, parent_id integer,
+  FOREIGN KEY (k, parent_id) REFERENCES %[1]ss (k, id));
+`
 	const body = `  paths: [schema.sql]
 output:
   driver: %s
@@ -290,16 +296,74 @@ generation:
 	if err != nil {
 		t.Fatal(err)
 	}
-	tests := []struct{ dialect, driver, layout string }{
-		{"postgres", "pgx", "single_file"},
-		{"postgres", "stdlib", "file_per_table"},
-		{"mysql", "stdlib", "single_file"},
-		{"sqlite", "stdlib", "file_per_table"},
+	const pgEnum = "CREATE TYPE sort AS ENUM ('a', 'b');\n"
+	tests := []struct {
+		dialect, driver, layout string
+		prelude                 string
+		enum, timestamp         string
+	}{
+		{"postgres", "pgx", "single_file", pgEnum, "sort", "timestamptz"},
+		{"postgres", "stdlib", "file_per_table", pgEnum, "sort", "timestamp"},
+		{"mysql", "stdlib", "single_file", "", "enum('a', 'b')", "datetime"},
+		{"sqlite", "stdlib", "file_per_table", "", "", "datetime"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.dialect+"/"+tt.driver, func(t *testing.T) {
 			cfg := "version: 1\ninput:\n  dialect: " + tt.dialect + "\n" + fmt.Sprintf(body, tt.driver, tt.layout)
-			dir, stderr, err := runCommand(t, "generate", schema, cfg)
+			ddl := tt.prelude + schema + fmt.Sprintf(member, "flag", "boolean") + fmt.Sprintf(member, "stamp", tt.timestamp)
+			if tt.enum != "" {
+				ddl += fmt.Sprintf(member, "kind", tt.enum)
+			}
+			dir, stderr, err := runCommand(t, "generate", ddl, cfg)
+			if err != nil {
+				t.Fatalf("generate: %v\nstderr: %s", err, stderr)
+			}
+			if testing.Short() && os.Getenv("SQLGEN_BUILD_GENERATED") == "" {
+				return
+			}
+			buildGenerated(t, root, dir)
+		})
+	}
+}
+
+// The connect split compares a one-column time key with the parent's. A SQLite
+// datetime reads back as a time.Time off the Null wrapper while the parent holds
+// a types.DateTime, so the parent's side unwraps, whichever column the FK
+// references.
+func TestGenerate_TimeFKNestedWritersCompile(t *testing.T) {
+	const cfg = `version: 1
+input:
+  dialect: %s
+  paths: [schema.sql]
+output:
+  driver: %s
+  dir: out
+  package: models
+  layout: single_file
+generation:
+  nested_mutations:
+    enabled: true
+`
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct{ name, dialect, driver, schema string }{
+		{"unique target", "sqlite", "stdlib", `CREATE TABLE stamps (id integer PRIMARY KEY, k datetime NOT NULL UNIQUE);
+CREATE TABLE stamp_kids (id integer PRIMARY KEY, k datetime REFERENCES stamps (k));`},
+		{"pk target", "sqlite", "stdlib", `CREATE TABLE stamps (k datetime PRIMARY KEY);
+CREATE TABLE stamp_kids (id integer PRIMARY KEY, stamp_k datetime REFERENCES stamps (k));`},
+		{"self reference", "sqlite", "stdlib", `CREATE TABLE stamps (k datetime PRIMARY KEY, parent_k datetime REFERENCES stamps (k));`},
+		{"postgres pgx", "postgres", "pgx", `CREATE TABLE stamps (k timestamptz PRIMARY KEY);
+CREATE TABLE stamp_kids (id integer PRIMARY KEY, stamp_k timestamptz REFERENCES stamps (k));`},
+		{"postgres stdlib", "postgres", "stdlib", `CREATE TABLE stamps (k timestamp PRIMARY KEY);
+CREATE TABLE stamp_kids (id integer PRIMARY KEY, stamp_k timestamp REFERENCES stamps (k));`},
+		{"mysql", "mysql", "stdlib", `CREATE TABLE stamps (k datetime(6) PRIMARY KEY);
+CREATE TABLE stamp_kids (id integer PRIMARY KEY, stamp_k datetime(6) REFERENCES stamps (k));`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, stderr, err := runCommand(t, "generate", tt.schema, fmt.Sprintf(cfg, tt.dialect, tt.driver))
 			if err != nil {
 				t.Fatalf("generate: %v\nstderr: %s", err, stderr)
 			}
