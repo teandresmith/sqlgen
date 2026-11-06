@@ -11,8 +11,8 @@
 
 - Kind: composite
 - Struct: `ProjectMemberPK`
-- `project_id` — ProjectID `int64`
 - `account_id` — AccountID `int64`
+- `project_id` — ProjectID `int64`
 
 ## Columns
 
@@ -26,7 +26,7 @@
 
 | Name | Columns | Unique | Method | Where |
 | --- | --- | --- | --- | --- |
-| `project_members_pkey` | project_id, account_id | yes | btree |  |
+| `project_members_pkey` | account_id, project_id | yes | btree |  |
 
 ## Query methods
 
@@ -42,7 +42,7 @@ Generated SQL:
 sqlite:
 
 ```sql
-SELECT "account_id", "project_id", "role" FROM "project_members" WHERE "project_id" = ? AND "account_id" = ? LIMIT 1
+SELECT "account_id", "project_id", "role" FROM "project_members" WHERE "account_id" = ? AND "project_id" = ? LIMIT 1
 ```
 
 ### GetMany
@@ -68,7 +68,7 @@ Generated SQL:
 sqlite:
 
 ```sql
-SELECT EXISTS(SELECT 1 FROM "project_members" WHERE "project_id" = ? AND "account_id" = ?)
+SELECT EXISTS(SELECT 1 FROM "project_members" WHERE "account_id" = ? AND "project_id" = ?)
 ```
 
 ### ExistsWhere
@@ -167,7 +167,7 @@ Generated SQL:
 sqlite:
 
 ```sql
-UPDATE "project_members" SET <set> WHERE "project_id" = ? AND "account_id" = ?
+UPDATE "project_members" SET <set> WHERE "account_id" = ? AND "project_id" = ?
 ```
 
 ### UpdateMany
@@ -182,7 +182,7 @@ Generated SQL:
 sqlite:
 
 ```sql
-UPDATE "project_members" SET <set> WHERE "project_id" = ? AND "account_id" = ?
+UPDATE "project_members" SET <set> WHERE "account_id" = ? AND "project_id" = ?
 ```
 
 ### UpdateWhere
@@ -197,7 +197,7 @@ Generated SQL:
 sqlite:
 
 ```sql
-UPDATE "project_members" SET <set> WHERE <filter> RETURNING "project_id", "account_id"
+UPDATE "project_members" SET <set> WHERE <filter> RETURNING "account_id", "project_id"
 ```
 
 ### Upsert
@@ -241,7 +241,7 @@ Generated SQL:
 sqlite:
 
 ```sql
-DELETE FROM "project_members" WHERE "project_id" = ? AND "account_id" = ?
+DELETE FROM "project_members" WHERE "account_id" = ? AND "project_id" = ?
 ```
 
 ### HardDeleteMany
@@ -255,7 +255,7 @@ Generated SQL:
 sqlite:
 
 ```sql
-DELETE FROM "project_members" WHERE ("project_id", "account_id") IN (<pks>)
+DELETE FROM "project_members" WHERE ("account_id", "project_id") IN (<pks>)
 ```
 
 ### HardDeleteWhere
@@ -270,7 +270,7 @@ Generated SQL:
 sqlite:
 
 ```sql
-DELETE FROM "project_members" WHERE <filter> RETURNING "project_id", "account_id"
+DELETE FROM "project_members" WHERE <filter> RETURNING "account_id", "project_id"
 ```
 
 ## Filter
@@ -294,7 +294,7 @@ Fields: AccountID, ProjectID, Role
 ## Read examples
 
 ```go
-row, err := client.ProjectMembers().Get(ctx, models.ProjectMemberPK{ProjectID: 1, AccountID: 1})
+row, err := client.ProjectMembers().Get(ctx, models.ProjectMemberPK{AccountID: 1, ProjectID: 1})
 rows, err := client.ProjectMembers().GetMany(ctx, &models.GetProjectMembersInput{Filter: &models.ProjectMemberFilter{Role: &comparator.String{Eq: new("example")}}})
 ```
 
@@ -302,5 +302,5 @@ rows, err := client.ProjectMembers().GetMany(ctx, &models.GetProjectMembersInput
 
 ```go
 created, err := client.ProjectMembers().Create(ctx, &models.CreateProjectMemberInput{ProjectID: 1, AccountID: 1, Role: "example"})
-updated, err := client.ProjectMembers().Update(ctx, models.ProjectMemberPK{ProjectID: 1, AccountID: 1}, &models.UpdateProjectMemberInput{Role: omittable.Set("example")})
+updated, err := client.ProjectMembers().Update(ctx, models.ProjectMemberPK{AccountID: 1, ProjectID: 1}, &models.UpdateProjectMemberInput{Role: omittable.Set("example")})
 ```

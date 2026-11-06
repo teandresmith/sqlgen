@@ -1250,8 +1250,8 @@
         {
           "name": "project_members_pkey",
           "columns": [
-            "project_id",
-            "account_id"
+            "account_id",
+            "project_id"
           ],
           "unique": true,
           "method": "btree"
@@ -1262,13 +1262,13 @@
         "struct": "ProjectMemberPK",
         "columns": [
           {
-            "name": "project_id",
-            "go_field": "ProjectID",
+            "name": "account_id",
+            "go_field": "AccountID",
             "go_type": "int64"
           },
           {
-            "name": "account_id",
-            "go_field": "AccountID",
+            "name": "project_id",
+            "go_field": "ProjectID",
             "go_type": "int64"
           }
         ]
@@ -1331,7 +1331,7 @@
             ],
             "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
             "sql_bodies": {
-              "sqlite": "SELECT \"account_id\", \"project_id\", \"role\" FROM \"project_members\" WHERE \"project_id\" = ? AND \"account_id\" = ? LIMIT 1"
+              "sqlite": "SELECT \"account_id\", \"project_id\", \"role\" FROM \"project_members\" WHERE \"account_id\" = ? AND \"project_id\" = ? LIMIT 1"
             }
           },
           {
@@ -1359,7 +1359,7 @@
             "returns": "bool",
             "errors": [],
             "sql_bodies": {
-              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"project_members\" WHERE \"project_id\" = ? AND \"account_id\" = ?)"
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"project_members\" WHERE \"account_id\" = ? AND \"project_id\" = ?)"
             }
           },
           {
@@ -1488,7 +1488,7 @@
             ],
             "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
             "sql_bodies": {
-              "sqlite": "UPDATE \"project_members\" SET <set> WHERE \"project_id\" = ? AND \"account_id\" = ?"
+              "sqlite": "UPDATE \"project_members\" SET <set> WHERE \"account_id\" = ? AND \"project_id\" = ?"
             }
           },
           {
@@ -1506,7 +1506,7 @@
             ],
             "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
             "sql_bodies": {
-              "sqlite": "UPDATE \"project_members\" SET <set> WHERE \"project_id\" = ? AND \"account_id\" = ?"
+              "sqlite": "UPDATE \"project_members\" SET <set> WHERE \"account_id\" = ? AND \"project_id\" = ?"
             }
           },
           {
@@ -1529,7 +1529,7 @@
             ],
             "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
-              "sqlite": "UPDATE \"project_members\" SET <set> WHERE <filter> RETURNING \"project_id\", \"account_id\""
+              "sqlite": "UPDATE \"project_members\" SET <set> WHERE <filter> RETURNING \"account_id\", \"project_id\""
             }
           },
           {
@@ -1588,7 +1588,7 @@
             "errors": [],
             "notes": "Idempotent — a primary key that does not exist is not an error.",
             "sql_bodies": {
-              "sqlite": "DELETE FROM \"project_members\" WHERE \"project_id\" = ? AND \"account_id\" = ?"
+              "sqlite": "DELETE FROM \"project_members\" WHERE \"account_id\" = ? AND \"project_id\" = ?"
             }
           },
           {
@@ -1603,7 +1603,7 @@
             "errors": [],
             "notes": "Idempotent — primary keys that do not exist are not an error.",
             "sql_bodies": {
-              "sqlite": "DELETE FROM \"project_members\" WHERE (\"project_id\", \"account_id\") IN (<pks>)"
+              "sqlite": "DELETE FROM \"project_members\" WHERE (\"account_id\", \"project_id\") IN (<pks>)"
             }
           },
           {
@@ -1620,7 +1620,7 @@
             ],
             "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
             "sql_bodies": {
-              "sqlite": "DELETE FROM \"project_members\" WHERE <filter> RETURNING \"project_id\", \"account_id\""
+              "sqlite": "DELETE FROM \"project_members\" WHERE <filter> RETURNING \"account_id\", \"project_id\""
             }
           }
         ]
@@ -1660,12 +1660,12 @@
       },
       "examples": {
         "read": [
-          "row, err := client.ProjectMembers().Get(ctx, models.ProjectMemberPK{ProjectID: 1, AccountID: 1})",
+          "row, err := client.ProjectMembers().Get(ctx, models.ProjectMemberPK{AccountID: 1, ProjectID: 1})",
           "rows, err := client.ProjectMembers().GetMany(ctx, &models.GetProjectMembersInput{Filter: &models.ProjectMemberFilter{Role: &comparator.String{Eq: new(\"example\")}}})"
         ],
         "write": [
           "created, err := client.ProjectMembers().Create(ctx, &models.CreateProjectMemberInput{ProjectID: 1, AccountID: 1, Role: \"example\"})",
-          "updated, err := client.ProjectMembers().Update(ctx, models.ProjectMemberPK{ProjectID: 1, AccountID: 1}, &models.UpdateProjectMemberInput{Role: omittable.Set(\"example\")})"
+          "updated, err := client.ProjectMembers().Update(ctx, models.ProjectMemberPK{AccountID: 1, ProjectID: 1}, &models.UpdateProjectMemberInput{Role: omittable.Set(\"example\")})"
         ]
       }
     },

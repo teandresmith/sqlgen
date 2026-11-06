@@ -22,12 +22,21 @@
 ## Open
 
 <!-- fixes:open:begin -->
+
+_No open fixes._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
 ### FIX-362
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 8, cmd/sqlgen/gen
 - **Surfaced by:** 32.3 auto-review question, measured 2026-11-05
+- **Vetted:** corrected at `a956661a` (2026-11-05)
 
 **Issue.** **`<Table>PK` and `PKColumns` follow column order, not the `PRIMARY KEY (...)` clause
 order PRD §27.5 states.** For `CREATE TABLE cycles (workspace_id bigint NOT NULL, id bigint NOT
@@ -37,38 +46,97 @@ MySQL and SQLite, but `TableContext.PKColumns` is `[workspace_id id]` on all thr
 and `mc.AffectedPKs` therefore disagree with the order §27.5 calls load-bearing. One example has
 this shape: `introspect_sqlite`'s `project_members` declares `PRIMARY KEY (account_id,
 project_id)` with the columns the other way round. Since 32.3, a declared relationship key list
-maps onto the clause order (`gen.resolvedPrimaryKey`), so it is the one reader that already
-follows §27.5.
+maps onto the clause order (`gen.resolvedPrimaryKey`, and config's key-length check through an
+inline reorder in `checkRelationshipKeyLength`), so those are the only readers that already
+follow §27.5. The §4.13 cursor-key PK fallback reads `PKColumns` too, so it carries the same
+column order (`introspect_sqlite`: `cursorKeys: []string{"project_id", "account_id"}`).
 
-**Root cause.** With no `primary_key` override, `buildTableColumns`
+**Root cause.** (Line refs as of `a956661a`.) With no `primary_key` override, `buildTableColumns`
 (`cmd/sqlgen/gen/context_table.go:360-365`) collects the PK by walking columns and reading
 `PrimaryKey` flags, so it never consults the PRIMARY KEY constraint's `Columns`. Config's
-`resolvedPKColumns` / `pkColumnNames` (`cmd/sqlgen/config/validate.go:1914`, `:2510`) do the same.
+`resolvedPKColumns` / `pkColumnNames` (`cmd/sqlgen/config/validate.go:1991`, `:2587`) do the same.
 
 **Suggested fix.**
-- In `buildTableColumns`, order `pkColumns` by the declared PRIMARY KEY constraint when its
-  columns are the flagged set, falling back to column order. `resolvedPrimaryKey`
-  (`cmd/sqlgen/gen/relationship_targets.go:119`) does the same lookup, so share it.
-- Give `config.resolvedPKColumns` the same order from `SchemaTable.PrimaryKey` (added in 32.3).
-- Check that SQLite introspection keeps the clause order (`PRAGMA table_info.pk` is the key
-  position) and that `assertSchemaParity` covers it, so `files` and `database` agree.
-- Tests: a `PKColumns` order case on all three dialects under both sources; regenerate and
-  review the `introspect_sqlite` goldens (`ProjectMemberPK` field order, cache keys, manifest
-  `pk.columns`).
+- Extract the no-override branch of `resolvedPrimaryKey` (`cmd/sqlgen/gen/relationship_targets.go:126`)
+  into `declaredPrimaryKey(table)`: the PRIMARY KEY constraint's `Columns` when they are the
+  flagged set, else the flagged columns in column order. `resolvedPrimaryKey` calls it.
+- In `buildTableColumns`, build `pkColumns` by walking `declaredPrimaryKey(table)` and looking each
+  name up in `columns` (an excluded column is skipped, as before). This also puts the §4.13
+  cursor-key PK fallback in clause order, since `ResolveTableConnection` reads `pkColumns`.
+- Give `config.resolvedPKColumns` the same rule from `SchemaTable.PrimaryKey`, and drop the
+  inline reorder in `checkRelationshipKeyLength`, which now gets it from `resolvedPKColumns`.
+- No parser change: SQLite introspection already sorts by `PRAGMA table_xinfo.pk`
+  (`parser/introspect/sqlite.go:408-414`), `TestSQLiteIntrospect_CompositePKOrder` pins it, and all
+  three `parity_fixtures_test.go` fixtures carry a `PRIMARY KEY (b, a)` table under
+  `assertSchemaParity`, which keeps constraint-column order.
+- Tests: `TestBuildTableContexts_CompositePKFollowsClauseOrder` (parsed DDL, all three dialects)
+  and `TestValidatePostParse_ResolvedPKFollowsClauseOrder` (the composite-strategy error names
+  `(id, workspace_id)`). The `database` source is covered by the parity tests above plus the
+  `introspect_sqlite` goldens.
+- Changed from the original: the SQLite/parity bullet needs no work (already covered); the config
+  change also removes the 32.3 inline reorder rather than adding a second one; and the cursor-key
+  fallback order changes with `PKColumns`, which the original did not name.
+- Prototype results, run at `a956661a` on 2026-11-05: reproduction — a probe through
+  `gen.BuildTableContextsFromSchema` on `CREATE TABLE cycles (workspace_id bigint NOT NULL, id
+  bigint NOT NULL, PRIMARY KEY (id, workspace_id))` printed `postgres: constraint=[id
+  workspace_id] PKColumns=[workspace_id id]`, and the same for `mysql` and `sqlite`; with the
+  prototype, `PKColumns=[id workspace_id]` on all three. Gates — `go test -race -short ./...` in
+  `cmd/sqlgen` → ok; `golangci-lint run ./gen/... ./config/...` → 0 issues; `go test -count=1
+  ./introspect/ -run 'ParityFixture|CompositePKOrder'` in `parser` → ok (at HEAD, no change);
+  `make update-golden` → no unit golden churn; `make update-golden-e2e` → ok; in
+  `introspect_sqlite`, `GOWORK=off go test -race -count=1 ./...` → ok and `GOWORK=off
+  golangci-lint run` → 0 issues. Fail-first — `context_table.go` reverted →
+  `TestBuildTableContexts_CompositePKFollowsClauseOrder` fails on all three dialects:
+  "PKColumns mismatch (-want +got): - "id", + "workspace_id", - "workspace_id", + "id""; `validate.go`
+  reverted → `TestValidatePostParse_ResolvedPKFollowsClauseOrder` fails: "… composite primary key
+  (workspace_id, id) …, want it to name "composite primary key (id, workspace_id)"" (and
+  `…KeyLengthNamesClauseOrder` still passes); the existing `gen` and `config` suites without the
+  fix pass. Golden churn: `introspect_sqlite` only, ~3 files in each of `expected/` and `models/`
+  (`models_gen.go` ±31, `manifest/manifest_gen.json` ±16, `manifest/project_member.md` ±12):
+  `ProjectMemberPK` fields, every composite-PK `WHERE`/`RETURNING` order, `cursorKeys`,
+  `AffectedPKs`, manifest `pk.columns` and the `project_members_pkey` index columns; no cache
+  churn (the example has no cache). `make update-golden-e2e` also added two unrelated
+  testcontainers `go.sum` lines to the `mysql` and `sqlite` examples, left out of the patch.
+  Patch: `.claude/prototypes/FIX-362.patch` (11 files, +181/-139).
 
 **References.**
-- PRD §27.5 "Composite-key ordering invariant" (`docs/PRD.md:13964`); §8.6 `primary_key.columns`
+- PRD §27.5 "Composite-key ordering invariant" (`docs/PRD.md:13965`); §8.6 `primary_key.columns`
   "declaration order is load-bearing"; §13.4 (the 32.3 ruling that lists follow the clause order).
 - `docs/design/CACHE.md` §16.
 - `docs/tracker/phase-32.md` 32.3 Completion Record.
 
-**Resolution notes.** _Filled in by /fix resolve._
+**Resolution notes.** With no `primary_key.columns` override, the resolved primary key now
+follows the `PRIMARY KEY (...)` clause in both gen and config. `resolvedPrimaryKey`'s lookup moved
+into `gen.declaredPrimaryKey(table)`: the constraint's columns when they are exactly the flagged
+set, else column order. `buildTableColumns` builds `pkColumns` from it, so `<Table>PK` field
+order, composite cache keys, `AffectedPKs`, composite-PK `WHERE` / `RETURNING` order, the
+§4.13 cursor-key PK fallback and manifest `pk.columns` all follow the clause.
+`config.resolvedPKColumns` applies the same rule from `SchemaTable.PrimaryKey`, and
+`checkRelationshipKeyLength` drops its inline reorder, which is now redundant. No parser change:
+introspection already kept the clause order (see the Suggested fix).
 
-<!-- fixes:open:end -->
+Applied from the vetted prototype at `a956661a` (fresh, applied cleanly). Two changes on top of
+it: the gen test's subtests are now named by a table field, since `req-check` cannot verify
+computed subtest names; and the `resolvedPKColumns` doc comment is shorter. Auto-review
+inline doc fixes: `primaryKeyColumnNames` and config `pkColumnNames` docs now say "column
+order" (not "declaration order") and point at the clause-order helper; the new config test's
+doc comment is shorter; the Root cause line refs are marked as of `a956661a`. `/verify`: added
+`TestCacheTemplate_compositeKeyFollowsClauseOrder` (DDL → table contexts → cache context →
+rendered `keyForCycle`, fails with the fix reverted), so `cache-key.composite-pk-clause-order` is
+pinned at the cache key itself, not only at `PKColumns`; `phase-32.md` and `CACHE.md` §16 wording
+updated; the conflict-target comment order went to the backlog.
 
-## Resolved
+Tests. `TestBuildTableContexts_CompositePKFollowsClauseOrder` (postgres / mysql / sqlite) and
+`TestValidatePostParse_ResolvedPKFollowsClauseOrder`; the existing
+`…RelationshipKeyLengthNamesClauseOrder` now runs through `resolvedPKColumns`. Registry: a new
+`cache-key.composite-pk-clause-order` row in `docs/conformance/runtime/cache.md` (§27.5) claims
+the gen test plus `golden: introspect_sqlite`, and `config.composite-pk-strategy.message` in
+`docs/conformance/cli/config.md` now names the clause order and claims the config test. Golden
+churn matches the vetted record: `introspect_sqlite` `expected/` and `models/` only
+(`models_gen.go`, `manifest/manifest_gen.json`, `manifest/project_member.md`); the unrelated
+testcontainers `go.sum` lines `make update-golden-e2e` adds to `mysql` / `sqlite` were discarded
+(backlog). `make check` and `make check-examples` pass.
 
-<!-- fixes:resolved:begin -->
 ### FIX-361
 
 - **Status:** Resolved

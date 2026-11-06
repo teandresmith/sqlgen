@@ -46,8 +46,9 @@ func junctionKeyColumn(schema *parser.Schema, r config.TableRelationship, source
 	return toSingular(tName) + "_id", nil
 }
 
-// primaryKeyColumnNames returns table's primary-key column names in declaration
-// order, or nil for a nil table.
+// primaryKeyColumnNames returns table's primary-key column names in column
+// order, or nil for a nil table; declaredPrimaryKey gives the PRIMARY KEY (...)
+// order.
 func primaryKeyColumnNames(table *parser.Table) []string {
 	if table == nil {
 		return nil

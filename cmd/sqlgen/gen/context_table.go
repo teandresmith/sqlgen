@@ -357,9 +357,11 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 		return columns, overridePKColumns(columns, tableCfg.PrimaryKey.Columns), unmapped, nil
 	}
 
+	// The PK follows its PRIMARY KEY (...) order, not column order: it sets
+	// the <Table>PK field order and the composite cache key (PRD §27.5).
 	var pkColumns []ColumnContext
-	for i := range columns {
-		if columns[i].PrimaryKey {
+	for _, name := range declaredPrimaryKey(table) {
+		if i := slices.IndexFunc(columns, func(c ColumnContext) bool { return c.Name == name }); i >= 0 {
 			pkColumns = append(pkColumns, columns[i])
 		}
 	}

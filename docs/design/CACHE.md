@@ -1506,7 +1506,7 @@ alongside them.
        PKImportPath string   // single-PK: "github.com/google/uuid" (if named type)
        PKComposite  bool
        PKStructName string   // composite only: "OrderItemPK"
-       PKFields     []PKField // composite only; DDL column order + types
+       PKFields     []PKField // composite only; PRIMARY KEY (...) order + types
    }
 
    type PKField struct {

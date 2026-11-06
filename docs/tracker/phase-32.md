@@ -713,8 +713,7 @@ question. A probe showed that the parser keeps the clause order on all three dia
 - Fail first: `…DeclaredKeyListMapsOntoPrimaryKey/a composite key follows the PRIMARY KEY clause
   order` got `[workspace_id id]`, and `TestValidatePostParse_RelationshipKeyLengthNamesClauseOrder`
   named `(workspace_id, id)`.
-- The `<Table>PK` order itself is FIX-362 (tracked). Until it lands, the two orders differ on a
-  table like `project_members`, which cannot use a composite manual key before 32.5.
+- The `<Table>PK` order itself followed in FIX-362, so the two orders now agree.
 
 **Checks.** `make check` green (`refs-check`, `req-check` included). `make check-examples` green,
 run twice: after the main change and after the review fixes.

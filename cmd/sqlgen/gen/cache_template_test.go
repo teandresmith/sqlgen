@@ -77,6 +77,31 @@ func TestCacheTemplate_emitsCompositePKKeyHelper(t *testing.T) {
 	}
 }
 
+// TestCacheTemplate_compositeKeyFollowsClauseOrder pins PRD §27.5 from DDL to
+// the rendered helper: keyFor{Table} joins the components in PRIMARY KEY (...)
+// order when it differs from column order.
+func TestCacheTemplate_compositeKeyFollowsClauseOrder(t *testing.T) {
+	schema := parseDDLForTest(t, config.DialectPostgres,
+		"CREATE TABLE cycles (workspace_id bigint NOT NULL, id bigint NOT NULL, PRIMARY KEY (id, workspace_id));")
+	cfg := cacheTestConfig(true)
+	tables, err := gen.BuildTableContextsFromSchema(schema, cfg)
+	if err != nil {
+		t.Fatalf("BuildTableContextsFromSchema: %v", err)
+	}
+	out := executeCacheTemplate(t, gen.BuildCacheContext(tables, nil, cfg, "db", "Client"))
+
+	start := strings.Index(out, "func (c *Cache) keyForCycle(pk CyclePK) string {")
+	if start < 0 {
+		t.Fatalf("missing keyForCycle helper; output:\n%s", out)
+	}
+	helper := out[start:]
+	idIdx := strings.Index(helper, "pk.ID,")
+	workspaceIdx := strings.Index(helper, "pk.WorkspaceID,")
+	if idIdx < 0 || workspaceIdx < 0 || idIdx >= workspaceIdx {
+		t.Errorf("keyForCycle component order: ID idx=%d, WorkspaceID idx=%d, want ID first\noutput:\n%s", idIdx, workspaceIdx, out)
+	}
+}
+
 func TestCacheTemplate_emitsInvalidateDispatch(t *testing.T) {
 	cfg := cacheTestConfig(true)
 	ctx := gen.BuildCacheContext(

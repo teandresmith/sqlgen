@@ -145,6 +145,33 @@ func TestBuildTableContexts_PKOverride_CompositePreservesOrder(t *testing.T) {
 	}
 }
 
+// TestBuildTableContexts_CompositePKFollowsClauseOrder pins PRD §27.5: with no
+// primary_key override, PKColumns follows the PRIMARY KEY (...) clause, not
+// column order, on every dialect.
+func TestBuildTableContexts_CompositePKFollowsClauseOrder(t *testing.T) {
+	const ddl = "CREATE TABLE cycles (workspace_id bigint NOT NULL, id bigint NOT NULL, PRIMARY KEY (id, workspace_id));"
+	tests := []struct {
+		name    string
+		dialect config.Dialect
+	}{
+		{name: "postgres", dialect: config.DialectPostgres},
+		{name: "mysql", dialect: config.DialectMySQL},
+		{name: "sqlite", dialect: config.DialectSQLite},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := parseDDLForTest(t, tt.dialect, ddl)
+			contexts, err := gen.BuildTableContextsFromSchema(schema, testInput(schema).Config)
+			if err != nil {
+				t.Fatalf("BuildTableContextsFromSchema: %v", err)
+			}
+			if diff := cmp.Diff([]string{"id", "workspace_id"}, pkColumnNames(t, contexts[0])); diff != "" {
+				t.Errorf("PKColumns mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestBuildTableContexts_NoPK_SkippedFromGeneration pins PRD §9.4b: a table
 // with no auto-detected PK and no primary_key.columns override is skipped
 // from generation entirely — no TableContext is produced, so no client,

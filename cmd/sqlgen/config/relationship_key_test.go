@@ -351,3 +351,15 @@ func TestValidatePostParse_RelationshipKeyLengthNamesClauseOrder(t *testing.T) {
 	_, err := config.ValidatePostParse(cfg, tables, nil)
 	assertErrContains(t, err, "ValidatePostParse()", "2 columns (id, workspace_id)")
 }
+
+// TestValidatePostParse_ResolvedPKFollowsClauseOrder pins PRD §27.5: without a
+// primary_key.columns override, the resolved key follows its PRIMARY KEY (...)
+// order, here through the composite-strategy error.
+func TestValidatePostParse_ResolvedPKFollowsClauseOrder(t *testing.T) {
+	tables := relationshipKeySchema()
+	tables[0].PrimaryKey = []string{"id", "workspace_id"}
+	cfg := validConfig()
+	cfg.Tables["cycles"] = config.TableConfig{PrimaryKey: &config.TablePrimaryKeyConfig{Strategy: config.PKStrategyDB}}
+	_, err := config.ValidatePostParse(cfg, tables, nil)
+	assertErrContains(t, err, "ValidatePostParse()", "composite primary key (id, workspace_id)")
+}

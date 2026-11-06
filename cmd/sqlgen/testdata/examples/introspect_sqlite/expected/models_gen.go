@@ -2752,8 +2752,8 @@ type GetAccountsInput struct {
 
 // ProjectMemberPK - composite primary key for the project_members table.
 type ProjectMemberPK struct {
-	ProjectID int64 `db:"project_id" json:"project_id"`
 	AccountID int64 `db:"account_id" json:"account_id"`
+	ProjectID int64 `db:"project_id" json:"project_id"`
 }
 type ProjectMember struct {
 	ProjectID int64  `db:"project_id" json:"project_id"`
@@ -2867,7 +2867,7 @@ func newProjectMemberClient(querier database.Querier, mutationHooks []hook.Mutat
 		batchSize:     200,
 		queryLimit:    1000,
 		pageSize:      100,
-		cursorKeys:    []string{"project_id", "account_id"},
+		cursorKeys:    []string{"account_id", "project_id"},
 		strictUpdates: true,
 		mutationHooks: mutationHooks,
 		queryHooks:    queryHooks,
@@ -2963,8 +2963,8 @@ func (c *projectMemberClient) Get(ctx context.Context, pk ProjectMemberPK, opts 
 		}
 		projectMembers, err := c.GetMany(ctx, &GetProjectMembersInput{
 			Filter: &ProjectMemberFilter{
-				ProjectID: &comparator.Number[int64]{Eq: new(pk.ProjectID)},
 				AccountID: &comparator.Number[int64]{Eq: new(pk.AccountID)},
+				ProjectID: &comparator.Number[int64]{Eq: new(pk.ProjectID)},
 			},
 			Limit: new(1),
 		}, internalOpts)
@@ -3110,14 +3110,14 @@ func (c *projectMemberClient) Create(ctx context.Context, input *CreateProjectMe
 			return nil, err
 		}
 
-		m.AffectedPKs = []any{ProjectMemberPK{ProjectID: input.ProjectID, AccountID: input.AccountID}}
+		m.AffectedPKs = []any{ProjectMemberPK{AccountID: input.AccountID, ProjectID: input.ProjectID}}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
 
-		return c.Get(ctx, ProjectMemberPK{ProjectID: input.ProjectID, AccountID: input.AccountID}, func(o *CallOptions[ProjectMemberFieldOptions]) {
+		return c.Get(ctx, ProjectMemberPK{AccountID: input.AccountID, ProjectID: input.ProjectID}, func(o *CallOptions[ProjectMemberFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
@@ -3182,7 +3182,7 @@ func (c *projectMemberClient) CreateMany(ctx context.Context, inputs []*CreatePr
 				return nil, err
 			}
 			for _, input := range batch {
-				allPKs = append(allPKs, ProjectMemberPK{ProjectID: input.ProjectID, AccountID: input.AccountID})
+				allPKs = append(allPKs, ProjectMemberPK{AccountID: input.AccountID, ProjectID: input.ProjectID})
 			}
 		}
 
@@ -3253,8 +3253,8 @@ func (c *projectMemberClient) Update(ctx context.Context, pk ProjectMemberPK, in
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 			SetClauses: setClauses,
 			Conditions: sql.BuildCompositePKConditions(c.dialect,
-				[]string{"project_id", "account_id"},
-				[]any{pk.ProjectID, pk.AccountID}),
+				[]string{"account_id", "project_id"},
+				[]any{pk.AccountID, pk.ProjectID}),
 		})
 
 		execResult, err := conn.Exec(ctx, query, args...)
@@ -3355,8 +3355,8 @@ func (c *projectMemberClient) UpdateMany(ctx context.Context, items []UpdateProj
 					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 						SetClauses: setClauses,
 						Conditions: sql.BuildCompositePKConditions(c.dialect,
-							[]string{"project_id", "account_id"},
-							[]any{item.PK.ProjectID, item.PK.AccountID}),
+							[]string{"account_id", "project_id"},
+							[]any{item.PK.AccountID, item.PK.ProjectID}),
 					})
 
 					execResult, err := conn.Exec(ctx, query, args...)
@@ -3460,7 +3460,7 @@ func (c *projectMemberClient) UpdateWhere(ctx context.Context, filter *ProjectMe
 		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
 			SetClauses:       setClauses,
 			Conditions:       conds,
-			ReturningColumns: []string{"project_id", "account_id"},
+			ReturningColumns: []string{"account_id", "project_id"},
 		})
 
 		rows, err := conn.Query(ctx, query, args...)
@@ -3472,7 +3472,7 @@ func (c *projectMemberClient) UpdateWhere(ctx context.Context, filter *ProjectMe
 		var pks []ProjectMemberPK
 		for rows.Next() {
 			var pk ProjectMemberPK
-			if err := rows.Scan(&pk.ProjectID, &pk.AccountID); err != nil {
+			if err := rows.Scan(&pk.AccountID, &pk.ProjectID); err != nil {
 				return nil, fmt.Errorf("scan updated project_member pk: %w", err)
 			}
 			pks = append(pks, pk)
@@ -3519,8 +3519,8 @@ func (c *projectMemberClient) HardDelete(ctx context.Context, pk ProjectMemberPK
 		conn := database.Conn(ctx, c.querier)
 		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
 			Conditions: sql.BuildCompositePKConditions(c.dialect,
-				[]string{"project_id", "account_id"},
-				[]any{pk.ProjectID, pk.AccountID}),
+				[]string{"account_id", "project_id"},
+				[]any{pk.AccountID, pk.ProjectID}),
 		})
 
 		execResult, err := conn.Exec(ctx, query, args...)
@@ -3563,16 +3563,16 @@ func (c *projectMemberClient) HardDeleteMany(ctx context.Context, pks []ProjectM
 			end := min(start+c.batchSize, len(pks))
 			pkValues := make([][]any, end-start)
 			for i, pk := range pks[start:end] {
-				pkValues[i] = []any{pk.ProjectID, pk.AccountID}
+				pkValues[i] = []any{pk.AccountID, pk.ProjectID}
 			}
 			hardConds := []sql.Condition{
-				sql.BuildCompositePKBatchCondition(c.dialect, []string{"project_id", "account_id"}, pkValues),
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{"account_id", "project_id"}, pkValues),
 			}
 
 			// RETURNING the key columns names the rows this sub-batch wrote.
 			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
 				Conditions:       hardConds,
-				ReturningColumns: []string{"project_id", "account_id"},
+				ReturningColumns: []string{"account_id", "project_id"},
 			})
 			rows, err := conn.Query(ctx, query, args...)
 			if err != nil {
@@ -3581,7 +3581,7 @@ func (c *projectMemberClient) HardDeleteMany(ctx context.Context, pks []ProjectM
 			batchKeys := make(map[ProjectMemberPK]struct{}, end-start)
 			for rows.Next() {
 				var rowPK ProjectMemberPK
-				if err := rows.Scan(&rowPK.ProjectID, &rowPK.AccountID); err != nil {
+				if err := rows.Scan(&rowPK.AccountID, &rowPK.ProjectID); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("scan deleted project_member key: %w", err)
 				}
@@ -3631,7 +3631,7 @@ func (c *projectMemberClient) HardDeleteWhere(ctx context.Context, filter *Proje
 		// DELETE with RETURNING — get affected composite PKs in one round-trip
 		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
 			Conditions:       conds,
-			ReturningColumns: []string{"project_id", "account_id"},
+			ReturningColumns: []string{"account_id", "project_id"},
 		})
 
 		rows, err := conn.Query(ctx, query, args...)
@@ -3643,7 +3643,7 @@ func (c *projectMemberClient) HardDeleteWhere(ctx context.Context, filter *Proje
 		var pks []ProjectMemberPK
 		for rows.Next() {
 			var pk ProjectMemberPK
-			if err := rows.Scan(&pk.ProjectID, &pk.AccountID); err != nil {
+			if err := rows.Scan(&pk.AccountID, &pk.ProjectID); err != nil {
 				return nil, fmt.Errorf("scan deleted project_member pk: %w", err)
 			}
 			pks = append(pks, pk)
@@ -3728,7 +3728,7 @@ func (c *projectMemberClient) Upsert(ctx context.Context, input *CreateProjectMe
 		// from the UPDATE-set half of the conflict clause — a
 		// row's tenant is not a mutable attribute under normal operation.
 		conflictColumns := projectMemberConflictColumns[target]
-		updateColumns := excludeColumns(columns, append(conflictColumns, "project_id", "account_id"))
+		updateColumns := excludeColumns(columns, append(conflictColumns, "account_id", "project_id"))
 
 		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
 			Columns:             columns,
@@ -3741,14 +3741,14 @@ func (c *projectMemberClient) Upsert(ctx context.Context, input *CreateProjectMe
 			return nil, err
 		}
 
-		m.AffectedPKs = []any{ProjectMemberPK{ProjectID: input.ProjectID, AccountID: input.AccountID}}
+		m.AffectedPKs = []any{ProjectMemberPK{AccountID: input.AccountID, ProjectID: input.ProjectID}}
 
 		// Empty FieldOptions — caller doesn't need the result
 		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
 			return nil, nil
 		}
 
-		return c.Get(ctx, ProjectMemberPK{ProjectID: input.ProjectID, AccountID: input.AccountID}, func(o *CallOptions[ProjectMemberFieldOptions]) {
+		return c.Get(ctx, ProjectMemberPK{AccountID: input.AccountID, ProjectID: input.ProjectID}, func(o *CallOptions[ProjectMemberFieldOptions]) {
 			*o = options
 			o.SkipHooks = true
 			o.LockMode = sql.LockNone
@@ -3816,7 +3816,7 @@ func (c *projectMemberClient) UpsertMany(ctx context.Context, inputs []*CreatePr
 		// only add a misleading assignment to the SET list.
 		columns := []string{"project_id", "account_id", "role"}
 		conflictColumns := projectMemberConflictColumns[target]
-		updateColumns := excludeColumns(columns, append(conflictColumns, "project_id", "account_id"))
+		updateColumns := excludeColumns(columns, append(conflictColumns, "account_id", "project_id"))
 		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
 
 		// One value row per input, built before any statement runs: the dedupe
@@ -3833,7 +3833,7 @@ func (c *projectMemberClient) UpsertMany(ctx context.Context, inputs []*CreatePr
 				input.Role,
 			})
 			rowInputs = append(rowInputs, input)
-			rowPKs = append(rowPKs, ProjectMemberPK{ProjectID: input.ProjectID, AccountID: input.AccountID})
+			rowPKs = append(rowPKs, ProjectMemberPK{AccountID: input.AccountID, ProjectID: input.ProjectID})
 		}
 
 		// Dedupe by conflict target, last occurrence wins, first-appearance
@@ -3928,8 +3928,8 @@ func (c *projectMemberClient) Exists(ctx context.Context, pk ProjectMemberPK, op
 	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
 		conn := database.Conn(ctx, c.querier)
 		conds := sql.BuildCompositePKConditions(c.dialect,
-			[]string{"project_id", "account_id"},
-			[]any{pk.ProjectID, pk.AccountID})
+			[]string{"account_id", "project_id"},
+			[]any{pk.AccountID, pk.ProjectID})
 
 		query, args := sql.BuildExists(c.dialect, c.table, conds)
 
@@ -4197,12 +4197,12 @@ func decodeProjectMemberCursor(encoded string, keys []string) (map[string]any, e
 	out := make(map[string]any, len(keys))
 	for _, key := range keys {
 		switch key {
-		case "project_id":
-			err = json.Unmarshal(raw[key], &row.ProjectID)
-			out[key] = row.ProjectID
 		case "account_id":
 			err = json.Unmarshal(raw[key], &row.AccountID)
 			out[key] = row.AccountID
+		case "project_id":
+			err = json.Unmarshal(raw[key], &row.ProjectID)
+			out[key] = row.ProjectID
 		}
 		if err != nil {
 			return nil, err
@@ -4440,8 +4440,8 @@ func (f *ProjectMemberFilter) ToConditions(dialect sql.Dialect, opts ...FilterOp
 		var pkConds []sql.Condition
 		for _, pk := range f.PKs {
 			pkConds = append(pkConds, sql.And(
-				sql.Condition{Clause: dialect.QuoteIdentifier("project_id") + " = $", Value: pk.ProjectID},
 				sql.Condition{Clause: dialect.QuoteIdentifier("account_id") + " = $", Value: pk.AccountID},
+				sql.Condition{Clause: dialect.QuoteIdentifier("project_id") + " = $", Value: pk.ProjectID},
 			))
 		}
 		conds = append(conds, sql.Or(pkConds...))

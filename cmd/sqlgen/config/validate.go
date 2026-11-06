@@ -816,12 +816,8 @@ func checkRelationshipKeyLength(cfg *RootConfig, parsed map[string]SchemaTable, 
 	if found := findTableConfig(cfg, table); found != nil {
 		tc = *found
 	}
+	// A list maps onto the key in its PRIMARY KEY (...) order (§13.4).
 	pk := resolvedPKColumns(tc, table)
-	if (tc.PrimaryKey == nil || len(tc.PrimaryKey.Columns) == 0) && len(table.PrimaryKey) == len(pk) &&
-		!slices.ContainsFunc(pk, func(c string) bool { return !slices.Contains(table.PrimaryKey, c) }) {
-		// A list maps onto the key in its PRIMARY KEY (...) order (§13.4).
-		pk = table.PrimaryKey
-	}
 	if len(pk) == 0 || len(cols) == len(pk) {
 		return nil
 	}
@@ -1984,15 +1980,20 @@ func accessDropsFilter(access string) bool {
 	return access == AccessWriteOnly || access == AccessHidden || access == AccessInternal
 }
 
-// resolvedPKColumns returns the table's effective primary-key columns in
-// declaration order: the tables.<name>.primary_key.columns override when
-// present (it silently replaces the auto-detected PK, PRD §8.6), otherwise
-// the schema PK flags.
+// resolvedPKColumns returns the table's effective primary-key columns: the
+// tables.<name>.primary_key.columns override in declaration order when present
+// (it silently replaces the auto-detected PK, PRD §8.6), otherwise the schema
+// PK in its PRIMARY KEY (...) order (§27.5), falling back to column order when
+// no constraint lists exactly the flagged columns.
 func resolvedPKColumns(tc TableConfig, table SchemaTable) []string {
 	if tc.PrimaryKey != nil && len(tc.PrimaryKey.Columns) > 0 {
 		return tc.PrimaryKey.Columns
 	}
-	return pkColumnNames(table.Columns)
+	pk := pkColumnNames(table.Columns)
+	if len(table.PrimaryKey) == len(pk) && !slices.ContainsFunc(pk, func(c string) bool { return !slices.Contains(table.PrimaryKey, c) }) {
+		return table.PrimaryKey
+	}
+	return pk
 }
 
 // resolvedCursorKeys returns the table's effective §4.13 cursor-key set and a
@@ -2583,7 +2584,7 @@ func findViewConfig(cfg *RootConfig, view SchemaView) ViewConfig {
 }
 
 // pkColumnNames returns the subset of column names marked PrimaryKey, in
-// declaration order.
+// column order.
 func pkColumnNames(cols []SchemaColumn) []string {
 	var names []string
 	for _, col := range cols {

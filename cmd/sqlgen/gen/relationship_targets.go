@@ -121,17 +121,10 @@ func newRelationshipTargets(input *GenerateInput, collisions map[string]bool) *r
 
 // resolvedPrimaryKey is the key a declared key list maps onto (PRD §13.4): the
 // override's columns that exist on the table, in declared order, else the PK
-// in its PRIMARY KEY (...) order. A table whose PK columns no declared
-// constraint lists in full falls back to column order.
+// in its PRIMARY KEY (...) order.
 func resolvedPrimaryKey(table *parser.Table, tableCfg config.TableConfig) []string {
 	if tableCfg.PrimaryKey == nil || len(tableCfg.PrimaryKey.Columns) == 0 {
-		cols := primaryKeyColumnNames(table)
-		for _, c := range table.Constraints {
-			if c.Type == parser.PrimaryKey && sameColumnSet(c.Columns, cols) {
-				return c.Columns
-			}
-		}
-		return cols
+		return declaredPrimaryKey(table)
 	}
 	var pk []string
 	for _, name := range tableCfg.PrimaryKey.Columns {
@@ -140,6 +133,19 @@ func resolvedPrimaryKey(table *parser.Table, tableCfg config.TableConfig) []stri
 		}
 	}
 	return pk
+}
+
+// declaredPrimaryKey returns table's primary-key column names in PRIMARY KEY
+// (...) order, the order PRD §27.5 makes load-bearing. A table whose PK
+// columns no declared constraint lists in full falls back to column order.
+func declaredPrimaryKey(table *parser.Table) []string {
+	cols := primaryKeyColumnNames(table)
+	for _, c := range table.Constraints {
+		if c.Type == parser.PrimaryKey && sameColumnSet(c.Columns, cols) {
+			return c.Columns
+		}
+	}
+	return cols
 }
 
 // sameColumnSet reports whether a and b hold the same column names.
