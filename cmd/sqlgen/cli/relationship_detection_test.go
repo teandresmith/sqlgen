@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -247,6 +248,60 @@ CREATE TABLE tasks (id integer PRIMARY KEY, cycle_id integer REFERENCES cycles(i
 				if !strings.Contains(src, want) {
 					t.Errorf("models_gen.go is missing %q; the parent's loader:\n%s", want, src[start:min(start+4000, len(src))])
 				}
+			}
+			if testing.Short() && os.Getenv("SQLGEN_BUILD_GENERATED") == "" {
+				return
+			}
+			buildGenerated(t, root, dir)
+		})
+	}
+}
+
+// A composite-key edge's nested writers compile on every dialect and layout,
+// with a text key member, whose comparator differs from an integer's.
+func TestGenerate_CompositeKeyNestedWritersCompile(t *testing.T) {
+	const schema = `CREATE TABLE cycles (id integer PRIMARY KEY, workspace_id integer NOT NULL, slug varchar(40) NOT NULL,
+  UNIQUE (workspace_id, id), UNIQUE (slug, id));
+CREATE TABLE tasks (id integer PRIMARY KEY, workspace_id integer NOT NULL, cycle_id integer, title varchar(40) NOT NULL,
+  UNIQUE (workspace_id, id),
+  FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));
+CREATE TABLE notes (id integer PRIMARY KEY, cycle_slug varchar(40), cycle_id integer,
+  FOREIGN KEY (cycle_slug, cycle_id) REFERENCES cycles (slug, id));
+CREATE TABLE labels (id integer PRIMARY KEY, workspace_id integer NOT NULL, UNIQUE (workspace_id, id));
+CREATE TABLE task_labels (workspace_id integer NOT NULL, task_id integer NOT NULL, label_id integer NOT NULL,
+  PRIMARY KEY (workspace_id, task_id, label_id),
+  FOREIGN KEY (workspace_id, task_id) REFERENCES tasks (workspace_id, id),
+  FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id));`
+	const body = `  paths: [schema.sql]
+output:
+  driver: %s
+  dir: out
+  package: models
+  layout: %s
+tenancy:
+  enabled: true
+  column: workspace_id
+  required: true
+generation:
+  nested_mutations:
+    enabled: true
+`
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct{ dialect, driver, layout string }{
+		{"postgres", "pgx", "single_file"},
+		{"postgres", "stdlib", "file_per_table"},
+		{"mysql", "stdlib", "single_file"},
+		{"sqlite", "stdlib", "file_per_table"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.dialect+"/"+tt.driver, func(t *testing.T) {
+			cfg := "version: 1\ninput:\n  dialect: " + tt.dialect + "\n" + fmt.Sprintf(body, tt.driver, tt.layout)
+			dir, stderr, err := runCommand(t, "generate", schema, cfg)
+			if err != nil {
+				t.Fatalf("generate: %v\nstderr: %s", err, stderr)
 			}
 			if testing.Short() && os.Getenv("SQLGEN_BUILD_GENERATED") == "" {
 				return

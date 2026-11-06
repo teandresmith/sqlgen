@@ -1091,32 +1091,33 @@ SQLite.
 
 **PRD Reference:** Section 9.9
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] E1's nullable-referenced check reads every referenced member. It reads `nestedParentKey` (`rel.ParentKey`), the first pair only, and `compositeKeyWriteGuard` hides that until it is lifted: `shelves(region NOT NULL, bin NULL)` would otherwise pass.
-- [ ] `tenancy_postgres` schema (moved from 32.8, so the nested `example:` rows fail first):
+- [x] E1's nullable-referenced check reads every referenced member. It reads `nestedParentKey` (`rel.ParentKey`), the first pair only, and `compositeKeyWriteGuard` hides that until it is lifted: `shelves(region NOT NULL, bin NULL)` would otherwise pass.
+- [x] `tenancy_postgres` schema (moved from 32.8, so the nested `example:` rows fail first):
   - a composite tenant FK (`(workspace_id, x_id) → (workspace_id, id)`);
   - a tenant junction (M2M);
   - a composite-PK target, read surfaces only;
   - a `MATCH FULL` composite FK whose members are all free and nullable.
 
-  Regenerate its goldens; only the new tables change.
-- [ ] `nested.go.tmpl` and `context_nested.go`, for single-column-PK parents and targets (R3):
+  Regenerate its goldens; only the new tables change, plus `ToConditions` on the existing ones
+  (the package now has relationship filters).
+- [x] `nested.go.tmpl` and `context_nested.go`, for single-column-PK parents and targets (R3):
   - connect identifies the target by its PK and loads it through its own tenant-scoped client,
     reading its referenced columns;
   - pinned members must equal the target's referenced values, or `ErrAlreadyRelated` before any
     write (PRD §9.9.6, §9.9.8);
   - free members take the target's values;
   - `allow_reparent` never moves a pinned member.
-- [ ] Nested `create` sets every member from the parent's referenced columns, the tenant column
+- [x] Nested `create` sets every member from the parent's referenced columns, the tenant column
   included; a tenancy-set value that disagrees is `ErrAlreadyRelated` (design §7.1).
-- [ ] Disconnect nulls the free members, gated on 32.4's eligibility (SIMPLE / FULL).
-- [ ] `ErrAlreadyRelated` keys its owner map on the `[N]string` tuple.
-- [ ] M2M link and unlink insert and delete the junction row by the union of both key lists; E5
+- [x] Disconnect nulls the free members, gated on 32.4's eligibility (SIMPLE / FULL).
+- [x] `ErrAlreadyRelated` keys its owner map on the `[N]string` tuple.
+- [x] M2M link and unlink insert and delete the junction row by the union of both key lists; E5
   and E11 over that union (disconnect needs a junction PK equal to it, design §7.1).
-- [ ] Lift the staging guard's nested-ineligible reason. E1 and E3 still exclude composite-PK
+- [x] Lift the staging guard's nested-ineligible reason. E1 and E3 still exclude composite-PK
   parents and targets.
 
 ### Acceptance Criteria
@@ -1127,21 +1128,115 @@ SQLite.
 - A tenant junction links and unlinks through all three of its columns.
 - Disconnect under MATCH FULL with a pinned member is not generated, and is dropped silently
   (a schema fact, PRD §9.9.4).
-- Go goldens of existing examples are unchanged.
+- Go goldens of other examples are unchanged.
 
 ### Tests Required
 
-- [ ] Gen tests for connect (pinned verify, free write), create, disconnect, reparent and M2M
+- [x] Gen tests for connect (pinned verify, free write), create, disconnect, reparent and M2M
   link/unlink at N = 2.
-- [ ] Live-database tests (PostgreSQL): a cross-tenant connect fails before the write; a pinned
+- [x] Live-database tests (PostgreSQL): a cross-tenant connect fails before the write; a pinned
   mismatch is `ErrAlreadyRelated`, not a raw FK error; MATCH FULL all-NULL disconnect succeeds.
-- [ ] `ErrAlreadyRelated` on a tuple-keyed owner.
-- [ ] Every design §10.5 row for 32.6 passes, and its registry row lists the test.
-- [ ] `TestE2EGoldenFiles` green with no golden change.
+- [x] `ErrAlreadyRelated` on a tuple-keyed owner.
+- [x] Every design §10.5 row for 32.6 passes, and its registry row lists the test.
+- [x] `TestE2EGoldenFiles` green; only `tenancy_postgres` changes.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-11-06 on `design/tenant-composite-fk-relationships`, uncommitted.
+
+**Files.**
+- `gen/context.go`: `NestedKeyMemberContext`, `NestedScopeTerm`, `NestedOwnerMember`,
+  `NestedFieldAssign`, `FreeKeyMembers()`. `KeyMembers`, `ParentScope`, `OwnerMembers` and
+  `JunctionLinkFields` replace the one-column `FK*`, `ParentFilterExpr` and `Junction*Field` scalars.
+- `gen/context_nested.go`: every resolver walks the key; `resolveNestedKeyAssign`,
+  `nestedParentScope`, `resolveNestedOwnerTuple`, `junctionLinks`. `settleNestedKeyRewrite` is gone.
+- `gen/key_members.go`: `keyParents`. `gen/relationship_targets.go`, `gen/export_test.go`: the write
+  guard and its seam are gone.
+- `gen/templates/table/nested.go.tmpl`: ranges over the members, a tuple-keyed owner map for a
+  composite key, `targetRows` for a junction column read off the target.
+- Example: `tenancy_postgres` gains `cycles`, `sprints`, `projects`, `tasks`, `labels`, `task_labels`,
+  `badges`, `task_badges`,
+  `milestones`, `checkpoints`, `templates`, `template_steps`; `tests/nested_composite_test.go` (new).
+- Tests: `gen/nested_composite_test.go` (new), `TestGenerate_CompositeKeyNestedWritersCompile`.
+- Docs: PRD §9.9.3, §9.9.6, §9.9.8, the registry, design §7.1, §10.1, §10.2, §10.3.
+
+**Fail first.** Regression guards ran green at HEAD: `TestNestedEligibility_ChildInputDropsTenantFKColumn`,
+`TestNestedTemplate_ChildCreateInputDropsEveryKeyMember/single-column tenant key` and the existing
+nested suite. New behavior failed at HEAD: the schema refused to generate (`the edge joins through a
+composite key, which nested writes do not reach yet`), so every example row failed for that reason;
+behind the seam, `shelves` passed E1 (`nested edges = ["Crates"], want none`) and the executor tests
+found no composite statements. `/surrogate pk has no disconnect` passed at HEAD, since that junction's
+edge was already refused; it asserts the verb set after the lift.
+
+**Behavior and interpretation.**
+- **`nested.composite-create-tenant-mismatch` reworded.** The row said "under `SkipTenancy`", which
+  cannot occur: every key member is elided from the child input, so under `SkipTenancy` the parent
+  alone sets the column. PRD §9.9.8 says "tenancy-set", and that case is reachable: a shared parent's
+  column, which tenancy does not guard, against the resolver. The executor maps the target's
+  `tenancy.ErrMismatch` to `ErrAlreadyRelated`. The test is
+  `TestCreateWithRelated_TenancySetTenantMismatchIsAlreadyRelated`.
+- **The mapping covers a single-column tenant FK too** (ruled below). No other example's golden
+  moved.
+- **Composite has-one is unreachable in this phase.** A has-one side is declared, a declared key list
+  maps onto the parent's PK (R7), so a two-column key needs a composite-PK parent, which E3 excludes.
+  The matrix cell is now a stated `n/a`. The template handles the shape, and it is untested until the
+  next phase lifts E3.
+- **Owner tuple.** `[N]string` as the design says, which also compares binary and network keys. NULL
+  is held apart, since a NULL member and an empty string stringify alike. A free member's NULL makes
+  a row unparented only when every free member is NULL, matching the adoption's `IS NULL` guard; a
+  partly NULL key is `ErrAlreadyRelated`, or adopted under `allow_reparent`.
+- **M2M.** A column in both keys takes the parent's value (PRD §9.9.6, added here). Under `SkipTenancy`
+  a target in another workspace is then a raw FK violation on `link`, not `ErrAlreadyRelated`: no
+  tenancy-set value disagrees, and the PRD's pinned rule covers O2M and has-one only.
+- **32.4's note on an M2M into a UNIQUE column is lifted.** `create` and `connect` read the column off
+  the target. `disconnect` reads no target, so it is lost and reported for a listed edge.
+  `TestNestedEligibility_M2MIntoAUniqueKeyIsNotWriteEligible` became
+  `TestNestedEligibility_JunctionReferencingTargetColumn`.
+- **Surrogate junction.** It loses `disconnect` at generation, and `clear` needs just E11 (PRD §9.9.3).
+  `create` and `connect` are emitted but every link fails at runtime: see the `/verify` findings below.
+
+**Goldens.** `make update-golden` and `make update-golden-e2e` moved `tenancy_postgres` alone. Beyond
+the new tables, one existing-table change: `ToConditions` on `Article`, `LineItem` and the two views
+gains `opts ...FilterOption`, because the package now has relationship filters. The `go.sum` drift
+reappeared and was reverted.
+
+**Auto-review (sqlgen-reviewer).** It confirmed fail first by removing the `ErrMismatch` mapping. One
+high-confidence finding, fixed: the parent write forced only the primary key, so under a narrowed
+`FieldOptions` the executors read a zero `parent.WorkspaceID`. Measured on `tenancy_postgres`: `connect`
+and `create` gave a false `ErrAlreadyRelated`, `disconnect` and `clear` returned nil and wrote nothing,
+and the M2M link gave a raw `ErrMismatch`. `NestedContext.ParentKeyFields` now forces every column an
+edge's key references, which also covers a one-column key into a UNIQUE column.
+`TestWithRelated_NarrowedSelectionStillWritesTheEdge` failed first with the false `ErrAlreadyRelated`.
+Coverage closed from its report: `TestUpdateWithRelated_LinkStepReadsTheTargetsReferencedColumn` runs
+`targetRows` live (`badges`, `task_badges`), and `TestNestedTemplate_HasOneTenantKeyMapsTheMismatch`
+renders the has-one branch. A free member with no null guard now drops `connect`, as a one-column key
+does. Its doc corrections are applied. Rendered by no fixture: the nullable pinned guard.
+
+**Checks.** `make check` and `make check-examples` green, conformance included on all four drivers;
+`TestE2EGoldenFiles`, `TestE2EDatabaseTwin` and `make build-generated` green. `make test-integration`
+was not run; it is due at 32.8.
+
+**Rulings (2026-11-06, each took the recommended option).**
+- A single-column tenant FK off a shared parent is `ErrAlreadyRelated` (`CONFLICT`), not
+  `tenancy.ErrMismatch` (`FORBIDDEN`), as PRD §9.9.8 and §9.9.10 say. Pinned by
+  `TestCreateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated`, which passed on arrival.
+- A partly NULL key on `connect` stays `ErrAlreadyRelated`, matching the adoption's `IS NULL` guard.
+  PRD §9.9.3 now states it. Pinned by `TestUpdateWithRelated_PartlyNullKeyIsAlreadyRelated`, which
+  passed on arrival.
+- The mapping extends to the M2M link step (PRD §9.9.6, §9.9.8). Failed first with the raw
+  `tenant on mutation input does not match` error; `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated`.
+
+**Rulings from `/verify 32.6` (2026-11-06, each took the recommended option; none is implemented yet).**
+- A surrogate-PK junction's link targets the UNIQUE equal to the key union, and without one the edge
+  is refused under E13 (FIX-364).
+- An M2M `connect` under `SkipTenancy` runs a pinned check on a column both keys share, and a mismatch
+  is `ErrAlreadyRelated` (FIX-368).
+- The PRD §9.9.6 junction paragraph stands, amended by that ruling and with the SQLite FK claim
+  removed (FIX-368).
+- A shared parent's tenant mismatch is loud on `disconnect` and `clear` too (FIX-369).
+
+`tenancy_postgres` gains `template_labels`, `workspaces`, `workspace_notes`, `zones` and `sites` for
+these. No fixture renders the nullable pinned guard (`null[i] || …`), so it is neither compiled nor run.
 
 ## 32.7 GraphQL — relationship fields and filters for composite edges
 

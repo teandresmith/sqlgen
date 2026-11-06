@@ -86,8 +86,7 @@ CREATE TABLE profiles (user_id bigint PRIMARY KEY REFERENCES users(id), bio text
 `
 
 // keyMembersContexts builds ddl with nested mutations on and tenancy on
-// workspace_id, with edges through composite keys generated. mutate adjusts
-// the config first.
+// workspace_id. mutate adjusts the config first.
 func keyMembersContexts(t *testing.T, dialect config.Dialect, ddl string, mutate func(*config.RootConfig)) map[string]gen.TableContext {
 	t.Helper()
 	contexts, err := buildKeyMembersContexts(t, dialect, ddl, mutate)
@@ -100,7 +99,6 @@ func keyMembersContexts(t *testing.T, dialect config.Dialect, ddl string, mutate
 // buildKeyMembersContexts is keyMembersContexts returning the build error.
 func buildKeyMembersContexts(t *testing.T, dialect config.Dialect, ddl string, mutate func(*config.RootConfig)) (map[string]gen.TableContext, error) {
 	t.Helper()
-	gen.WriteCompositeKeyEdgesForTest(t)
 	schema := parseDDLForTest(t, dialect, ddl)
 	parser.DetectRelationships(schema)
 	cfg := testInput(schema).Config
@@ -119,56 +117,6 @@ func buildKeyMembersContexts(t *testing.T, dialect config.Dialect, ddl string, m
 		byName[tc.TableName] = tc
 	}
 	return byName, nil
-}
-
-// A composite-key edge generates its reads, and nested writes do not reach it:
-// listing one is an error with that reason, and an unlisted one carries no
-// surface (PRD §9.9.4).
-func TestNestedEligibility_CompositeKeyEdgeIsNotWriteEligibleYet(t *testing.T) {
-	const ddl = `
-CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id));
-CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_id bigint,
-  FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`
-	build := func(t *testing.T, listed bool) (map[string]gen.TableContext, error) {
-		t.Helper()
-		schema := parseDDLForTest(t, config.DialectPostgres, ddl)
-		parser.DetectRelationships(schema)
-		cfg := testInput(schema).Config
-		cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
-		if listed {
-			cfg.Tables["cycles"] = config.TableConfig{NestedMutations: &config.TableNestedMutationsConfig{
-				Relationships: []config.TableNestedRelationship{{Name: "Tasks"}},
-			}}
-		}
-		contexts, err := gen.BuildTableContextsFromSchema(schema, cfg)
-		byName := make(map[string]gen.TableContext, len(contexts))
-		for _, tc := range contexts {
-			byName[tc.TableName] = tc
-		}
-		return byName, err
-	}
-
-	t.Run("unlisted", func(t *testing.T) {
-		tables, err := build(t, false)
-		if err != nil {
-			t.Fatalf("BuildTableContextsFromSchema() error: %v", err)
-		}
-		cycles := tables["cycles"]
-		if len(cycles.O2MRelationships) != 1 {
-			t.Fatalf("cycles O2M relationships = %d, want the composite edge", len(cycles.O2MRelationships))
-		}
-		if got := nestedEdgeNames(cycles); len(got) != 0 {
-			t.Errorf("cycles nested edges = %q, want none", got)
-		}
-	})
-
-	t.Run("listed", func(t *testing.T) {
-		_, err := build(t, true)
-		const want = "the edge joins through a composite key, which nested writes do not reach yet"
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("BuildTableContextsFromSchema() error = %v, want it to contain %q", err, want)
-		}
-	})
 }
 
 // A key referencing a nullable UNIQUE column loads, and has no nested surface: a
@@ -298,34 +246,5 @@ func TestNestedEligibility_MatchFull(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// TestNestedEligibility_M2MIntoAUniqueKeyIsNotWriteEligible pins E5's binding
-// clause (PRD §9.9.4): the link step writes the target's primary key into the
-// junction's reference FK, so a junction keyed on one of the target's UNIQUE
-// columns cannot be written from it, even when the two share a type. The edge
-// is omitted, and reported when listed.
-func TestNestedEligibility_M2MIntoAUniqueKeyIsNotWriteEligible(t *testing.T) {
-	const ddl = `
-CREATE TABLE users (id bigint PRIMARY KEY, name text NOT NULL);
-CREATE TABLE tags (id bigint PRIMARY KEY, legacy_id bigint NOT NULL UNIQUE);
-CREATE TABLE user_tags (
-	user_id bigint NOT NULL REFERENCES users(id),
-	tag_legacy_id bigint NOT NULL REFERENCES tags(legacy_id),
-	PRIMARY KEY (user_id, tag_legacy_id)
-);`
-	contexts := keyMembersContexts(t, config.DialectPostgres, ddl, nil)
-	if slices.Contains(nestedEdgeNames(contexts["users"]), "Tags") {
-		t.Errorf("auto-included: users nested edges = %v, want Tags not write-eligible", nestedEdgeNames(contexts["users"]))
-	}
-	_, err := buildKeyMembersContexts(t, config.DialectPostgres, ddl, func(cfg *config.RootConfig) {
-		cfg.Tables["users"] = config.TableConfig{NestedMutations: &config.TableNestedMutationsConfig{
-			Relationships: []config.TableNestedRelationship{{Name: "Tags"}},
-		}}
-	})
-	const want = `the junction's reference FK "tag_legacy_id" references the target's "legacy_id" rather than its primary key`
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Fatalf("listed: error = %v, want it to contain %q", err, want)
 	}
 }

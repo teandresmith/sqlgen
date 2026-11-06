@@ -87,8 +87,25 @@ type Client struct {
 	opts               clientOptions
 	article            *articleClient
 	articleStat        *articleStatClient
+	badge              *badgeClient
+	checkpoint         *checkpointClient
+	cycle              *cycleClient
+	label              *labelClient
 	lineItem           *lineItemClient
+	milestone          *milestoneClient
+	project            *projectClient
+	site               *siteClient
+	sprint             *sprintClient
+	task               *taskClient
+	taskBadge          *taskBadgeClient
+	taskLabel          *taskLabelClient
+	template           *templateClient
+	templateLabel      *templateLabelClient
+	templateStep       *templateStepClient
+	workspace          *workspaceClient
 	workspaceLineTotal *workspaceLineTotalClient
+	workspaceNote      *workspaceNoteClient
+	zone               *zoneClient
 }
 
 // New creates a new Client with the given querier and options.
@@ -119,8 +136,25 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		opts:               options,
 		article:            newArticleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		articleStat:        newArticleStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		badge:              newBadgeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		checkpoint:         newCheckpointClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		cycle:              newCycleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		label:              newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		lineItem:           newLineItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		milestone:          newMilestoneClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		project:            newProjectClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		site:               newSiteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		sprint:             newSprintClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		task:               newTaskClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		taskBadge:          newTaskBadgeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		taskLabel:          newTaskLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		template:           newTemplateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		templateLabel:      newTemplateLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		templateStep:       newTemplateStepClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		workspace:          newWorkspaceClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		workspaceLineTotal: newWorkspaceLineTotalClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		workspaceNote:      newWorkspaceNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		zone:               newZoneClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 	}
 
 	// Thread the tenant resolver into every entity client that needs one. That
@@ -148,11 +182,61 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// erroring — a resolver error still propagates.
 	c.article.tenantResolver = options.tenantResolver
 	c.articleStat.tenantResolver = options.tenantResolver
+	c.badge.tenantResolver = options.tenantResolver
+	c.checkpoint.tenantResolver = options.tenantResolver
+	c.cycle.tenantResolver = options.tenantResolver
+	c.label.tenantResolver = options.tenantResolver
 	c.lineItem.tenantResolver = options.tenantResolver
+	c.milestone.tenantResolver = options.tenantResolver
+	c.project.tenantResolver = options.tenantResolver
+	c.site.tenantResolver = options.tenantResolver
+	c.sprint.tenantResolver = options.tenantResolver
+	c.task.tenantResolver = options.tenantResolver
+	c.taskLabel.tenantResolver = options.tenantResolver
+	c.template.tenantResolver = options.tenantResolver
+	c.templateLabel.tenantResolver = options.tenantResolver
+	c.templateStep.tenantResolver = options.tenantResolver
+	c.workspace.tenantResolver = options.tenantResolver
 	c.workspaceLineTotal.tenantResolver = options.tenantResolver
+	c.workspaceNote.tenantResolver = options.tenantResolver
+	c.zone.tenantResolver = options.tenantResolver
+
+	// Push the configured CallbackMode down to every entity client that can
+	// carry a nested-mutation surface: the nested methods open the transaction
+	// the whole nested write runs in and pass this mode to it, so
+	// deferred events and cache invalidation flush the way the client was
+	// configured rather than on NewTransaction's default.
+	c.badge.callbackMode = options.callbackMode
+	c.cycle.callbackMode = options.callbackMode
+	c.label.callbackMode = options.callbackMode
+	c.milestone.callbackMode = options.callbackMode
+	c.sprint.callbackMode = options.callbackMode
+	c.task.callbackMode = options.callbackMode
+	c.template.callbackMode = options.callbackMode
+	c.workspace.callbackMode = options.callbackMode
+	c.zone.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
 	// the nested-mutation executors write through
+	c.badge.taskClient = c.task
+	c.badge.taskBadgeClient = c.taskBadge
+	c.cycle.taskClient = c.task
+	c.label.taskClient = c.task
+	c.label.templateClient = c.template
+	c.label.taskLabelClient = c.taskLabel
+	c.label.templateLabelClient = c.templateLabel
+	c.milestone.checkpointClient = c.checkpoint
+	c.project.taskClient = c.task
+	c.sprint.taskClient = c.task
+	c.task.badgeClient = c.badge
+	c.task.labelClient = c.label
+	c.task.taskBadgeClient = c.taskBadge
+	c.task.taskLabelClient = c.taskLabel
+	c.template.templateStepClient = c.templateStep
+	c.template.labelClient = c.label
+	c.template.templateLabelClient = c.templateLabel
+	c.workspace.workspaceNoteClient = c.workspaceNote
+	c.zone.siteClient = c.site
 
 	return c
 }
@@ -167,14 +251,99 @@ func (c *Client) ArticleStat() ArticleStatClient {
 	return c.articleStat
 }
 
+// Badges returns the BadgeClient for Badge operations.
+func (c *Client) Badges() BadgeClient {
+	return c.badge
+}
+
+// Checkpoints returns the CheckpointClient for Checkpoint operations.
+func (c *Client) Checkpoints() CheckpointClient {
+	return c.checkpoint
+}
+
+// Cycles returns the CycleClient for Cycle operations.
+func (c *Client) Cycles() CycleClient {
+	return c.cycle
+}
+
+// Labels returns the LabelClient for Label operations.
+func (c *Client) Labels() LabelClient {
+	return c.label
+}
+
 // LineItems returns the LineItemClient for LineItem operations.
 func (c *Client) LineItems() LineItemClient {
 	return c.lineItem
 }
 
+// Milestones returns the MilestoneClient for Milestone operations.
+func (c *Client) Milestones() MilestoneClient {
+	return c.milestone
+}
+
+// Projects returns the ProjectClient for Project operations.
+func (c *Client) Projects() ProjectClient {
+	return c.project
+}
+
+// Sites returns the SiteClient for Site operations.
+func (c *Client) Sites() SiteClient {
+	return c.site
+}
+
+// Sprints returns the SprintClient for Sprint operations.
+func (c *Client) Sprints() SprintClient {
+	return c.sprint
+}
+
+// Tasks returns the TaskClient for Task operations.
+func (c *Client) Tasks() TaskClient {
+	return c.task
+}
+
+// TaskBadges returns the TaskBadgeClient for TaskBadge operations.
+func (c *Client) TaskBadges() TaskBadgeClient {
+	return c.taskBadge
+}
+
+// TaskLabels returns the TaskLabelClient for TaskLabel operations.
+func (c *Client) TaskLabels() TaskLabelClient {
+	return c.taskLabel
+}
+
+// Templates returns the TemplateClient for Template operations.
+func (c *Client) Templates() TemplateClient {
+	return c.template
+}
+
+// TemplateLabels returns the TemplateLabelClient for TemplateLabel operations.
+func (c *Client) TemplateLabels() TemplateLabelClient {
+	return c.templateLabel
+}
+
+// TemplateSteps returns the TemplateStepClient for TemplateStep operations.
+func (c *Client) TemplateSteps() TemplateStepClient {
+	return c.templateStep
+}
+
+// Workspaces returns the WorkspaceClient for Workspace operations.
+func (c *Client) Workspaces() WorkspaceClient {
+	return c.workspace
+}
+
 // WorkspaceLineTotal returns the WorkspaceLineTotalClient for WorkspaceLineTotal operations.
 func (c *Client) WorkspaceLineTotal() WorkspaceLineTotalClient {
 	return c.workspaceLineTotal
+}
+
+// WorkspaceNotes returns the WorkspaceNoteClient for WorkspaceNote operations.
+func (c *Client) WorkspaceNotes() WorkspaceNoteClient {
+	return c.workspaceNote
+}
+
+// Zones returns the ZoneClient for Zone operations.
+func (c *Client) Zones() ZoneClient {
+	return c.zone
 }
 
 // Begin starts a new transaction with the given name.

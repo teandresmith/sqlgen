@@ -178,6 +178,10 @@ func {{ .WidenFuncName }}(n *{{ .CreateBlockName }}) *{{ .UpdateBlockName }} {
 // would run before the nested rows exist and return a stale set, and the primary
 // key is forced on because every nested write keys on it. A nil
 // selection passes through — the parent reads that as "every column".
+{{- if .Nested.ParentKeyFields }}
+// The columns the edges' keys reference are forced on too: the nested writes
+// copy them, so a narrowed selection must not leave them zero.
+{{- end }}
 func {{ .Nested.ParentFieldOptionsFunc }}(fo *{{ .StructName }}FieldOptions) *{{ .StructName }}FieldOptions {
 	if fo == nil {
 		return nil
@@ -187,6 +191,9 @@ func {{ .Nested.ParentFieldOptionsFunc }}(fo *{{ .StructName }}FieldOptions) *{{
 	scalars.{{ . }} = nil
 {{- end }}
 	scalars.{{ $pk }} = true
+{{- range .Nested.ParentKeyFields }}
+	scalars.{{ . }} = true
+{{- end }}
 	return &scalars
 }
 
@@ -428,7 +435,7 @@ func (c *{{ $client }}) UpsertWithRelated(ctx context.Context, input *{{ .Nested
 	return result, nil
 }
 {{- end }}
-{{- range .Nested.Edges }}
+{{- range $edge := .Nested.Edges }}
 
 // {{ .ExecutorName }} applies the {{ $parent.StructName }}.{{ .FieldName }} block.
 //
@@ -569,7 +576,9 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 {{- if eq .Shape "has_one" }}
 	// The has-one occupancy read below filters on it too.
 {{- end }}
-	pid := {{ .ParentKeyExpr }}
+{{- range .ParentScope }}
+	{{ .ParentVar }} := {{ .ParentKeyExpr }}
+{{- end }}
 {{- end }}
 {{- if .HasClear }}
 
@@ -580,7 +589,9 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 	if nested.Clear {
 {{- if eq .Shape "m2m" }}
 		if err := c.{{ .JunctionClientField }}.HardDeleteWhere(ctx, &{{ .JunctionStructName }}Filter{
-			{{ .JunctionLocalFilterField }}: {{ .ParentFilterExpr }},
+{{- range .ParentScope }}
+			{{ .FilterField }}: {{ .FilterExpr }},
+{{- end }}
 		}, func(o *CallOptions[{{ .JunctionStructName }}FieldOptions]) {
 			nestedChildOptions(o, options)
 		}); err != nil {
@@ -589,7 +600,9 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 {{- else }}
 		if _, err := c.{{ .TargetClientField }}.UpdateWhere(ctx,
 			&{{ .TargetStructName }}Filter{
-				{{ .FKFilterField }}: {{ .ParentFilterExpr }},
+{{- range .ParentScope }}
+				{{ .FilterField }}: {{ .FilterExpr }},
+{{- end }}
 {{- if .DiscFilterField }}
 				// On the unlink half too: this edge is `fk = parent AND
 				// <discriminator>`, so a clear without the second term would
@@ -598,7 +611,7 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 				{{ .DiscFilterField }}: {{ .DiscFilterExpr }},
 {{- end }}
 			},
-			&Update{{ .TargetStructName }}Input{ {{ .FKFieldName }}: {{ .FKUnlinkAssignExpr }} },
+			&Update{{ .TargetStructName }}Input{ {{ range $i, $m := .FreeKeyMembers }}{{ if $i }}, {{ end }}{{ $m.FieldName }}: {{ $m.UnlinkAssignExpr }}{{ end }} },
 			func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
 				nestedChildOptions(o, options)
 				// Nothing selected — the inner call does not need its result
@@ -613,6 +626,10 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 {{- if eq .Shape "m2m" }}
 
 	targetIDs := make([]{{ .ConnectIDGoType }}, 0, {{ if .HasCreate }}len(nested.Create){{ else }}0{{ end }}{{ if .HasConnect }}+len(connectIDs){{ end }})
+{{- if .TargetReadFields }}
+	// The link rows take these targets' referenced columns.
+	targetRows := make(map[{{ .ConnectIDGoType }}]*{{ .TargetStructName }}, cap(targetIDs))
+{{- end }}
 {{- if .HasCreate }}
 
 	if len(nested.Create) > 0 {
@@ -626,13 +643,16 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 		// input verbatim. The PK-only selection is what the link step needs.
 		created, err := c.{{ .TargetClientField }}.CreateMany(ctx, nested.Create, func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
 			nestedChildOptions(o, options)
-			o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true}
+			o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true{{ range .TargetReadFields }}, {{ . }}: true{{ end }}}
 		})
 		if err != nil {
 			return nestedError({{ printf "%q" .FieldName }}, "create", nil, err)
 		}
 		for _, row := range created {
 			targetIDs = append(targetIDs, row.{{ .TargetPKFieldName }})
+{{- if .TargetReadFields }}
+			targetRows[row.{{ .TargetPKFieldName }}] = row
+{{- end }}
 		}
 	}
 {{- end }}
@@ -679,7 +699,7 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 */}}
 			}, func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
 				nestedChildOptions(o, options)
-				o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true}
+				o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true{{ range .TargetReadFields }}, {{ . }}: true{{ end }}}
 				// Deliberately unlocked: this validates caller input at call time,
 				// it does not promise the target is still visible at commit.
 				o.LockMode = sql.LockNone
@@ -689,6 +709,9 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 			}
 			for _, row := range visible {
 				found[row.{{ .TargetPKFieldName }}] = true
+{{- if .TargetReadFields }}
+				targetRows[row.{{ .TargetPKFieldName }}] = row
+{{- end }}
 			}
 		}
 		for _, tid := range connectIDs {
@@ -712,15 +735,26 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 				continue
 			}
 			seen[tid] = true
+{{- if .TargetReadFields }}
+			row := targetRows[tid]
+{{- end }}
 			links = append(links, &Create{{ .JunctionStructName }}Input{
-				{{ .JunctionLocalField }}: {{ .JunctionLocalAssignExpr }},
-				{{ .JunctionReferenceField }}: {{ .JunctionReferenceAssignExpr }},
+{{- range .JunctionLinkFields }}
+				{{ .FieldName }}: {{ .AssignExpr }},
+{{- end }}
 			})
 		}
 		if _, err := c.{{ .JunctionClientField }}.UpsertMany(ctx, links, {{ .JunctionConflictTarget }}, func(o *CallOptions[{{ .JunctionStructName }}FieldOptions]) {
 			nestedChildOptions(o, options)
 			o.FieldOptions = &{{ .JunctionStructName }}FieldOptions{}
 		}); err != nil {
+{{- if .TenantKeyMember }}
+			// The key sets the tenant column from the parent and tenancy sets it
+			// from the resolver: disagreeing, the two bind this row to two keys.
+			if errors.Is(err, tenancy.ErrMismatch) {
+				err = ErrAlreadyRelated
+			}
+{{- end }}
 			return nestedError({{ printf "%q" .FieldName }}, "link", nil, err)
 		}
 	}
@@ -741,8 +775,9 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 			}
 			unlinking[tid] = true
 			pks = append(pks, {{ .JunctionPKStructName }}{
-				{{ .JunctionPKLocalField }}: {{ .JunctionPKLocalAssignExpr }},
-				{{ .JunctionPKReferenceField }}: {{ .JunctionPKReferenceAssignExpr }},
+{{- range .JunctionPKFields }}
+				{{ .FieldName }}: {{ .AssignExpr }},
+{{- end }}
 			})
 		}
 		// Chunked at c.batchSize; a composite key binds two parameters
@@ -782,7 +817,9 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 {{- end }}
 		occupied, err := c.{{ .TargetClientField }}.GetMany(ctx, &Get{{ .TargetPlural }}Input{
 			Filter: &{{ .TargetStructName }}Filter{
-				{{ .FKFilterField }}: {{ .ParentFilterExpr }},
+{{- range .ParentScope }}
+				{{ .FilterField }}: {{ .FilterExpr }},
+{{- end }}
 {{- if .DiscFilterField }}
 				{{ .DiscFilterField }}: {{ .DiscFilterExpr }},
 {{- end }}
@@ -814,7 +851,9 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 
 	if n := nested.Create; n != nil {
 		if _, err := c.{{ .TargetClientField }}.Create(ctx, &Create{{ .TargetStructName }}Input{
-			{{ .FKFieldName }}: {{ .FKAssignExpr }},
+{{- range .KeyMembers }}
+			{{ .FieldName }}: {{ .AssignExpr }},
+{{- end }}
 {{- if .DiscFieldName }}
 			{{ .DiscFieldName }}: {{ .DiscAssignExpr }},
 {{- end }}
@@ -827,6 +866,13 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 			// so it costs one statement rather than a statement plus a read.
 			o.FieldOptions = &{{ .TargetStructName }}FieldOptions{}
 		}); err != nil {
+{{- if .TenantKeyMember }}
+			// The key sets the tenant column from the parent and tenancy sets it
+			// from the resolver: disagreeing, the two bind this row to two keys.
+			if errors.Is(err, tenancy.ErrMismatch) {
+				err = ErrAlreadyRelated
+			}
+{{- end }}
 			return nestedError({{ printf "%q" .FieldName }}, "create", nil, err)
 		}
 	}
@@ -839,7 +885,9 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 				return nestedError({{ printf "%q" .FieldName }}, "create", nil, ErrNilInput)
 			}
 			inputs = append(inputs, &Create{{ .TargetStructName }}Input{
-				{{ .FKFieldName }}: {{ .FKAssignExpr }},
+{{- range .KeyMembers }}
+				{{ .FieldName }}: {{ .AssignExpr }},
+{{- end }}
 {{- if .DiscFieldName }}
 				{{ .DiscFieldName }}: {{ .DiscAssignExpr }},
 {{- end }}
@@ -854,6 +902,13 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 			// so it costs one statement rather than a statement plus a read.
 			o.FieldOptions = &{{ .TargetStructName }}FieldOptions{}
 		}); err != nil {
+{{- if .TenantKeyMember }}
+			// The key sets the tenant column from the parent and tenancy sets it
+			// from the resolver: disagreeing, the two bind this row to two keys.
+			if errors.Is(err, tenancy.ErrMismatch) {
+				err = ErrAlreadyRelated
+			}
+{{- end }}
 			return nestedError({{ printf "%q" .FieldName }}, "create", nil, err)
 		}
 	}
@@ -866,7 +921,14 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 	// parented", and the FK constraint proves a row exists, not that the caller
 	// may see it.
 	if len(connectIDs) > 0 {
+{{- if .CompositeKey }}
+		// Each target's key, as a tuple of strings, which compares every key
+		// type. NULL is held apart: it stringifies like an empty string.
+		owner := make(map[{{ .ConnectIDGoType }}][{{ len .KeyMembers }}]string, len(connectIDs))
+		nulls := make(map[{{ .ConnectIDGoType }}][{{ len .KeyMembers }}]bool, len(connectIDs))
+{{- else }}
 		owner := make(map[{{ .ConnectIDGoType }}]{{ .FKOwnerGoType }}, len(connectIDs))
+{{- end }}
 		// Chunked at c.batchSize, for the reason the disconnect below is:
 		// a single `IN` over the caller's whole list hits a dialect-dependent
 		// bind ceiling whose error cannot be attributed to an edge.
@@ -894,7 +956,7 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 {{- end }}
 			}, func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
 				nestedChildOptions(o, options)
-				o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true{{ if ne .FKFieldName .TargetPKFieldName }}, {{ .FKFieldName }}: true{{ end }}}
+				o.FieldOptions = &{{ .TargetStructName }}FieldOptions{ {{ .TargetPKFieldName }}: true{{ range .KeyMembers }}{{ if ne .FieldName $edge.TargetPKFieldName }}, {{ .FieldName }}: true{{ end }}{{ end }}}
 				// Deliberately unlocked: this validates caller input at call time,
 				// it does not promise the target is still visible at commit.
 				o.LockMode = sql.LockNone
@@ -903,7 +965,24 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 				return nestedError({{ printf "%q" .FieldName }}, "connect", nil, err)
 			}
 			for _, row := range visible {
-				owner[row.{{ .TargetPKFieldName }}] = row.{{ .FKFieldName }}
+{{- if .CompositeKey }}
+				var key [{{ len .KeyMembers }}]string
+				var null [{{ len .KeyMembers }}]bool
+{{- range .OwnerMembers }}
+{{- if .Guard }}
+				if {{ .Guard }} {
+					key[{{ .Index }}] = {{ .Key }}
+				} else {
+					null[{{ .Index }}] = true
+				}
+{{- else }}
+				key[{{ .Index }}] = {{ .Key }}
+{{- end }}
+{{- end }}
+				owner[row.{{ .TargetPKFieldName }}], nulls[row.{{ .TargetPKFieldName }}] = key, null
+{{- else }}
+				owner[row.{{ .TargetPKFieldName }}] = row.{{ (index .KeyMembers 0).FieldName }}
+{{- end }}
 			}
 		}
 
@@ -913,20 +992,36 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 		// Queueing it twice would trip the shortfall check below and report a
 		// conflict that did not happen.
 		queued := make(map[{{ .ConnectIDGoType }}]bool, len(connectIDs))
+{{- if .CompositeKey }}
+		want := {{ keyTuple .LoadKey "referenced" "parent" }}
+{{- end }}
 		for _, v := range connectIDs {
 			cur, ok := owner[v]
+{{- if .CompositeKey }}
+			null := nulls[v]
+{{- end }}
 			switch {
 			case !ok:
 				// Absent, another tenant's, or soft-deleted — indistinguishable
 				// to this caller, and all NOT_FOUND. Never CONFLICT: that would
 				// confirm the row exists.
 				return nestedError({{ printf "%q" .FieldName }}, "connect", v, ErrNotFound)
+{{- if .CompositeKey }}
+{{- if .OwnerPinnedMismatch }}
+			case {{ .OwnerPinnedMismatch }}:
+				// Bound to another key through a member this edge cannot write,
+				// so allow_reparent does not reach it either.
+				return nestedError({{ printf "%q" .FieldName }}, "connect", v, ErrAlreadyRelated)
+{{- end }}
+			case {{ .OwnerAllHeld }} && cur == want:
+{{- else }}
 			case {{ .FKOwnerGuard }} && {{ .FKOwnerKey }} == parent.{{ .ParentKeyField }}:
+{{- end }}
 				// Already ours — the requested end state holds, so this is a
 				// no-op rather than a conflict.
 				continue
 {{- if not .AllowReparent }}
-			case {{ .FKOwnerGuard }}:
+			case {{ if .CompositeKey }}{{ .OwnerAnyHeld }}{{ else }}{{ .FKOwnerGuard }}{{ end }}:
 				return nestedError({{ printf "%q" .FieldName }}, "connect", v, ErrAlreadyRelated)
 {{- end }}
 			}
@@ -959,10 +1054,12 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 						// The `IS NULL` guard is what makes the adoption atomic
 						// against a concurrent connect that parented the row
 						// between the read above and this statement.
-						{{ .FKFilterField }}: {{ .FKFilterNullExpr }},
+{{- range .FreeKeyMembers }}
+						{{ .FilterField }}: {{ .NullFilterExpr }},
+{{- end }}
 {{- end }}
 					},
-					&Update{{ .TargetStructName }}Input{ {{ .FKFieldName }}: {{ .FKUpdateAssignExpr }} },
+					&Update{{ .TargetStructName }}Input{ {{ range $i, $m := .FreeKeyMembers }}{{ if $i }}, {{ end }}{{ $m.FieldName }}: {{ $m.UpdateAssignExpr }}{{ end }} },
 					func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
 						nestedChildOptions(o, options)
 						// Nothing selected — the verify read below counts
@@ -981,7 +1078,9 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 				adopted, err := c.{{ .TargetClientField }}.GetMany(ctx, &Get{{ .TargetPlural }}Input{
 					Filter: &{{ .TargetStructName }}Filter{
 						{{ .TargetPKFieldName }}: {{ .AdoptFilterExpr }},
-						{{ .FKFilterField }}: {{ .ParentFilterExpr }},
+{{- range .ParentScope }}
+						{{ .FilterField }}: {{ .FilterExpr }},
+{{- end }}
 {{- if .DiscFilterField }}
 						// The same scope the UPDATE above carries.
 						{{ .DiscFilterField }}: {{ .DiscFilterExpr }},
@@ -1036,13 +1135,15 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 			if _, err := c.{{ .TargetClientField }}.UpdateWhere(ctx,
 				&{{ .TargetStructName }}Filter{
 					{{ .TargetPKFieldName }}: {{ .ConnectFilterExpr }},
-					{{ .FKFilterField }}: {{ .ParentFilterExpr }},
+{{- range .ParentScope }}
+					{{ .FilterField }}: {{ .FilterExpr }},
+{{- end }}
 {{- if .DiscFilterField }}
 					// Scoped on the unlink half too — see the clear above.
 					{{ .DiscFilterField }}: {{ .DiscFilterExpr }},
 {{- end }}
 				},
-				&Update{{ .TargetStructName }}Input{ {{ .FKFieldName }}: {{ .FKUnlinkAssignExpr }} },
+				&Update{{ .TargetStructName }}Input{ {{ range $i, $m := .FreeKeyMembers }}{{ if $i }}, {{ end }}{{ $m.FieldName }}: {{ $m.UnlinkAssignExpr }}{{ end }} },
 				func(o *CallOptions[{{ .TargetStructName }}FieldOptions]) {
 					nestedChildOptions(o, options)
 					o.FieldOptions = &{{ .TargetStructName }}FieldOptions{}

@@ -110,6 +110,7 @@ type keyMember struct {
 	column   string
 	nullable bool
 	pinned   bool
+	tenant   bool
 }
 
 // edgeKeyMembers classifies the key of an O2M or has-one edge on its target
@@ -124,9 +125,26 @@ func edgeKeyMembers(rel RelationshipContext, target *TableContext) []keyMember {
 			column:   name,
 			nullable: col.Nullable,
 			pinned:   col.Tenant || col.PrimaryKey || slices.Contains(rel.SharedMembers, name),
+			tenant:   col.Tenant,
 		})
 	}
 	return members
+}
+
+// keyParents returns the parent column each key pair references, or the
+// parent's key for an edge built without pairs.
+func keyParents(tc *TableContext, pairs []parser.KeyPair, fallback ColumnContext) []ColumnContext {
+	if len(pairs) == 0 {
+		return []ColumnContext{fallback}
+	}
+	parents := make([]ColumnContext, len(pairs))
+	for i, p := range pairs {
+		parents[i] = fallback
+		if col, ok := columnBySQLName(tc.Columns, p.Referenced); ok {
+			parents[i] = col
+		}
+	}
+	return parents
 }
 
 // keyRewrite is which rewrite verbs an edge's key admits, before the verbs

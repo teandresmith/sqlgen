@@ -146,8 +146,8 @@ func TestRelationshipTargets_NestedSurfaceWritesResolvedTable(t *testing.T) {
 		if e.TargetStructName != "Ledger" || e.TargetClientField != "ledgerClient" {
 			t.Errorf("nested Ledgers target = (%q, %q), want (Ledger, ledgerClient)", e.TargetStructName, e.TargetClientField)
 		}
-		if e.FKFieldName != "UserID" {
-			t.Errorf("nested Ledgers FKFieldName = %q, want UserID", e.FKFieldName)
+		if got := e.KeyMembers[0].FieldName; got != "UserID" {
+			t.Errorf("nested Ledgers key member field = %q, want UserID", got)
 		}
 		if diff := cmp.Diff([]string{"ID", "Memo"}, qvwChildFieldNames(e)); diff != "" {
 			t.Errorf("nested Ledgers child fields mismatch (-want +got):\n%s", diff)
@@ -180,7 +180,7 @@ func TestRelationshipTargets_NestedLinkWritesResolvedJunction(t *testing.T) {
 			Junction: "user_ledgers", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"ledger_id"},
 		}}, true)
 		e := qvwNestedEdge(t, users, "LinkedLedgers")
-		got := []string{e.JunctionStructName, e.JunctionClientField, e.JunctionLocalField, e.JunctionReferenceField}
+		got := []string{e.JunctionStructName, e.JunctionClientField, e.JunctionLinkFields[0].FieldName, e.JunctionLinkFields[1].FieldName}
 		want := []string{"UserLedger", "userLedgerClient", "UserID", "LedgerID"}
 		if diff := cmp.Diff(want, got); diff != "" {
 			t.Errorf("nested LinkedLedgers junction (struct, client, local, reference) mismatch (-want +got):\n%s", diff)
@@ -200,7 +200,7 @@ func TestRelationshipTargets_NestedLinkWritesResolvedJunction(t *testing.T) {
 			Junction: "audit.user_tags", JunctionLocalFK: config.KeyColumns{"user_id"}, JunctionReferenceFK: config.KeyColumns{"tag_code"},
 		}}, true)
 		e := qvwNestedEdge(t, users, "AuditTags")
-		got := []string{e.JunctionStructName, e.JunctionClientField, e.JunctionLocalField, e.JunctionReferenceField}
+		got := []string{e.JunctionStructName, e.JunctionClientField, e.JunctionLinkFields[0].FieldName, e.JunctionLinkFields[1].FieldName}
 		want := []string{"AuditUserTag", "auditUserTagClient", "UserID", "TagCode"}
 		if diff := cmp.Diff(want, got); diff != "" {
 			t.Errorf("nested AuditTags junction (struct, client, local, reference) mismatch (-want +got):\n%s", diff)

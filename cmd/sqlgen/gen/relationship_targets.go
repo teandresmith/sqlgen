@@ -234,20 +234,6 @@ func (t *relationshipTargets) generates(qualifiedTarget string) bool {
 	return res == targetGenerated
 }
 
-// writeCompositeKeyEdges lifts the guard compositeKeyWriteGuard keeps. It stays
-// off while the nested writers compare and write one column per key; tests turn
-// it on to reach the eligibility code, which already handles every member.
-var writeCompositeKeyEdges bool
-
-// compositeKeyWriteGuard reports whether an edge joins through more than one
-// column pair, which nested writes do not reach yet.
-func compositeKeyWriteGuard(rel RelationshipContext) bool {
-	if writeCompositeKeyEdges {
-		return false
-	}
-	return rel.CompositeKey()
-}
-
 // excludedKeyMember returns the first key column of an FK-inferred edge that
 // `exclude_columns` removes, spelled "table.column", or "" when there is none.
 // The members are every column of the edge's key (an M2M junction's two keys)

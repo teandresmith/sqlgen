@@ -11,16 +11,6 @@ import (
 // Test-only export surface. Bridges package-internal helpers to the external
 // `gen_test` test package without widening the production API.
 
-// WriteCompositeKeyEdgesForTest resolves nested edges through composite keys
-// for the rest of t, so tests reach the eligibility code that handles every key
-// member while generation still keeps them out of nested writes. Tests that
-// call it must not run in parallel.
-func WriteCompositeKeyEdgesForTest(t *testing.T) {
-	t.Helper()
-	writeCompositeKeyEdges = true
-	t.Cleanup(func() { writeCompositeKeyEdges = false })
-}
-
 // AttachTenancyToTablesForTest invokes the unexported attachTenancyToTables
 // so external tests can exercise the annotation pass (including the
 // annotateO2OChildTenancy side-effect) end-to-end.

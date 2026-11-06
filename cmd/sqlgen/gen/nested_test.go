@@ -540,8 +540,8 @@ func TestNestedEligibility_AllowReparentNeedsNoNullGuard(t *testing.T) {
 	// and the adoption's verify read scope themselves with it whatever
 	// allow_reparent says. What the flag removes is the `IS NULL` term the
 	// adoption would run under.
-	if e.FKFilterNullExpr != "" {
-		t.Errorf("FKFilterNullExpr = %q, want empty — the adoption carries no IS NULL guard under allow_reparent", e.FKFilterNullExpr)
+	if got := e.KeyMembers[0].NullFilterExpr; got != "" {
+		t.Errorf("NullFilterExpr = %q, want empty — the adoption carries no IS NULL guard under allow_reparent", got)
 	}
 
 	out := renderNested(t, users)
@@ -1625,13 +1625,13 @@ func TestNestedEligibility_JunctionSoftDeleteKeepsTheLinkingHalf(t *testing.T) {
 	if !soft.HasCreate || !soft.HasConnect {
 		t.Errorf("SoftTags: HasCreate=%v HasConnect=%v, want both true — the rule scopes to the unlink verbs", soft.HasCreate, soft.HasConnect)
 	}
-	if soft.JunctionPKStructName != "" || soft.JunctionLocalFilterField != "" {
-		t.Errorf("SoftTags still carries unlink expressions (pk=%q filter=%q)", soft.JunctionPKStructName, soft.JunctionLocalFilterField)
+	if soft.JunctionPKStructName != "" || len(soft.ParentScope) != 0 {
+		t.Errorf("SoftTags still carries unlink expressions (pk=%q scope=%v)", soft.JunctionPKStructName, soft.ParentScope)
 	}
 	// The sibling junction differs in exactly one column, so the comparison
 	// says the rule fired on the soft-delete column and not on something else.
-	if plain.JunctionPKStructName == "" || plain.JunctionLocalFilterField == "" {
-		t.Errorf("Categories: the control edge lost its unlink expressions too (pk=%q filter=%q)", plain.JunctionPKStructName, plain.JunctionLocalFilterField)
+	if plain.JunctionPKStructName == "" || len(plain.ParentScope) == 0 {
+		t.Errorf("Categories: the control edge lost its unlink expressions too (pk=%q scope=%v)", plain.JunctionPKStructName, plain.ParentScope)
 	}
 
 	out := renderNested(t, users)
@@ -1762,8 +1762,8 @@ func TestNestedUnlink_NullWrapperFKSetsTheWrapperInvalid(t *testing.T) {
 	if !e.HasDisconnect {
 		t.Fatal("fixture is wrong: the Null-wrapper FK edge must keep `disconnect` or this test cannot fail")
 	}
-	if want := "omittable.Set(uuid.NullUUID{Valid: false})"; e.FKUnlinkAssignExpr != want {
-		t.Errorf("FKUnlinkAssignExpr = %q, want %q", e.FKUnlinkAssignExpr, want)
+	if want := "omittable.Set(uuid.NullUUID{Valid: false})"; e.KeyMembers[0].UnlinkAssignExpr != want {
+		t.Errorf("UnlinkAssignExpr = %q, want %q", e.KeyMembers[0].UnlinkAssignExpr, want)
 	}
 	if body := nestedExcerpt(renderNested(t, users), e.ExecutorName); !strings.Contains(body, "omittable.Set(uuid.NullUUID{Valid: false})") {
 		t.Errorf("the emitted unlink does not set the wrapper invalid:\n%s", body)
@@ -1884,8 +1884,8 @@ func TestNestedTemplate_AdoptionCountsThroughAVerifyRead(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			users := buildNestedContexts(t, tt.mutate)["users"]
 			e := nestedEdge(t, users, tt.edge)
-			if !e.HasConnect || e.ParentFilterExpr == "" {
-				t.Fatalf("%s: HasConnect=%v ParentFilterExpr=%q, want connect with an `fk = parent` term", tt.edge, e.HasConnect, e.ParentFilterExpr)
+			if !e.HasConnect || len(e.ParentScope) != 1 {
+				t.Fatalf("%s: HasConnect=%v ParentScope=%v, want connect with an `fk = parent` term", tt.edge, e.HasConnect, e.ParentScope)
 			}
 			body := nestedExcerpt(renderNested(t, users), e.ExecutorName)
 
@@ -1912,7 +1912,7 @@ func TestNestedTemplate_AdoptionCountsThroughAVerifyRead(t *testing.T) {
 			read := loop[verify:]
 			wants := []string{
 				e.TargetPKFieldName + ": " + e.AdoptFilterExpr,
-				e.FKFilterField + ": " + e.ParentFilterExpr,
+				e.ParentScope[0].FilterField + ": " + e.ParentScope[0].FilterExpr,
 				"nestedChildOptions(o, options)",
 				"Limit: new(0)",
 				"o.SkipHooks = true",
@@ -1927,7 +1927,7 @@ func TestNestedTemplate_AdoptionCountsThroughAVerifyRead(t *testing.T) {
 					t.Errorf("the verify read lacks %q:\n%s", want, read)
 				}
 			}
-			if !strings.Contains(body[:start], "pid := "+e.ParentKeyExpr) {
+			if !strings.Contains(body[:start], "pid := "+e.ParentScope[0].ParentKeyExpr) {
 				t.Errorf("the verify read filters on `pid`, which %s never declares:\n%s", e.ExecutorName, body)
 			}
 		})

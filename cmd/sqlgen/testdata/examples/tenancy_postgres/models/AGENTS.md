@@ -14,8 +14,25 @@ sqlgen manifest. Start here: [./manifest/_index.md](./manifest/_index.md).
 
 - **Article** (`articles`, table) — [./manifest/article.md](./manifest/article.md)
 - **ArticleStat** (`article_stats`, view) — [./manifest/article_stat.md](./manifest/article_stat.md)
+- **Badge** (`badges`, table) — [./manifest/badge.md](./manifest/badge.md)
+- **Checkpoint** (`checkpoints`, table) — [./manifest/checkpoint.md](./manifest/checkpoint.md)
+- **Cycle** (`cycles`, table) — [./manifest/cycle.md](./manifest/cycle.md)
+- **Label** (`labels`, table) — [./manifest/label.md](./manifest/label.md)
 - **LineItem** (`line_items`, table) — [./manifest/line_item.md](./manifest/line_item.md)
+- **Milestone** (`milestones`, table) — [./manifest/milestone.md](./manifest/milestone.md)
+- **Project** (`projects`, table) — [./manifest/project.md](./manifest/project.md)
+- **Site** (`sites`, table) — [./manifest/site.md](./manifest/site.md)
+- **Sprint** (`sprints`, table) — [./manifest/sprint.md](./manifest/sprint.md)
+- **Task** (`tasks`, table) — [./manifest/task.md](./manifest/task.md)
+- **TaskBadge** (`task_badges`, table) — [./manifest/task_badge.md](./manifest/task_badge.md)
+- **TaskLabel** (`task_labels`, table) — [./manifest/task_label.md](./manifest/task_label.md)
+- **Template** (`templates`, table) — [./manifest/template.md](./manifest/template.md)
+- **TemplateLabel** (`template_labels`, table) — [./manifest/template_label.md](./manifest/template_label.md)
+- **TemplateStep** (`template_steps`, table) — [./manifest/template_step.md](./manifest/template_step.md)
+- **Workspace** (`workspaces`, table) — [./manifest/workspace.md](./manifest/workspace.md)
 - **WorkspaceLineTotal** (`workspace_line_totals`, view) — [./manifest/workspace_line_total.md](./manifest/workspace_line_total.md)
+- **WorkspaceNote** (`workspace_notes`, table) — [./manifest/workspace_note.md](./manifest/workspace_note.md)
+- **Zone** (`zones`, table) — [./manifest/zone.md](./manifest/zone.md)
 
 ## Conventions
 

@@ -189,6 +189,34 @@
       "file": "entities/article_stat.json"
     },
     {
+      "name": "Badge",
+      "table": "badges",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/badge.json"
+    },
+    {
+      "name": "Checkpoint",
+      "table": "checkpoints",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/checkpoint.json"
+    },
+    {
+      "name": "Cycle",
+      "table": "cycles",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/cycle.json"
+    },
+    {
+      "name": "Label",
+      "table": "labels",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/label.json"
+    },
+    {
       "name": "LineItem",
       "table": "line_items",
       "schema": "public",
@@ -196,11 +224,102 @@
       "file": "entities/line_item.json"
     },
     {
+      "name": "Milestone",
+      "table": "milestones",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/milestone.json"
+    },
+    {
+      "name": "Project",
+      "table": "projects",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/project.json"
+    },
+    {
+      "name": "Site",
+      "table": "sites",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/site.json"
+    },
+    {
+      "name": "Sprint",
+      "table": "sprints",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/sprint.json"
+    },
+    {
+      "name": "Task",
+      "table": "tasks",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/task.json"
+    },
+    {
+      "name": "TaskBadge",
+      "table": "task_badges",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/task_badge.json"
+    },
+    {
+      "name": "TaskLabel",
+      "table": "task_labels",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/task_label.json"
+    },
+    {
+      "name": "Template",
+      "table": "templates",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/template.json"
+    },
+    {
+      "name": "TemplateLabel",
+      "table": "template_labels",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/template_label.json"
+    },
+    {
+      "name": "TemplateStep",
+      "table": "template_steps",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/template_step.json"
+    },
+    {
+      "name": "Workspace",
+      "table": "workspaces",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/workspace.json"
+    },
+    {
       "name": "WorkspaceLineTotal",
       "table": "workspace_line_totals",
       "schema": "public",
       "kind": "view",
       "file": "entities/workspace_line_total.json"
+    },
+    {
+      "name": "WorkspaceNote",
+      "table": "workspace_notes",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/workspace_note.json"
+    },
+    {
+      "name": "Zone",
+      "table": "zones",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/zone.json"
     }
   ],
   "enums": [],

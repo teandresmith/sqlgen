@@ -23,7 +23,243 @@
 
 <!-- fixes:open:begin -->
 
-_No open fixes._
+### FIX-363
+
+- **Status:** Open
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe reproduced by the parent
+
+**Issue.** **A composite key with an enum, timestamp or boolean member generates a package that
+does not compile.** PRD §9.9.3 makes a nullable composite key eligible for `connect`, `disconnect`
+and `clear`, and §9.9.4 E1 only refuses a binding the emitter cannot construct. With
+`kinded_kids (kind kind, parent_id integer, FOREIGN KEY (kind, parent_id) REFERENCES kinded (kind, id))`
+on PostgreSQL / pgx, `sqlgen generate` succeeds and `go build` fails:
+`out/models_gen.go:1864:78: cannot use new(pid0) (value of type *string) as *Kind value in struct literal`,
+and the same at two more sites. The reviewer measured the same error on `*time.Time` and `*bool`
+members; `bytea`, `inet` and `numeric` compiled. Lifting the staging guard is what exposes this:
+a project with `nested_mutations` on and such a key built before 32.6.
+
+**Root cause.** `nestedParentScope` (`cmd/sqlgen/gen/context_nested.go:907`) renders `pidN` through
+`nestedParentKeyExpr` (`:1723`), which picks the stringified form from
+`funcPKIsStringType(goType)`. That test puts these types in the ID family, but the member's filter
+field is `comparator.Enum`, `Time` or `Bool`, whose `Eq` takes the real type. A one-column key
+reaches the same helper with the comparator matching, which is why nothing failed before.
+`TestGenerate_CompositeKeyNestedWritersCompile` has only integer and varchar members, and
+`tenancy_postgres` adds only UUID, bigint and text.
+
+**Suggested fix.**
+- Decide the `pidN` form from the filter field (`ff.ComparatorType`), not the parent's Go type.
+- Add an enum, a timestamp and a boolean member to `TestGenerate_CompositeKeyNestedWritersCompile`,
+  on every dialect that has the type. It must fail first with the error above.
+- Confirm the `Eq` terms run live for an enum member; `(kind, id)` is the usual subtype FK.
+
+**References.**
+- PRD §9.9.3, §9.9.4 (E1).
+- Registry: `gen.nested.composite-key-free-members`.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-364
+
+- **Status:** Open
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe on PostgreSQL
+
+**Issue.** **On a surrogate-PK junction every M2M link fails, on the first link and not only on a
+re-link.** PRD §9.9.3 makes `create` and `connect` eligible on such a junction, and the generator
+emits both, but the call fails with `upsert many team_labels: conflict target names a column the
+input does not supply, so the written rows cannot be identified`. A verb that is generated and can
+never succeed is the failure E13 exists to prevent. The Completion Record's "It loses `disconnect`
+only" was wrong and is corrected. `TestNestedEligibility_TenantJunctionUnlinkNeedsPKOverTheUnion/surrogate pk has no disconnect`
+pins `create: true, connect: true`, so the test asserts the defect.
+
+**Root cause.** `resolveNestedM2M` (`cmd/sqlgen/gen/context_nested.go:1233`) takes the junction's
+`<Junction>ConflictPK`, here `(id)`, and the link input never supplies `id`. The one-column shape
+fails the same way, so the bug predates 32.6, which extends it to composite tenant junctions.
+`docs/tracker/backlog.md` (2026-10-02, `[reading]`) predicted a re-link failure; the measured
+failure is earlier.
+
+**Suggested fix.**
+- **Ruled 2026-11-06:** the link step targets the UNIQUE constraint equal to the union of both
+  keys when one exists, and an edge with neither that nor a PK equal to the union is refused under
+  E13. Amend PRD §9.9.4 E13 and §9.9.6 to say so.
+- Add a live test for the chosen outcome and correct the surrogate fixture's verb expectations.
+- Remove the backlog line once this lands.
+
+**References.**
+- PRD §9.9.3, §9.9.4 (E5, E13), §9.9.6.
+- Registry: `nested.junction-key-union`, `gen.nested.e5-junction`.
+- FIX-365 is masked by this entry and must land with it or before it.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-365
+
+- **Status:** Open
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe
+
+**Issue.** **E1's nullable-referenced rule is not applied to the M2M reference side.** PRD §9.9.4
+E1 refuses "an edge whose key references a nullable column". With a NOT NULL junction column the
+edge is refused, but with a misleading reason. With a nullable junction column, reachable only on a
+surrogate-PK junction, the generator emits `TagCode: omittable.Set(row.Code)` for
+`tags.code TEXT UNIQUE`, so a target holding NULL writes a link row with a NULL key. Today FIX-364
+stops that link from running at all; fixing FIX-364 alone exposes a silent NULL link.
+
+**Root cause.** `resolveNestedTarget` (`cmd/sqlgen/gen/context_nested.go:435`) checks
+`nestedParentKeys` only, and `junctionLinks` copies a target column without reading its nullability.
+
+**Suggested fix.**
+- Reject the edge in `junctionLinks` / `resolveNestedM2M` when a reference-side column is nullable,
+  with the same reason wording as the parent side.
+- Add a table-driven case to `TestNestedEligibility_NullableReferencedColumnIsNotWriteEligible` for
+  both the NOT NULL and the nullable junction column.
+
+**References.**
+- PRD §9.9.4 (E1).
+- Registry: `gen.nested.e1-nullable-referenced-key`, `gen.nested.e1-target-shape`.
+- FIX-364.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-366
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06)
+
+**Issue.** **The `nested.composite-*` rows apply to `all`, but nested writes through a composite key
+run live on PostgreSQL only.** MySQL and SQLite only compile
+(`TestGenerate_CompositeKeyNestedWritersCompile`). Design §11 item 1 requires a passing test on
+every dialect in Applies-to at phase close, and the phase's "Every dialect" ground rule covers this
+work. Nothing measured is broken there; the unproved paths are the non-`RETURNING` read-backs:
+`CreateMany` returning `TargetReadFields`, the parent's key columns after a narrowed `Create` or
+`Upsert`, and SQLite's FK enforcement.
+
+**Root cause.** Every live test is in `tenancy_postgres/tests/nested_composite_test.go`. The
+conformance suite's nested surface covers `authors` and `tags` only, and 32.8's task list adds load
+and filter tests to `mysql` and `sqlite`, though its Tests Required says "nested where eligible".
+
+**Suggested fix.**
+- Give the conformance schema a nullable composite-FK nested edge and a composite-key junction on
+  every dialect, and move the row tests that are not tenancy-specific into the suite. Or add nested
+  tests to 32.8's task list for `mysql` and `sqlite`.
+- Mark `nested.composite-disconnect-nulls-free-members` as the design does: `all`, with `MATCH FULL`
+  on PostgreSQL only.
+
+**References.**
+- PRD §9.9, Appendix B. `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §10.1, §11, §12 Q1.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-367
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06)
+
+**Issue.** **Several 32.6 branches have no test that reaches them.**
+- The nullable pinned guard (`null[i] || cur[i] != want[i]`) appears in no checked-in `.go` file
+  under `cmd/sqlgen`, so it is neither compiled nor run. A reviewer probe rendered it and it behaved.
+- PRD §9.9.3's "`allow_reparent` adopts" a partly NULL key has no test.
+- `gen.nested.e1-target-shape`: no test asserts the "cannot construct from the parent column" refusal.
+- `gen.nested.e5-junction`: no test asserts a key column absent from the junction's create input, and
+  no payload-column case runs on a three-column union.
+- `TestWithRelated_NarrowedSelectionStillWritesTheEdge` covers `UpdateWithRelated` only; the forcing
+  also serves `Create` and `Upsert`.
+- `TestCreateWithRelated_*` tests in `tests/nested_composite_test.go` that call `UpdateWithRelated`
+  are misnamed.
+
+**Root cause.** `tenancy_postgres` has no table with a nullable pinned member, and the fixtures stop
+at the shapes the acceptance criteria name.
+
+**Suggested fix.**
+- Add a table with a nullable member shared with another FK (the reviewer's `shared_kids(org NULL, …)`)
+  and assert NULL is `ErrAlreadyRelated` and a match adopts.
+- Add a partly NULL `allow_reparent` adoption test, the two refusal cases, the three-column payload
+  case, and `Create` / `Upsert` subtests of the narrowed-selection test.
+- Rename the misnamed tests and update the registry rows that list them.
+
+**References.**
+- PRD §9.9.3, §9.9.4 (E1, E5), §9.9.6, §9.6.
+- Registry: `nested.composite-connect-pinned-mismatch`, `nested.composite-connect-held-elsewhere`.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-368
+
+- **Status:** Open
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe; ruled by the user the same day
+
+**Issue.** **An M2M `connect` under `SkipTenancy` to a target in another workspace is a raw FK
+violation, not `ErrAlreadyRelated`.** Measured on `tenancy_postgres`: `foreign_key constraint
+violation … task_labels_workspace_id_label_id_fkey`, attributed to `link` with no id. PRD §9.9.6's
+pinned rule says "a key with several columns" without limiting itself to O2M, and the user ruled that
+the rule covers a column both junction keys share.
+
+**Root cause.** `junctionLinks` (`cmd/sqlgen/gen/context_nested.go`) gives a shared column the parent's
+value and skips the reference side's pair, so nothing compares the target's own value. The M2M
+visibility read selects only the primary key and `TargetReadFields`.
+
+**Suggested fix.**
+- **Ruled 2026-11-06:** read each column the two keys share off the target in the M2M visibility read
+  and refuse a mismatch with `ErrAlreadyRelated` naming the target, attributed to `connect`, before the
+  link step, `allow_reparent` having no bearing.
+- Decide at implementation how a nested M2M `create` under `SkipTenancy` behaves when the created
+  target's value disagrees: it has no id to name, so the §9.9.8 "none on `create`" form fits. Flag it
+  if the PRD does not settle it.
+- Rewrite the PRD §9.9.6 junction paragraph, which the user accepted on these terms: drop "the
+  junction's own foreign keys refuse a target that disagrees", which this ruling replaces and which is
+  false on SQLite without `PRAGMA foreign_keys=ON`. Update the §9.9.8 row and the Completion Record's
+  M2M note.
+- Add a live test under `SkipTenancy` asserting the sentinel, the attribution, the id and an unchanged
+  junction. It must fail first with the raw FK error.
+
+**References.**
+- PRD §9.9.6, §9.9.8.
+- Registry: `nested.composite-connect-pinned-mismatch`, `nested.junction-key-union`.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-369
+
+- **Status:** Open
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe; ruled by the user the same day
+
+**Issue.** **A shared parent's tenant mismatch reports differently per verb, and `clear` reports
+success while writing nothing.** Measured on a tenant junction: `link` gives `ErrAlreadyRelated`,
+`disconnect` gives raw `tenancy.ErrMismatch`, and `clear` returns `err=nil` with the row still there.
+The user ruled the asymmetry a bug. A caller told an edge was cleared must be able to rely on that.
+
+**Root cause.** The `tenancy.ErrMismatch` mapping in `nested.go.tmpl` covers `create` and `link` only.
+`disconnect` passes a key holding the parent's tenant value to `HardDeleteMany`, which refuses it
+unmapped. `clear` goes through `HardDeleteWhere`, whose tenant filter and `key = parent` terms
+contradict each other, so it matches no rows and returns nil.
+
+**Suggested fix.**
+- **Ruled 2026-11-06:** `disconnect` and `clear` fail loud on this mismatch, with `ErrAlreadyRelated`
+  attributed to the verb, as `create` and `link` do (PRD §9.9.8).
+- Map the error at `disconnect`. `clear` raises nothing to map, so it needs an explicit comparison of
+  the parent's tenant column with the resolved tenant before the statement.
+- Measure the O2M `disconnect` and `clear` on a tenant key as well; the probe covered the junction.
+  A generated-surface or golden change here needs a check against 32.6's unchanged-goldens acceptance.
+- Add the verbs to the PRD §9.9.8 row, and live tests that fail first with the measured outcomes.
+
+**References.**
+- PRD §9.9.6, §9.9.8, §9.9.10.
+- Registry: `nested.composite-create-tenant-mismatch`.
+- `feedback_loud_errors_over_silence`.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
 
 <!-- fixes:open:end -->
 

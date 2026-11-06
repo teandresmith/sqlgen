@@ -701,6 +701,10 @@ type ResolvedOperations struct {
 // *target's* primary key, access projection and tenancy, so every table
 // context has to exist and the attach passes have to have run first.
 type NestedContext struct {
+	// ParentKeyFields are the parent columns beyond its primary key that an
+	// edge's key references. The parent write selects them whatever the caller
+	// selected, since every statement below it reads them (PRD §9.6).
+	ParentKeyFields []string
 	// CreateInputName is `Create<Parent>WithRelatedInput`, UpdateInputName
 	// `Update<Parent>WithRelatedInput` and UpsertInputName
 	// `Upsert<Parent>WithRelatedInput` (PRD §9.9.5). All three are claimed by
@@ -833,6 +837,26 @@ type NestedEdgeContext struct {
 	// ParentKeyField is the parent's Go field for the column the key
 	// references, the PK field unless the key references a UNIQUE column.
 	ParentKeyField string
+	// ParentKeyFields are the parent's Go fields for every column the key
+	// references, which the executor reads off the parent write's result.
+	ParentKeyFields []string
+	// KeyMembers is every member of the traversed key, in key order. Empty on
+	// M2M, where the key lives in the junction row.
+	KeyMembers []NestedKeyMemberContext
+	// CompositeKey reports a key of several columns, and LoadKey is that key
+	// as the loaders read it, which `connect` compares by tuple.
+	CompositeKey bool
+	LoadKey      []KeyMemberContext
+	// TenantKeyMember reports that the key holds the tenant column of the row
+	// the edge writes, the target's or on M2M the junction's. Tenancy sets it
+	// too, so `create` and the link step can find the two disagreeing
+	// (PRD §9.9.6).
+	TenantKeyMember bool
+	// ParentScope is the `fk = parent` filter, one term per member: on the
+	// target for a shape-2 or shape-3 edge, on the junction's local key for
+	// M2M. Every statement scoped to this parent carries all of it, and it is
+	// empty when any term cannot render.
+	ParentScope []NestedScopeTerm
 
 	// --- create verb ---
 
@@ -844,11 +868,6 @@ type NestedEdgeContext struct {
 	// nested child input — every field except the traversed FK and the edge's
 	// discriminator column (PRD §9.9.5). Empty on M2M.
 	ChildFields []InputFieldContext
-	// FKFieldName is the traversed FK's Go field on the target's create input,
-	// and FKAssignExpr the right-hand side that sets it from the parent's key
-	// (PRD §9.9.6). Empty on M2M, where the link lives in the junction row.
-	FKFieldName  string
-	FKAssignExpr string
 	// DiscFieldName / DiscAssignExpr set the edge's discriminator column on
 	// every nested create. Empty when the edge declares none.
 	DiscFieldName  string
@@ -885,52 +904,28 @@ type NestedEdgeContext struct {
 	// (PRD §4.8 / §9.9.6). O2M and has-one only; an M2M connect adds a link
 	// rather than moving one.
 	AllowReparent bool
-	// FKFilterField / FKFilterNullExpr compile the adoption UPDATE's `IS NULL`
-	// guard — the target's FK filter member and the term that makes the
-	// adoption atomic against a concurrent connect. FKFilterNullExpr is empty
-	// under AllowReparent, which deliberately adopts without the guard
-	// (PRD §9.9.6); FKFilterField is not, because the unlink verbs and the
-	// adoption's verify read filter on the same member with ParentFilterExpr.
-	// Both are empty on M2M.
-	FKFilterField    string
-	FKFilterNullExpr string
-	// FKOwnerGoType / FKOwnerGuard / FKOwnerKey read the FK back off a
+	// FKOwnerGoType / FKOwnerGuard / FKOwnerKey read a one-column FK back off a
 	// visibility-read row: the model column's Go type, the non-null guard, and
 	// the unwrapped value to compare against the parent's key. A nullable FK
 	// is always a pointer or a Null wrapper, so the guard is never empty.
 	FKOwnerGoType string
 	FKOwnerGuard  string
 	FKOwnerKey    string
-	// FKUpdateAssignExpr sets the FK to the parent's key through the target's
-	// update input.
-	FKUpdateAssignExpr string
+	// OwnerMembers read a composite key back off a visibility-read row into its
+	// `[N]string` tuple. Stringifying keeps a binary or network key comparable.
+	//
+	// The three conditions are over the locals `cur`, `null` and `want`:
+	// OwnerPinnedMismatch is empty when no member is pinned, OwnerAllHeld is
+	// true when every free member holds a value, OwnerAnyHeld when one does.
+	OwnerMembers        []NestedOwnerMember
+	OwnerPinnedMismatch string
+	OwnerAllHeld        string
+	OwnerAnyHeld        string
 
 	// --- disconnect and clear verbs ---
 
 	HasDisconnect bool
 	HasClear      bool
-	// ParentKeyExpr converts the parent's primary key into the element type
-	// the parent-scoped filter term takes — a string on the comparator.ID
-	// family, the key's own Go type on comparator.Number / comparator.Opaque
-	// (PRD §11.2). The emitted executor binds it to a local named `pid`, which
-	// ParentFilterExpr then reads.
-	ParentKeyExpr string
-	// ParentFilterExpr is the `fk = parent` term both unlink verbs carry: it
-	// is what makes a `disconnect` structurally incapable of touching another
-	// parent's rows, and on `clear` it is the entire filter (PRD §9.9.6).
-	// The `connect` adoption's verify read carries it too, which is how that
-	// read counts only the rows now parented here. On M2M it filters the
-	// junction's local FK instead, and the junction client is the one that
-	// runs the statement.
-	ParentFilterExpr string
-	// FKUnlinkAssignExpr SETs the traversed FK to NULL through the target's
-	// update input. It must be the `omittable.Set[*T](nil)` spelling, never
-	// the zero `omittable.Value`: on a nullable FK bound to a pointer
-	// type both compile in this position, and the second omits the column from
-	// the SET list — matching its rows, reporting success and unlinking
-	// nothing. Empty on M2M, where the link is a junction row rather than a
-	// column.
-	FKUnlinkAssignExpr string
 	// DiscFilterField / DiscFilterExpr scope the two unlink verbs to the edge's
 	// own discriminator value — the same scoping a nested `create` sets and the
 	// `connect` visibility read checks. Without them a `clear` on one
@@ -952,30 +947,92 @@ type NestedEdgeContext struct {
 	// --- m2m link ---
 
 	// JunctionStructName / JunctionClientField / JunctionConflictTarget name
-	// the junction the link rows go through, and JunctionLocalField /
-	// JunctionReferenceField its two FK members on the junction's create
-	// input. JunctionLocalAssignExpr sets the local one from the parent's key.
-	JunctionStructName      string
-	JunctionClientField     string
-	JunctionConflictTarget  string
-	JunctionLocalField      string
-	JunctionReferenceField  string
-	JunctionLocalAssignExpr string
-	// JunctionReferenceAssignExpr sets the junction's reference FK from one
-	// target id, spelled `tid`.
-	JunctionReferenceAssignExpr string
-	// JunctionPKStructName and its two members spell the `<Junction>PK` values
+	// the junction the link rows go through. JunctionLinkFields set the union
+	// of its two keys on its create input: a column in the local key from the
+	// parent, any other from the target, spelled `tid` for the target's primary
+	// key and `row` for a column TargetReadFields reads.
+	JunctionStructName     string
+	JunctionClientField    string
+	JunctionConflictTarget string
+	JunctionLinkFields     []NestedFieldAssign
+	// TargetReadFields are the target's fields the link step needs beyond its
+	// primary key, so `create` and `connect` read them back.
+	TargetReadFields []string
+	// JunctionPKStructName and JunctionPKFields spell the `<Junction>PK` values
 	// an M2M `disconnect` hands HardDeleteMany (PRD §9.9.6). The junction's
-	// key has to be exactly the two foreign keys for the pair to be
-	// expressible, so a junction with a surrogate key carries no `disconnect`.
-	JunctionPKStructName          string
-	JunctionPKLocalField          string
-	JunctionPKReferenceField      string
-	JunctionPKLocalAssignExpr     string
-	JunctionPKReferenceAssignExpr string
-	// JunctionLocalFilterField is the junction filter member an M2M `clear`
-	// filters on; ParentFilterExpr above is the term it takes.
-	JunctionLocalFilterField string
+	// primary key has to be exactly the union of its two keys for the value to
+	// be expressible, so a junction with a surrogate key carries no `disconnect`.
+	JunctionPKStructName string
+	JunctionPKFields     []NestedFieldAssign
+}
+
+// NestedKeyMemberContext is one member of the key a shape-2 or shape-3 edge
+// traverses.
+type NestedKeyMemberContext struct {
+	// Column is the member on the target, and FieldName its Go field there.
+	Column    string
+	FieldName string
+	// Pinned reports a member no verb rewrites (PRD §9.9.2).
+	Pinned bool
+	// AssignExpr sets the member from the parent's referenced column through
+	// the target's create input (PRD §9.9.6).
+	AssignExpr string
+	// UpdateAssignExpr sets a free member the same way through the update
+	// input, for the `connect` adoption.
+	UpdateAssignExpr string
+	// UnlinkAssignExpr SETs a free member to NULL through the update input. It
+	// must be the `omittable.Set[*T](nil)` spelling, never the zero
+	// `omittable.Value`: on a nullable FK bound to a pointer type both compile
+	// in this position, and the second omits the column from the SET list —
+	// matching its rows, reporting success and unlinking nothing.
+	UnlinkAssignExpr string
+	// FilterField / NullFilterExpr compile the adoption UPDATE's `IS NULL`
+	// guard on a free member, the term that makes the adoption atomic against a
+	// concurrent connect. NullFilterExpr is empty under AllowReparent, which
+	// deliberately adopts without the guard (PRD §9.9.6).
+	FilterField    string
+	NullFilterExpr string
+}
+
+// NestedScopeTerm is one term of an edge's `fk = parent` filter. It is what
+// makes a `disconnect` structurally incapable of touching another parent's
+// rows, and on `clear` it is the entire filter (PRD §9.9.6). The `connect`
+// adoption's verify read carries it too, which is how that read counts only the
+// rows now parented here.
+type NestedScopeTerm struct {
+	FilterField string
+	// ParentVar is the local the executor binds ParentKeyExpr to: the parent's
+	// referenced column in the comparator's element type, a string on the
+	// comparator.ID family, the key's own Go type on comparator.Number and
+	// comparator.Opaque (PRD §11.2). FilterExpr reads that local.
+	ParentVar     string
+	ParentKeyExpr string
+	FilterExpr    string
+}
+
+// NestedOwnerMember reads one member of a composite key off the row `row` into
+// slot Index of its tuple. Guard is empty when the member cannot be NULL.
+type NestedOwnerMember struct {
+	Index int
+	Guard string
+	Key   string
+}
+
+// NestedFieldAssign is one field of a struct literal the executor builds.
+type NestedFieldAssign struct {
+	FieldName  string
+	AssignExpr string
+}
+
+// FreeKeyMembers returns the members the rewrite verbs write.
+func (e NestedEdgeContext) FreeKeyMembers() []NestedKeyMemberContext {
+	free := make([]NestedKeyMemberContext, 0, len(e.KeyMembers))
+	for _, m := range e.KeyMembers {
+		if !m.Pinned {
+			free = append(free, m)
+		}
+	}
+	return free
 }
 
 // TableTenancyContext holds per-table tenancy metadata threaded into the

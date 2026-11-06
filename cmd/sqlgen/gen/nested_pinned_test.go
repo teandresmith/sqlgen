@@ -94,7 +94,7 @@ func TestNestedEligibility_ChildInputDropsTenantFKColumn(t *testing.T) {
 			t.Fatalf("child input %s keeps workspace_id, the traversed tenant FK", e.ChildInputName)
 		}
 	}
-	if e.FKFieldName != "WorkspaceID" {
-		t.Errorf("FKFieldName = %q, want WorkspaceID", e.FKFieldName)
+	if got := e.KeyMembers[0].FieldName; got != "WorkspaceID" {
+		t.Errorf("key member field = %q, want WorkspaceID", got)
 	}
 }

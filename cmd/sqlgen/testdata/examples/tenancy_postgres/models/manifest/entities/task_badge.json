@@ -1,0 +1,439 @@
+{
+  "kind": "table",
+  "name": "TaskBadge",
+  "table": "task_badges",
+  "schema": "public",
+  "file_prefix": "task_badge",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "task_badges_pkey",
+      "columns": [
+        "task_id",
+        "badge_code"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "composite",
+    "struct": "TaskBadgePK",
+    "columns": [
+      {
+        "name": "task_id",
+        "go_field": "TaskID",
+        "go_type": "int64"
+      },
+      {
+        "name": "badge_code",
+        "go_field": "BadgeCode",
+        "go_type": "string"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:taskbadge:{task_id}:{badge_code}",
+      "invalidates_on": [
+        "Update",
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "TaskBadgeCreated",
+        "TaskBadgeDeleted",
+        "TaskBadgeUpdated"
+      ],
+      "payload_shape": "models.TaskBadgeEvent"
+    },
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "task_id",
+      "go_field": "TaskID",
+      "go_type": "int64",
+      "db_type": "bigint",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.Number[int64]",
+      "comment": ""
+    },
+    {
+      "name": "badge_code",
+      "go_field": "BadgeCode",
+      "go_type": "string",
+      "db_type": "text",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.ID",
+      "comment": ""
+    }
+  ],
+  "relationships": [],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "pk",
+            "type": "TaskBadgePK"
+          }
+        ],
+        "returns": "*TaskBadge",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"badge_code\", \"task_id\" FROM \"public\".\"task_badges\" WHERE \"task_id\" = $1 AND \"badge_code\" = $2 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetTaskBadgesInput"
+          }
+        ],
+        "returns": "[]*TaskBadge",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"badge_code\", \"task_id\" FROM \"public\".\"task_badges\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "pk",
+            "type": "TaskBadgePK"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"task_badges\" WHERE \"task_id\" = $1 AND \"badge_code\" = $2)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*TaskBadgeFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"task_badges\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*TaskBadgeFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"task_badges\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[TaskBadgeFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[TaskBadge]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[TaskBadgeFilter]"
+          }
+        ],
+        "returns": "*Connection[TaskBadge]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamTaskBadgesInput"
+          }
+        ],
+        "returns": "iter.Seq2[*TaskBadge, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"badge_code\", \"task_id\" FROM \"public\".\"task_badges\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateTaskBadgeInput"
+          }
+        ],
+        "returns": "*TaskBadge",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"task_badges\" (<columns>) VALUES (<values>)"
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateTaskBadgeInput"
+          }
+        ],
+        "returns": "[]*TaskBadge",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"task_badges\" (<columns>) VALUES <values>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "pk",
+            "type": "TaskBadgePK"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateTaskBadgeInput"
+          }
+        ],
+        "returns": "*TaskBadge",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"task_badges\" SET <set> WHERE \"task_id\" = $1 AND \"badge_code\" = $2"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateTaskBadgeItem"
+          }
+        ],
+        "returns": "[]*TaskBadge",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"task_badges\" SET <set> WHERE \"task_id\" = $1 AND \"badge_code\" = $2"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*TaskBadgeFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateTaskBadgeInput"
+          }
+        ],
+        "returns": "[]*TaskBadge",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"task_badges\" SET <set> WHERE <filter> RETURNING \"task_id\", \"badge_code\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateTaskBadgeInput"
+          },
+          {
+            "name": "target",
+            "type": "TaskBadgeConflictTarget"
+          }
+        ],
+        "returns": "*TaskBadge",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated TaskBadgeConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"task_badges\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateTaskBadgeInput"
+          },
+          {
+            "name": "target",
+            "type": "TaskBadgeConflictTarget"
+          }
+        ],
+        "returns": "[]*TaskBadge",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same TaskBadgeConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"task_badges\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "pk",
+            "type": "TaskBadgePK"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"task_badges\" WHERE \"task_id\" = $1 AND \"badge_code\" = $2"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "pks",
+            "type": "[]TaskBadgePK"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"task_badges\" WHERE (\"task_id\", \"badge_code\") IN (<pks>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*TaskBadgeFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"task_badges\" WHERE <filter> RETURNING \"task_id\", \"badge_code\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "TaskBadgeFilter",
+    "fields": [
+      {
+        "name": "BadgeCode",
+        "type": "*comparator.ID"
+      },
+      {
+        "name": "TaskID",
+        "type": "*comparator.Number[int64]"
+      },
+      {
+        "name": "And",
+        "type": "[]*TaskBadgeFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*TaskBadgeFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "TaskBadgeSort",
+    "fields": [
+      "BadgeCode",
+      "TaskID"
+    ]
+  },
+  "examples": {
+    "read": [
+      "row, err := client.TaskBadges().Get(ctx, models.TaskBadgePK{TaskID: 1, BadgeCode: \"example\"})",
+      "rows, err := client.TaskBadges().GetMany(ctx, &models.GetTaskBadgesInput{Filter: &models.TaskBadgeFilter{TaskID: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+    ],
+    "write": [
+      "created, err := client.TaskBadges().Create(ctx, &models.CreateTaskBadgeInput{TaskID: 1, BadgeCode: \"example\"})",
+      "updated, err := client.TaskBadges().Update(ctx, models.TaskBadgePK{TaskID: 1, BadgeCode: \"example\"}, &models.UpdateTaskBadgeInput{})"
+    ]
+  }
+}
