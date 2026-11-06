@@ -29,6 +29,7 @@
 - **Severity:** blocking
 - **Origin:** phase 32, cmd/sqlgen/gen
 - **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe reproduced by the parent
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
 
 **Issue.** **A composite key with an enum, timestamp or boolean member generates a package that
 does not compile.** PRD §9.9.3 makes a nullable composite key eligible for `connect`, `disconnect`
@@ -36,23 +37,69 @@ and `clear`, and §9.9.4 E1 only refuses a binding the emitter cannot construct.
 `kinded_kids (kind kind, parent_id integer, FOREIGN KEY (kind, parent_id) REFERENCES kinded (kind, id))`
 on PostgreSQL / pgx, `sqlgen generate` succeeds and `go build` fails:
 `out/models_gen.go:1864:78: cannot use new(pid0) (value of type *string) as *Kind value in struct literal`,
-and the same at two more sites. The reviewer measured the same error on `*time.Time` and `*bool`
-members; `bytea`, `inet` and `numeric` compiled. Lifting the staging guard is what exposes this:
+and the same at two more sites. The same error is measured on `*time.Time` and `*bool` on PostgreSQL
+(pgx and stdlib), MySQL and SQLite. SQLite also gives `cannot use parent.K (variable of struct type
+types.DateTime) as "time".Time value in struct literal` at the create and connect assignments. The enum
+failure is PostgreSQL only: a MySQL inline `enum` member compiles. `bytea`, `inet`, `numeric`, `interval`,
+`uuid` and `double precision` compile. Lifting the staging guard is what exposes this:
 a project with `nested_mutations` on and such a key built before 32.6.
 
 **Root cause.** `nestedParentScope` (`cmd/sqlgen/gen/context_nested.go:907`) renders `pidN` through
 `nestedParentKeyExpr` (`:1723`), which picks the stringified form from
 `funcPKIsStringType(goType)`. That test puts these types in the ID family, but the member's filter
-field is `comparator.Enum`, `Time` or `Bool`, whose `Eq` takes the real type. A one-column key
-reaches the same helper with the comparator matching, which is why nothing failed before.
+field is `comparator.Enum`, `Time` or `Bool`, whose `Eq` takes the real type. A one-column
+timestamp or boolean key on PostgreSQL lands on `comparator.ID`, which matches; a one-column enum FK fails
+at these sites too, but such a schema already fails without nested writes.
 `TestGenerate_CompositeKeyNestedWritersCompile` has only integer and varchar members, and
 `tenancy_postgres` adds only UUID, bigint and text.
 
 **Suggested fix.**
-- Decide the `pidN` form from the filter field (`ff.ComparatorType`), not the parent's Go type.
-- Add an enum, a timestamp and a boolean member to `TestGenerate_CompositeKeyNestedWritersCompile`,
-  on every dialect that has the type. It must fail first with the error above.
-- Confirm the `Eq` terms run live for an enum member; `(kind, id)` is the usual subtype FK.
+- `nestedParentScope` passes `ff.ComparatorType`, and `nestedParentKeyExpr` stringifies only on the ID and
+  String families, otherwise using the column's own value. Add `nestedComparatorFamily`, shared with
+  `nestedEqFilterExpr`.
+- Add `nestedKeyValueExpr`, which unwraps `types.DateTime` to `.Time`, used by the scope term and by
+  `nestedAssignExpr`'s Null-wrapper arm.
+- `TestGenerate_CompositeKeyNestedWritersCompile` gains enum, timestamp and boolean members per dialect.
+  Add `TestNestedParentKeyExpr`, which runs under `-short`, where the build test is skipped.
+- Corrected from the original: the comparator decision alone is not enough, since SQLite needs the
+  `types.DateTime` unwrap at two sites to meet this entry's own test.
+- The owner tuple does not share the root cause: no comparator is involved, and enum, timestamp and bool
+  compile and pass live.
+- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced with a `generate` plus `go build` probe, e.g.
+  `out/models_gen.go:1863:78: cannot use new(pid0) (value of type *string) as *Kind value in struct literal`.
+  Live `Eq` confirmed through throwaway examples (create, connect, repeat connect, held, wrong-parent
+  disconnect, disconnect, clear, checked with raw SQL): PostgreSQL pgx enum, timestamptz, bool, and pinned
+  enum and timestamp; MySQL 8.0 datetime(6), bool, pinned datetime; SQLite datetime, bool, pinned datetime.
+  Gates: `go test -race -timeout=30m ./gen/... ./cli/...`, `make update-golden`, `make update-golden-e2e`,
+  `golangci-lint` and gofumpt green. Fail-first: reverting the comparator decision fails
+  `TestNestedParentKeyExpr/enum` (`= "fmt.Sprint(parent.K)", want "parent.K"`) and the postgres/pgx build
+  (`cannot use new(pid0) (value of type *string) as *Sort value in struct literal`); removing the unwrap from
+  the scope term fails `TestNestedParentKeyExpr/sqlite_datetime` and the sqlite build; removing it from
+  `nestedAssignExpr` fails the sqlite build (`cannot use parent.K ... as "time".Time`); the existing suite
+  passes without the fix. Golden churn: none (`make update-golden-e2e` also adds two unrelated go.sum lines,
+  reverted and not in the patch). An earlier `./cli` run hit the default 10-minute mark while run alongside
+  other jobs; `make check` timing should be watched. Has-one is not exercised: neither probe schema reached
+  the failing term. Patch: `.claude/prototypes/FIX-363.patch`.
+
+- The user ruled on 2026-11-06: widen this entry to the one-column SQLite datetime FK, which has the same
+  `types.DateTime` cause at a different site, the `{{ .FKOwnerKey }} == parent.{{ .ParentKeyField }}` template
+  line. Measured with this patch applied: `out/models_gen.go:2029:34: invalid operation: cur.Time == parent.K
+  (mismatched types "time".Time and types.DateTime)`; a `datetime` PK target fails the same way at `:1890:34`.
+  Nested off builds.
+
+- Fold-in result, run at `e48ece8b` on 2026-11-06: `ParentKeyField` and `FKOwnerKey` go, replaced by
+  `FKOwnerIsParent`, rendered by `nestedOwnerIsParentExpr`; the template line is `case {{ .FKOwnerGuard }} &&
+  {{ .FKOwnerIsParent }}:`. A `types.DateTime` parent renders `cur.Time.Equal(parent.K.Time)`, not `==`, which
+  compiles but compares the zone pointer: a held row stored at `+05:30` gave a false `already related to
+  another row`. A self-reference shape is covered too. Tests: `TestGenerate_SQLiteDatetimeFKNestedWritersCompile`
+  (unique target, PK target, self-reference) and `TestNestedOwnerIsParentExpr`. Gates: `go test -race
+  -timeout=30m ./gen/... ./cli/...`, `make update-golden`, `make update-golden-e2e`, `golangci-lint`, gofumpt
+  green; a live SQLite probe with seven stored forms was a no-op for this parent and `ErrAlreadyRelated` for
+  another. Fail-first: removing the branch fails all three build subtests with `mismatched types`; `==` fails
+  `TestNestedOwnerIsParentExpr/sqlite_datetime`; the existing suite passes without it. Golden churn: none. This
+  fixes compilation only: such a key still fails at runtime (FIX-371). Line ref: `nestedParentScope` is at
+  `:889`, `:907` is its `ParentKeyExpr` line. Has-one reaches this line under an explicit `one_to_one` config.
+  Patch: `.claude/prototypes/FIX-363.patch` (5 files, +190/-49).
 
 **References.**
 - PRD §9.9.3, §9.9.4 (E1).
@@ -66,6 +113,7 @@ reaches the same helper with the comparator matching, which is why nothing faile
 - **Severity:** blocking
 - **Origin:** phase 32, cmd/sqlgen/gen
 - **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe on PostgreSQL
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
 
 **Issue.** **On a surrogate-PK junction every M2M link fails, on the first link and not only on a
 re-link.** PRD §9.9.3 makes `create` and `connect` eligible on such a junction, and the generator
@@ -73,25 +121,55 @@ emits both, but the call fails with `upsert many team_labels: conflict target na
 input does not supply, so the written rows cannot be identified`. A verb that is generated and can
 never succeed is the failure E13 exists to prevent. The Completion Record's "It loses `disconnect`
 only" was wrong and is corrected. `TestNestedEligibility_TenantJunctionUnlinkNeedsPKOverTheUnion/surrogate pk has no disconnect`
-pins `create: true, connect: true`, so the test asserts the defect.
+pins `create: true, connect: true` and never checks the link target. Those verbs are right once
+the target is the fixture's `UNIQUE (workspace_id, team_id, label_id)`.
 
-**Root cause.** `resolveNestedM2M` (`cmd/sqlgen/gen/context_nested.go:1233`) takes the junction's
+**Root cause.** `resolveNestedM2M` (`cmd/sqlgen/gen/context_nested.go:1198`, the `ct.CoversPK` loop at `:1234`) takes the junction's
 `<Junction>ConflictPK`, here `(id)`, and the link input never supplies `id`. The one-column shape
 fails the same way, so the bug predates 32.6, which extends it to composite tenant junctions.
 `docs/tracker/backlog.md` (2026-10-02, `[reading]`) predicted a re-link failure; the measured
 failure is earlier.
 
 **Suggested fix.**
-- **Ruled 2026-11-06:** the link step targets the UNIQUE constraint equal to the union of both
-  keys when one exists, and an edge with neither that nor a PK equal to the union is refused under
-  E13. Amend PRD §9.9.4 E13 and §9.9.6 to say so.
-- Add a live test for the chosen outcome and correct the surrogate fixture's verb expectations.
-- Remove the backlog line once this lands.
+- **Ruled 2026-11-06:** the link step targets the conflict target whose columns equal the union of
+  both keys, and an edge with no such target is refused under E13.
+- `junctionLinkTarget` in `context_nested.go` selects it by set equality. The rejection reads "the
+  junction table emits no conflict-target constant equal to the union of its two keys for the link
+  step to pass". The early zero-targets check in `resolveNestedJunction` goes, so a no-target junction
+  that also fails E5 now reports E5.
+- Amend PRD E13, E5's wording, §9.9.6 and §9.9.7 (a UNIQUE link target adds one read-back statement per
+  sub-batch). Rewrite `gen.nested.e13-junction-conflict-target`, add `gen.nested.e13-no-union-target-refused`
+  and `update-with-related.surrogate-junction-link`, and add the example test to `nested.junction-key-union`.
+- Tests: `TestNestedEligibility_JunctionLinkTargetIsTheUnionOfItsKeys` (9 rows, listed a hard error and
+  auto-included omitted), a link-target assertion on the surrogate fixture, conformance
+  `UpdateWithRelated/a junction keyed by a surrogate links through its UNIQUE, and a re-link keeps the
+  row` (new `seals`, `crate_seals`), and tenancy_postgres
+  `TestUpdateWithRelated_SurrogateTenantJunctionLinksThroughItsUnique` (new `reviewers`, `task_reviewers`).
+- Remove the 2026-10-02 surrogate-junction line from `docs/tracker/backlog.md` when this lands.
+- Corrected from the original: no verb expectation changes, since the fixture's UNIQUE equals the union;
+  the PRD scope widens to §9.9.7 and E5; the changing registry row is the E13 one, not E5.
+- Outcomes, measured: surrogate plus UNIQUE equal to the union survives with `create`, `connect`, `clear`
+  (`create` and `connect` only with a soft-delete column). A `primary_key.columns` override over the pair
+  with such a UNIQUE is newly admitted, measured at context level only. A PK narrower than the union is
+  newly refused: at HEAD on SQLite the second link silently moved the first (`narrow=1 → narrow=2`).
+  Nothing else that worked at HEAD is refused.
+- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced on sqlite, postgres and mysql
+  conformance and tenancy_postgres with `conflict target names a column the input does not supply, so
+  the written rows cannot be identified`, on the first link. Gates: `go test -race ./gen`, `TestE2EGoldenFiles`,
+  conformance on all four legs, tenancy_postgres, `golangci-lint`, `make req-check` and `make refs-check`
+  green. Fail-first: reverting the selection to `ct.CoversPK` fails the surrogate fixture with
+  `teams.Labels link target = "TeamLabelConflictPK", want "TeamLabelConflictWorkspaceIDTeamIDLabelID"` and
+  all 9 new rows; dropping the length check or the membership check each fails its row; the live tests fail
+  under the base CLI with the message above; the existing suite passes without the fix. Golden churn: none
+  from the ruling, which leaves every existing example byte-identical; the new fixtures add
+  tenancy_postgres +4/~12 in each of `expected/` and `models/`, and conformance ~4 per dialect. Not measured:
+  the read-back statement count, since the harness records no statements inside a transaction.
+  `docs/conformance/REPORT.md` needs `make conformance`. Patch: `.claude/prototypes/FIX-364.patch`.
 
 **References.**
 - PRD §9.9.3, §9.9.4 (E5, E13), §9.9.6.
-- Registry: `nested.junction-key-union`, `gen.nested.e5-junction`.
-- FIX-365 is masked by this entry and must land with it or before it.
+- Registry: `nested.junction-key-union`, `gen.nested.e13-junction-conflict-target`.
+- FIX-365 touches the same region of `context_nested.go`.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
@@ -101,22 +179,48 @@ failure is earlier.
 - **Severity:** blocking
 - **Origin:** phase 32, cmd/sqlgen/gen
 - **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
 
 **Issue.** **E1's nullable-referenced rule is not applied to the M2M reference side.** PRD §9.9.4
-E1 refuses "an edge whose key references a nullable column". With a NOT NULL junction column the
-edge is refused, but with a misleading reason. With a nullable junction column, reachable only on a
-surrogate-PK junction, the generator emits `TagCode: omittable.Set(row.Code)` for
-`tags.code TEXT UNIQUE`, so a target holding NULL writes a link row with a NULL key. Today FIX-364
-stops that link from running at all; fixing FIX-364 alone exposes a silent NULL link.
+E1 refuses "an edge whose key references a nullable column". With a NOT NULL junction column not shared
+with the local key, the edge is refused with a misleading reason (`the junction's reference FK "tag_code"
+binds to string, which sqlgen cannot construct from the target's key`). With a nullable junction column
+the generator emits `TagCode: omittable.Set(row.Code)` for `tags.code TEXT UNIQUE`, on all three dialects.
+With a nullable `labels.region` shared with the local key, the edge is eligible on a composite-PK junction,
+because `junctionLinks` skips that pair. Today FIX-364 stops every surrogate link. Under FIX-364's ruling a
+target holding NULL fails loud, measured on SQLite: `link: upsert many z_parent_codes: input 0 supplies no
+definite value for every conflict column, so its generated id cannot be resolved`. So the eligible verb
+fails on some rows rather than writing a silent NULL link, as this entry first said. A live NULL link was
+never run.
 
 **Root cause.** `resolveNestedTarget` (`cmd/sqlgen/gen/context_nested.go:435`) checks
 `nestedParentKeys` only, and `junctionLinks` copies a target column without reading its nullability.
 
 **Suggested fix.**
-- Reject the edge in `junctionLinks` / `resolveNestedM2M` when a reference-side column is nullable,
-  with the same reason wording as the parent side.
-- Add a table-driven case to `TestNestedEligibility_NullableReferencedColumnIsNotWriteEligible` for
-  both the NOT NULL and the nullable junction column.
+- Add `nestedReferencedColumns(tc, rel, target)`: the parent keys plus every `rel.JunctionReference`
+  target column, shared ones included. `resolveNestedTarget`'s E1 loop ranges over it, so the reason
+  wording stays the parent side's single literal.
+- Make `TestNestedEligibility_NullableReferencedColumnIsNotWriteEligible` table-driven: parent side, NOT
+  NULL junction column, nullable junction column, shared column. Each asserts reads survive, the auto edge
+  is omitted and the listed edge errors with the E1 reason.
+- PRD §9.9.4 E1 gains: "On an M2M edge the rule covers both junction keys, because a target holding NULL
+  has no key to give a link row."
+- Corrected from the original: the site moved from `junctionLinks` / `resolveNestedM2M` to
+  `resolveNestedTarget`, because the check there exceeds the lint limit (`calculated cyclomatic complexity
+  for function resolveNestedM2M is 18, max is 15 (cyclop)`). It reads `rel.JunctionReference`, not the links,
+  so the shared-column case is refused too.
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): should E1's PRD text name
+  the M2M reference side → add one sentence, because gates are green, no goldens move, no public surface
+  changes, and it adds text for an unspecified case without reversing a ruling.
+- Prototype results, run at `e48ece8b` on 2026-11-06: generation measured through a throwaway probe and a
+  sibling `tenancy_postgres` copy (`models_gen.go:65625 TagCode:  omittable.Set(row.Code),`, which builds).
+  Gates: `go test -race ./...` in `cmd/sqlgen` green, root and `./cli` needing `-timeout=30m` (the default 10m
+  was exceeded with other vetters running, no assertion failed); `TestE2EGoldenFiles`, `golangci-lint`, `make
+  req-check`, `make refs-check`, tenancy_postgres, mysql and graphql suites green. Fail-first: reverting the
+  loop to `nestedParentKeys` fails the three reference-side subtests, e.g. `teams nested edges = ["Labels"],
+  want none`; only those fail, so the existing suite passes without the fix. Golden churn: none. Both this
+  patch and FIX-364's change PRD §9.9, so the second to land reruns `make req-rehash SECTIONS=9.9`. Patch:
+  `.claude/prototypes/FIX-365.patch`.
 
 **References.**
 - PRD §9.9.4 (E1).
@@ -131,25 +235,52 @@ stops that link from running at all; fixing FIX-364 alone exposes a silent NULL 
 - **Severity:** tracked
 - **Origin:** phase 32, cmd/sqlgen/gen
 - **Surfaced by:** `/verify 32.6` (2026-11-06)
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
 
 **Issue.** **The `nested.composite-*` rows apply to `all`, but nested writes through a composite key
 run live on PostgreSQL only.** MySQL and SQLite only compile
 (`TestGenerate_CompositeKeyNestedWritersCompile`). Design §11 item 1 requires a passing test on
 every dialect in Applies-to at phase close, and the phase's "Every dialect" ground rule covers this
-work. Nothing measured is broken there; the unproved paths are the non-`RETURNING` read-backs:
-`CreateMany` returning `TargetReadFields`, the parent's key columns after a narrowed `Create` or
-`Upsert`, and SQLite's FK enforcement.
+work. Nothing measured is broken there; the unproved paths are MySQL's non-`RETURNING` read-backs
+(`CreateMany` returning `TargetReadFields`, the parent's key columns after a narrowed `Create` or
+`Upsert`) and SQLite's FK enforcement. SQLite writes run through `RETURNING`.
 
 **Root cause.** Every live test is in `tenancy_postgres/tests/nested_composite_test.go`. The
-conformance suite's nested surface covers `authors` and `tags` only, and 32.8's task list adds load
+conformance suite's nested parents are `authors` and `tags` only, and 32.8's task list adds load
 and filter tests to `mysql` and `sqlite`, though its Tests Required says "nested where eligible".
 
 **Suggested fix.**
-- Give the conformance schema a nullable composite-FK nested edge and a composite-key junction on
-  every dialect, and move the row tests that are not tenancy-specific into the suite. Or add nested
-  tests to 32.8's task list for `mysql` and `sqlite`.
-- Mark `nested.composite-disconnect-nulls-free-members` as the design does: `all`, with `MATCH FULL`
-  on PostgreSQL only.
+- Conformance schema, every dialect: new `depots`, `routes`, `vans`, `tools`, `van_tools`, `permits`,
+  `van_permits`, `bays`, `lockers`. The existing composite tables cannot carry nested writes (`order_items`
+  fails E3 and E1, `shelves` E1, `crates` and `stations` reach composite-PK targets). `region` is a
+  tenant-shaped pinned key with no tenancy; `allow_reparent` on Route.Vans; edges listed by name, except
+  `vans`, since a listed Permits edge cannot carry `disconnect`.
+- New `suite/nested_composite.go`: 13 subtests under `CreateWithRelated`, `UpdateWithRelated` and
+  `UpsertWithRelated`, including narrowed selections, `CreateMany` returning `TargetReadFields`, and a
+  cross-value link as a foreign-key `ConstraintError`, which proves SQLite enforces the composite FK.
+- `tenancy_mysql` and `tenancy`: turn `nested_mutations` on, add composite tenant tables and
+  `tests/nested_composite_test.go`. The two tenancy-specific rows cannot go in the suite, and
+  `tenancy_mysql` alone would leave them unproved on SQLite.
+- Split the `MATCH FULL` half into a new row `nested.composite-match-full-disconnect-nulls-every-member`,
+  applying to `postgres`; the original row stays `all`. Design §10.5's "nested.* (×8)" becomes ×9.
+- Corrected from the original: new tables are needed, the suite alone is not enough, and the design's
+  `all (FULL: postgres)` is not valid Applies-to grammar. 32.8's "nested where eligible" line is met by this.
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): split the `MATCH FULL` row or
+  keep one row → split, because gates are green, no golden moves, no public surface changes, and no ruling
+  or PRD behavior is reversed.
+- Prototype results, run at `e48ece8b` on 2026-11-06: gap reproduced by counting composite connect executors:
+  tenancy_postgres 8, every other module 0. **No `nested.composite-*` row fails on MySQL or SQLite.** Gates:
+  conformance on all four legs, `tenancy`, `tenancy_mysql`, their lint, `make lint-conformance`,
+  `TestE2EGoldenFiles`, `TestE2EDatabaseTwin/tenancy*`, `make req-check`, `make refs-check` green. Fail-first:
+  breaking each guarded line failed its subtest on both sqlite and mysql (pinned check, free writes, held
+  and partly NULL cases, the already-ours no-op, disconnect and clear, shared link column, forced parent
+  keys, `TargetReadFields`, the tenant mappings, cross-tenant skip), e.g. `Lockers: connect: sqlgen: already
+  related to another row`; the existing suite passes without the fix. No fail-first: the adoption's `IS NULL`
+  guard, reachable only by a race, and the has-one mapping, unit-only under E3. Golden churn: `tenancy` ~7
+  files (+36061/-8826 in `expected/`, the same in `models/`), which also gains `WithRelated` on `post`, `tag`,
+  `user`; `tenancy_mysql` ~8 files (+30051/-1976, the same in `models/`). With FIX-364: one row conflict in
+  `cli/gen.md` (keep both sides) and 16 generated conformance files, cleared by regenerating. Patch:
+  `.claude/prototypes/FIX-366.patch` (72 files, 19.8 MB).
 
 **References.**
 - PRD §9.9, Appendix B. `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §10.1, §11, §12 Q1.
@@ -162,28 +293,52 @@ and filter tests to `mysql` and `sqlite`, though its Tests Required says "nested
 - **Severity:** tracked
 - **Origin:** phase 32, cmd/sqlgen/gen
 - **Surfaced by:** `/verify 32.6` (2026-11-06)
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
 
 **Issue.** **Several 32.6 branches have no test that reaches them.**
 - The nullable pinned guard (`null[i] || cur[i] != want[i]`) appears in no checked-in `.go` file
   under `cmd/sqlgen`, so it is neither compiled nor run. A reviewer probe rendered it and it behaved.
 - PRD §9.9.3's "`allow_reparent` adopts" a partly NULL key has no test.
-- `gen.nested.e1-target-shape`: no test asserts the "cannot construct from the parent column" refusal.
-- `gen.nested.e5-junction`: no test asserts a key column absent from the junction's create input, and
+- `gen.nested.e1-target-shape`: no test asserts the "cannot construct from the parent's key" refusal.
+- `gen.nested.e5-junction`: no test asserts a local or reference key column absent from the junction's create input, and
   no payload-column case runs on a three-column union.
 - `TestWithRelated_NarrowedSelectionStillWritesTheEdge` covers `UpdateWithRelated` only; the forcing
   also serves `Create` and `Upsert`.
-- `TestCreateWithRelated_*` tests in `tests/nested_composite_test.go` that call `UpdateWithRelated`
+- `TestCreateWithRelated_TenancySetTenantMismatchIsAlreadyRelated` and
+  `TestCreateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated` call `UpdateWithRelated`, so they
   are misnamed.
 
 **Root cause.** `tenancy_postgres` has no table with a nullable pinned member, and the fixtures stop
 at the shapes the acceptance criteria name.
 
 **Suggested fix.**
-- Add a table with a nullable member shared with another FK (the reviewer's `shared_kids(org NULL, …)`)
-  and assert NULL is `ErrAlreadyRelated` and a match adopts.
-- Add a partly NULL `allow_reparent` adoption test, the two refusal cases, the three-column payload
-  case, and `Create` / `Upsert` subtests of the narrowed-selection test.
-- Rename the misnamed tests and update the registry rows that list them.
+- tenancy_postgres gains `plots` (allow_reparent, two free members) and `shared_parents`,
+  `shared_guardians`, `shared_kids` (nullable `org` pinned on both edges), appended to `schema.sql`.
+  `sqlgen.yml` lists `zones` (Sites and Plots, since the list is an allowlist) and `shared_guardians`.
+- Example tests: `TestUpdateWithRelated_NullablePinnedMember`, `TestUpdateWithRelated_AllowReparentAdoptsAPartlyNullKey`,
+  and `TestWithRelated_NarrowedSelectionStillWritesTheEdge` split into create, upsert inserts, upsert
+  conflicts and update.
+- Unit tests: `TestNestedEligibility_JunctionKeyColumnOutsideTheCreateInput`,
+  `TestNestedEligibility_PayloadColumnOnThreeColumnUnion`, and three new TargetShape cases for E1.
+- Rename the two misnamed tests in the code, `nested.composite-create-tenant-mismatch`, the design doc and
+  `docs/tracker/phase-32.md` (lines 1177, 1222). Update `gen.nested.e1-target-shape`,
+  `gen.nested.e5-junction` and `nested.parent-write-strips-relationships`, which gains the narrowed-selection
+  test and the referenced parent columns (PRD §9.6).
+- Corrected from the original: the NULL pinned test needs a parent whose `org` is the empty string, since
+  with a non-empty org deleting `null[i] ||` survives; it also runs on an `allow_reparent` edge; `Create` and
+  `Upsert` assert through the rows, since an all-false selection returns nil (PRD §9.6).
+- Prototype results, run at `e48ece8b` on 2026-11-06: no production defect surfaced; every new test passed
+  against unmodified generated code. The gap reproduced: `grep -rnE 'null\[[0-9]+\] \|\|' cmd/sqlgen` found no
+  pinned guard. Gates: `go test -race ./gen/...`, tenancy_postgres suite and lint, `make update-golden`, `make
+  update-golden-e2e`, `TestE2EGoldenFiles`, `sqlgen diff --quiet`, `make refs-check`, `make req-check` green.
+  Fail-first: removing `null[%d] ||` fails `TestUpdateWithRelated_NullablePinnedMember/default_edge/NULL_is_refused`
+  (`error names <nil>, want 1`); making `allow_reparent` refuse a partly NULL key fails
+  `/region_held` and `/id_held`; deleting the `FieldOptions` line in Create and Upsert fails their subtests with
+  a false `ErrAlreadyRelated`; deleting the E1 `expr == ""` block fails the TargetShape cases; deleting each E5
+  refusal fails its subtest; stopping the payload rule at two columns fails all three three-column cases. The
+  optional and sequence refusals were already guarded. Golden churn: tenancy_postgres only, +8/~12 in each of
+  `expected/` and `models/`. Overlap: clean over FIX-365; a hand merge in `client.md` with FIX-368; 18 generated
+  conflicts with FIX-364, cleared by regenerating. Patch: `.claude/prototypes/FIX-367.patch` (49 files).
 
 **References.**
 - PRD §9.9.3, §9.9.4 (E1, E5), §9.9.6, §9.6.
@@ -197,6 +352,7 @@ at the shapes the acceptance criteria name.
 - **Severity:** blocking
 - **Origin:** phase 32, cmd/sqlgen/gen
 - **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe; ruled by the user the same day
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
 
 **Issue.** **An M2M `connect` under `SkipTenancy` to a target in another workspace is a raw FK
 violation, not `ErrAlreadyRelated`.** Measured on `tenancy_postgres`: `foreign_key constraint
@@ -212,15 +368,59 @@ visibility read selects only the primary key and `TargetReadFields`.
 - **Ruled 2026-11-06:** read each column the two keys share off the target in the M2M visibility read
   and refuse a mismatch with `ErrAlreadyRelated` naming the target, attributed to `connect`, before the
   link step, `allow_reparent` having no bearing.
-- Decide at implementation how a nested M2M `create` under `SkipTenancy` behaves when the created
-  target's value disagrees: it has no id to name, so the §9.9.8 "none on `create`" form fits. Flag it
-  if the PRD does not settle it.
 - Rewrite the PRD §9.9.6 junction paragraph, which the user accepted on these terms: drop "the
   junction's own foreign keys refuse a target that disagrees", which this ruling replaces and which is
   false on SQLite without `PRAGMA foreign_keys=ON`. Update the §9.9.8 row and the Completion Record's
   M2M note.
 - Add a live test under `SkipTenancy` asserting the sentinel, the attribution, the id and an unchanged
   junction. It must fail first with the raw FK error.
+
+- The check is not gated on `SkipTenancy`, since the ruled text is unconditional, so it also fires for a
+  shared parent under tenancy. That `connect` moves from `link` with no id to `connect` naming the id, and
+  `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated` moves to the new `Template.Stamps` fixture, since
+  on `Template.Labels` neither verb reaches `link` any more. The reverse
+  edges (`Label.Tasks`, `Label.Templates`) get the same check from the same site.
+- PRD §9.9.2 gains one sentence pointing to §9.9.6, since "An M2M edge has no pinned members" is silent on
+  this. Update the 32.6 Completion Record's M2M note (`docs/tracker/phase-32.md:1188-1190`), which still says
+  a raw FK violation and that the pinned rule covers O2M and has-one only.
+- Prototype results, run at `e48ece8b` on 2026-11-06 (the ruled `connect` half only): reproduced on
+  tenancy_postgres, `Labels: link: upsert many task_labels: ... foreign_key constraint violation on constraint
+  task_labels_workspace_id_label_id_fkey` with edge=Labels verb=link id=<nil>. A `sqlite3 :memory:` composite
+  FK with no PRAGMA accepted a dangling row, confirming the PRD claim is false there. Prototype:
+  `resolveJunctionSharedRead` builds `JunctionSharedAgrees` and `JunctionSharedFields`, the visibility read
+  selects them, and the check runs in caller id order, `ErrNotFound` first; a NULL on the target disagrees.
+  Gates: `go test -race ./gen/...`, `golangci-lint`, tenancy_postgres suite and lint, `make update-golden`,
+  `make update-golden-e2e`, `make req-check`, `make refs-check` green. Fail-first: removing the check fails
+  `TestUpdateWithRelated_ConnectSharedJunctionColumnMismatchIsAlreadyRelated` with the raw FK error and
+  `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated` with `attribution = Labels link, want Labels
+  connect`; not selecting the field fails with `error names 4, want 5`; dropping it from the template and
+  removing the target-key guard each fail their unit test; the existing suite passes without the fix. Golden
+  churn: tenancy_postgres +0/~2 (36 lines each); other examples none. FIX-364's PRD hunk at `docs/PRD.md:7909`
+  needs a hand merge with this patch, and its conformance hashes clear with `make req-rehash`. Patch:
+  `.claude/prototypes/FIX-368.patch`.
+- The user ruled on 2026-11-06: option (A). A nested M2M `create` whose created target disagrees on a shared
+  column is refused with `ErrAlreadyRelated`, attributed to `create`, no id. This reverses the `link`
+  attribution in PRD §9.9.6 and §9.9.8.
+
+- Ruled-option results, run at `e48ece8b` on 2026-11-06: the M2M `create` selects `JunctionSharedFields` and
+  refuses after `CreateMany` with `ErrAlreadyRelated`, attributed to `create`, no id. **The link step's
+  `tenancy.ErrMismatch` mapping stays reachable and is kept.** Measured live: it fires on three shapes, with the
+  tenant column in the parent's key only on a tenanted target, in the target's key only on a shared target, and
+  shared on a shared parent and shared target that agree against the resolver; each gives `<Edge>: link: sqlgen:
+  already related to another row`. Only the shared column on the target's tenant column (`Template.Labels`) is
+  closed by the new checks. New shared `stamps` and `template_stamps` keep `link` under live test. PRD §9.9.2,
+  §9.9.6, §9.9.8, new row `nested.m2m-create-shared-column-mismatch`, `nested.composite-create-tenant-mismatch`
+  reworded to "key-set tenant column differs from the resolved tenant", design `:775`. Gates: `go test -race
+  ./gen/...`, `TestE2EGoldenFiles`, tenancy_postgres suite and lint, `make update-golden`, `make
+  update-golden-e2e`, `make req-check`, `make refs-check` green. Fail-first: removing the `create` check fails
+  with `attribution = Labels link, want Labels create` and, under `SkipTenancy`, the raw FK error; removing the
+  `create` selection gives a false refusal; removing the link mapping fails with the raw `tenant on mutation
+  input does not match resolved tenant`; removing the `connect` check fails with `error names <nil>, want 6`; the
+  existing suite passes without the fix. Golden churn: tenancy_postgres +4/~12 in `expected/`, mirrored in
+  `models/`; no other example moves. FIX-369 no longer applies cleanly over this: hand-merge `context_nested.go`,
+  `main_test.go`, `nested_composite_test.go`, `PRD.md`, `cli/gen.md` and `client.md`, add its verbs to the
+  reworded §9.9.8 row, and move its `Labels: link` test to Stamps. This supersedes the patch line above. Patch:
+  `.claude/prototypes/FIX-368.patch` (43 files).
 
 **References.**
 - PRD §9.9.6, §9.9.8.
@@ -234,6 +434,7 @@ visibility read selects only the primary key and `TargetReadFields`.
 - **Severity:** blocking
 - **Origin:** phase 32, cmd/sqlgen/gen
 - **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe; ruled by the user the same day
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
 
 **Issue.** **A shared parent's tenant mismatch reports differently per verb, and `clear` reports
 success while writing nothing.** Measured on a tenant junction: `link` gives `ErrAlreadyRelated`,
@@ -248,16 +449,383 @@ contradict each other, so it matches no rows and returns nil.
 **Suggested fix.**
 - **Ruled 2026-11-06:** `disconnect` and `clear` fail loud on this mismatch, with `ErrAlreadyRelated`
   attributed to the verb, as `create` and `link` do (PRD §9.9.8).
-- Map the error at `disconnect`. `clear` raises nothing to map, so it needs an explicit comparison of
-  the parent's tenant column with the resolved tenant before the statement.
-- Measure the O2M `disconnect` and `clear` on a tenant key as well; the probe covered the junction.
-  A generated-surface or golden change here needs a check against 32.6's unchanged-goldens acceptance.
+- Map the error at M2M `disconnect`. M2M `clear` and O2M `disconnect` and `clear` raise nothing to map:
+  each matches zero rows and returns nil, so they need an explicit comparison of the parent's tenant
+  column with the resolved tenant before the statement. The prototype adds a `tenantKeyConflict(verb)`
+  closure and the edge fields `TenantKeyParent` and `TenantKeyClient`, set only when the tenant member
+  comes from a parent column other than the parent's own tenant column.
+- Has-one is unreachable for these verbs, and its executor arm takes the guard without a test.
 - Add the verbs to the PRD §9.9.8 row, and live tests that fail first with the measured outcomes.
+
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): emit the comparison when
+  the key takes the column from the parent's own tenant column → no, skip it, because gates are green, it
+  causes less churn, adds no public surface, and §9.9.6 already says such a mismatch needs a shared parent.
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): attribute a missing tenant
+  at the comparison → `tenancy.ErrMissing` through `nestedError`, read through the target's own `required`,
+  because gates are green, there is no churn or public surface, and it is the error the inner statement
+  would give. No live test covers `required: false`, since tenancy_postgres is `required: true`.
+- Prototype results, run at `e48ece8b` on 2026-11-06, recommended options: with a sibling tenancy_postgres
+  copy plus `template_notes`, O2M `disconnect`, O2M `clear` and M2M `clear` by tenant A on a B-owned parent
+  return `err=<nil>` with the row still linked; M2M `disconnect` gives the raw `tenancy: tenant on mutation
+  input does not match resolved tenant`; `SkipTenancy` and an explicit owner tenant unlink correctly; a miss
+  is `err=<nil>`. Gates: `go test -race ./gen/...` (`-run Nested` on the final code), `golangci-lint`,
+  `TestE2EGoldenFiles`, tenancy_postgres suite and lint, `make req-check`, `make refs-check` green. Not run:
+  conformance, graphql and mysql suites, whose goldens are byte-identical. Fail-first: removing the O2M
+  comparison fails `/o2m_disconnect` and `/o2m_disconnect_naming_no_row` (`error = <nil>, want sqlgen: already
+  related to another row`); removing the clear comparison fails `/o2m_clear`, `/m2m_clear` and
+  `TestUpsertWithRelated_UnlinkTenantMismatchRollsBackTheInsert`; removing the M2M mapping fails
+  `/m2m_disconnect` with the raw error; the existing suite passes without the fix. Golden churn:
+  tenancy_postgres +2/~12 in `expected/`, mirrored in `models/`, mostly the `template_notes` fixture; no
+  other example moves. `docs/conformance/REPORT.md` needs `make conformance`. Patch:
+  `.claude/prototypes/FIX-369.patch` (38 files), overlapping FIX-364 and FIX-368 in the nested code.
+- The user ruled on 2026-11-06: option (a) on both questions, which the prototype already implements:
+  1. On a tenant mismatch, does an O2M `disconnect` fail loud, given PRD §9.9.6 and §29.4.2a say "a miss is
+     a no-op"? (a, recommended, prototyped) `ErrAlreadyRelated` on every mismatch, even an id on no row, with
+     the carve-out "a tenant mismatch is not a miss"; it reveals nothing about row existence, and a miss
+     with agreeing tenants stays a no-op. (b) Keep the PRD: O2M `disconnect` stays silent with the row still
+     linked, and the verbs stay asymmetric.
+  2. On `UpsertWithRelated`'s insert branch, does the refusal apply, given §9.9.5 says these verbs "match
+     zero rows and are no-ops" on a fresh parent? (a, recommended, prototyped) Refuse on both branches, so
+     the insert rolls back; the executor has no branch detection and §9.9.5 forbids it, and M2M `disconnect`
+     already fails here. (b) Keep the no-op, which needs insert-versus-update detection. Not prototyped.
+
+- Corrected from the original: M2M `clear` and O2M `disconnect` take a comparison rather than a mapping, and
+  the PRD change reaches §9.9.5, §9.9.6, §9.9.10 and §29.4.2a. FIX-368 keeps the link-step mapping, which stays
+  reachable, and rewords the §9.9.8 row, so this entry adds its verbs to that wording. With FIX-368 a
+  shared-parent `connect` reaches `link` only on a shared target. This patch needs a hand merge over FIX-368's.
 
 **References.**
 - PRD §9.9.6, §9.9.8, §9.9.10.
 - Registry: `nested.composite-create-tenant-mismatch`.
 - `feedback_loud_errors_over_silence`.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-370
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-363 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **An enum in a primary key, or a one-column enum FK, generates a package that does not
+compile, with or without nested writes.** `generate` plus `go build`, nested off (PostgreSQL pgx and stdlib, MySQL stdlib; line numbers vary by schema):
+`out/models_gen.go:235:8: cannot use &comparator.ID{…} (value of type *comparator.ID) as
+*comparator.Enum[Kind] value in struct literal`. One-column FK: `out/models_gen.go:436:8: cannot use
+&comparator.NullableID{…} … as *comparator.NullableEnum[Kind] value`. Composite junction PK:
+`out/models_gen.go:2411:15`, the same error.
+
+**Root cause.** `pkComparatorFamily` returns "ID" while the filter field is `comparator.Enum[T]`. Its
+comment (`cmd/sqlgen/gen/context_table.go:2452`) says enum columns are "not routed here", but they are.
+On MySQL each column declares its own enum, so an FK's Go type also differs from its parent key's
+(`ChildrenThingKindEnum` vs `ThingsKindEnum`), and the O2M loader fails separately.
+
+**Suggested fix.**
+- `pkComparatorFamily` gains an `isEnumLikeType` arm returning "Enum", first in the switch to mirror
+  `resolveGenericComparator`. `funcPKFilterExpr` and `pkFilterInExpr` render `comparator.Enum[T]` and
+  `NullableEnum[T]`. `ConnectKeyExpr`, `TargetPKIsString` and the nested paths follow the family unchanged.
+- `buildAPIRowKeyMembers` emits `models.Kind`, with `modelsPkg` threaded through `buildAPIRowKeys`.
+- New `RelationshipContext.FKEnumGoType` and funcmap `pkFilterInExprByGoType`: the O2M loader converts each
+  parent key to the FK's enum when the two types differ.
+- Tests: `TestGenerate_EnumKeysCompile` (`cmd/sqlgen/cli/enum_key_test.go`; pgx, pg stdlib, mysql; enum PK,
+  nullable and NOT NULL one-column FK, enum junction PK, nested on) and `TestEnumKey_FollowsTheFilterField`.
+- Corrected from the original: the family change alone leaves the MySQL per-column enum FK failing (`cannot use
+  &comparator.NullableEnum[ThingsKindEnum]{…} … as *comparator.NullableEnum[ChildrenThingKindEnum]`), and the
+  API row-key caller needs the models qualifier. M2M `clear` on an enum junction has build and text coverage
+  only, since a live test would add tables to an example schema and move goldens.
+- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced on pgx, pg stdlib and mysql with the errors in
+  the Issue. Gates: `go test -race -timeout=30m ./gen/... ./cli/...`, `make update-golden`, `make
+  update-golden-e2e`, `golangci-lint`, `make refs-check`, gofumpt green. Live probes, not in the patch: pgx on a
+  graphql example copy (CRUD, loaders both ways, nested verbs, O2M and M2M `clear`, needing a temporary resolver
+  qualifier) and MySQL 8.0 (CRUD and all three loaders) passed. Fail-first: removing the enum arm, the
+  `funcPKFilterExpr` case, the `pkFilterInExpr` form, the models qualifier and the `FKEnumGoType` wiring each
+  fails `TestEnumKey_FollowsTheFilterField` or `TestGenerate_EnumKeysCompile`; the existing suite passes without
+  the fix. Golden churn: none. Its only shared file with FIX-363's earlier snapshot is `context.go`, in separate
+  hunks; the two have not been built together. Patch: `.claude/prototypes/FIX-370.patch` (7 files, +197/-34).
+
+**References.**
+- PRD §11.2. FIX-363.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-371
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-363 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `e48ece8b` plus FIX-363's patch (2026-11-06)
+
+**Issue.** **A time key on `comparator.ID` is bound as `time.Time.String()` text, which fails or silently
+misses on every dialect.**
+- PostgreSQL, in any zone: `invalid input syntax for type timestamp with time zone: "2026-01-02 03:04:05.123456
+  +0000 UTC"` on `Create`, `Get`, `Update`, the O2M loader, the M2M parent loader and nested writes.
+- MySQL reads the wall-clock part and ignores the rest, so a key matches only when its zone equals the driver's
+  `loc`; otherwise `create stamp: get stamp: sqlgen: resource not found`. `timestamp(6)` fails even when they match.
+- SQLite compares text that never matches: `resource not found` on `Create`, a loader returning `got 1 rows` with
+  no kids (silent wrong data), and a nested `connect` adopting a row gives a false `already related to another
+  row`.
+
+**Root cause.** The first arm of `resolveSimpleComparator` (`cmd/sqlgen/gen/context_table.go:2558`), keyed on
+`FKConvert`, puts a time key on `comparator.ID`. PRD §11.2 says that shape "would misclassify `decimal` and `time`
+columns", and its table gives `time.Time` → `Time`, so the code deviates from the PRD.
+
+**Suggested fix.**
+- Prototype results, run at `e48ece8b` with FIX-363's patch on 2026-11-06, option A: `pkComparatorFamily` gains a
+  "Time" arm, `funcPKFilterExpr` and `pkFilterInExpr` emit `comparator.Time` and `NullableTime`, the Time arm moves
+  ahead of the key arm in `resolveSimpleComparator`, SQLite's `types.DateTime` unwraps with `.Time` plus an
+  unexported generated `dateTimeKeys`, and `buildAPIRowKeyMembers` hands GraphQL a `time.Time`. All eight dialect
+  and zone runs give 42 ok (38 on SQLite) with only the `map[time.Time]` connect failures left. Gates: `go test
+  -race -timeout=30m ./gen/... ./cli/...`, sqlite, postgres and mysql examples and lint, `make update-golden`,
+  `make update-golden-e2e`, gofumpt green; the example gates ran with two unrelated go.sum lines present.
+  Fail-first: each site reverted fails `TestTimeKeyComparatorSelection`, `TestTimeKeyFilterExprs`,
+  `TestBuildAPIRowKeys_TimeKeys` or `TestGenerate_TimeKeyBindsAsTime`, and the base generator fails live
+  `TestTimeKeyedRoundTrip` on all three dialects; the existing suite passes without the fix. Golden churn: none from
+  the fix; the `time_keyed` fixture gives postgres +2/~10, mysql +6/~17, sqlite +8/~17 in each of `expected/` and
+  `models/`. Applies on top of FIX-363; checked by reverse apply only. Must not land before the ruling. Patch:
+  `.claude/prototypes/FIX-371.patch` (134 files; the fix is 8 files, +288/-9).
+- The user ruled on 2026-11-06: option (A), which the prototype implements. Time and enum keys stay supported, composite members included. The ruling changes public generated surface:
+  - (A, recommended, prototyped) Route to `comparator.Time`: `StampFilter.K` goes from `*comparator.ID` to
+    `*comparator.Time`, and `KidFilter.StampK` to `*comparator.NullableTime`, with time operands and range
+    operators; the GraphQL filter family changes with it. Fixes all three dialects and every zone pairing, and
+    matches §11.2.
+  - (B) Stay on `comparator.ID` and render a dialect-specific string. No public change, but no text spelling can
+    follow a MySQL `loc` the generator cannot see, so a silent miss remains, and the filter stays string-typed on
+    a time column. Not prototyped; measured by SQL only.
+
+**References.**
+- PRD §11.2. FIX-363, FIX-370 (both patches add an arm to `pkComparatorFamily`).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-372
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-363 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **A key whose FK differs in width or family from its referenced column breaks generation or
+loads.** Both directions fail to compile on the plain one-column O2M loader: `parent_id bigint REFERENCES kinded
+(id)` with `id integer` gives `cannot use &comparator.NullableNumber[int32]{…} … as
+*comparator.NullableNumber[int64] value in struct literal`, and narrower gives `cannot use
+&comparator.Number[int64]{…} as *comparator.Number[int32]`. M2M and composite loads compile but fail at runtime on
+a parent key above the FK's range: pgx `unable to encode 4294967301 into binary format for int4 (OID 23)`, lib/pq
+`value "4294967301" is out of range for type integer (22003)`, and one such parent fails the whole load. Under
+`use_pointers: false` nested writers do not compile (`cannot use parent.ID (variable of type int64) as int32
+value`); under the default the edge is dropped by §9.9.4 E1. MySQL 8.0 and 8.4 refuse this DDL (`Error 3780`), so it
+reaches MySQL only as schema-file input. SQLite differs by storage class (TEXT or REAL FK into INTEGER).
+
+**Root cause.** `get.go.tmpl:474` renders `{{ .FKFieldName }}: {{ pkFilterInExpr .ParentKey $keysVar .FKNullable
+}}`, so the comparator's type comes from the parent key and the filter field's from the FK column. Composite and
+M2M loaders bind `[]any`, so they compile, and fail at the driver. Relationship filters are SQL-only and correct.
+`nestedAssignExpr` builds `sql.NullInt32{Int32: parent.ID}` without checking the type.
+
+**Suggested fix.**
+- `wireKeyedLoad` routes an edge through the existing keyed loader when `comparatorsDiffer`, on O2M, has-one and
+  both M2M keys. Matching edges are untouched. A mismatched edge chunks at 4000 rather than one `= ANY`.
+- `keyGuard` on the referenced side skips a key the integer FK cannot hold, the rule §13.3 applies to NULL.
+- `keyTuple` buckets an integer member as `fmt.Sprint(float64(v))` when its counterpart is a float: without it a
+  child of parent 1000000 keyed `1e+06` loaded 0 rows, measured on SQLite.
+- `nestedAssignExpr` refuses a `database/sql` Null wrapper over another type, so E1 drops the edge.
+- Tests in `gen/key_mismatch_test.go`, fixtures and runtime tests in postgres, postgres_stdlib and sqlite, two PRD
+  §13.3 sentences, three conformance rows.
+- Corrected from the original: building the comparator from the FK's type fixes one site only, and relationship
+  filters are not a defect site. The guard, float bucketing and nested check are added for measured failures of
+  the same mismatch. Build tests skip MySQL, whose DDL is refused; it has template coverage.
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): a parent key an integer FK cannot
+  hold → skip it and load no children, because gates are green, its only golden effect is a shared comment, it adds
+  no public surface, and it extends §13.3's NULL rule. Such a parent has no children, so the result is correct.
+- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced at HEAD on Postgres pgx (5 compile errors), MySQL
+  file-only (3), SQLite family mismatch (5), and the runtime errors above. Gates: `go test -race ./gen/`, examples
+  postgres, postgres_stdlib, sqlite, tenancy_postgres and lint, `TestE2EGoldenFiles`, `make req-check`, `make
+  refs-check` green, some before final test-only or comment edits. Fail-first: reverting the O2M route, the M2M
+  routes, the guard, float bucketing and the nested check each fails its case in
+  `TestGetTemplate_fkComparatorDiffersFromParentKey`, `TestGetTemplate_keyWiderThanFKStaysOutOfTheLoad` or
+  `TestNestedEligibility_nullWrapperOfAnotherWidth`; the existing suite passes without the fix. Golden churn:
+  postgres +6/~10, postgres_stdlib +0/~4, sqlite +12/~18, all fixture tables; tenancy_postgres +0/~1, comment text
+  only, across 10 loaders. No existing edge changed its loader. `comparatorsDiffer` reads `pkComparatorFamily`, so
+  recheck it after FIX-370 and FIX-371. Patch: `.claude/prototypes/FIX-372.patch` (116 files; 14 source, tests,
+  fixtures and docs, the rest generated, so regenerate).
+
+**References.**
+- PRD §5.3, §11.1, §13.3, §9.9.4 (E1).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-373
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** FIX-366 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `e48ece8b` plus FIX-366's patch (2026-11-06)
+
+**Issue.** **On a case-insensitive collation, a nested `connect` through a composite key with a string
+member refuses rows the database treats as matching.** Measured on MySQL's default collation, depot region
+`EU`, vans region `eu`: `create van region=eu depot(EU) err=<nil>`, then `re-connect of the row the depot holds
+err=update depot with related: Vans: connect: 1: sqlgen: already related to another row`, and `connect of
+unparented van region=eu to depot EU err=... Vans: connect: 2: sqlgen: already related to another row`. A
+documented no-op and a valid adoption are both refused, loudly, for `connect`. Measured on MySQL 8.0
+(`utf8mb4_0900_ai_ci`), SQLite `TEXT COLLATE NOCASE` and PostgreSQL 16 `CITEXT` alike: the composite no-op,
+the adoption, an `allow_reparent` move and the single-column no-op are all refused. `disconnect`, which compares
+in the database, works. The `depots` and `vans` tables exist only in FIX-366's patch.
+
+**Root cause.** The three-way split compares stringified members in Go, at `nested.go.tmpl:1011` (pinned
+mismatch), `:1016` (composite no-op) and `:1018` (single-column no-op), with the expressions built by
+`resolveNestedOwnerTuple` (`context_nested.go:1114`). Go cannot apply a database collation.
+
+**Suggested fix.**
+- Prototype results, run at `e48ece8b` on 2026-11-06, option A: PRD §9.9.6 paragraph beside §9.5's "Both halves
+  compare values as Go sees them", new row `nested.connect-key-compared-as-go` (mysql), new subtest gated on a
+  new `CapCaseInsensitiveText`. Gates: conformance/mysql `UpdateWithRelated` ok, sqlite skips by capability, suite
+  lint, `make req-check`, `make refs-check` green. Fail-first: under routing (B) the new test fails with `error =
+  <nil>, want sqlgen: already related to another row`; no true before/after pair exists, since A changes no
+  behavior. Golden churn: none. Cut on top of FIX-366, which must land first. Patch:
+  `.claude/prototypes/FIX-373.patch`. Rejected routing option:
+  `/private/tmp/claude-501/-Users-teandresmith-sqlgen/6bed3e18-93e2-46f9-87c1-05edb218fdd4/scratchpad/FIX-373.option-route.patch`.
+- `strings.EqualFold` is rejected: it disagrees with the database both ways (`cafe`=`café` on MySQL) and would
+  report a false no-op on a case-sensitive column.
+- The user ruled on 2026-11-06: option (A) on question 1 and option (a) on question 2, so the §9.9.6 limit paragraph also covers FIX-368's shared-column check. The patch predates question 2's ruling and needs that sentence, and a sentence that a `connect` naming a target's primary key in another case is `ErrNotFound` (measured: `connect: BLUE: sqlgen: resource not found`, stored `blue`), hand-merged with FIX-368's §9.9.6 anchors. FIX-366 lands first.
+  1. How should the split read equality? (A, recommended) A documented limit: +0 statements, no SQL or generated
+     change, no goldens; the refusals stay, loud, with the row untouched, and the error text misleads for a row
+     this parent holds. (B) Route Go mismatches through the adoption and verify read: every case resolves on all
+     three dialects, the refusal path goes from 2 to 4 statements, ~2 lines in tenancy_postgres, but it
+     contradicts §9.9.6's "before the adoption `UPDATE`" and the call succeeds while the returned relationship
+     omits the adopted row, because the loader drops it. (C) A database-computed `CASE WHEN` in the visibility
+     read: +0 statements, but `GetMany` cannot select an expression, so the runtime changes or hooks and tenancy
+     are bypassed; not prototyped. (D) A follow-up read on Go mismatches: +1 per chunk, a new §9.9.7 row, and the
+     same read-back gap as B; not prototyped.
+  2. FIX-368's shared-column check refuses an M2M `connect` HEAD accepts: `m2m connect van EU to tool eu
+     (database FK accepts it): err=[ErrAlreadyRelated]`, on all three dialects. (a, recommended) Accept it under
+     the limit and extend the §9.9.6 paragraph; M2M then matches O2M. (b) On a Go mismatch, read `id IN … AND
+     shared = parent` before refusing: +1 per chunk and a new §9.9.7 row; not prototyped.
+
+**References.**
+- PRD §9.9.3, §9.9.6, §9.9.7. FIX-368.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-374
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 16, cmd/sqlgen/gen
+- **Surfaced by:** FIX-370 vet (2026-11-06), filed on the user's yes
+
+**Issue.** **An enum in a primary key fails to generate with GraphQL on, a composite member included.** `sqlgen generate` on a graphql example copy with an enum-PK table, with FIX-370's patch applied, gives `models/graph/sqlgenresolver/resolvers_gen.go:6256:47: undefined: ZzKind`, then `Error: gqlgen subprocess failed`.
+
+**Root cause.** `buildAPIPKArgs` / `funcPKGoArgs` write an unqualified `a.GoType`. With a temporary `models.` qualifier at that one site the example generated, built and ran live.
+
+**Suggested fix.**
+- Qualify the enum type at that site, and add an enum PK to a GraphQL build test.
+- Lands after FIX-370.
+
+**References.**
+- PRD §26. FIX-370.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-375
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** FIX-371 vet (2026-11-06), filed on the user's yes
+
+**Issue.** **A nested `connect` naming a time key fails unless its zone pointer matches the scanned row's.** Foreign-zone keys fail on all three dialects: `update stamp with related: Notes: connect: 2026-01-02 09:34:05.123456 +0530 IST: sqlgen: resource not found`. The same instant in `time.Local` under TZ=UTC also fails on MySQL and SQLite: `update tag with related: Stamps: connect: 2026-01-02 03:04:05.123456 +0000 UTC: sqlgen: resource not found`. So an ordinary `time.Now()` key in a UTC container hits it. It fails loudly, and a key read back from the database passes. It reproduces at base and FIX-371's patch leaves it.
+
+**Root cause.** The executor buckets rows in `map[time.Time]` (`nested.go.tmpl`), which compares the zone pointer.
+
+**Suggested fix.**
+- Bucket time keys by a normalized form, such as `UnixNano` or a UTC value, in the visibility read and the two-verb check.
+- Add a live test with the same instant in two zones.
+
+**References.**
+- PRD §9.9.6. FIX-371.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-376
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-371 vet (2026-11-06), filed on the user's yes
+
+**Issue.** **A boolean key on `comparator.ID` fails on MySQL and SQLite.** MySQL, k=true: `create flag: get flag: sqlgen: resource not found`. MySQL, k=false: reads pass, but nested clear gives `Error 1292 (22007): Truncated incorrect INTEGER value`; 8 ok, 12 ERR. SQLite, both values: `resource not found`; 4 ok, 16 ERR. PostgreSQL passes all 20 steps.
+
+**Root cause.** `funcFKToString` binds `fmt.Sprint`, as text. It is FIX-371's root cause, but `comparator.Bool` has no `In` (PRD §11.2), so it cannot follow FIX-371's routing.
+
+**Suggested fix.**
+- Decide how a boolean key binds, given `comparator.Bool` has no `In`. Adding `In` changes public surface and needs a ruling.
+- Add a live test on all three dialects.
+
+**References.**
+- PRD §11.2. FIX-371.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-377
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-370 vet (2026-11-06), filed on the user's yes
+
+**Issue.** **MySQL SET keys and array keys do not compile.** At base: `invalid map key type SKSet`, and `cannot use &comparator.ID{…} as *comparator.Slice[string]` for `text[] PRIMARY KEY`. After FIX-370, SET and `kind[]` keys classify as Enum and gain a second error, `SKSet does not satisfy comparable`; `text[]` is unchanged.
+
+**Root cause.** `pkComparatorFamily` cannot identify these from the Go type, and a slice-backed type cannot key a Go map.
+
+**Suggested fix.**
+- Choose between a comparator route and a validation error for keys that cannot be a Go map key; either way the generator must not emit code that fails to build.
+- Add a build test.
+
+**References.**
+- PRD §11.2, §4.13. FIX-370.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-378
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** FIX-373 vet (2026-11-06), filed on the user's yes
+
+**Issue.** **Relationship loaders silently drop children whose key differs from the parent's only in case.** Measured on MySQL, SQLite NOCASE and PostgreSQL citext: `composite loader Depot.Vans for region EU, child region eu: len=0`; `single loader Team.Players for ABC, child abc: len=0`. `disconnect` finds the same row, so the database treats it as linked. No error is raised. FIX-373's limit covers `connect` only.
+
+**Root cause.** Loaders fetch by database comparison, then bucket the rows in Go by stringified key, so a case-differing child matches no parent.
+
+**Suggested fix.**
+- Decide how buckets read equality; Go cannot apply a collation, and `strings.EqualFold` disagrees with the database both ways.
+- Any option changing the loader's statements needs a ruling against PRD §13.2 and §25.1.
+- Add a conformance row with a mixed-case key.
+
+**References.**
+- PRD §13.2, §13.3. FIX-373.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-379
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 13, cmd/sqlgen/gen
+- **Surfaced by:** FIX-370 vet (2026-11-06), filed on the user's yes
+
+**Issue.** **`tenancy.enabled: true` with a `column` no table has crashes generation.** `generating unified client: goimports failed for out/client_gen.go: out/client_gen.go:22:40: expected type argument list`; the raw output shows `tenancy.TenantResolver[]`. Measured with FIX-370's patch on a schema of enum tables, not checked at base.
+
+**Root cause.** Not yet traced: the resolver's type parameter comes from the tenant column's Go type, which no table supplies.
+
+**Suggested fix.**
+- Confirm at base, and refuse this at validation with an error naming the column.
+- Add a config validation test.
+
+**References.**
+- PRD §29, §4.13.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
