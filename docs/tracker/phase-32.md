@@ -1193,7 +1193,7 @@ edge was already refused; it asserts the verb set after the lift.
   `TestNestedEligibility_M2MIntoAUniqueKeyIsNotWriteEligible` became
   `TestNestedEligibility_JunctionReferencingTargetColumn`.
 - **Surrogate junction.** It loses `disconnect` at generation, and `clear` needs just E11 (PRD §9.9.3).
-  `create` and `connect` are emitted but every link fails at runtime: see the `/verify` findings below.
+  `create` and `connect` are emitted but every link fails at runtime: see the `/verify` findings below (resolved by FIX-364).
 
 **Goldens.** `make update-golden` and `make update-golden-e2e` moved `tenancy_postgres` alone. Beyond
 the new tables, one existing-table change: `ToConditions` on `Article`, `LineItem` and the two views
@@ -1226,7 +1226,7 @@ was not run; it is due at 32.8.
 - The mapping extends to the M2M link step (PRD §9.9.6, §9.9.8). Failed first with the raw
   `tenant on mutation input does not match` error; `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated`.
 
-**Rulings from `/verify 32.6` (2026-11-06, each took the recommended option; none is implemented yet).**
+**Rulings from `/verify 32.6` (2026-11-06, each took the recommended option; FIX-364 has landed; FIX-368 and FIX-369 are open).**
 - A surrogate-PK junction's link targets the UNIQUE equal to the key union, and without one the edge
   is refused under E13 (FIX-364).
 - An M2M `connect` under `SkipTenancy` runs a pinned check on a column both keys share, and a mismatch

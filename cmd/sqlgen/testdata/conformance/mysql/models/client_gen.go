@@ -130,6 +130,7 @@ type Client struct {
 	counter       *counterClient
 	crate         *crateClient
 	crateItem     *crateItemClient
+	crateSeal     *crateSealClient
 	document      *documentClient
 	itemNote      *itemNoteClient
 	itemReceipt   *itemReceiptClient
@@ -140,6 +141,7 @@ type Client struct {
 	post          *postClient
 	product       *productClient
 	revision      *revisionClient
+	seal          *sealClient
 	shelf         *shelfClient
 	station       *stationClient
 	tag           *tagClient
@@ -166,6 +168,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		counter:       newCounterClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		crate:         newCrateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		crateItem:     newCrateItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		crateSeal:     newCrateSealClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		document:      newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		itemNote:      newItemNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		itemReceipt:   newItemReceiptClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
@@ -176,6 +179,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		post:          newPostClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		product:       newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		revision:      newRevisionClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		seal:          newSealClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		shelf:         newShelfClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		station:       newStationClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		tag:           newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
@@ -189,6 +193,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.author.callbackMode = options.callbackMode
 	c.crate.callbackMode = options.callbackMode
 	c.product.callbackMode = options.callbackMode
+	c.seal.callbackMode = options.callbackMode
 	c.shelf.callbackMode = options.callbackMode
 	c.station.callbackMode = options.callbackMode
 	c.tag.callbackMode = options.callbackMode
@@ -200,11 +205,15 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.author.authorProfileClient = c.authorProfile
 	c.author.authorTagClient = c.authorTag
 	c.crate.orderItemClient = c.orderItem
+	c.crate.sealClient = c.seal
 	c.crate.crateItemClient = c.crateItem
+	c.crate.crateSealClient = c.crateSeal
 	c.orderItem.itemNoteClient = c.itemNote
 	c.orderItem.crateClient = c.crate
 	c.orderItem.stationClient = c.station
 	c.product.orderItemClient = c.orderItem
+	c.seal.crateClient = c.crate
+	c.seal.crateSealClient = c.crateSeal
 	c.shelf.crateClient = c.crate
 	c.shelf.parcelClient = c.parcel
 	c.station.orderItemClient = c.orderItem
@@ -243,6 +252,11 @@ func (c *Client) Crates() CrateClient {
 // CrateItems returns the CrateItemClient for CrateItem operations.
 func (c *Client) CrateItems() CrateItemClient {
 	return c.crateItem
+}
+
+// CrateSeals returns the CrateSealClient for CrateSeal operations.
+func (c *Client) CrateSeals() CrateSealClient {
+	return c.crateSeal
 }
 
 // Documents returns the DocumentClient for Document operations.
@@ -293,6 +307,11 @@ func (c *Client) Products() ProductClient {
 // Revisions returns the RevisionClient for Revision operations.
 func (c *Client) Revisions() RevisionClient {
 	return c.revision
+}
+
+// Seals returns the SealClient for Seal operations.
+func (c *Client) Seals() SealClient {
+	return c.seal
 }
 
 // Shelves returns the ShelfClient for Shelf operations.

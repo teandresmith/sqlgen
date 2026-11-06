@@ -238,6 +238,57 @@ func updateWithRelated(t *testing.T, h *Harness) {
 		uwrAssertEdgesUnchanged(t, h, posts, profiles, pairs)
 	})
 
+	t.Run("a junction keyed by a surrogate links through its UNIQUE, and a re-link keeps the row", func(t *testing.T) {
+		h.Reset(t)
+		crate, err := h.Client.Crates().Create(ctx, &models.CreateCrateInput{Label: "crate"})
+		if err != nil {
+			t.Fatalf("Create crate error = %v, want nil", err)
+		}
+		linked, err := h.Client.Seals().Create(ctx, &models.CreateSealInput{Name: "linked"})
+		if err != nil {
+			t.Fatalf("Create seal error = %v, want nil", err)
+		}
+		free, err := h.Client.Seals().Create(ctx, &models.CreateSealInput{Name: "free"})
+		if err != nil {
+			t.Fatalf("Create seal error = %v, want nil", err)
+		}
+
+		if _, err := h.Client.Crates().UpdateWithRelated(ctx, crate.ID, &models.UpdateCrateWithRelatedInput{
+			Seals: &models.CrateSealsUpdateNested{Connect: []int64{linked.ID}},
+		}); err != nil {
+			t.Fatalf("UpdateWithRelated(first link) error = %v, want nil", err)
+		}
+		first := uwrSealRows(t, h, crate.ID)
+		if len(first) != 1 {
+			t.Fatalf("crate seals = %v, want one link", first)
+		}
+
+		if _, err := h.Client.Crates().UpdateWithRelated(ctx, crate.ID, &models.UpdateCrateWithRelatedInput{
+			Seals: &models.CrateSealsUpdateNested{
+				Create:  []*models.CreateSealInput{{Name: "created"}},
+				Connect: []int64{linked.ID, free.ID},
+			},
+		}); err != nil {
+			t.Fatalf("UpdateWithRelated(re-link) error = %v, want nil", err)
+		}
+		rows := uwrSealRows(t, h, crate.ID)
+		if len(rows) != 3 {
+			t.Fatalf("crate seals = %v, want three links", rows)
+		}
+		if rows[linked.ID] != first[linked.ID] {
+			t.Errorf("re-linked seal's junction id = %d, want the row's own %d", rows[linked.ID], first[linked.ID])
+		}
+
+		if _, err := h.Client.Crates().UpdateWithRelated(ctx, crate.ID, &models.UpdateCrateWithRelatedInput{
+			Seals: &models.CrateSealsUpdateNested{Clear: true, Connect: []int64{free.ID}},
+		}); err != nil {
+			t.Fatalf("UpdateWithRelated(clear and connect) error = %v, want nil", err)
+		}
+		if rows := uwrSealRows(t, h, crate.ID); len(rows) != 1 || rows[free.ID] == 0 {
+			t.Errorf("crate seals after clear = %v, want only seal %d", rows, free.ID)
+		}
+	})
+
 	t.Run("connect leaves a post or tag already on the edge in place and adds the others", func(t *testing.T) {
 		h.Reset(t)
 		a := createAuthor(t, h, "a")
@@ -1388,6 +1439,22 @@ func uwrPairs(pairs ...[2]int64) [][2]int64 {
 	slices.SortFunc(out, func(a, b [2]int64) int {
 		return slices.Compare(a[:], b[:])
 	})
+	return out
+}
+
+// uwrSealRows returns a crate's crate_seals rows as seal id to junction id.
+func uwrSealRows(t *testing.T, h *Harness, crateID int64) map[int64]int64 {
+	t.Helper()
+	rows, err := h.Client.CrateSeals().GetMany(context.Background(), &models.GetCrateSealsInput{
+		Filter: &models.CrateSealFilter{CrateID: &comparator.Number[int64]{Eq: new(crateID)}},
+	})
+	if err != nil {
+		t.Fatalf("GetMany crate seals error = %v, want nil", err)
+	}
+	out := make(map[int64]int64, len(rows))
+	for _, r := range rows {
+		out[r.SealID] = r.ID
+	}
 	return out
 }
 

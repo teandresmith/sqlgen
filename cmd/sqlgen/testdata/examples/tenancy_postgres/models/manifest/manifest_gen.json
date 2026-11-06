@@ -238,6 +238,13 @@
       "file": "entities/project.json"
     },
     {
+      "name": "Reviewer",
+      "table": "reviewers",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/reviewer.json"
+    },
+    {
       "name": "Site",
       "table": "sites",
       "schema": "public",
@@ -271,6 +278,13 @@
       "schema": "public",
       "kind": "table",
       "file": "entities/task_label.json"
+    },
+    {
+      "name": "TaskReviewer",
+      "table": "task_reviewers",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/task_reviewer.json"
     },
     {
       "name": "Template",

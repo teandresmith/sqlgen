@@ -26828,6 +26828,3603 @@ type GetProjectsInput struct {
 	requiredColumns []string
 }
 
+type Reviewer struct {
+	ID          int64     `db:"id" json:"id"`
+	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
+	Name        string    `db:"name" json:"name"`
+
+	// Tasks - many-to-many relationship with the tasks table.
+	Tasks []*Task `db:"-" json:"tasks"`
+}
+
+// ReviewerClient provides type-safe operations for the reviewers table.
+type ReviewerClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single reviewer by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error)
+
+	// GetMany returns reviewers matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetReviewersInput, opts ...func(*CallOptions[ReviewerFieldOptions])) ([]*Reviewer, error)
+
+	// Exists returns true if a reviewer with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[ReviewerFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any reviewer matches the given filter.
+	ExistsWhere(ctx context.Context, filter *ReviewerFilter, opts ...func(*CallOptions[ReviewerFieldOptions])) (bool, error)
+
+	// Count returns the number of reviewers matching the given filter.
+	Count(ctx context.Context, filter *ReviewerFilter, opts ...func(*CallOptions[ReviewerFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new reviewer and returns the created entity.
+	Create(ctx context.Context, input *CreateReviewerInput, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error)
+
+	// CreateMany inserts multiple reviewers in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateReviewerInput, opts ...func(*CallOptions[ReviewerFieldOptions])) ([]*Reviewer, error)
+
+	// Update partially updates a reviewer by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateReviewerInput, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error)
+
+	// UpdateMany updates multiple reviewers and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateReviewerItem, opts ...func(*CallOptions[ReviewerFieldOptions])) ([]*Reviewer, error)
+
+	// UpdateWhere updates all reviewers matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *ReviewerFilter, input *UpdateReviewerInput, opts ...func(*CallOptions[ReviewerFieldOptions])) ([]*Reviewer, error)
+
+	// Upsert inserts a reviewer or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateReviewerInput, target ReviewerConflictTarget, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error)
+
+	// UpsertMany inserts or updates multiple reviewers in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateReviewerInput, target ReviewerConflictTarget, opts ...func(*CallOptions[ReviewerFieldOptions])) ([]*Reviewer, error)
+
+	// CreateWithRelated creates a reviewer together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateReviewerWithRelatedInput, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error)
+
+	// UpdateWithRelated updates a reviewer together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdateReviewerWithRelatedInput, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error)
+
+	// UpsertWithRelated inserts or updates a reviewer together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertReviewerWithRelatedInput, target ReviewerConflictTarget, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a reviewer from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[ReviewerFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple reviewers from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[ReviewerFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all reviewers matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *ReviewerFilter, opts ...func(*CallOptions[ReviewerFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of reviewers with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[ReviewerFilter], opts ...func(*CallOptions[ReviewerFieldOptions])) (*PaginateResult[Reviewer], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of reviewers.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[ReviewerFilter], opts ...func(*CallOptions[ReviewerFieldOptions])) (*Connection[Reviewer], error)
+
+	// Stream returns an iterator over reviewers matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamReviewersInput, opts ...func(*CallOptions[StreamReviewerFieldOptions])) iter.Seq2[*Reviewer, error]
+}
+
+// reviewerClient implements the ReviewerClient interface.
+type reviewerClient struct {
+	querier            database.Querier
+	dialect            sql.Dialect
+	table              sql.Table
+	batchSize          int
+	queryLimit         int
+	pageSize           int
+	cursorKeys         []string
+	strictUpdates      bool
+	mutationHooks      []hook.MutationHook
+	queryHooks         []hook.QueryHook
+	panicHandler       hook.PanicHandler
+	callbackMode       database.CallbackMode
+	tenantResolver     tenancy.TenantResolver[uuid.UUID]
+	tasksDefaultSort   []sql.Sort
+	taskClient         *taskClient
+	taskReviewerClient *taskReviewerClient
+}
+
+// newReviewerClient creates a new reviewerClient.
+func newReviewerClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *reviewerClient {
+	return &reviewerClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "reviewers"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *reviewerClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *reviewerClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// resolveTenant reads the operation's tenant from tenantValue and applies THIS
+// table's tenancy.required setting to it, returning the value, a bool
+// indicating whether tenancy should be applied to this call, and any resolver
+// error. The split matters: tenantValue's answer is shared across every client
+// the operation touches, while the apply bool below is this table's alone
+// (required is a per-table setting). The apply bool encodes the
+// tenancy.required semantic:
+//
+//   - Non-zero resolver return → apply=true; callers AND the filter into the
+//     WHERE (reads), verify-match against caller-supplied tenant (mutations),
+//     and auto-set the tenant column on INSERT.
+//   - Zero resolver return (resolver returned (zero, nil) or is nil) under
+//     tenancy.required:true → apply=false, err=tenancy.ErrMissing. The op
+//     fails closed before the DB round-trip.
+//   - Zero resolver return under tenancy.required:false → apply=false, err=nil.
+//     The op silently becomes cross-tenant: no filter append, no verify-match,
+//     no auto-set. This is the "missing tenant skips the filter" path
+//     — always-off rather than a silent zero-value write.
+//   - Resolver returns a non-nil error → apply=false, err propagated.
+//
+// Required-at-codegen determinism: the required:true vs required:false branch
+// is picked at template-expansion time per-table, from the table's resolved
+// tenancy config. Runtime callers observe a stable behavior per table.
+//
+// explicit carries CallOptions.Tenant (the explicit-tenant resolution
+// mode): when non-nil, tenancy behaves as normal resolution with
+// the resolver replaced by this constant — filter, auto-set, and verify-match
+// all apply. Precedence over SkipTenancy is normalized in
+// resolveCallOptions, so callers gate on SkipTenancy exactly as before. The
+// pointer distinguishes set from unset; a set zero value is honored verbatim.
+func (c *reviewerClient) resolveTenant(ctx context.Context, explicit *uuid.UUID) (uuid.UUID, bool, error) {
+	if explicit != nil {
+		return *explicit, true, nil
+	}
+	var zero uuid.UUID
+	v, err := c.tenantValue(ctx)
+	if err != nil {
+		return zero, false, err
+	}
+	if v == zero {
+		return zero, false, tenancy.ErrMissing
+	}
+	return v, true, nil
+}
+
+// tenantValue returns the tenant the user resolver reports for this operation,
+// invoking it at most once per logical operation.
+//
+// It answers the table-independent half of the question and stops there: what
+// the resolver said. The tenancy.required reading of that answer — zero means
+// ErrMissing, or zero means skip the filter — belongs to resolveTenant above,
+// because `required` is a per-table setting while this value is
+// shared across every client the operation touches.
+//
+// Keeping the two apart is load-bearing rather than tidy. The ctx cache is
+// keyed on the tenant type alone, so it is one slot for the whole package;
+// caching the reading instead of the answer let whichever table resolved first
+// impose its `required` on the rest, and a required:false table handing
+// apply=false to a required:true one is a fail-open. A nil resolver
+// yields the zero value and the same per-table branch a zero return takes.
+func (c *reviewerClient) tenantValue(ctx context.Context) (uuid.UUID, error) {
+	// Short-circuit: an entry point for this logical operation — a chaining
+	// mutation (Create, Update, Upsert, …) or a nested method's hoist — already
+	// resolved and stashed the value via tenancy.WithResolvedTenant. Lookup
+	// uses the same comparable T as the resolver, so collisions across entity
+	// clients with different tenant types are impossible.
+	if v, ok := tenancy.CachedTenant[uuid.UUID](ctx); ok {
+		return v, nil
+	}
+	if c.tenantResolver == nil {
+		var zero uuid.UUID
+		return zero, nil
+	}
+	return c.tenantResolver(ctx)
+}
+
+// filterOptions resolves the FilterOption set this client's filters need to
+// compile their relationship members. A relationship filter is a
+// read of the related table, so the target's tenant predicate goes inside the
+// EXISTS subquery — otherwise the filter would be a cross-tenant existence
+// probe on rows the caller cannot otherwise see.
+//
+// The resolve is gated on filter, not performed unconditionally, because the
+// option set is read only by the EXISTS helpers: a filter that sets no
+// relationship member compiles identically with or without it. Resolving anyway
+// would import the tenant's failure modes into calls that have no tenanted
+// component at all — on a shared table the outer WHERE is
+// never tenant-scoped, so a resolver that reports a missing tenant as an error
+// would reject every read that legitimately runs before a tenant is selected.
+//
+// Beyond that gate, nil is the correct answer in exactly the cases where the
+// table's own WHERE gets no tenant filter either: SkipTenancy, and a zero
+// resolver result under tenancy.required:false. The subquery is then unscoped
+// by the same decision that leaves the outer statement unscoped.
+func (c *reviewerClient) filterOptions(ctx context.Context, filter *ReviewerFilter, skipTenancy bool, explicit *uuid.UUID) ([]FilterOption, error) {
+	if skipTenancy || !filter.usesRelationshipFilter() {
+		return nil, nil
+	}
+	tenant, apply, err := c.resolveTenant(ctx, explicit)
+	if err != nil {
+		return nil, err
+	}
+	if !apply {
+		return nil, nil
+	}
+	return []FilterOption{WithFilterTenant(tenant)}, nil
+}
+
+// reviewerAllColumns is the column list for full-entity reads, sorted for determinism.
+var reviewerAllColumns = []string{"id", "name", "workspace_id"}
+
+// scanReviewers scans rows into Reviewer entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanReviewers(rows database.Rows, columns []string) ([]*Reviewer, error) {
+	var result []*Reviewer
+	for rows.Next() {
+		r := &Reviewer{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &r.ID
+			case "workspace_id":
+				targets[idx] = &r.WorkspaceID
+			case "name":
+				targets[idx] = &r.Name
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan reviewer: %w", err)
+		}
+
+		result = append(result, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate reviewer rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single reviewer by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *reviewerClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get reviewer: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableReviewers, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	// Resolve tenant once at the entity-method boundary so the
+	// cache read-through hook can build a tenant-scoped key. The terminal
+	// (and the internal GetMany) sees the same value via q.Tenant. apply=false
+	// under tenancy.required:false + zero resolver skips both qctx.Tenant and
+	// the verify-match (cross-tenant read).
+	if !options.SkipTenancy {
+		resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nil, fmt.Errorf("get reviewer: resolve tenant: %w", err)
+		}
+		if apply {
+			qctx.Tenant = resolvedTenant
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[ReviewerFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[ReviewerFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		reviewers, err := c.GetMany(ctx, &GetReviewersInput{
+			Filter: &ReviewerFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(reviewers) == 0 {
+			return nil, ErrNotFound
+		}
+		return reviewers[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get reviewer: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Reviewer), nil
+}
+
+// GetMany returns reviewers matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *reviewerClient) GetMany(ctx context.Context, input *GetReviewersInput, opts ...func(*CallOptions[ReviewerFieldOptions])) ([]*Reviewer, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetReviewersInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get many reviewers: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableReviewers, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := reviewerAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "workspace_id", "id")
+				}
+			}
+		}
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect, filterOpts...)
+		}
+
+		// Tenancy auto-filter — append tenant = resolved to WHERE.
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// filter (cross-tenant read).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var reviewers []*Reviewer
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		reviewers, err = scanReviewers(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, reviewers, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return reviewers, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many reviewers: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Reviewer), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the workspace_id and id columns into a narrowed projection when one is:
+// loadRelationships maps every child back through r.WorkspaceID and r.ID, which
+// an unselected column would leave at its zero value.
+func (fo *ReviewerFieldOptions) loadsRelationships() bool {
+	if fo.Tasks != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache, SkipEvents, SkipTenancy and Tenant. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// A child that fell back to the ctx resolver instead of the parent's explicit
+// Tenant would read the two halves of one row set under two tenants, and on the
+// explicit-tenant bootstrap path, where ctx carries no tenant at all, fail with
+// tenancy.ErrMissing while the parent succeeded.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *reviewerClient) loadRelationships(ctx context.Context, conn database.Querier, reviewers []*Reviewer, options CallOptions[ReviewerFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Tasks != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			reviewerKeyed := make([]*Reviewer, 0, len(reviewers))
+			reviewerKeys := make([][]any, 0, len(reviewers))
+			for _, r := range reviewers {
+				reviewerKeyed = append(reviewerKeyed, r)
+				reviewerKeys = append(reviewerKeys, []any{r.WorkspaceID, r.ID})
+			}
+
+			sorts := fo.Tasks.Sorts
+			if len(sorts) == 0 {
+				sorts = c.tasksDefaultSort
+			}
+
+			// The three steps run once per chunk of 4000 parent keys:
+			// within half the dialect's bind-parameter limit, leaving the rest for
+			// the relationship's filters.
+			for start := 0; start < len(reviewerKeys); start += 4000 {
+				chunk := reviewerKeys[start:min(start+4000, len(reviewerKeys))]
+
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[[2]string][][2]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "public", Name: "task_reviewers"}, sql.SelectOptions{
+						Columns:    []string{"workspace_id", "reviewer_id", "task_id"},
+						Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "reviewer_id"}, chunk)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load reviewer tasks junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load reviewer tasks junction columns: %w", err)
+					}
+
+					for junctionRows.Next() {
+						var key0 uuid.UUID
+						var key1 int64
+						var key2 int64
+						ptrs := make([]any, len(junctionCols))
+						for i, col := range junctionCols {
+							switch col {
+							case "workspace_id":
+								ptrs[i] = &key0
+							case "reviewer_id":
+								ptrs[i] = &key1
+							case "task_id":
+								ptrs[i] = &key2
+							}
+						}
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan reviewer tasks junction: %w", err)
+						}
+						parentID, targetID := [2]string{key0.String(), fmt.Sprint(key1)}, [2]string{key0.String(), fmt.Sprint(key2)}
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate reviewer tasks junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "reviewer_id"}, chunk),
+				})
+				conditions := []sql.Condition{
+					sql.TupleInSubquery(c.dialect, []string{"workspace_id", "id"}, sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("workspace_id") + ", j." + c.dialect.QuoteIdentifier("task_id") + "" +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "public", Name: "task_reviewers"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &TaskFilter{}
+				if fo.Tasks.Filter != nil {
+					filter.And = append(filter.And, fo.Tasks.Filter)
+				}
+
+				relatedTasks, err := c.taskClient.GetMany(ctx, &GetTasksInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its referenced columns, so
+					// the fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"workspace_id", "id"},
+				}, func(co *CallOptions[TaskFieldOptions]) {
+					co.FieldOptions = fo.Tasks.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+					co.SkipTenancy = options.SkipTenancy
+					co.Tenant = options.Tenant
+				})
+				if err != nil {
+					return fmt.Errorf("load reviewer tasks: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts order each parent's slice.
+				parentsByTarget := make(map[[2]string][]int, len(relatedTasks))
+				for i := start; i < start+len(chunk); i++ {
+					parent := reviewerKeyed[i]
+					for _, tID := range parentToTargetIDs[[2]string{parent.WorkspaceID.String(), fmt.Sprint(parent.ID)}] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedTasks {
+					for _, i := range parentsByTarget[[2]string{t.WorkspaceID.String(), fmt.Sprint(t.ID)}] {
+						reviewerKeyed[i].Tasks = append(reviewerKeyed[i].Tasks, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new reviewer and returns the created entity.
+func (c *reviewerClient) Create(ctx context.Context, input *CreateReviewerInput, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateReviewerInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create reviewer: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableReviewers, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"name"}
+		args := []any{input.Name}
+		// Tenancy auto-set + mismatch check. Caller-set tenant on
+		// the input is tolerated only when it matches the resolved value — any
+		// mismatch returns ErrMismatch before the DB round-trip. apply=false
+		// under tenancy.required:false + zero resolver falls through to the
+		// SkipTenancy-style branch: caller-supplied value wins, no auto-set,
+		// no verify-match (the DB NOT NULL constraint surfaces if the input is
+		// also empty).
+		// capturedTenant carries the tenant value written to the row into
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// the tenant-scoped key from the row itself, independent of how (or
+		// whether) the tenant was resolved. Stays nil only when
+		// no tenant value reaches the INSERT (a DB default fills the column).
+		var capturedTenant any
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
+			// resolver's answer, not this table's reading of it: a zero return
+			// is cached as a zero, and each table downstream re-applies its own
+			// tenancy.required branch to it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash resolved tenant on MutationContext so the cache hook
+				// builds tenant-scoped keys without re-invoking the resolver
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+				capturedTenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value is used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+				capturedTenant = v
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			// SkipTenancy:true — caller must explicitly set the tenant value.
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+			capturedTenant = v
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[ReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create reviewer: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Reviewer), nil
+}
+
+// CreateMany inserts multiple reviewers in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *reviewerClient) CreateMany(ctx context.Context, inputs []*CreateReviewerInput, opts ...func(*CallOptions[ReviewerFieldOptions])) ([]*Reviewer, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many reviewers: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableReviewers, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Reviewer{}, nil
+		}
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// (and the per-input verify-match short-circuits via the cache)
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// Filled in lockstep with the PK slice above; feeds m.AffectedTenants
+		// so cache invalidation and event stamping rebuild tenant-scoped keys
+		// from each row's own tenant value.
+		var allTenants []any
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"workspace_id", "name"}
+			var valueRows [][]any
+			for _, input := range batch {
+				// Tenancy auto-set + mismatch check.
+				// applyTenancy=false under SkipTenancy OR under required:false
+				// + zero resolver — caller-supplied tenant is used, else the DB
+				// NOT NULL constraint surfaces.
+				// The allTenants append below relies on the tenant-∉-PK column
+				// always being an omittable CreateInput field (promoted by
+				// attachTenancyToTables) so exactly one carrier element is
+				// appended per input, in lockstep with the PK slice.
+				var workspaceID any
+				if applyTenancy {
+					if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+					workspaceID = resolvedTenant
+				} else if v, ok := input.WorkspaceID.Get(); ok {
+					workspaceID = v
+				} else {
+					return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+				}
+				allTenants = append(allTenants, workspaceID)
+
+				valueRows = append(valueRows, []any{
+					workspaceID,
+					input.Name,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+		m.AffectedTenants = allTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetReviewersInput{
+			Filter: &ReviewerFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[ReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many reviewers: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Reviewer), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *reviewerClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *reviewerClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan reviewer id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a reviewer by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *reviewerClient) Update(ctx context.Context, id int64, input *UpdateReviewerInput, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update reviewer: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableReviewers, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Tenancy mismatch check before any SQL build. applyTenancy
+		// is false under SkipTenancy OR under required:false + zero resolver —
+		// in the second case the WHERE below also drops the tenant predicate.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		// Tenant column excluded from SET under normal operation.
+		// Honored when the caller opted out via SkipTenancy OR when
+		// required:false + zero resolver opted out of tenancy for this call.
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[ReviewerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if applyTenancy {
+			updateConds = append(updateConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+		}
+
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       updateConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		matched := 0
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan updated reviewer tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[ReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update reviewer: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Reviewer), nil
+}
+
+// UpdateReviewerItem pairs a primary key with an update input for batch updates.
+type UpdateReviewerItem struct {
+	ID    int64                `json:"id"`
+	Input *UpdateReviewerInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple reviewers and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
+func (c *reviewerClient) UpdateMany(ctx context.Context, items []UpdateReviewerItem, opts ...func(*CallOptions[ReviewerFieldOptions])) ([]*Reviewer, error) {
+	// UpdateReviewerItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many reviewers: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableReviewers, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Reviewer{}, nil
+		}
+
+		// Resolve the tenant once; per-item mismatch checks use the same value.
+		// applyTenancy=false under SkipTenancy OR under required:false + zero
+		// resolver — the per-item verify-match and per-row WHERE both drop.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the per-item verify-match short-circuits via the
+			// cache and the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				for _, item := range items {
+					if v, ok := item.Input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateReviewerItem
+		// Per-item RETURNING captures each updated row's tenant; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from the rows themselves.
+		tenantByPK := make(map[int64]any, len(items))
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			var queuedItems []UpdateReviewerItem
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if !applyTenancy {
+					if v, ok := item.Input.WorkspaceID.Get(); ok {
+						setClauses["workspace_id"] = v
+					}
+				}
+				if v, ok := item.Input.Name.Get(); ok {
+					setClauses["name"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.ID)
+					continue
+				}
+				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+				if applyTenancy {
+					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses:       setClauses,
+					Conditions:       itemConds,
+					ReturningColumns: []string{"workspace_id"},
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
+				allIDs = append(allIDs, item.ID)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise.
+			// Each statement RETURNING-projects the row's tenant; the scan
+			// below captures it per queued PK.
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for i := range pgxBatch.Len() {
+						rows, err := br.Query()
+						if err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						matched := 0
+						for rows.Next() {
+							var rowTenant uuid.UUID
+							if err := rows.Scan(&rowTenant); err != nil {
+								rows.Close()
+								br.Close()
+								return nil, fmt.Errorf("scan updated reviewer tenant: %w", err)
+							}
+							tenantByPK[queuedItems[i].ID] = rowTenant
+							matched++
+						}
+						if err := rows.Err(); err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						rows.Close()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close batch: %w", err)
+					}
+				} else {
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_reviewer", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							rows, err := conn.Query(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							matched := 0
+							for rows.Next() {
+								var rowTenant uuid.UUID
+								if err := rows.Scan(&rowTenant); err != nil {
+									rows.Close()
+									return fmt.Errorf("scan updated reviewer tenant: %w", err)
+								}
+								tenantByPK[queuedItems[i].ID] = rowTenant
+								matched++
+							}
+							if err := rows.Err(); err != nil {
+								rows.Close()
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							rows.Close()
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
+						}
+						return nil
+					}); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetReviewersInput{
+			Filter: &ReviewerFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[ReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many reviewers: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Reviewer), nil
+}
+
+// UpdateWhere updates all reviewers matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *reviewerClient) UpdateWhere(ctx context.Context, filter *ReviewerFilter, input *UpdateReviewerInput, opts ...func(*CallOptions[ReviewerFieldOptions])) ([]*Reviewer, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update reviewers where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableReviewers, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		conds := filter.ToConditions(c.dialect, filterOpts...)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Tenancy filter + mismatch check. applyTenancy=false
+		// under SkipTenancy OR under required:false + zero resolver — the
+		// filter is not AND'd and the SET-clause tenant override below fires
+		// (only meaningful when the tenant column is NOT in the PK; when it
+		// is, the column is excluded from UpdateInputFields entirely).
+		applyTenancy := false
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetReviewersInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[ReviewerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan updated reviewer id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetReviewersInput{
+			Filter: &ReviewerFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[ReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update reviewers where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Reviewer), nil
+}
+
+// HardDelete permanently removes a reviewer from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *reviewerClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[ReviewerFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableReviewers, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       hardConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		var matched int
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan deleted reviewer tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete reviewer: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple reviewers from the database.
+func (c *reviewerClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[ReviewerFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableReviewers, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var scopeConds []sql.Condition
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Every sub-batch records the tenant of each row it touches, so cache
+		// invalidation and event stamping rebuild tenant-scoped keys from the
+		// rows themselves.
+		tenantByPK := make(map[int64]any, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+			hardConds = append(hardConds, scopeConds...)
+
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id", "workspace_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchTenants := make(map[int64]any, end-start)
+			for rows.Next() {
+				var rowID int64
+				var rowTenant uuid.UUID
+				if err := rows.Scan(&rowID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted reviewer tenant: %w", err)
+				}
+				batchTenants[rowID] = rowTenant
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many reviewers: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all reviewers matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *reviewerClient) HardDeleteWhere(ctx context.Context, filter *ReviewerFilter, opts ...func(*CallOptions[ReviewerFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableReviewers, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		conds := filter.ToConditions(c.dialect, filterOpts...)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan deleted reviewer id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete reviewers where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *reviewerClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
+}
+
+// ReviewerConflictTarget identifies a unique constraint for upsert conflict detection.
+type ReviewerConflictTarget int
+
+const (
+	ReviewerConflictPK            ReviewerConflictTarget = iota // PRIMARY KEY (id)
+	ReviewerConflictWorkspaceIDID                               // UNIQUE (workspace_id, id)
+)
+
+// reviewerConflictColumns maps each conflict target to its column set.
+var reviewerConflictColumns = map[ReviewerConflictTarget][]string{
+	ReviewerConflictPK:            {"id"},
+	ReviewerConflictWorkspaceIDID: {"workspace_id", "id"},
+}
+
+// Upsert inserts a reviewer or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *reviewerClient) Upsert(ctx context.Context, input *CreateReviewerInput, target ReviewerConflictTarget, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateReviewerInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert reviewer: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableReviewers, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"name"}
+		args := []any{input.Name}
+		// Tenancy auto-set + mismatch check. apply=false under
+		// tenancy.required:false + zero resolver falls through to the
+		// caller-supplied value branch.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// (single-resolve). The resolver's answer is cached, not
+			// this table's reading of it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := reviewerConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[ReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert reviewer: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Reviewer), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves
+// the generated primary key, also capturing the row's tenant column so cache
+// invalidation and event stamping can rebuild the tenant-scoped key from the
+// row itself. On the conflict-update path the existing row keeps
+// its tenant, so the captured value (not the input) is authoritative.
+func (c *reviewerClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id", "workspace_id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	var id int64
+	var rowTenant uuid.UUID
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id, &rowTenant)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	if found {
+		return id, rowTenant, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *reviewerClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, any, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, nil, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id", "workspace_id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+
+	var id int64
+	var rowTenant uuid.UUID
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, nil, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, nil, ErrNotFound
+	}
+	// BuildSelect emits its column list sorted, which need not match the order
+	// the columns were requested in, so bind the scan targets by name rather
+	// than by position — the same rule scanReviewers follows.
+	cols, err := rows.Columns()
+	if err != nil {
+		return 0, nil, err
+	}
+	targets := make([]any, len(cols))
+	for i, col := range cols {
+		switch col {
+		case "id":
+			targets[i] = &id
+		case "workspace_id":
+			targets[i] = &rowTenant
+		}
+	}
+	if err := rows.Scan(targets...); err != nil {
+		return 0, nil, err
+	}
+	return id, rowTenant, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple reviewers in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// reviewers.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *reviewerClient) UpsertMany(ctx context.Context, inputs []*CreateReviewerInput, target ReviewerConflictTarget, opts ...func(*CallOptions[ReviewerFieldOptions])) ([]*Reviewer, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many reviewers: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableReviewers, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Reviewer{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"workspace_id", "name"}
+		conflictColumns := reviewerConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateReviewerInput, 0, len(inputs))
+		var rowIDs []int64
+		// Filled from the rows themselves after each sub-batch; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from each row's own tenant value. A
+		// conflict leaves the existing row's tenant in place, so the input's
+		// value is not authoritative the way it is for CreateMany.
+		var rowTenants []any
+		for _, input := range inputs {
+			// Tenancy auto-set + mismatch check.
+			// applyTenancy=false under SkipTenancy OR under required:false
+			// + zero resolver — caller-supplied tenant is used, else the DB
+			// NOT NULL constraint surfaces.
+			var workspaceID any
+			if applyTenancy {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				workspaceID = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				workspaceID = v
+			} else {
+				return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+			}
+
+			valueRows = append(valueRows, []any{
+				workspaceID,
+				input.Name,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateReviewerInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, batchTenants, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+		m.AffectedTenants = rowTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetReviewersInput{
+			Filter: &ReviewerFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[ReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many reviewers: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Reviewer), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key and tenant in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// reviewers.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *reviewerClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, []any, error) {
+	if len(rows) == 0 {
+		return nil, nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level reviewerConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanReviewers
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id", "workspace_id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	found, err := scanReviewers(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk     int64
+		tenant any
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = reviewerColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID, tenant: entity.WorkspaceID}
+	}
+
+	pks := make([]int64, len(rows))
+	tenants := make([]any, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+		tenants[i] = resolved.tenant
+	}
+	return pks, tenants, nil
+}
+
+// reviewerColumnValue returns one column's value off a scanned
+// Reviewer, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanReviewers.
+func reviewerColumnValue(r *Reviewer, column string) any {
+	switch column {
+	case "id":
+		return r.ID
+	case "workspace_id":
+		return r.WorkspaceID
+	case "name":
+		return r.Name
+	}
+	return nil
+}
+
+// CreateReviewerWithRelatedInput holds the fields for creating a reviewers record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateReviewerWithRelatedInput struct {
+	// Reviewer holds the parent's own columns — identical to the input Create accepts.
+	Reviewer CreateReviewerInput `json:"reviewer"`
+
+	// Tasks - many-to-many relationship with the tasks table.
+	Tasks *ReviewerTasksCreateNested `json:"tasks,omitempty"`
+}
+
+// UpdateReviewerWithRelatedInput holds the fields for updating a reviewers record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateReviewerWithRelatedInput struct {
+	// Reviewer holds the parent's own columns — identical to the input Update accepts.
+	Reviewer UpdateReviewerInput `json:"reviewer"`
+
+	// Tasks - many-to-many relationship with the tasks table.
+	Tasks *ReviewerTasksUpdateNested `json:"tasks,omitempty"`
+}
+
+// UpsertReviewerWithRelatedInput holds the fields for upserting a reviewers record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateReviewerInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertReviewerWithRelatedInput struct {
+	// Reviewer holds the parent's own columns — identical to the input Upsert accepts.
+	Reviewer CreateReviewerInput `json:"reviewer"`
+
+	// Tasks - many-to-many relationship with the tasks table.
+	Tasks *ReviewerTasksUpdateNested `json:"tasks,omitempty"`
+}
+
+// ReviewerTasksCreateNested is the create-side verb block for Reviewer.Tasks.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type ReviewerTasksCreateNested struct {
+	Create  []*CreateTaskInput `json:"create,omitempty"`
+	Connect []int64            `json:"connect,omitempty"`
+}
+
+// ReviewerTasksUpdateNested is the update-side verb block for Reviewer.Tasks,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type ReviewerTasksUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear   bool               `json:"clear,omitempty"`
+	Create  []*CreateTaskInput `json:"create,omitempty"`
+	Connect []int64            `json:"connect,omitempty"`
+}
+
+// reviewerTasksNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func reviewerTasksNestedFromCreate(n *ReviewerTasksCreateNested) *ReviewerTasksUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &ReviewerTasksUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// reviewerNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+// The columns the edges' keys reference are forced on too: the nested writes
+// copy them, so a narrowed selection must not leave them zero.
+func reviewerNestedParentFieldOptions(fo *ReviewerFieldOptions) *ReviewerFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.Tasks = nil
+	scalars.ID = true
+	scalars.WorkspaceID = true
+	return &scalars
+}
+
+// reviewerNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func reviewerNestedSelectsRelationship(fo *ReviewerFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.Tasks != nil
+}
+
+// nestedResolvedTenantCtx resolves the tenant once for a whole nested write,
+// before the transaction opens, so every inner call inherits it off ctx instead
+// of re-invoking the user resolver: the tenant resolves at most once per
+// mutation, nested children included. The inner writes route through other
+// entity clients, and the stash each of them makes is scoped to its own
+// hook-handler ctx — it never escapes back here, so without this hoist a
+// two-edge nested write resolved three to ten times.
+//
+// Only the raw resolver value is cached. No tenancy.required branch is taken
+// here, which is what lets a *shared* parent hoist for a tenanted child: each
+// inner call still applies its own table's required setting to the value.
+// Hoisting a decision instead would hand this table's reading of a zero
+// resolver to children configured fail-closed.
+//
+// The other two resolution modes need no hoist and get none: SkipTenancy
+// resolves nothing anywhere, and an explicit tenant already reaches every inner
+// call through nestedChildOptions and short-circuits ahead of the cache.
+func (c *reviewerClient) nestedResolvedTenantCtx(ctx context.Context, options CallOptions[ReviewerFieldOptions]) (context.Context, error) {
+	if options.SkipTenancy || options.Tenant != nil {
+		return ctx, nil
+	}
+	resolvedTenant, err := c.tenantValue(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return tenancy.WithResolvedTenant(ctx, resolvedTenant), nil
+}
+
+// CreateWithRelated creates a reviewer together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *reviewerClient) CreateWithRelated(ctx context.Context, input *CreateReviewerWithRelatedInput, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create reviewer with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	// The gate is "some client this method reaches resolves a tenant", not "an
+	// edge target is tenanted": the parent's own terminal re-read resolves
+	// too when the caller selected a relationship.
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("create reviewer with related: resolve tenant: %w", err)
+	}
+
+	var result *Reviewer
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err = database.WithTransaction(ctx, c.querier, "create_reviewer_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.Reviewer, func(o *CallOptions[ReviewerFieldOptions]) {
+			*o = options
+			o.FieldOptions = reviewerNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyReviewerTasksNested(ctx, parent, reviewerTasksNestedFromCreate(input.Tasks), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if reviewerNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[ReviewerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create reviewer with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a reviewer together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *reviewerClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdateReviewerWithRelatedInput, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update reviewer with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("update reviewer with related: resolve tenant: %w", err)
+	}
+
+	var result *Reviewer
+	err = database.WithTransaction(ctx, c.querier, "update_reviewer_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.Reviewer, func(o *CallOptions[ReviewerFieldOptions]) {
+			*o = options
+			o.FieldOptions = reviewerNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyReviewerTasksNested(ctx, parent, input.Tasks, options); err != nil {
+			return err
+		}
+
+		if reviewerNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[ReviewerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update reviewer with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a reviewer together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *reviewerClient) UpsertWithRelated(ctx context.Context, input *UpsertReviewerWithRelatedInput, target ReviewerConflictTarget, opts ...func(*CallOptions[ReviewerFieldOptions])) (*Reviewer, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert reviewer with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("upsert reviewer with related: resolve tenant: %w", err)
+	}
+
+	var result *Reviewer
+	err = database.WithTransaction(ctx, c.querier, "upsert_reviewer_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.Reviewer, target, func(o *CallOptions[ReviewerFieldOptions]) {
+			*o = options
+			o.FieldOptions = reviewerNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyReviewerTasksNested(ctx, parent, input.Tasks, options); err != nil {
+			return err
+		}
+
+		if reviewerNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[ReviewerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert reviewer with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applyReviewerTasksNested applies the Reviewer.Tasks block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// link, disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *reviewerClient) applyReviewerTasksNested(ctx context.Context, parent *Reviewer, nested *ReviewerTasksUpdateNested, options CallOptions[ReviewerFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	pid0 := parent.WorkspaceID.String()
+	pid1 := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if err := c.taskReviewerClient.HardDeleteWhere(ctx, &TaskReviewerFilter{
+			WorkspaceID: &comparator.ID{Eq: new(pid0)},
+			ReviewerID:  &comparator.Number[int64]{Eq: new(pid1)},
+		}, func(o *CallOptions[TaskReviewerFieldOptions]) {
+			nestedChildOptions(o, options)
+		}); err != nil {
+			return nestedError("Tasks", "clear", nil, err)
+		}
+	}
+
+	targetIDs := make([]int64, 0, len(nested.Create)+len(connectIDs))
+
+	if len(nested.Create) > 0 {
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Tasks", "create", nil, ErrNilInput)
+			}
+		}
+		// No traversed FK to elide on an M2M target — the parent's key goes
+		// into the junction row below — so this is the target's own create
+		// input verbatim. The PK-only selection is what the link step needs.
+		created, err := c.taskClient.CreateMany(ctx, nested.Create, func(o *CallOptions[TaskFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &TaskFieldOptions{ID: true}
+		})
+		if err != nil {
+			return nestedError("Tasks", "create", nil, err)
+		}
+		for _, row := range created {
+			targetIDs = append(targetIDs, row.ID)
+		}
+	}
+
+	// The junction FK proves existence, not visibility. Reading through the
+	// target's OWN client applies its tenant filter, soft-delete default and
+	// access rules, so a target in another tenant is NOT_FOUND here rather
+	// than a junction row nobody can ever read.
+	if len(connectIDs) > 0 {
+		found := make(map[int64]bool, len(connectIDs))
+		// Chunked at c.batchSize. A single statement over the caller's
+		// whole list hits a bind-parameter ceiling that is dialect-dependent
+		// and lowest on SQLite (32766), and every dialect's error for it names
+		// no table, column, edge or verb, so it cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.taskClient.GetMany(ctx, &GetTasksInput{
+				Filter: &TaskFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TaskFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &TaskFieldOptions{ID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Tasks", "connect", nil, err)
+			}
+			for _, row := range visible {
+				found[row.ID] = true
+			}
+		}
+		for _, tid := range connectIDs {
+			if !found[tid] {
+				return nestedError("Tasks", "connect", tid, ErrNotFound)
+			}
+		}
+		targetIDs = append(targetIDs, connectIDs...)
+	}
+
+	// link — UpsertMany, not CreateMany: re-adding an existing link is a set
+	// operation whose answer is "linked", and CreateMany raises a primary-key
+	// violation on it. The junction is a pure link table, so this compiles to
+	// ON CONFLICT DO NOTHING on every dialect.
+	if len(targetIDs) > 0 {
+		links := make([]*CreateTaskReviewerInput, 0, len(targetIDs))
+		seen := make(map[int64]bool, len(targetIDs))
+		for _, tid := range targetIDs {
+			if seen[tid] {
+				continue
+			}
+			seen[tid] = true
+			links = append(links, &CreateTaskReviewerInput{
+				WorkspaceID: omittable.Set(parent.WorkspaceID),
+				ReviewerID:  parent.ID,
+				TaskID:      tid,
+			})
+		}
+		if _, err := c.taskReviewerClient.UpsertMany(ctx, links, TaskReviewerConflictWorkspaceIDTaskIDReviewerID, func(o *CallOptions[TaskReviewerFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &TaskReviewerFieldOptions{}
+		}); err != nil {
+			// The key sets the tenant column from the parent and tenancy sets it
+			// from the resolver: disagreeing, the two bind this row to two keys.
+			if errors.Is(err, tenancy.ErrMismatch) {
+				err = ErrAlreadyRelated
+			}
+			return nestedError("Tasks", "link", nil, err)
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a reviewer with the given primary key exists.
+func (c *reviewerClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[ReviewerFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableReviewers, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips both the verify-match and the filter append.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists reviewer: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any reviewer matches the given filter.
+func (c *reviewerClient) ExistsWhere(ctx context.Context, filter *ReviewerFilter, opts ...func(*CallOptions[ReviewerFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableReviewers, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect, filterOpts...)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant probe).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists reviewers where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of reviewers matching the given filter.
+// A nil filter counts all reviewers.
+func (c *reviewerClient) Count(ctx context.Context, filter *ReviewerFilter, opts ...func(*CallOptions[ReviewerFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableReviewers, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect, filterOpts...)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant count).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count reviewers: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of reviewers with total count for offset-based pagination.
+// A nil filter paginates all reviewers.
+func (c *reviewerClient) Paginate(ctx context.Context, input PaginateInput[ReviewerFilter], opts ...func(*CallOptions[ReviewerFieldOptions])) (*PaginateResult[Reviewer], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate reviewers: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableReviewers, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[ReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		reviewers, err := c.GetMany(ctx, &GetReviewersInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[Reviewer]{
+			Items:      reviewers,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate reviewers: %w", err)
+	}
+	return result.(*PaginateResult[Reviewer]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of reviewers.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *reviewerClient) Connection(ctx context.Context, input ConnectionInput[ReviewerFilter], opts ...func(*CallOptions[ReviewerFieldOptions])) (*Connection[Reviewer], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection reviewers: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableReviewers, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[ReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeReviewerCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeReviewerCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		reviewers, err := c.GetMany(ctx, &GetReviewersInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(reviewers) > limit
+		if hasMore {
+			reviewers = reviewers[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(reviewers)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Reviewer], len(reviewers))
+		for i, row := range reviewers {
+			cursor, err := encodeReviewerCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Reviewer]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Reviewer]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection reviewers: %w", err)
+	}
+	return result.(*Connection[Reviewer]), nil
+}
+
+// encodeReviewerCursor encodes cursor key values as a base64 JSON string.
+func encodeReviewerCursor(keys []string, r *Reviewer) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = r.ID
+		case "workspace_id":
+			out["workspace_id"] = r.WorkspaceID
+		case "name":
+			out["name"] = r.Name
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode reviewer cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeReviewerCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeReviewerCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Reviewer
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamReviewersInput holds query parameters for streaming reviewers records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamReviewersInput struct {
+	Filter *ReviewerFilter `json:"filter"`
+	Sorts  []sql.Sort      `json:"sorts"`
+}
+
+// StreamReviewerFieldOptions controls scalar column selection for reviewers streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamReviewerFieldOptions struct {
+	ID          bool `json:"id"`
+	WorkspaceID bool `json:"workspace_id"`
+	Name        bool `json:"name"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamReviewerFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamReviewerFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	return false
+}
+
+// scanReviewerRow scans a single row into a Reviewer entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanReviewerRow(rows database.Rows, columns []string) (*Reviewer, error) {
+	r := &Reviewer{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &r.ID
+		case "workspace_id":
+			targets[idx] = &r.WorkspaceID
+		case "name":
+			targets[idx] = &r.Name
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan reviewer: %w", err)
+	}
+
+	return r, nil
+}
+
+// Stream returns an iterator over reviewers matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *reviewerClient) Stream(ctx context.Context, input *StreamReviewersInput, opts ...func(*CallOptions[StreamReviewerFieldOptions])) iter.Seq2[*Reviewer, error] {
+	return func(yield func(*Reviewer, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamReviewersInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream reviewers: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *Reviewer, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream reviewers: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableReviewers, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := reviewerAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			// A relationship filter compiles to a correlated EXISTS carrying the
+			// *target's* tenant predicate, so the tenant is
+			// resolved before the conditions are built rather than appended after them.
+			filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
+			if filterErr != nil {
+				emit(nil, filterErr)
+				return nil, nil
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect, filterOpts...)
+			}
+
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					emit(nil, fmt.Errorf("resolve tenant: %w", err))
+					return nil, nil
+				}
+				if apply {
+					conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				r, err := scanReviewerRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(r, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate reviewer rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream reviewers: %w", err))
+		}
+	}
+}
+
+// ReviewerFilter provides type-safe filtering for the reviewers table.
+type ReviewerFilter struct {
+	ID          *comparator.Number[int64] `json:"id"`
+	Name        *comparator.String        `json:"name"`
+	WorkspaceID *comparator.ID            `json:"workspace_id"`
+	Tasks       *TaskFilter               `json:"tasks"`
+	And         []*ReviewerFilter         `json:"and"`
+	Or          []*ReviewerFilter         `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *ReviewerFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Name != nil {
+		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	if f.WorkspaceID != nil {
+		conds = append(conds, f.WorkspaceID.Parse(dialect.QuoteIdentifier("workspace_id"), dialect)...)
+	}
+
+	if f.Tasks != nil {
+		conds = append(conds, reviewerTasksFilterExists(f.Tasks, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// usesRelationshipFilter reports whether f sets at least one relationship
+// member, directly or through and / or.
+//
+// The FilterOption set ToConditions takes is read only by the EXISTS helpers
+// below, so a filter with no relationship member ignores it entirely and
+// compiles to byte-identical SQL either way. The client's filterOptions
+// consults this before resolving a tenant, which is what keeps a read that has
+// no tenanted component from failing closed: on a shared table the outer WHERE
+// is never tenant-scoped, so a resolver that reports a missing tenant as an
+// error would otherwise reject reads that legitimately run before any tenant
+// is selected.
+func (f *ReviewerFilter) usesRelationshipFilter() bool {
+	if f == nil {
+		return false
+	}
+	if f.Tasks != nil {
+		return true
+	}
+	for _, sub := range f.And {
+		if sub.usesRelationshipFilter() {
+			return true
+		}
+	}
+	for _, sub := range f.Or {
+		if sub.usesRelationshipFilter() {
+			return true
+		}
+	}
+	return false
+}
+
+// reviewerTasksFilterExists compiles a TaskFilter set on the
+// Tasks relationship into a correlated EXISTS over tasks, joined through the task_reviewers junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func reviewerTasksFilterExists(f *TaskFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "public", Name: "task_reviewers"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "public", Name: "tasks"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("workspace_id") + " = " + jn + "." + dialect.QuoteIdentifier("workspace_id") +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("id") + " = " + jn + "." + dialect.QuoteIdentifier("task_id") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("workspace_id") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + jn + "." + dialect.QuoteIdentifier("reviewer_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	// The target's tenant rule applies inside the subquery. Without it a
+	// relationship filter would be a cross-tenant existence probe on a table the caller cannot otherwise read.
+	if scope.applyTenant {
+		subSQL += " AND " + tgt + "." + dialect.QuoteIdentifier("workspace_id") + " = $"
+		subArgs = append(subArgs, scope.tenant)
+	}
+
+	return sql.Exists([]string{"workspace_id", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// ReviewerFieldOptions controls column selection and relationship loading for reviewers queries.
+type ReviewerFieldOptions struct {
+	ID          bool                     `json:"id"`
+	WorkspaceID bool                     `json:"workspace_id"`
+	Name        bool                     `json:"name"`
+	Tasks       *TaskRelationshipOptions `json:"tasks"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *ReviewerFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *ReviewerFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":          "id",
+		"WorkspaceID": "workspace_id",
+		"Name":        "name",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *ReviewerFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	if fo.Tasks != nil {
+		return true
+	}
+	return false
+}
+
+// CreateReviewerInput holds the fields for creating a reviewers record.
+type CreateReviewerInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	Name        string                     `json:"name"`
+}
+
+// UpdateReviewerInput holds the fields for updating a reviewers record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateReviewerInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	Name        omittable.Value[string]    `json:"name,omitzero"`
+}
+
+// GetReviewersInput holds query parameters for retrieving reviewers records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetReviewersInput struct {
+	Filter *ReviewerFilter `json:"filter"`
+	Limit  *int            `json:"limit"`
+	Offset *int            `json:"offset"`
+	Sorts  []sql.Sort      `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 type Site struct {
 	ID          int64     `db:"id" json:"id"`
 	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
@@ -37391,6 +40988,2761 @@ type GetTaskLabelsInput struct {
 	requiredColumns []string
 }
 
+type TaskReviewer struct {
+	ID          int64     `db:"id" json:"id"`
+	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
+	TaskID      int64     `db:"task_id" json:"task_id"`
+	ReviewerID  int64     `db:"reviewer_id" json:"reviewer_id"`
+}
+
+// TaskReviewerClient provides type-safe operations for the task_reviewers table.
+type TaskReviewerClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single taskReviewer by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (*TaskReviewer, error)
+
+	// GetMany returns task_reviewers matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetTaskReviewersInput, opts ...func(*CallOptions[TaskReviewerFieldOptions])) ([]*TaskReviewer, error)
+
+	// Exists returns true if a taskReviewer with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any taskReviewer matches the given filter.
+	ExistsWhere(ctx context.Context, filter *TaskReviewerFilter, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (bool, error)
+
+	// Count returns the number of task_reviewers matching the given filter.
+	Count(ctx context.Context, filter *TaskReviewerFilter, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new taskReviewer and returns the created entity.
+	Create(ctx context.Context, input *CreateTaskReviewerInput, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (*TaskReviewer, error)
+
+	// CreateMany inserts multiple task_reviewers in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateTaskReviewerInput, opts ...func(*CallOptions[TaskReviewerFieldOptions])) ([]*TaskReviewer, error)
+
+	// Update partially updates a taskReviewer by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateTaskReviewerInput, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (*TaskReviewer, error)
+
+	// UpdateMany updates multiple task_reviewers and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateTaskReviewerItem, opts ...func(*CallOptions[TaskReviewerFieldOptions])) ([]*TaskReviewer, error)
+
+	// UpdateWhere updates all task_reviewers matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *TaskReviewerFilter, input *UpdateTaskReviewerInput, opts ...func(*CallOptions[TaskReviewerFieldOptions])) ([]*TaskReviewer, error)
+
+	// Upsert inserts a taskReviewer or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateTaskReviewerInput, target TaskReviewerConflictTarget, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (*TaskReviewer, error)
+
+	// UpsertMany inserts or updates multiple task_reviewers in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateTaskReviewerInput, target TaskReviewerConflictTarget, opts ...func(*CallOptions[TaskReviewerFieldOptions])) ([]*TaskReviewer, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a taskReviewer from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[TaskReviewerFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple task_reviewers from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[TaskReviewerFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all task_reviewers matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *TaskReviewerFilter, opts ...func(*CallOptions[TaskReviewerFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of task_reviewers with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[TaskReviewerFilter], opts ...func(*CallOptions[TaskReviewerFieldOptions])) (*PaginateResult[TaskReviewer], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of task_reviewers.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[TaskReviewerFilter], opts ...func(*CallOptions[TaskReviewerFieldOptions])) (*Connection[TaskReviewer], error)
+
+	// Stream returns an iterator over task_reviewers matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamTaskReviewersInput, opts ...func(*CallOptions[StreamTaskReviewerFieldOptions])) iter.Seq2[*TaskReviewer, error]
+}
+
+// taskReviewerClient implements the TaskReviewerClient interface.
+type taskReviewerClient struct {
+	querier        database.Querier
+	dialect        sql.Dialect
+	table          sql.Table
+	batchSize      int
+	queryLimit     int
+	pageSize       int
+	cursorKeys     []string
+	strictUpdates  bool
+	mutationHooks  []hook.MutationHook
+	queryHooks     []hook.QueryHook
+	panicHandler   hook.PanicHandler
+	tenantResolver tenancy.TenantResolver[uuid.UUID]
+}
+
+// newTaskReviewerClient creates a new taskReviewerClient.
+func newTaskReviewerClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *taskReviewerClient {
+	return &taskReviewerClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "task_reviewers"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *taskReviewerClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *taskReviewerClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// resolveTenant reads the operation's tenant from tenantValue and applies THIS
+// table's tenancy.required setting to it, returning the value, a bool
+// indicating whether tenancy should be applied to this call, and any resolver
+// error. The split matters: tenantValue's answer is shared across every client
+// the operation touches, while the apply bool below is this table's alone
+// (required is a per-table setting). The apply bool encodes the
+// tenancy.required semantic:
+//
+//   - Non-zero resolver return → apply=true; callers AND the filter into the
+//     WHERE (reads), verify-match against caller-supplied tenant (mutations),
+//     and auto-set the tenant column on INSERT.
+//   - Zero resolver return (resolver returned (zero, nil) or is nil) under
+//     tenancy.required:true → apply=false, err=tenancy.ErrMissing. The op
+//     fails closed before the DB round-trip.
+//   - Zero resolver return under tenancy.required:false → apply=false, err=nil.
+//     The op silently becomes cross-tenant: no filter append, no verify-match,
+//     no auto-set. This is the "missing tenant skips the filter" path
+//     — always-off rather than a silent zero-value write.
+//   - Resolver returns a non-nil error → apply=false, err propagated.
+//
+// Required-at-codegen determinism: the required:true vs required:false branch
+// is picked at template-expansion time per-table, from the table's resolved
+// tenancy config. Runtime callers observe a stable behavior per table.
+//
+// explicit carries CallOptions.Tenant (the explicit-tenant resolution
+// mode): when non-nil, tenancy behaves as normal resolution with
+// the resolver replaced by this constant — filter, auto-set, and verify-match
+// all apply. Precedence over SkipTenancy is normalized in
+// resolveCallOptions, so callers gate on SkipTenancy exactly as before. The
+// pointer distinguishes set from unset; a set zero value is honored verbatim.
+func (c *taskReviewerClient) resolveTenant(ctx context.Context, explicit *uuid.UUID) (uuid.UUID, bool, error) {
+	if explicit != nil {
+		return *explicit, true, nil
+	}
+	var zero uuid.UUID
+	v, err := c.tenantValue(ctx)
+	if err != nil {
+		return zero, false, err
+	}
+	if v == zero {
+		return zero, false, tenancy.ErrMissing
+	}
+	return v, true, nil
+}
+
+// tenantValue returns the tenant the user resolver reports for this operation,
+// invoking it at most once per logical operation.
+//
+// It answers the table-independent half of the question and stops there: what
+// the resolver said. The tenancy.required reading of that answer — zero means
+// ErrMissing, or zero means skip the filter — belongs to resolveTenant above,
+// because `required` is a per-table setting while this value is
+// shared across every client the operation touches.
+//
+// Keeping the two apart is load-bearing rather than tidy. The ctx cache is
+// keyed on the tenant type alone, so it is one slot for the whole package;
+// caching the reading instead of the answer let whichever table resolved first
+// impose its `required` on the rest, and a required:false table handing
+// apply=false to a required:true one is a fail-open. A nil resolver
+// yields the zero value and the same per-table branch a zero return takes.
+func (c *taskReviewerClient) tenantValue(ctx context.Context) (uuid.UUID, error) {
+	// Short-circuit: an entry point for this logical operation — a chaining
+	// mutation (Create, Update, Upsert, …) or a nested method's hoist — already
+	// resolved and stashed the value via tenancy.WithResolvedTenant. Lookup
+	// uses the same comparable T as the resolver, so collisions across entity
+	// clients with different tenant types are impossible.
+	if v, ok := tenancy.CachedTenant[uuid.UUID](ctx); ok {
+		return v, nil
+	}
+	if c.tenantResolver == nil {
+		var zero uuid.UUID
+		return zero, nil
+	}
+	return c.tenantResolver(ctx)
+}
+
+// taskReviewerAllColumns is the column list for full-entity reads, sorted for determinism.
+var taskReviewerAllColumns = []string{"id", "reviewer_id", "task_id", "workspace_id"}
+
+// scanTaskReviewers scans rows into TaskReviewer entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanTaskReviewers(rows database.Rows, columns []string) ([]*TaskReviewer, error) {
+	var result []*TaskReviewer
+	for rows.Next() {
+		t := &TaskReviewer{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &t.ID
+			case "workspace_id":
+				targets[idx] = &t.WorkspaceID
+			case "task_id":
+				targets[idx] = &t.TaskID
+			case "reviewer_id":
+				targets[idx] = &t.ReviewerID
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan task_reviewer: %w", err)
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate task_reviewer rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single task_reviewer by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *taskReviewerClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (*TaskReviewer, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get task_reviewer: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableTaskReviewers, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	// Resolve tenant once at the entity-method boundary so the
+	// cache read-through hook can build a tenant-scoped key. The terminal
+	// (and the internal GetMany) sees the same value via q.Tenant. apply=false
+	// under tenancy.required:false + zero resolver skips both qctx.Tenant and
+	// the verify-match (cross-tenant read).
+	if !options.SkipTenancy {
+		resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nil, fmt.Errorf("get task_reviewer: resolve tenant: %w", err)
+		}
+		if apply {
+			qctx.Tenant = resolvedTenant
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[TaskReviewerFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[TaskReviewerFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		taskReviewers, err := c.GetMany(ctx, &GetTaskReviewersInput{
+			Filter: &TaskReviewerFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(taskReviewers) == 0 {
+			return nil, ErrNotFound
+		}
+		return taskReviewers[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get task_reviewer: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*TaskReviewer), nil
+}
+
+// GetMany returns task_reviewers matching the given filter, field selection, and sort criteria.
+func (c *taskReviewerClient) GetMany(ctx context.Context, input *GetTaskReviewersInput, opts ...func(*CallOptions[TaskReviewerFieldOptions])) ([]*TaskReviewer, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetTaskReviewersInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get many task_reviewers: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableTaskReviewers, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := taskReviewerAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter — append tenant = resolved to WHERE.
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// filter (cross-tenant read).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var taskReviewers []*TaskReviewer
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		taskReviewers, err = scanTaskReviewers(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return taskReviewers, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many task_reviewers: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TaskReviewer), nil
+}
+
+// Create inserts a new task_reviewer and returns the created entity.
+func (c *taskReviewerClient) Create(ctx context.Context, input *CreateTaskReviewerInput, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (*TaskReviewer, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateTaskReviewerInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create task_reviewer: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableTaskReviewers, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"task_id", "reviewer_id"}
+		args := []any{input.TaskID, input.ReviewerID}
+		// Tenancy auto-set + mismatch check. Caller-set tenant on
+		// the input is tolerated only when it matches the resolved value — any
+		// mismatch returns ErrMismatch before the DB round-trip. apply=false
+		// under tenancy.required:false + zero resolver falls through to the
+		// SkipTenancy-style branch: caller-supplied value wins, no auto-set,
+		// no verify-match (the DB NOT NULL constraint surfaces if the input is
+		// also empty).
+		// capturedTenant carries the tenant value written to the row into
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// the tenant-scoped key from the row itself, independent of how (or
+		// whether) the tenant was resolved. Stays nil only when
+		// no tenant value reaches the INSERT (a DB default fills the column).
+		var capturedTenant any
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
+			// resolver's answer, not this table's reading of it: a zero return
+			// is cached as a zero, and each table downstream re-applies its own
+			// tenancy.required branch to it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash resolved tenant on MutationContext so the cache hook
+				// builds tenant-scoped keys without re-invoking the resolver
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+				capturedTenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value is used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+				capturedTenant = v
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			// SkipTenancy:true — caller must explicitly set the tenant value.
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+			capturedTenant = v
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[TaskReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create task_reviewer: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*TaskReviewer), nil
+}
+
+// CreateMany inserts multiple task_reviewers in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *taskReviewerClient) CreateMany(ctx context.Context, inputs []*CreateTaskReviewerInput, opts ...func(*CallOptions[TaskReviewerFieldOptions])) ([]*TaskReviewer, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many task_reviewers: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableTaskReviewers, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*TaskReviewer{}, nil
+		}
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// (and the per-input verify-match short-circuits via the cache)
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// Filled in lockstep with the PK slice above; feeds m.AffectedTenants
+		// so cache invalidation and event stamping rebuild tenant-scoped keys
+		// from each row's own tenant value.
+		var allTenants []any
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"workspace_id", "task_id", "reviewer_id"}
+			var valueRows [][]any
+			for _, input := range batch {
+				// Tenancy auto-set + mismatch check.
+				// applyTenancy=false under SkipTenancy OR under required:false
+				// + zero resolver — caller-supplied tenant is used, else the DB
+				// NOT NULL constraint surfaces.
+				// The allTenants append below relies on the tenant-∉-PK column
+				// always being an omittable CreateInput field (promoted by
+				// attachTenancyToTables) so exactly one carrier element is
+				// appended per input, in lockstep with the PK slice.
+				var workspaceID any
+				if applyTenancy {
+					if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+					workspaceID = resolvedTenant
+				} else if v, ok := input.WorkspaceID.Get(); ok {
+					workspaceID = v
+				} else {
+					return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+				}
+				allTenants = append(allTenants, workspaceID)
+
+				valueRows = append(valueRows, []any{
+					workspaceID,
+					input.TaskID,
+					input.ReviewerID,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+		m.AffectedTenants = allTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetTaskReviewersInput{
+			Filter: &TaskReviewerFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[TaskReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many task_reviewers: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TaskReviewer), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *taskReviewerClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *taskReviewerClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan task_reviewer id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a task_reviewer by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *taskReviewerClient) Update(ctx context.Context, id int64, input *UpdateTaskReviewerInput, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (*TaskReviewer, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update task_reviewer: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableTaskReviewers, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Tenancy mismatch check before any SQL build. applyTenancy
+		// is false under SkipTenancy OR under required:false + zero resolver —
+		// in the second case the WHERE below also drops the tenant predicate.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		// Tenant column excluded from SET under normal operation.
+		// Honored when the caller opted out via SkipTenancy OR when
+		// required:false + zero resolver opted out of tenancy for this call.
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.TaskID.Get(); ok {
+			setClauses["task_id"] = v
+		}
+		if v, ok := input.ReviewerID.Get(); ok {
+			setClauses["reviewer_id"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[TaskReviewerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if applyTenancy {
+			updateConds = append(updateConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+		}
+
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       updateConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		matched := 0
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan updated task_reviewer tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[TaskReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update task_reviewer: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*TaskReviewer), nil
+}
+
+// UpdateTaskReviewerItem pairs a primary key with an update input for batch updates.
+type UpdateTaskReviewerItem struct {
+	ID    int64                    `json:"id"`
+	Input *UpdateTaskReviewerInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple task_reviewers and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
+func (c *taskReviewerClient) UpdateMany(ctx context.Context, items []UpdateTaskReviewerItem, opts ...func(*CallOptions[TaskReviewerFieldOptions])) ([]*TaskReviewer, error) {
+	// UpdateTaskReviewerItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many task_reviewers: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableTaskReviewers, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*TaskReviewer{}, nil
+		}
+
+		// Resolve the tenant once; per-item mismatch checks use the same value.
+		// applyTenancy=false under SkipTenancy OR under required:false + zero
+		// resolver — the per-item verify-match and per-row WHERE both drop.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the per-item verify-match short-circuits via the
+			// cache and the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				for _, item := range items {
+					if v, ok := item.Input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateTaskReviewerItem
+		// Per-item RETURNING captures each updated row's tenant; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from the rows themselves.
+		tenantByPK := make(map[int64]any, len(items))
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			var queuedItems []UpdateTaskReviewerItem
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if !applyTenancy {
+					if v, ok := item.Input.WorkspaceID.Get(); ok {
+						setClauses["workspace_id"] = v
+					}
+				}
+				if v, ok := item.Input.TaskID.Get(); ok {
+					setClauses["task_id"] = v
+				}
+				if v, ok := item.Input.ReviewerID.Get(); ok {
+					setClauses["reviewer_id"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.ID)
+					continue
+				}
+				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+				if applyTenancy {
+					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses:       setClauses,
+					Conditions:       itemConds,
+					ReturningColumns: []string{"workspace_id"},
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
+				allIDs = append(allIDs, item.ID)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise.
+			// Each statement RETURNING-projects the row's tenant; the scan
+			// below captures it per queued PK.
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for i := range pgxBatch.Len() {
+						rows, err := br.Query()
+						if err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						matched := 0
+						for rows.Next() {
+							var rowTenant uuid.UUID
+							if err := rows.Scan(&rowTenant); err != nil {
+								rows.Close()
+								br.Close()
+								return nil, fmt.Errorf("scan updated task_reviewer tenant: %w", err)
+							}
+							tenantByPK[queuedItems[i].ID] = rowTenant
+							matched++
+						}
+						if err := rows.Err(); err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						rows.Close()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close batch: %w", err)
+					}
+				} else {
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_task_reviewer", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							rows, err := conn.Query(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							matched := 0
+							for rows.Next() {
+								var rowTenant uuid.UUID
+								if err := rows.Scan(&rowTenant); err != nil {
+									rows.Close()
+									return fmt.Errorf("scan updated task_reviewer tenant: %w", err)
+								}
+								tenantByPK[queuedItems[i].ID] = rowTenant
+								matched++
+							}
+							if err := rows.Err(); err != nil {
+								rows.Close()
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							rows.Close()
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
+						}
+						return nil
+					}); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetTaskReviewersInput{
+			Filter: &TaskReviewerFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[TaskReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many task_reviewers: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TaskReviewer), nil
+}
+
+// UpdateWhere updates all task_reviewers matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *taskReviewerClient) UpdateWhere(ctx context.Context, filter *TaskReviewerFilter, input *UpdateTaskReviewerInput, opts ...func(*CallOptions[TaskReviewerFieldOptions])) ([]*TaskReviewer, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update task_reviewers where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableTaskReviewers, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Tenancy filter + mismatch check. applyTenancy=false
+		// under SkipTenancy OR under required:false + zero resolver — the
+		// filter is not AND'd and the SET-clause tenant override below fires
+		// (only meaningful when the tenant column is NOT in the PK; when it
+		// is, the column is excluded from UpdateInputFields entirely).
+		applyTenancy := false
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.TaskID.Get(); ok {
+			setClauses["task_id"] = v
+		}
+		if v, ok := input.ReviewerID.Get(); ok {
+			setClauses["reviewer_id"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetTaskReviewersInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[TaskReviewerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan updated task_reviewer id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetTaskReviewersInput{
+			Filter: &TaskReviewerFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[TaskReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update task_reviewers where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TaskReviewer), nil
+}
+
+// HardDelete permanently removes a task_reviewer from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *taskReviewerClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[TaskReviewerFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableTaskReviewers, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       hardConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		var matched int
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan deleted task_reviewer tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete task_reviewer: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple task_reviewers from the database.
+func (c *taskReviewerClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[TaskReviewerFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableTaskReviewers, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var scopeConds []sql.Condition
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Every sub-batch records the tenant of each row it touches, so cache
+		// invalidation and event stamping rebuild tenant-scoped keys from the
+		// rows themselves.
+		tenantByPK := make(map[int64]any, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+			hardConds = append(hardConds, scopeConds...)
+
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id", "workspace_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchTenants := make(map[int64]any, end-start)
+			for rows.Next() {
+				var rowID int64
+				var rowTenant uuid.UUID
+				if err := rows.Scan(&rowID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted task_reviewer tenant: %w", err)
+				}
+				batchTenants[rowID] = rowTenant
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many task_reviewers: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all task_reviewers matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *taskReviewerClient) HardDeleteWhere(ctx context.Context, filter *TaskReviewerFilter, opts ...func(*CallOptions[TaskReviewerFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableTaskReviewers, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan deleted task_reviewer id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete task_reviewers where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *taskReviewerClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
+}
+
+// TaskReviewerConflictTarget identifies a unique constraint for upsert conflict detection.
+type TaskReviewerConflictTarget int
+
+const (
+	TaskReviewerConflictPK                          TaskReviewerConflictTarget = iota // PRIMARY KEY (id)
+	TaskReviewerConflictWorkspaceIDTaskIDReviewerID                                   // UNIQUE (workspace_id, task_id, reviewer_id)
+)
+
+// taskReviewerConflictColumns maps each conflict target to its column set.
+var taskReviewerConflictColumns = map[TaskReviewerConflictTarget][]string{
+	TaskReviewerConflictPK:                          {"id"},
+	TaskReviewerConflictWorkspaceIDTaskIDReviewerID: {"workspace_id", "task_id", "reviewer_id"},
+}
+
+// Upsert inserts a task_reviewer or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *taskReviewerClient) Upsert(ctx context.Context, input *CreateTaskReviewerInput, target TaskReviewerConflictTarget, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (*TaskReviewer, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateTaskReviewerInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert task_reviewer: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableTaskReviewers, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"task_id", "reviewer_id"}
+		args := []any{input.TaskID, input.ReviewerID}
+		// Tenancy auto-set + mismatch check. apply=false under
+		// tenancy.required:false + zero resolver falls through to the
+		// caller-supplied value branch.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// (single-resolve). The resolver's answer is cached, not
+			// this table's reading of it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := taskReviewerConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[TaskReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert task_reviewer: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*TaskReviewer), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves
+// the generated primary key, also capturing the row's tenant column so cache
+// invalidation and event stamping can rebuild the tenant-scoped key from the
+// row itself. On the conflict-update path the existing row keeps
+// its tenant, so the captured value (not the input) is authoritative.
+func (c *taskReviewerClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id", "workspace_id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	var id int64
+	var rowTenant uuid.UUID
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id, &rowTenant)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	if found {
+		return id, rowTenant, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *taskReviewerClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, any, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, nil, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id", "workspace_id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+
+	var id int64
+	var rowTenant uuid.UUID
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, nil, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, nil, ErrNotFound
+	}
+	// BuildSelect emits its column list sorted, which need not match the order
+	// the columns were requested in, so bind the scan targets by name rather
+	// than by position — the same rule scanTaskReviewers follows.
+	cols, err := rows.Columns()
+	if err != nil {
+		return 0, nil, err
+	}
+	targets := make([]any, len(cols))
+	for i, col := range cols {
+		switch col {
+		case "id":
+			targets[i] = &id
+		case "workspace_id":
+			targets[i] = &rowTenant
+		}
+	}
+	if err := rows.Scan(targets...); err != nil {
+		return 0, nil, err
+	}
+	return id, rowTenant, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple task_reviewers in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// task_reviewers.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *taskReviewerClient) UpsertMany(ctx context.Context, inputs []*CreateTaskReviewerInput, target TaskReviewerConflictTarget, opts ...func(*CallOptions[TaskReviewerFieldOptions])) ([]*TaskReviewer, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many task_reviewers: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableTaskReviewers, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*TaskReviewer{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"workspace_id", "task_id", "reviewer_id"}
+		conflictColumns := taskReviewerConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateTaskReviewerInput, 0, len(inputs))
+		var rowIDs []int64
+		// Filled from the rows themselves after each sub-batch; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from each row's own tenant value. A
+		// conflict leaves the existing row's tenant in place, so the input's
+		// value is not authoritative the way it is for CreateMany.
+		var rowTenants []any
+		for _, input := range inputs {
+			// Tenancy auto-set + mismatch check.
+			// applyTenancy=false under SkipTenancy OR under required:false
+			// + zero resolver — caller-supplied tenant is used, else the DB
+			// NOT NULL constraint surfaces.
+			var workspaceID any
+			if applyTenancy {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				workspaceID = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				workspaceID = v
+			} else {
+				return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+			}
+
+			valueRows = append(valueRows, []any{
+				workspaceID,
+				input.TaskID,
+				input.ReviewerID,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateTaskReviewerInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, batchTenants, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+		m.AffectedTenants = rowTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetTaskReviewersInput{
+			Filter: &TaskReviewerFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[TaskReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many task_reviewers: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TaskReviewer), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key and tenant in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// task_reviewers.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *taskReviewerClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, []any, error) {
+	if len(rows) == 0 {
+		return nil, nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level taskReviewerConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanTaskReviewers
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id", "workspace_id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	found, err := scanTaskReviewers(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk     int64
+		tenant any
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = taskReviewerColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID, tenant: entity.WorkspaceID}
+	}
+
+	pks := make([]int64, len(rows))
+	tenants := make([]any, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+		tenants[i] = resolved.tenant
+	}
+	return pks, tenants, nil
+}
+
+// taskReviewerColumnValue returns one column's value off a scanned
+// TaskReviewer, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanTaskReviewers.
+func taskReviewerColumnValue(t *TaskReviewer, column string) any {
+	switch column {
+	case "id":
+		return t.ID
+	case "workspace_id":
+		return t.WorkspaceID
+	case "task_id":
+		return t.TaskID
+	case "reviewer_id":
+		return t.ReviewerID
+	}
+	return nil
+}
+
+// Exists returns true if a task_reviewer with the given primary key exists.
+func (c *taskReviewerClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableTaskReviewers, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips both the verify-match and the filter append.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists task_reviewer: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any task_reviewer matches the given filter.
+func (c *taskReviewerClient) ExistsWhere(ctx context.Context, filter *TaskReviewerFilter, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableTaskReviewers, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant probe).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists task_reviewers where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of task_reviewers matching the given filter.
+// A nil filter counts all task_reviewers.
+func (c *taskReviewerClient) Count(ctx context.Context, filter *TaskReviewerFilter, opts ...func(*CallOptions[TaskReviewerFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableTaskReviewers, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant count).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count task_reviewers: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of task_reviewers with total count for offset-based pagination.
+// A nil filter paginates all task_reviewers.
+func (c *taskReviewerClient) Paginate(ctx context.Context, input PaginateInput[TaskReviewerFilter], opts ...func(*CallOptions[TaskReviewerFieldOptions])) (*PaginateResult[TaskReviewer], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate task_reviewers: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableTaskReviewers, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[TaskReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		taskReviewers, err := c.GetMany(ctx, &GetTaskReviewersInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[TaskReviewer]{
+			Items:      taskReviewers,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate task_reviewers: %w", err)
+	}
+	return result.(*PaginateResult[TaskReviewer]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of task_reviewers.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *taskReviewerClient) Connection(ctx context.Context, input ConnectionInput[TaskReviewerFilter], opts ...func(*CallOptions[TaskReviewerFieldOptions])) (*Connection[TaskReviewer], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection task_reviewers: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableTaskReviewers, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[TaskReviewerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeTaskReviewerCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeTaskReviewerCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		taskReviewers, err := c.GetMany(ctx, &GetTaskReviewersInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(taskReviewers) > limit
+		if hasMore {
+			taskReviewers = taskReviewers[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(taskReviewers)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[TaskReviewer], len(taskReviewers))
+		for i, row := range taskReviewers {
+			cursor, err := encodeTaskReviewerCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[TaskReviewer]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[TaskReviewer]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection task_reviewers: %w", err)
+	}
+	return result.(*Connection[TaskReviewer]), nil
+}
+
+// encodeTaskReviewerCursor encodes cursor key values as a base64 JSON string.
+func encodeTaskReviewerCursor(keys []string, t *TaskReviewer) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = t.ID
+		case "workspace_id":
+			out["workspace_id"] = t.WorkspaceID
+		case "task_id":
+			out["task_id"] = t.TaskID
+		case "reviewer_id":
+			out["reviewer_id"] = t.ReviewerID
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode task_reviewer cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeTaskReviewerCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeTaskReviewerCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row TaskReviewer
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamTaskReviewersInput holds query parameters for streaming task_reviewers records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamTaskReviewersInput struct {
+	Filter *TaskReviewerFilter `json:"filter"`
+	Sorts  []sql.Sort          `json:"sorts"`
+}
+
+// StreamTaskReviewerFieldOptions controls scalar column selection for task_reviewers streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamTaskReviewerFieldOptions struct {
+	ID          bool `json:"id"`
+	WorkspaceID bool `json:"workspace_id"`
+	TaskID      bool `json:"task_id"`
+	ReviewerID  bool `json:"reviewer_id"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamTaskReviewerFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.TaskID {
+		cols = append(cols, "task_id")
+	}
+	if fo.ReviewerID {
+		cols = append(cols, "reviewer_id")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamTaskReviewerFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.TaskID {
+		return true
+	}
+	if fo.ReviewerID {
+		return true
+	}
+	return false
+}
+
+// scanTaskReviewerRow scans a single row into a TaskReviewer entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanTaskReviewerRow(rows database.Rows, columns []string) (*TaskReviewer, error) {
+	t := &TaskReviewer{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &t.ID
+		case "workspace_id":
+			targets[idx] = &t.WorkspaceID
+		case "task_id":
+			targets[idx] = &t.TaskID
+		case "reviewer_id":
+			targets[idx] = &t.ReviewerID
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan task_reviewer: %w", err)
+	}
+
+	return t, nil
+}
+
+// Stream returns an iterator over task_reviewers matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *taskReviewerClient) Stream(ctx context.Context, input *StreamTaskReviewersInput, opts ...func(*CallOptions[StreamTaskReviewerFieldOptions])) iter.Seq2[*TaskReviewer, error] {
+	return func(yield func(*TaskReviewer, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamTaskReviewersInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream task_reviewers: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *TaskReviewer, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream task_reviewers: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableTaskReviewers, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := taskReviewerAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					emit(nil, fmt.Errorf("resolve tenant: %w", err))
+					return nil, nil
+				}
+				if apply {
+					conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				t, err := scanTaskReviewerRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(t, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate task_reviewer rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream task_reviewers: %w", err))
+		}
+	}
+}
+
+// TaskReviewerFilter provides type-safe filtering for the task_reviewers table.
+type TaskReviewerFilter struct {
+	ID          *comparator.Number[int64] `json:"id"`
+	ReviewerID  *comparator.Number[int64] `json:"reviewer_id"`
+	TaskID      *comparator.Number[int64] `json:"task_id"`
+	WorkspaceID *comparator.ID            `json:"workspace_id"`
+	And         []*TaskReviewerFilter     `json:"and"`
+	Or          []*TaskReviewerFilter     `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *TaskReviewerFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.ReviewerID != nil {
+		conds = append(conds, f.ReviewerID.Parse(dialect.QuoteIdentifier("reviewer_id"), dialect)...)
+	}
+
+	if f.TaskID != nil {
+		conds = append(conds, f.TaskID.Parse(dialect.QuoteIdentifier("task_id"), dialect)...)
+	}
+
+	if f.WorkspaceID != nil {
+		conds = append(conds, f.WorkspaceID.Parse(dialect.QuoteIdentifier("workspace_id"), dialect)...)
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// TaskReviewerFieldOptions controls column selection and relationship loading for task_reviewers queries.
+type TaskReviewerFieldOptions struct {
+	ID          bool `json:"id"`
+	WorkspaceID bool `json:"workspace_id"`
+	TaskID      bool `json:"task_id"`
+	ReviewerID  bool `json:"reviewer_id"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *TaskReviewerFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.TaskID {
+		cols = append(cols, "task_id")
+	}
+	if fo.ReviewerID {
+		cols = append(cols, "reviewer_id")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *TaskReviewerFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":          "id",
+		"WorkspaceID": "workspace_id",
+		"TaskID":      "task_id",
+		"ReviewerID":  "reviewer_id",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *TaskReviewerFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.TaskID {
+		return true
+	}
+	if fo.ReviewerID {
+		return true
+	}
+	return false
+}
+
+// CreateTaskReviewerInput holds the fields for creating a task_reviewers record.
+type CreateTaskReviewerInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	TaskID      int64                      `json:"task_id"`
+	ReviewerID  int64                      `json:"reviewer_id"`
+}
+
+// UpdateTaskReviewerInput holds the fields for updating a task_reviewers record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateTaskReviewerInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	TaskID      omittable.Value[int64]     `json:"task_id,omitzero"`
+	ReviewerID  omittable.Value[int64]     `json:"reviewer_id,omitzero"`
+}
+
+// GetTaskReviewersInput holds query parameters for retrieving task_reviewers records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetTaskReviewersInput struct {
+	Filter *TaskReviewerFilter `json:"filter"`
+	Limit  *int                `json:"limit"`
+	Offset *int                `json:"offset"`
+	Sorts  []sql.Sort          `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 type Task struct {
 	ID          int64     `db:"id" json:"id"`
 	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
@@ -37403,6 +43755,8 @@ type Task struct {
 	Badges []*Badge `db:"-" json:"badges"`
 	// Labels - many-to-many relationship with the labels table.
 	Labels []*Label `db:"-" json:"labels"`
+	// Reviewers - many-to-many relationship with the reviewers table.
+	Reviewers []*Reviewer `db:"-" json:"reviewers"`
 }
 
 // TaskClient provides type-safe operations for the tasks table.
@@ -37511,25 +43865,28 @@ type TaskClient interface {
 
 // taskClient implements the TaskClient interface.
 type taskClient struct {
-	querier           database.Querier
-	dialect           sql.Dialect
-	table             sql.Table
-	batchSize         int
-	queryLimit        int
-	pageSize          int
-	cursorKeys        []string
-	strictUpdates     bool
-	mutationHooks     []hook.MutationHook
-	queryHooks        []hook.QueryHook
-	panicHandler      hook.PanicHandler
-	callbackMode      database.CallbackMode
-	tenantResolver    tenancy.TenantResolver[uuid.UUID]
-	badgesDefaultSort []sql.Sort
-	labelsDefaultSort []sql.Sort
-	badgeClient       *badgeClient
-	labelClient       *labelClient
-	taskBadgeClient   *taskBadgeClient
-	taskLabelClient   *taskLabelClient
+	querier              database.Querier
+	dialect              sql.Dialect
+	table                sql.Table
+	batchSize            int
+	queryLimit           int
+	pageSize             int
+	cursorKeys           []string
+	strictUpdates        bool
+	mutationHooks        []hook.MutationHook
+	queryHooks           []hook.QueryHook
+	panicHandler         hook.PanicHandler
+	callbackMode         database.CallbackMode
+	tenantResolver       tenancy.TenantResolver[uuid.UUID]
+	badgesDefaultSort    []sql.Sort
+	labelsDefaultSort    []sql.Sort
+	reviewersDefaultSort []sql.Sort
+	badgeClient          *badgeClient
+	labelClient          *labelClient
+	reviewerClient       *reviewerClient
+	taskBadgeClient      *taskBadgeClient
+	taskLabelClient      *taskLabelClient
+	taskReviewerClient   *taskReviewerClient
 }
 
 // newTaskClient creates a new taskClient.
@@ -37935,6 +44292,9 @@ func (fo *TaskFieldOptions) loadsRelationships() bool {
 	if fo.Labels != nil {
 		return true
 	}
+	if fo.Reviewers != nil {
+		return true
+	}
 	return false
 }
 
@@ -38247,6 +44607,147 @@ func (c *taskClient) loadRelationships(ctx context.Context, conn database.Querie
 				for _, t := range relatedLabels {
 					for _, i := range parentsByTarget[[2]string{t.WorkspaceID.String(), fmt.Sprint(t.ID)}] {
 						taskKeyed[i].Labels = append(taskKeyed[i].Labels, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	if fo.Reviewers != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			taskKeyed := make([]*Task, 0, len(tasks))
+			taskKeys := make([][]any, 0, len(tasks))
+			for _, t := range tasks {
+				taskKeyed = append(taskKeyed, t)
+				taskKeys = append(taskKeys, []any{t.WorkspaceID, t.ID})
+			}
+
+			sorts := fo.Reviewers.Sorts
+			if len(sorts) == 0 {
+				sorts = c.reviewersDefaultSort
+			}
+
+			// The three steps run once per chunk of 4000 parent keys:
+			// within half the dialect's bind-parameter limit, leaving the rest for
+			// the relationship's filters.
+			for start := 0; start < len(taskKeys); start += 4000 {
+				chunk := taskKeys[start:min(start+4000, len(taskKeys))]
+
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[[2]string][][2]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "public", Name: "task_reviewers"}, sql.SelectOptions{
+						Columns:    []string{"workspace_id", "task_id", "reviewer_id"},
+						Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "task_id"}, chunk)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load task reviewers junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load task reviewers junction columns: %w", err)
+					}
+
+					for junctionRows.Next() {
+						var key0 uuid.UUID
+						var key1 int64
+						var key2 int64
+						ptrs := make([]any, len(junctionCols))
+						for i, col := range junctionCols {
+							switch col {
+							case "workspace_id":
+								ptrs[i] = &key0
+							case "task_id":
+								ptrs[i] = &key1
+							case "reviewer_id":
+								ptrs[i] = &key2
+							}
+						}
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan task reviewers junction: %w", err)
+						}
+						parentID, targetID := [2]string{key0.String(), fmt.Sprint(key1)}, [2]string{key0.String(), fmt.Sprint(key2)}
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate task reviewers junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "task_id"}, chunk),
+				})
+				conditions := []sql.Condition{
+					sql.TupleInSubquery(c.dialect, []string{"workspace_id", "id"}, sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("workspace_id") + ", j." + c.dialect.QuoteIdentifier("reviewer_id") + "" +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "public", Name: "task_reviewers"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &ReviewerFilter{}
+				if fo.Reviewers.Filter != nil {
+					filter.And = append(filter.And, fo.Reviewers.Filter)
+				}
+
+				relatedReviewers, err := c.reviewerClient.GetMany(ctx, &GetReviewersInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its referenced columns, so
+					// the fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"workspace_id", "id"},
+				}, func(co *CallOptions[ReviewerFieldOptions]) {
+					co.FieldOptions = fo.Reviewers.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+					co.SkipTenancy = options.SkipTenancy
+					co.Tenant = options.Tenant
+				})
+				if err != nil {
+					return fmt.Errorf("load task reviewers: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts order each parent's slice.
+				parentsByTarget := make(map[[2]string][]int, len(relatedReviewers))
+				for i := start; i < start+len(chunk); i++ {
+					parent := taskKeyed[i]
+					for _, tID := range parentToTargetIDs[[2]string{parent.WorkspaceID.String(), fmt.Sprint(parent.ID)}] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedReviewers {
+					for _, i := range parentsByTarget[[2]string{t.WorkspaceID.String(), fmt.Sprint(t.ID)}] {
+						taskKeyed[i].Reviewers = append(taskKeyed[i].Reviewers, t)
 					}
 				}
 			}
@@ -39988,6 +46489,9 @@ type CreateTaskWithRelatedInput struct {
 
 	// Labels - many-to-many relationship with the labels table.
 	Labels *TaskLabelsCreateNested `json:"labels,omitempty"`
+
+	// Reviewers - many-to-many relationship with the reviewers table.
+	Reviewers *TaskReviewersCreateNested `json:"reviewers,omitempty"`
 }
 
 // UpdateTaskWithRelatedInput holds the fields for updating a tasks record
@@ -40005,6 +46509,9 @@ type UpdateTaskWithRelatedInput struct {
 
 	// Labels - many-to-many relationship with the labels table.
 	Labels *TaskLabelsUpdateNested `json:"labels,omitempty"`
+
+	// Reviewers - many-to-many relationship with the reviewers table.
+	Reviewers *TaskReviewersUpdateNested `json:"reviewers,omitempty"`
 }
 
 // UpsertTaskWithRelatedInput holds the fields for upserting a tasks record
@@ -40026,6 +46533,9 @@ type UpsertTaskWithRelatedInput struct {
 
 	// Labels - many-to-many relationship with the labels table.
 	Labels *TaskLabelsUpdateNested `json:"labels,omitempty"`
+
+	// Reviewers - many-to-many relationship with the reviewers table.
+	Reviewers *TaskReviewersUpdateNested `json:"reviewers,omitempty"`
 }
 
 // TaskBadgesCreateNested is the create-side verb block for Task.Badges.
@@ -40115,6 +46625,49 @@ func taskLabelsNestedFromCreate(n *TaskLabelsCreateNested) *TaskLabelsUpdateNest
 	}
 }
 
+// TaskReviewersCreateNested is the create-side verb block for Task.Reviewers.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type TaskReviewersCreateNested struct {
+	Create  []*CreateReviewerInput `json:"create,omitempty"`
+	Connect []int64                `json:"connect,omitempty"`
+}
+
+// TaskReviewersUpdateNested is the update-side verb block for Task.Reviewers,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type TaskReviewersUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear   bool                   `json:"clear,omitempty"`
+	Create  []*CreateReviewerInput `json:"create,omitempty"`
+	Connect []int64                `json:"connect,omitempty"`
+}
+
+// taskReviewersNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func taskReviewersNestedFromCreate(n *TaskReviewersCreateNested) *TaskReviewersUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &TaskReviewersUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
 // taskNestedParentFieldOptions projects the caller's selection onto the
 // parent write: relationship members are dropped, because loading them there
 // would run before the nested rows exist and return a stale set, and the primary
@@ -40129,6 +46682,7 @@ func taskNestedParentFieldOptions(fo *TaskFieldOptions) *TaskFieldOptions {
 	scalars := *fo
 	scalars.Badges = nil
 	scalars.Labels = nil
+	scalars.Reviewers = nil
 	scalars.ID = true
 	scalars.WorkspaceID = true
 	return &scalars
@@ -40142,7 +46696,7 @@ func taskNestedSelectsRelationship(fo *TaskFieldOptions) bool {
 	if fo == nil {
 		return false
 	}
-	return fo.Badges != nil || fo.Labels != nil
+	return fo.Badges != nil || fo.Labels != nil || fo.Reviewers != nil
 }
 
 // nestedResolvedTenantCtx resolves the tenant once for a whole nested write,
@@ -40228,6 +46782,10 @@ func (c *taskClient) CreateWithRelated(ctx context.Context, input *CreateTaskWit
 			return err
 		}
 
+		if err := c.applyTaskReviewersNested(ctx, parent, taskReviewersNestedFromCreate(input.Reviewers), options); err != nil {
+			return err
+		}
+
 		// Terminal read — only when the caller selected a relationship; the
 		// parent write above stripped them.
 		if taskNestedSelectsRelationship(options.FieldOptions) {
@@ -40298,6 +46856,10 @@ func (c *taskClient) UpdateWithRelated(ctx context.Context, id int64, input *Upd
 			return err
 		}
 
+		if err := c.applyTaskReviewersNested(ctx, parent, input.Reviewers, options); err != nil {
+			return err
+		}
+
 		if taskNestedSelectsRelationship(options.FieldOptions) {
 			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[TaskFieldOptions]) {
 				*o = options
@@ -40356,6 +46918,10 @@ func (c *taskClient) UpsertWithRelated(ctx context.Context, input *UpsertTaskWit
 		}
 
 		if err := c.applyTaskLabelsNested(ctx, parent, input.Labels, options); err != nil {
+			return err
+		}
+
+		if err := c.applyTaskReviewersNested(ctx, parent, input.Reviewers, options); err != nil {
 			return err
 		}
 
@@ -40715,6 +47281,148 @@ func (c *taskClient) applyTaskLabelsNested(ctx context.Context, parent *Task, ne
 			}); err != nil {
 				return nestedError("Labels", "disconnect", nil, err)
 			}
+		}
+	}
+	return nil
+}
+
+// applyTaskReviewersNested applies the Task.Reviewers block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// link, disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *taskClient) applyTaskReviewersNested(ctx context.Context, parent *Task, nested *TaskReviewersUpdateNested, options CallOptions[TaskFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	pid0 := parent.WorkspaceID.String()
+	pid1 := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if err := c.taskReviewerClient.HardDeleteWhere(ctx, &TaskReviewerFilter{
+			WorkspaceID: &comparator.ID{Eq: new(pid0)},
+			TaskID:      &comparator.Number[int64]{Eq: new(pid1)},
+		}, func(o *CallOptions[TaskReviewerFieldOptions]) {
+			nestedChildOptions(o, options)
+		}); err != nil {
+			return nestedError("Reviewers", "clear", nil, err)
+		}
+	}
+
+	targetIDs := make([]int64, 0, len(nested.Create)+len(connectIDs))
+
+	if len(nested.Create) > 0 {
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Reviewers", "create", nil, ErrNilInput)
+			}
+		}
+		// No traversed FK to elide on an M2M target — the parent's key goes
+		// into the junction row below — so this is the target's own create
+		// input verbatim. The PK-only selection is what the link step needs.
+		created, err := c.reviewerClient.CreateMany(ctx, nested.Create, func(o *CallOptions[ReviewerFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &ReviewerFieldOptions{ID: true}
+		})
+		if err != nil {
+			return nestedError("Reviewers", "create", nil, err)
+		}
+		for _, row := range created {
+			targetIDs = append(targetIDs, row.ID)
+		}
+	}
+
+	// The junction FK proves existence, not visibility. Reading through the
+	// target's OWN client applies its tenant filter, soft-delete default and
+	// access rules, so a target in another tenant is NOT_FOUND here rather
+	// than a junction row nobody can ever read.
+	if len(connectIDs) > 0 {
+		found := make(map[int64]bool, len(connectIDs))
+		// Chunked at c.batchSize. A single statement over the caller's
+		// whole list hits a bind-parameter ceiling that is dialect-dependent
+		// and lowest on SQLite (32766), and every dialect's error for it names
+		// no table, column, edge or verb, so it cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.reviewerClient.GetMany(ctx, &GetReviewersInput{
+				Filter: &ReviewerFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ReviewerFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &ReviewerFieldOptions{ID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Reviewers", "connect", nil, err)
+			}
+			for _, row := range visible {
+				found[row.ID] = true
+			}
+		}
+		for _, tid := range connectIDs {
+			if !found[tid] {
+				return nestedError("Reviewers", "connect", tid, ErrNotFound)
+			}
+		}
+		targetIDs = append(targetIDs, connectIDs...)
+	}
+
+	// link — UpsertMany, not CreateMany: re-adding an existing link is a set
+	// operation whose answer is "linked", and CreateMany raises a primary-key
+	// violation on it. The junction is a pure link table, so this compiles to
+	// ON CONFLICT DO NOTHING on every dialect.
+	if len(targetIDs) > 0 {
+		links := make([]*CreateTaskReviewerInput, 0, len(targetIDs))
+		seen := make(map[int64]bool, len(targetIDs))
+		for _, tid := range targetIDs {
+			if seen[tid] {
+				continue
+			}
+			seen[tid] = true
+			links = append(links, &CreateTaskReviewerInput{
+				WorkspaceID: omittable.Set(parent.WorkspaceID),
+				TaskID:      parent.ID,
+				ReviewerID:  tid,
+			})
+		}
+		if _, err := c.taskReviewerClient.UpsertMany(ctx, links, TaskReviewerConflictWorkspaceIDTaskIDReviewerID, func(o *CallOptions[TaskReviewerFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &TaskReviewerFieldOptions{}
+		}); err != nil {
+			// The key sets the tenant column from the parent and tenancy sets it
+			// from the resolver: disagreeing, the two bind this row to two keys.
+			if errors.Is(err, tenancy.ErrMismatch) {
+				err = ErrAlreadyRelated
+			}
+			return nestedError("Reviewers", "link", nil, err)
 		}
 	}
 	return nil
@@ -41316,6 +48024,7 @@ type TaskFilter struct {
 	WorkspaceID *comparator.ID                    `json:"workspace_id"`
 	Badges      *BadgeFilter                      `json:"badges"`
 	Labels      *LabelFilter                      `json:"labels"`
+	Reviewers   *ReviewerFilter                   `json:"reviewers"`
 	And         []*TaskFilter                     `json:"and"`
 	Or          []*TaskFilter                     `json:"or"`
 }
@@ -41365,6 +48074,10 @@ func (f *TaskFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []s
 
 	if f.Labels != nil {
 		conds = append(conds, taskLabelsFilterExists(f.Labels, dialect, opts))
+	}
+
+	if f.Reviewers != nil {
+		conds = append(conds, taskReviewersFilterExists(f.Reviewers, dialect, opts))
 	}
 
 	for _, sub := range f.And {
@@ -41417,6 +48130,9 @@ func (f *TaskFilter) usesRelationshipFilter() bool {
 		return true
 	}
 	if f.Labels != nil {
+		return true
+	}
+	if f.Reviewers != nil {
 		return true
 	}
 	for _, sub := range f.And {
@@ -41526,16 +48242,65 @@ func taskLabelsFilterExists(f *LabelFilter, dialect sql.Dialect, opts []FilterOp
 	return sql.Exists([]string{"workspace_id", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
 }
 
+// taskReviewersFilterExists compiles a ReviewerFilter set on the
+// Reviewers relationship into a correlated EXISTS over reviewers, joined through the task_reviewers junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func taskReviewersFilterExists(f *ReviewerFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "public", Name: "task_reviewers"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "public", Name: "reviewers"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("workspace_id") + " = " + jn + "." + dialect.QuoteIdentifier("workspace_id") +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("id") + " = " + jn + "." + dialect.QuoteIdentifier("reviewer_id") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("workspace_id") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + jn + "." + dialect.QuoteIdentifier("task_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	// The target's tenant rule applies inside the subquery. Without it a
+	// relationship filter would be a cross-tenant existence probe on a table the caller cannot otherwise read.
+	if scope.applyTenant {
+		subSQL += " AND " + tgt + "." + dialect.QuoteIdentifier("workspace_id") + " = $"
+		subArgs = append(subArgs, scope.tenant)
+	}
+
+	return sql.Exists([]string{"workspace_id", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
 // TaskFieldOptions controls column selection and relationship loading for tasks queries.
 type TaskFieldOptions struct {
-	ID          bool                      `json:"id"`
-	WorkspaceID bool                      `json:"workspace_id"`
-	CycleID     bool                      `json:"cycle_id"`
-	SprintID    bool                      `json:"sprint_id"`
-	ProjectCode bool                      `json:"project_code"`
-	Title       bool                      `json:"title"`
-	Badges      *BadgeRelationshipOptions `json:"badges"`
-	Labels      *LabelRelationshipOptions `json:"labels"`
+	ID          bool                         `json:"id"`
+	WorkspaceID bool                         `json:"workspace_id"`
+	CycleID     bool                         `json:"cycle_id"`
+	SprintID    bool                         `json:"sprint_id"`
+	ProjectCode bool                         `json:"project_code"`
+	Title       bool                         `json:"title"`
+	Badges      *BadgeRelationshipOptions    `json:"badges"`
+	Labels      *LabelRelationshipOptions    `json:"labels"`
+	Reviewers   *ReviewerRelationshipOptions `json:"reviewers"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -41602,6 +48367,9 @@ func (fo *TaskFieldOptions) HasSelectedColumns() bool {
 	if fo.Labels != nil {
 		return true
 	}
+	if fo.Reviewers != nil {
+		return true
+	}
 	return false
 }
 
@@ -41617,6 +48385,13 @@ type LabelRelationshipOptions struct {
 	FieldOptions *LabelFieldOptions `json:"field_options"`
 	Filter       *LabelFilter       `json:"filter"`
 	Sorts        []sql.Sort         `json:"sorts"`
+}
+
+// ReviewerRelationshipOptions controls loading options for Reviewer relationships.
+type ReviewerRelationshipOptions struct {
+	FieldOptions *ReviewerFieldOptions `json:"field_options"`
+	Filter       *ReviewerFilter       `json:"filter"`
+	Sorts        []sql.Sort            `json:"sorts"`
 }
 
 // CreateTaskInput holds the fields for creating a tasks record.

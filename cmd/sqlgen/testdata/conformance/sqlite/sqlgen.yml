@@ -53,6 +53,12 @@ tables:
   posts:
     # A nested create spans several CreateMany chunks.
     batch_size: 2
+  crates:
+    # Listed by name, so a surrogate-keyed junction this edge cannot link through
+    # fails generation instead of disappearing.
+    nested_mutations:
+      relationships:
+        - name: Seals
   author_tags:
     batch_size: 2
   counters:

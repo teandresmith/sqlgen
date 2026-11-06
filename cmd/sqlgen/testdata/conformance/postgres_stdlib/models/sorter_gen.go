@@ -142,6 +142,28 @@ func (s CrateItemSorter) ProductID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "product_id", Direction: direction}
 }
 
+// CrateSealSorter provides type-safe sort helpers for the CrateSeal entity.
+// Each method returns a sql.Sort for the corresponding column.
+type CrateSealSorter struct{}
+
+// NewCrateSealSorter returns a new CrateSealSorter.
+func NewCrateSealSorter() CrateSealSorter { return CrateSealSorter{} }
+
+// CrateID returns a sort for the crate_id column in the given direction.
+func (s CrateSealSorter) CrateID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "crate_id", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s CrateSealSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// SealID returns a sort for the seal_id column in the given direction.
+func (s CrateSealSorter) SealID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "seal_id", Direction: direction}
+}
+
 // DocumentSorter provides type-safe sort helpers for the Document entity.
 // Each method returns a sql.Sort for the corresponding column.
 type DocumentSorter struct{}
@@ -390,6 +412,23 @@ func (s RevisionSorter) DocumentID(direction sql.SortDirection) sql.Sort {
 // Number returns a sort for the number column in the given direction.
 func (s RevisionSorter) Number(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "number", Direction: direction}
+}
+
+// SealSorter provides type-safe sort helpers for the Seal entity.
+// Each method returns a sql.Sort for the corresponding column.
+type SealSorter struct{}
+
+// NewSealSorter returns a new SealSorter.
+func NewSealSorter() SealSorter { return SealSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s SealSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s SealSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
 }
 
 // ShelfSorter provides type-safe sort helpers for the Shelf entity.

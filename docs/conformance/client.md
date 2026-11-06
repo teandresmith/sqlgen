@@ -471,7 +471,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | increment.composite-pk | On a composite-PK table `Increment` takes the `{Table}PK` struct and matches all PK columns, so only that tuple changes, and it records that tuple as its affected key | `conformance: Increment/a composite key increments only its own tuple` | all | client-methods: Increment × composite-pk |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: e53990409a23b8d5 -->
+<!-- prd: 9.9 sha256: 8dd1413e23456801 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -514,7 +514,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | update-with-related.field-selection | A nil `FieldOptions` makes `UpdateWithRelated` return the parent with every relationship member unpopulated, on the edges it wrote as well (§9.9.5). A selected relationship comes back holding the rows as the call left them, including the rows the call itself created, connected and unlinked, and a selected scalar carries the value the call wrote. An empty `&FieldOptions{}` performs every write and returns `nil` (§9.6) | `conformance: UpdateWithRelated/a nil FieldOptions returns the parent with no relationship populated, on the edges it wrote as well`; `conformance: UpdateWithRelated/a selected relationship is returned holding the rows the call wrote`; `conformance: UpdateWithRelated/an empty FieldOptions performs every write and returns nil` | all | client-methods: UpdateWithRelated × field-selection |
 
 ## §9.9.6 Execution order
-<!-- prd: 9.9.6 sha256: 3f597a48e60b4823 -->
+<!-- prd: 9.9.6 sha256: cb48a0d305955d8d -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -534,12 +534,13 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | create-with-related.terminal-read-loader-hooks | The relationship loads of `CreateWithRelated`'s terminal read run with the caller's hook toggles, not the `SkipHooks` the method sets on the read itself, so each selected list relationship fires the caller's query hook | `conformance: CreateWithRelated/the terminal read loads the selected relationships with the caller's query hooks` | all |  |
 | update-with-related.clear-replaces-set | `clear` with `connect` (and `create`) on one O2M or M2M edge leaves the edge holding exactly the rows the block names, including a named row that was already on the edge and was unlinked by the `clear` first | `conformance: UpdateWithRelated/clear runs before create and connect, so clear with connect leaves exactly the rows the block names` | all |  |
 | update-with-related.disconnect-parent-scoped | `disconnect` touches only this parent's rows: an O2M or has-one id parented elsewhere, an M2M target linked only to another parent, and an id naming no row are each a no-op, not an error | `conformance: UpdateWithRelated/disconnect is scoped to the parent, so another parent's child and a missing id are left alone` | all |  |
+| update-with-related.surrogate-junction-link | On a junction keyed by a surrogate, the link step targets the UNIQUE equal to the union of both keys: `create` and `connect` link, a re-link keeps the row and its surrogate, and `clear` plus `connect` replaces the set | `conformance: UpdateWithRelated/a junction keyed by a surrogate links through its UNIQUE, and a re-link keeps the row` | all |  |
 | update-with-related.connect-already-ours | An O2M `connect` naming a row already on the edge is a no-op, and an M2M `connect` naming a target already linked keeps exactly one link; the other named rows are adopted or linked | `conformance: UpdateWithRelated/connect leaves a post or tag already on the edge in place and adds the others` | all |  |
 | update-with-related.has-one-replace | A has-one child is replaced by `clear` with `create` or `connect`: the old child's FK becomes NULL and the new child is under the parent. `{disconnect: current, create}` and `{disconnect: current, connect: other}` do not replace: they return `ErrAlreadyRelated` naming the current child | `conformance: UpdateWithRelated/clear with create or connect replaces the has-one's child`; `conformance: UpdateWithRelated/create or connect on a has-one already holding a child is ErrAlreadyRelated naming that child` | all |  |
 | update-with-related.soft-deleted-child-unlinked | An O2M `disconnect` naming a soft-deleted child, and a `clear` on an edge holding one, set that child's FK to NULL | `conformance: UpdateWithRelated/disconnect and clear set the FK to NULL on a soft-deleted child` | all |  |
 
 ## §9.9.7 Query count
-<!-- prd: 9.9.7 sha256: 1f5b6ea0047ce786 -->
+<!-- prd: 9.9.7 sha256: b76656b2d016b10d -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

@@ -13285,6 +13285,2044 @@ type GetCrateItemsInput struct {
 	requiredColumns []string
 }
 
+type CrateSeal struct {
+	ID      int64 `db:"id" json:"id"`
+	CrateID int64 `db:"crate_id" json:"crate_id"`
+	SealID  int64 `db:"seal_id" json:"seal_id"`
+}
+
+// CrateSealClient provides type-safe operations for the crate_seals table.
+type CrateSealClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single crateSeal by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[CrateSealFieldOptions])) (*CrateSeal, error)
+
+	// GetMany returns crate_seals matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetCrateSealsInput, opts ...func(*CallOptions[CrateSealFieldOptions])) ([]*CrateSeal, error)
+
+	// Exists returns true if a crateSeal with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[CrateSealFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any crateSeal matches the given filter.
+	ExistsWhere(ctx context.Context, filter *CrateSealFilter, opts ...func(*CallOptions[CrateSealFieldOptions])) (bool, error)
+
+	// Count returns the number of crate_seals matching the given filter.
+	Count(ctx context.Context, filter *CrateSealFilter, opts ...func(*CallOptions[CrateSealFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new crateSeal and returns the created entity.
+	Create(ctx context.Context, input *CreateCrateSealInput, opts ...func(*CallOptions[CrateSealFieldOptions])) (*CrateSeal, error)
+
+	// CreateMany inserts multiple crate_seals in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateCrateSealInput, opts ...func(*CallOptions[CrateSealFieldOptions])) ([]*CrateSeal, error)
+
+	// Update partially updates a crateSeal by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateCrateSealInput, opts ...func(*CallOptions[CrateSealFieldOptions])) (*CrateSeal, error)
+
+	// UpdateMany updates multiple crate_seals and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateCrateSealItem, opts ...func(*CallOptions[CrateSealFieldOptions])) ([]*CrateSeal, error)
+
+	// UpdateWhere updates all crate_seals matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *CrateSealFilter, input *UpdateCrateSealInput, opts ...func(*CallOptions[CrateSealFieldOptions])) ([]*CrateSeal, error)
+
+	// Upsert inserts a crateSeal or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateCrateSealInput, target CrateSealConflictTarget, opts ...func(*CallOptions[CrateSealFieldOptions])) (*CrateSeal, error)
+
+	// UpsertMany inserts or updates multiple crate_seals in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateCrateSealInput, target CrateSealConflictTarget, opts ...func(*CallOptions[CrateSealFieldOptions])) ([]*CrateSeal, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a crateSeal from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[CrateSealFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple crate_seals from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[CrateSealFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all crate_seals matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *CrateSealFilter, opts ...func(*CallOptions[CrateSealFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of crate_seals with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[CrateSealFilter], opts ...func(*CallOptions[CrateSealFieldOptions])) (*PaginateResult[CrateSeal], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of crate_seals.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[CrateSealFilter], opts ...func(*CallOptions[CrateSealFieldOptions])) (*Connection[CrateSeal], error)
+
+	// Stream returns an iterator over crate_seals matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamCrateSealsInput, opts ...func(*CallOptions[StreamCrateSealFieldOptions])) iter.Seq2[*CrateSeal, error]
+}
+
+// crateSealClient implements the CrateSealClient interface.
+type crateSealClient struct {
+	querier       database.Querier
+	dialect       sql.Dialect
+	table         sql.Table
+	batchSize     int
+	queryLimit    int
+	pageSize      int
+	cursorKeys    []string
+	strictUpdates bool
+	mutationHooks []hook.MutationHook
+	queryHooks    []hook.QueryHook
+	panicHandler  hook.PanicHandler
+}
+
+// newCrateSealClient creates a new crateSealClient.
+func newCrateSealClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *crateSealClient {
+	return &crateSealClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "crate_seals"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *crateSealClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *crateSealClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// crateSealAllColumns is the column list for full-entity reads, sorted for determinism.
+var crateSealAllColumns = []string{"crate_id", "id", "seal_id"}
+
+// scanCrateSeals scans rows into CrateSeal entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanCrateSeals(rows database.Rows, columns []string) ([]*CrateSeal, error) {
+	var result []*CrateSeal
+	for rows.Next() {
+		c := &CrateSeal{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &c.ID
+			case "crate_id":
+				targets[idx] = &c.CrateID
+			case "seal_id":
+				targets[idx] = &c.SealID
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan crate_seal: %w", err)
+		}
+
+		result = append(result, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate crate_seal rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single crate_seal by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *crateSealClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[CrateSealFieldOptions])) (*CrateSeal, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get crate_seal: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableCrateSeals, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[CrateSealFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[CrateSealFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		crateSeals, err := c.GetMany(ctx, &GetCrateSealsInput{
+			Filter: &CrateSealFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(crateSeals) == 0 {
+			return nil, ErrNotFound
+		}
+		return crateSeals[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get crate_seal: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*CrateSeal), nil
+}
+
+// GetMany returns crate_seals matching the given filter, field selection, and sort criteria.
+func (c *crateSealClient) GetMany(ctx context.Context, input *GetCrateSealsInput, opts ...func(*CallOptions[CrateSealFieldOptions])) ([]*CrateSeal, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetCrateSealsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many crate_seals: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableCrateSeals, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := crateSealAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var crateSeals []*CrateSeal
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		crateSeals, err = scanCrateSeals(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return crateSeals, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many crate_seals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*CrateSeal), nil
+}
+
+// Create inserts a new crate_seal and returns the created entity.
+func (c *crateSealClient) Create(ctx context.Context, input *CreateCrateSealInput, opts ...func(*CallOptions[CrateSealFieldOptions])) (*CrateSeal, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateCrateSealInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create crate_seal: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableCrateSeals, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"crate_id", "seal_id"}
+		args := []any{input.CrateID, input.SealID}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[CrateSealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create crate_seal: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*CrateSeal), nil
+}
+
+// CreateMany inserts multiple crate_seals in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *crateSealClient) CreateMany(ctx context.Context, inputs []*CreateCrateSealInput, opts ...func(*CallOptions[CrateSealFieldOptions])) ([]*CrateSeal, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many crate_seals: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableCrateSeals, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*CrateSeal{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"crate_id", "seal_id"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.CrateID,
+					input.SealID,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetCrateSealsInput{
+			Filter: &CrateSealFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CrateSealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many crate_seals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*CrateSeal), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *crateSealClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *crateSealClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan crate_seal id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a crate_seal by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *crateSealClient) Update(ctx context.Context, id int64, input *UpdateCrateSealInput, opts ...func(*CallOptions[CrateSealFieldOptions])) (*CrateSeal, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update crate_seal: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableCrateSeals, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.CrateID.Get(); ok {
+			setClauses["crate_id"] = v
+		}
+		if v, ok := input.SealID.Get(); ok {
+			setClauses["seal_id"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[CrateSealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[CrateSealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update crate_seal: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*CrateSeal), nil
+}
+
+// UpdateCrateSealItem pairs a primary key with an update input for batch updates.
+type UpdateCrateSealItem struct {
+	ID    int64                 `json:"id"`
+	Input *UpdateCrateSealInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple crate_seals and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *crateSealClient) UpdateMany(ctx context.Context, items []UpdateCrateSealItem, opts ...func(*CallOptions[CrateSealFieldOptions])) ([]*CrateSeal, error) {
+	// UpdateCrateSealItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many crate_seals: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableCrateSeals, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*CrateSeal{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateCrateSealItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_crate_seal", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.CrateID.Get(); ok {
+						setClauses["crate_id"] = v
+					}
+					if v, ok := item.Input.SealID.Get(); ok {
+						setClauses["seal_id"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetCrateSealsInput{
+			Filter: &CrateSealFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CrateSealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many crate_seals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*CrateSeal), nil
+}
+
+// UpdateWhere updates all crate_seals matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *crateSealClient) UpdateWhere(ctx context.Context, filter *CrateSealFilter, input *UpdateCrateSealInput, opts ...func(*CallOptions[CrateSealFieldOptions])) ([]*CrateSeal, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update crate_seals where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableCrateSeals, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.CrateID.Get(); ok {
+			setClauses["crate_id"] = v
+		}
+		if v, ok := input.SealID.Get(); ok {
+			setClauses["seal_id"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetCrateSealsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[CrateSealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated crate_seal id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetCrateSealsInput{
+			Filter: &CrateSealFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CrateSealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update crate_seals where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*CrateSeal), nil
+}
+
+// HardDelete permanently removes a crate_seal from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *crateSealClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[CrateSealFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableCrateSeals, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete crate_seal: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple crate_seals from the database.
+func (c *crateSealClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[CrateSealFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableCrateSeals, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted crate_seal key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many crate_seals: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all crate_seals matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *crateSealClient) HardDeleteWhere(ctx context.Context, filter *CrateSealFilter, opts ...func(*CallOptions[CrateSealFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableCrateSeals, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted crate_seal id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete crate_seals where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *crateSealClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// CrateSealConflictTarget identifies a unique constraint for upsert conflict detection.
+type CrateSealConflictTarget int
+
+const (
+	CrateSealConflictCrateIDSealID CrateSealConflictTarget = iota // UNIQUE (crate_id, seal_id)
+	CrateSealConflictPK                                           // PRIMARY KEY (id)
+)
+
+// crateSealConflictColumns maps each conflict target to its column set.
+var crateSealConflictColumns = map[CrateSealConflictTarget][]string{
+	CrateSealConflictCrateIDSealID: {"crate_id", "seal_id"},
+	CrateSealConflictPK:            {"id"},
+}
+
+// Upsert inserts a crate_seal or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *crateSealClient) Upsert(ctx context.Context, input *CreateCrateSealInput, target CrateSealConflictTarget, opts ...func(*CallOptions[CrateSealFieldOptions])) (*CrateSeal, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateCrateSealInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert crate_seal: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableCrateSeals, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"crate_id", "seal_id"}
+		args := []any{input.CrateID, input.SealID}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := crateSealConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[CrateSealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert crate_seal: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*CrateSeal), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *crateSealClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *crateSealClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple crate_seals in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// crate_seals.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *crateSealClient) UpsertMany(ctx context.Context, inputs []*CreateCrateSealInput, target CrateSealConflictTarget, opts ...func(*CallOptions[CrateSealFieldOptions])) ([]*CrateSeal, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many crate_seals: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableCrateSeals, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*CrateSeal{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"crate_id", "seal_id"}
+		conflictColumns := crateSealConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateCrateSealInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.CrateID,
+				input.SealID,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateCrateSealInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetCrateSealsInput{
+			Filter: &CrateSealFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[CrateSealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many crate_seals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*CrateSeal), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// crate_seals.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *crateSealClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level crateSealConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanCrateSeals
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanCrateSeals(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = crateSealColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// crateSealColumnValue returns one column's value off a scanned
+// CrateSeal, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanCrateSeals.
+func crateSealColumnValue(c *CrateSeal, column string) any {
+	switch column {
+	case "id":
+		return c.ID
+	case "crate_id":
+		return c.CrateID
+	case "seal_id":
+		return c.SealID
+	}
+	return nil
+}
+
+// Exists returns true if a crate_seal with the given primary key exists.
+func (c *crateSealClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[CrateSealFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableCrateSeals, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists crate_seal: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any crate_seal matches the given filter.
+func (c *crateSealClient) ExistsWhere(ctx context.Context, filter *CrateSealFilter, opts ...func(*CallOptions[CrateSealFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableCrateSeals, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists crate_seals where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of crate_seals matching the given filter.
+// A nil filter counts all crate_seals.
+func (c *crateSealClient) Count(ctx context.Context, filter *CrateSealFilter, opts ...func(*CallOptions[CrateSealFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableCrateSeals, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count crate_seals: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of crate_seals with total count for offset-based pagination.
+// A nil filter paginates all crate_seals.
+func (c *crateSealClient) Paginate(ctx context.Context, input PaginateInput[CrateSealFilter], opts ...func(*CallOptions[CrateSealFieldOptions])) (*PaginateResult[CrateSeal], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate crate_seals: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableCrateSeals, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[CrateSealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		crateSeals, err := c.GetMany(ctx, &GetCrateSealsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[CrateSeal]{
+			Items:      crateSeals,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate crate_seals: %w", err)
+	}
+	return result.(*PaginateResult[CrateSeal]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of crate_seals.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *crateSealClient) Connection(ctx context.Context, input ConnectionInput[CrateSealFilter], opts ...func(*CallOptions[CrateSealFieldOptions])) (*Connection[CrateSeal], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection crate_seals: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableCrateSeals, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[CrateSealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeCrateSealCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeCrateSealCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		crateSeals, err := c.GetMany(ctx, &GetCrateSealsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(crateSeals) > limit
+		if hasMore {
+			crateSeals = crateSeals[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(crateSeals)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[CrateSeal], len(crateSeals))
+		for i, row := range crateSeals {
+			cursor, err := encodeCrateSealCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[CrateSeal]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[CrateSeal]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection crate_seals: %w", err)
+	}
+	return result.(*Connection[CrateSeal]), nil
+}
+
+// encodeCrateSealCursor encodes cursor key values as a base64 JSON string.
+func encodeCrateSealCursor(keys []string, c *CrateSeal) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = c.ID
+		case "crate_id":
+			out["crate_id"] = c.CrateID
+		case "seal_id":
+			out["seal_id"] = c.SealID
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode crate_seal cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeCrateSealCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeCrateSealCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row CrateSeal
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamCrateSealsInput holds query parameters for streaming crate_seals records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamCrateSealsInput struct {
+	Filter *CrateSealFilter `json:"filter"`
+	Sorts  []sql.Sort       `json:"sorts"`
+}
+
+// StreamCrateSealFieldOptions controls scalar column selection for crate_seals streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamCrateSealFieldOptions struct {
+	ID      bool `json:"id"`
+	CrateID bool `json:"crate_id"`
+	SealID  bool `json:"seal_id"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamCrateSealFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.CrateID {
+		cols = append(cols, "crate_id")
+	}
+	if fo.SealID {
+		cols = append(cols, "seal_id")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamCrateSealFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.CrateID {
+		return true
+	}
+	if fo.SealID {
+		return true
+	}
+	return false
+}
+
+// scanCrateSealRow scans a single row into a CrateSeal entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanCrateSealRow(rows database.Rows, columns []string) (*CrateSeal, error) {
+	c := &CrateSeal{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &c.ID
+		case "crate_id":
+			targets[idx] = &c.CrateID
+		case "seal_id":
+			targets[idx] = &c.SealID
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan crate_seal: %w", err)
+	}
+
+	return c, nil
+}
+
+// Stream returns an iterator over crate_seals matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *crateSealClient) Stream(ctx context.Context, input *StreamCrateSealsInput, opts ...func(*CallOptions[StreamCrateSealFieldOptions])) iter.Seq2[*CrateSeal, error] {
+	return func(yield func(*CrateSeal, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamCrateSealsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream crate_seals: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *CrateSeal, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream crate_seals: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableCrateSeals, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := crateSealAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				c, err := scanCrateSealRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(c, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate crate_seal rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream crate_seals: %w", err))
+		}
+	}
+}
+
+// CrateSealFilter provides type-safe filtering for the crate_seals table.
+type CrateSealFilter struct {
+	CrateID *comparator.Number[int64] `json:"crate_id"`
+	ID      *comparator.Number[int64] `json:"id"`
+	SealID  *comparator.Number[int64] `json:"seal_id"`
+	And     []*CrateSealFilter        `json:"and"`
+	Or      []*CrateSealFilter        `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *CrateSealFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.CrateID != nil {
+		conds = append(conds, f.CrateID.Parse(dialect.QuoteIdentifier("crate_id"), dialect)...)
+	}
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.SealID != nil {
+		conds = append(conds, f.SealID.Parse(dialect.QuoteIdentifier("seal_id"), dialect)...)
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// CrateSealFieldOptions controls column selection and relationship loading for crate_seals queries.
+type CrateSealFieldOptions struct {
+	ID      bool `json:"id"`
+	CrateID bool `json:"crate_id"`
+	SealID  bool `json:"seal_id"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *CrateSealFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.CrateID {
+		cols = append(cols, "crate_id")
+	}
+	if fo.SealID {
+		cols = append(cols, "seal_id")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *CrateSealFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":      "id",
+		"CrateID": "crate_id",
+		"SealID":  "seal_id",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *CrateSealFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.CrateID {
+		return true
+	}
+	if fo.SealID {
+		return true
+	}
+	return false
+}
+
+// CreateCrateSealInput holds the fields for creating a crate_seals record.
+type CreateCrateSealInput struct {
+	CrateID int64 `json:"crate_id"`
+	SealID  int64 `json:"seal_id"`
+}
+
+// UpdateCrateSealInput holds the fields for updating a crate_seals record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateCrateSealInput struct {
+	CrateID omittable.Value[int64] `json:"crate_id,omitzero"`
+	SealID  omittable.Value[int64] `json:"seal_id,omitzero"`
+}
+
+// GetCrateSealsInput holds query parameters for retrieving crate_seals records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetCrateSealsInput struct {
+	Filter *CrateSealFilter `json:"filter"`
+	Limit  *int             `json:"limit"`
+	Offset *int             `json:"offset"`
+	Sorts  []sql.Sort       `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 type Crate struct {
 	ID       int64   `db:"id" json:"id"`
 	ShelfTag *string `db:"shelf_tag" json:"shelf_tag"`
@@ -13292,6 +15330,8 @@ type Crate struct {
 
 	// OrderItems - many-to-many relationship with the order_items table.
 	OrderItems []*OrderItem `db:"-" json:"order_items"`
+	// Seals - many-to-many relationship with the seals table.
+	Seals []*Seal `db:"-" json:"seals"`
 }
 
 // CrateClient provides type-safe operations for the crates table.
@@ -13344,6 +15384,25 @@ type CrateClient interface {
 	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
 	UpsertMany(ctx context.Context, inputs []*CreateCrateInput, target CrateConflictTarget, opts ...func(*CallOptions[CrateFieldOptions])) ([]*Crate, error)
 
+	// CreateWithRelated creates a crate together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateCrateWithRelatedInput, opts ...func(*CallOptions[CrateFieldOptions])) (*Crate, error)
+
+	// UpdateWithRelated updates a crate together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdateCrateWithRelatedInput, opts ...func(*CallOptions[CrateFieldOptions])) (*Crate, error)
+
+	// UpsertWithRelated inserts or updates a crate together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertCrateWithRelatedInput, target CrateConflictTarget, opts ...func(*CallOptions[CrateFieldOptions])) (*Crate, error)
+
 	// --- Hard Delete Operations ---
 
 	// HardDelete permanently removes a crate from the database.
@@ -13394,8 +15453,11 @@ type crateClient struct {
 	panicHandler          hook.PanicHandler
 	callbackMode          database.CallbackMode
 	orderItemsDefaultSort []sql.Sort
+	sealsDefaultSort      []sql.Sort
 	orderItemClient       *orderItemClient
+	sealClient            *sealClient
 	crateItemClient       *crateItemClient
+	crateSealClient       *crateSealClient
 }
 
 // newCrateClient creates a new crateClient.
@@ -13643,6 +15705,9 @@ func (fo *CrateFieldOptions) loadsRelationships() bool {
 	if fo.OrderItems != nil {
 		return true
 	}
+	if fo.Seals != nil {
+		return true
+	}
 	return false
 }
 
@@ -13805,6 +15870,147 @@ func (c *crateClient) loadRelationships(ctx context.Context, conn database.Queri
 				for _, t := range relatedOrderItems {
 					for _, i := range parentsByTarget[[2]string{fmt.Sprint(t.OrderID), fmt.Sprint(t.ProductID)}] {
 						crateKeyed[i].OrderItems = append(crateKeyed[i].OrderItems, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	if fo.Seals != nil {
+		g.Go(func() error {
+			// Collect parent IDs
+			crateIDs := make([]int64, len(crates))
+			for idx, c := range crates {
+				crateIDs[idx] = c.ID
+			}
+
+			sorts := fo.Seals.Sorts
+			if len(sorts) == 0 {
+				sorts = c.sealsDefaultSort
+			}
+
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(crateIDs); start += 16383 {
+				chunk := crateIDs[start:min(start+16383, len(crateIDs))]
+
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "crate_seals"}, sql.SelectOptions{
+						Columns:    []string{"crate_id", "seal_id"},
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("crate_id")).In(toAnySlice(chunk)...)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load crate seals junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load crate seals junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "crate_id":
+							localIdx = i
+						case "seal_id":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey int64
+						var refKey int64
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan crate seals junction: %w", err)
+						}
+						parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate crate seals junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("crate_id")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("id")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("seal_id") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "crate_seals"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &SealFilter{}
+				if fo.Seals.Filter != nil {
+					filter.And = append(filter.And, fo.Seals.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (crates) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedSeals, err := c.sealClient.GetMany(ctx, &GetSealsInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"id"},
+				}, func(co *CallOptions[SealFieldOptions]) {
+					co.FieldOptions = fo.Seals.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load crate seals: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				parentsByTarget := make(map[string][]int, len(relatedSeals))
+				for i := start; i < start+len(chunk); i++ {
+					for _, tID := range parentToTargetIDs[fmt.Sprint(crates[i].ID)] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedSeals {
+					for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {
+						crates[i].Seals = append(crates[i].Seals, t)
 					}
 				}
 			}
@@ -14926,6 +17132,434 @@ func crateColumnValue(c *Crate, column string) any {
 	return nil
 }
 
+// CreateCrateWithRelatedInput holds the fields for creating a crates record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateCrateWithRelatedInput struct {
+	// Crate holds the parent's own columns — identical to the input Create accepts.
+	Crate CreateCrateInput `json:"crate"`
+
+	// Seals - many-to-many relationship with the seals table.
+	Seals *CrateSealsCreateNested `json:"seals,omitempty"`
+}
+
+// UpdateCrateWithRelatedInput holds the fields for updating a crates record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateCrateWithRelatedInput struct {
+	// Crate holds the parent's own columns — identical to the input Update accepts.
+	Crate UpdateCrateInput `json:"crate"`
+
+	// Seals - many-to-many relationship with the seals table.
+	Seals *CrateSealsUpdateNested `json:"seals,omitempty"`
+}
+
+// UpsertCrateWithRelatedInput holds the fields for upserting a crates record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateCrateInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertCrateWithRelatedInput struct {
+	// Crate holds the parent's own columns — identical to the input Upsert accepts.
+	Crate CreateCrateInput `json:"crate"`
+
+	// Seals - many-to-many relationship with the seals table.
+	Seals *CrateSealsUpdateNested `json:"seals,omitempty"`
+}
+
+// CrateSealsCreateNested is the create-side verb block for Crate.Seals.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type CrateSealsCreateNested struct {
+	Create  []*CreateSealInput `json:"create,omitempty"`
+	Connect []int64            `json:"connect,omitempty"`
+}
+
+// CrateSealsUpdateNested is the update-side verb block for Crate.Seals,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type CrateSealsUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear   bool               `json:"clear,omitempty"`
+	Create  []*CreateSealInput `json:"create,omitempty"`
+	Connect []int64            `json:"connect,omitempty"`
+}
+
+// crateSealsNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func crateSealsNestedFromCreate(n *CrateSealsCreateNested) *CrateSealsUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &CrateSealsUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// crateNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+func crateNestedParentFieldOptions(fo *CrateFieldOptions) *CrateFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.OrderItems = nil
+	scalars.Seals = nil
+	scalars.ID = true
+	return &scalars
+}
+
+// crateNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func crateNestedSelectsRelationship(fo *CrateFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.OrderItems != nil || fo.Seals != nil
+}
+
+// CreateWithRelated creates a crate together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *crateClient) CreateWithRelated(ctx context.Context, input *CreateCrateWithRelatedInput, opts ...func(*CallOptions[CrateFieldOptions])) (*Crate, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create crate with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Crate
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err := database.WithTransaction(ctx, c.querier, "create_crate_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.Crate, func(o *CallOptions[CrateFieldOptions]) {
+			*o = options
+			o.FieldOptions = crateNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyCrateSealsNested(ctx, parent, crateSealsNestedFromCreate(input.Seals), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if crateNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[CrateFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create crate with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a crate together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *crateClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdateCrateWithRelatedInput, opts ...func(*CallOptions[CrateFieldOptions])) (*Crate, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update crate with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Crate
+	err := database.WithTransaction(ctx, c.querier, "update_crate_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.Crate, func(o *CallOptions[CrateFieldOptions]) {
+			*o = options
+			o.FieldOptions = crateNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyCrateSealsNested(ctx, parent, input.Seals, options); err != nil {
+			return err
+		}
+
+		if crateNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[CrateFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update crate with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a crate together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *crateClient) UpsertWithRelated(ctx context.Context, input *UpsertCrateWithRelatedInput, target CrateConflictTarget, opts ...func(*CallOptions[CrateFieldOptions])) (*Crate, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert crate with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Crate
+	err := database.WithTransaction(ctx, c.querier, "upsert_crate_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.Crate, target, func(o *CallOptions[CrateFieldOptions]) {
+			*o = options
+			o.FieldOptions = crateNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyCrateSealsNested(ctx, parent, input.Seals, options); err != nil {
+			return err
+		}
+
+		if crateNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[CrateFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert crate with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applyCrateSealsNested applies the Crate.Seals block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// link, disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *crateClient) applyCrateSealsNested(ctx context.Context, parent *Crate, nested *CrateSealsUpdateNested, options CallOptions[CrateFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	pid := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if err := c.crateSealClient.HardDeleteWhere(ctx, &CrateSealFilter{
+			CrateID: &comparator.Number[int64]{Eq: new(pid)},
+		}, func(o *CallOptions[CrateSealFieldOptions]) {
+			nestedChildOptions(o, options)
+		}); err != nil {
+			return nestedError("Seals", "clear", nil, err)
+		}
+	}
+
+	targetIDs := make([]int64, 0, len(nested.Create)+len(connectIDs))
+
+	if len(nested.Create) > 0 {
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Seals", "create", nil, ErrNilInput)
+			}
+		}
+		// No traversed FK to elide on an M2M target — the parent's key goes
+		// into the junction row below — so this is the target's own create
+		// input verbatim. The PK-only selection is what the link step needs.
+		created, err := c.sealClient.CreateMany(ctx, nested.Create, func(o *CallOptions[SealFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &SealFieldOptions{ID: true}
+		})
+		if err != nil {
+			return nestedError("Seals", "create", nil, err)
+		}
+		for _, row := range created {
+			targetIDs = append(targetIDs, row.ID)
+		}
+	}
+
+	// The junction FK proves existence, not visibility. Reading through the
+	// target's OWN client applies its tenant filter, soft-delete default and
+	// access rules, so a target in another tenant is NOT_FOUND here rather
+	// than a junction row nobody can ever read.
+	if len(connectIDs) > 0 {
+		found := make(map[int64]bool, len(connectIDs))
+		// Chunked at c.batchSize. A single statement over the caller's
+		// whole list hits a bind-parameter ceiling that is dialect-dependent
+		// and lowest on SQLite (32766), and every dialect's error for it names
+		// no table, column, edge or verb, so it cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.sealClient.GetMany(ctx, &GetSealsInput{
+				Filter: &SealFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[SealFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &SealFieldOptions{ID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Seals", "connect", nil, err)
+			}
+			for _, row := range visible {
+				found[row.ID] = true
+			}
+		}
+		for _, tid := range connectIDs {
+			if !found[tid] {
+				return nestedError("Seals", "connect", tid, ErrNotFound)
+			}
+		}
+		targetIDs = append(targetIDs, connectIDs...)
+	}
+
+	// link — UpsertMany, not CreateMany: re-adding an existing link is a set
+	// operation whose answer is "linked", and CreateMany raises a primary-key
+	// violation on it. The junction is a pure link table, so this compiles to
+	// ON CONFLICT DO NOTHING on every dialect.
+	if len(targetIDs) > 0 {
+		links := make([]*CreateCrateSealInput, 0, len(targetIDs))
+		seen := make(map[int64]bool, len(targetIDs))
+		for _, tid := range targetIDs {
+			if seen[tid] {
+				continue
+			}
+			seen[tid] = true
+			links = append(links, &CreateCrateSealInput{
+				CrateID: parent.ID,
+				SealID:  tid,
+			})
+		}
+		if _, err := c.crateSealClient.UpsertMany(ctx, links, CrateSealConflictCrateIDSealID, func(o *CallOptions[CrateSealFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &CrateSealFieldOptions{}
+		}); err != nil {
+			return nestedError("Seals", "link", nil, err)
+		}
+	}
+	return nil
+}
+
 // Exists returns true if a crate with the given primary key exists.
 func (c *crateClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[CrateFieldOptions])) (bool, error) {
 	options := resolveCallOptions(opts)
@@ -15407,6 +18041,7 @@ type CrateFilter struct {
 	Label      *comparator.String        `json:"label"`
 	ShelfTag   *comparator.NullableID    `json:"shelf_tag"`
 	OrderItems *OrderItemFilter          `json:"order_items"`
+	Seals      *SealFilter               `json:"seals"`
 	And        []*CrateFilter            `json:"and"`
 	Or         []*CrateFilter            `json:"or"`
 }
@@ -15440,6 +18075,10 @@ func (f *CrateFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []
 
 	if f.OrderItems != nil {
 		conds = append(conds, crateOrderItemsFilterExists(f.OrderItems, dialect, opts))
+	}
+
+	if f.Seals != nil {
+		conds = append(conds, crateSealsFilterExists(f.Seals, dialect, opts))
 	}
 
 	for _, sub := range f.And {
@@ -15513,12 +18152,52 @@ func crateOrderItemsFilterExists(f *OrderItemFilter, dialect sql.Dialect, opts [
 	return sql.Exists([]string{"id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
 }
 
+// crateSealsFilterExists compiles a SealFilter set on the
+// Seals relationship into a correlated EXISTS over seals, joined through the crate_seals junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func crateSealsFilterExists(f *SealFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "crate_seals"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "", Name: "seals"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("id") + " = " + jn + "." + dialect.QuoteIdentifier("seal_id") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("crate_id") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("id", sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
 // CrateFieldOptions controls column selection and relationship loading for crates queries.
 type CrateFieldOptions struct {
 	ID         bool                          `json:"id"`
 	ShelfTag   bool                          `json:"shelf_tag"`
 	Label      bool                          `json:"label"`
 	OrderItems *OrderItemRelationshipOptions `json:"order_items"`
+	Seals      *SealRelationshipOptions      `json:"seals"`
 }
 
 // Columns returns the SQL column names for all selected columns, sorted alphabetically
@@ -15561,6 +18240,9 @@ func (fo *CrateFieldOptions) HasSelectedColumns() bool {
 	if fo.OrderItems != nil {
 		return true
 	}
+	if fo.Seals != nil {
+		return true
+	}
 	return false
 }
 
@@ -15569,6 +18251,13 @@ type OrderItemRelationshipOptions struct {
 	FieldOptions *OrderItemFieldOptions `json:"field_options"`
 	Filter       *OrderItemFilter       `json:"filter"`
 	Sorts        []sql.Sort             `json:"sorts"`
+}
+
+// SealRelationshipOptions controls loading options for Seal relationships.
+type SealRelationshipOptions struct {
+	FieldOptions *SealFieldOptions `json:"field_options"`
+	Filter       *SealFilter       `json:"filter"`
+	Sorts        []sql.Sort        `json:"sorts"`
 }
 
 // CreateCrateInput holds the fields for creating a crates record.
@@ -39992,6 +42681,2701 @@ type GetRevisionsInput struct {
 	Limit  *int            `json:"limit"`
 	Offset *int            `json:"offset"`
 	Sorts  []sql.Sort      `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type Seal struct {
+	ID   int64  `db:"id" json:"id"`
+	Name string `db:"name" json:"name"`
+
+	// Crates - many-to-many relationship with the crates table.
+	Crates []*Crate `db:"-" json:"crates"`
+}
+
+// SealClient provides type-safe operations for the seals table.
+type SealClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single seal by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error)
+
+	// GetMany returns seals matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetSealsInput, opts ...func(*CallOptions[SealFieldOptions])) ([]*Seal, error)
+
+	// Exists returns true if a seal with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[SealFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any seal matches the given filter.
+	ExistsWhere(ctx context.Context, filter *SealFilter, opts ...func(*CallOptions[SealFieldOptions])) (bool, error)
+
+	// Count returns the number of seals matching the given filter.
+	Count(ctx context.Context, filter *SealFilter, opts ...func(*CallOptions[SealFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new seal and returns the created entity.
+	Create(ctx context.Context, input *CreateSealInput, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error)
+
+	// CreateMany inserts multiple seals in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateSealInput, opts ...func(*CallOptions[SealFieldOptions])) ([]*Seal, error)
+
+	// Update partially updates a seal by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateSealInput, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error)
+
+	// UpdateMany updates multiple seals and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateSealItem, opts ...func(*CallOptions[SealFieldOptions])) ([]*Seal, error)
+
+	// UpdateWhere updates all seals matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *SealFilter, input *UpdateSealInput, opts ...func(*CallOptions[SealFieldOptions])) ([]*Seal, error)
+
+	// Upsert inserts a seal or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateSealInput, target SealConflictTarget, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error)
+
+	// UpsertMany inserts or updates multiple seals in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateSealInput, target SealConflictTarget, opts ...func(*CallOptions[SealFieldOptions])) ([]*Seal, error)
+
+	// CreateWithRelated creates a seal together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateSealWithRelatedInput, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error)
+
+	// UpdateWithRelated updates a seal together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdateSealWithRelatedInput, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error)
+
+	// UpsertWithRelated inserts or updates a seal together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertSealWithRelatedInput, target SealConflictTarget, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a seal from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[SealFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple seals from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[SealFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all seals matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *SealFilter, opts ...func(*CallOptions[SealFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of seals with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[SealFilter], opts ...func(*CallOptions[SealFieldOptions])) (*PaginateResult[Seal], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of seals.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[SealFilter], opts ...func(*CallOptions[SealFieldOptions])) (*Connection[Seal], error)
+
+	// Stream returns an iterator over seals matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamSealsInput, opts ...func(*CallOptions[StreamSealFieldOptions])) iter.Seq2[*Seal, error]
+}
+
+// sealClient implements the SealClient interface.
+type sealClient struct {
+	querier           database.Querier
+	dialect           sql.Dialect
+	table             sql.Table
+	batchSize         int
+	queryLimit        int
+	pageSize          int
+	cursorKeys        []string
+	strictUpdates     bool
+	mutationHooks     []hook.MutationHook
+	queryHooks        []hook.QueryHook
+	panicHandler      hook.PanicHandler
+	callbackMode      database.CallbackMode
+	cratesDefaultSort []sql.Sort
+	crateClient       *crateClient
+	crateSealClient   *crateSealClient
+}
+
+// newSealClient creates a new sealClient.
+func newSealClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *sealClient {
+	return &sealClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "seals"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *sealClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *sealClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// sealAllColumns is the column list for full-entity reads, sorted for determinism.
+var sealAllColumns = []string{"id", "name"}
+
+// scanSeals scans rows into Seal entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanSeals(rows database.Rows, columns []string) ([]*Seal, error) {
+	var result []*Seal
+	for rows.Next() {
+		s := &Seal{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &s.ID
+			case "name":
+				targets[idx] = &s.Name
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan seal: %w", err)
+		}
+
+		result = append(result, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate seal rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single seal by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *sealClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get seal: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableSeals, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[SealFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SealFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		seals, err := c.GetMany(ctx, &GetSealsInput{
+			Filter: &SealFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(seals) == 0 {
+			return nil, ErrNotFound
+		}
+		return seals[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get seal: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Seal), nil
+}
+
+// GetMany returns seals matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *sealClient) GetMany(ctx context.Context, input *GetSealsInput, opts ...func(*CallOptions[SealFieldOptions])) ([]*Seal, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetSealsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many seals: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableSeals, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := sealAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "id")
+				}
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var seals []*Seal
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		seals, err = scanSeals(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, seals, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return seals, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many seals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Seal), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the id column into a narrowed projection when one is:
+// loadRelationships maps every child back through s.ID, which
+// an unselected column would leave at its zero value.
+func (fo *SealFieldOptions) loadsRelationships() bool {
+	if fo.Crates != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *sealClient) loadRelationships(ctx context.Context, conn database.Querier, seals []*Seal, options CallOptions[SealFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Crates != nil {
+		g.Go(func() error {
+			// Collect parent IDs
+			sealIDs := make([]int64, len(seals))
+			for idx, s := range seals {
+				sealIDs[idx] = s.ID
+			}
+
+			sorts := fo.Crates.Sorts
+			if len(sorts) == 0 {
+				sorts = c.cratesDefaultSort
+			}
+
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(sealIDs); start += 16383 {
+				chunk := sealIDs[start:min(start+16383, len(sealIDs))]
+
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "crate_seals"}, sql.SelectOptions{
+						Columns:    []string{"seal_id", "crate_id"},
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("seal_id")).In(toAnySlice(chunk)...)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load seal crates junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load seal crates junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "seal_id":
+							localIdx = i
+						case "crate_id":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey int64
+						var refKey int64
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan seal crates junction: %w", err)
+						}
+						parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate seal crates junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("seal_id")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("id")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("crate_id") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "crate_seals"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &CrateFilter{}
+				if fo.Crates.Filter != nil {
+					filter.And = append(filter.And, fo.Crates.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (seals) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedCrates, err := c.crateClient.GetMany(ctx, &GetCratesInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"id"},
+				}, func(co *CallOptions[CrateFieldOptions]) {
+					co.FieldOptions = fo.Crates.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load seal crates: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				parentsByTarget := make(map[string][]int, len(relatedCrates))
+				for i := start; i < start+len(chunk); i++ {
+					for _, tID := range parentToTargetIDs[fmt.Sprint(seals[i].ID)] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedCrates {
+					for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {
+						seals[i].Crates = append(seals[i].Crates, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new seal and returns the created entity.
+func (c *sealClient) Create(ctx context.Context, input *CreateSealInput, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateSealInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create seal: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableSeals, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"name"}
+		args := []any{input.Name}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create seal: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Seal), nil
+}
+
+// CreateMany inserts multiple seals in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *sealClient) CreateMany(ctx context.Context, inputs []*CreateSealInput, opts ...func(*CallOptions[SealFieldOptions])) ([]*Seal, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many seals: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableSeals, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Seal{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"name"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.Name,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetSealsInput{
+			Filter: &SealFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many seals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Seal), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *sealClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *sealClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan seal id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a seal by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *sealClient) Update(ctx context.Context, id int64, input *UpdateSealInput, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update seal: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableSeals, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[SealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update seal: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Seal), nil
+}
+
+// UpdateSealItem pairs a primary key with an update input for batch updates.
+type UpdateSealItem struct {
+	ID    int64            `json:"id"`
+	Input *UpdateSealInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple seals and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *sealClient) UpdateMany(ctx context.Context, items []UpdateSealItem, opts ...func(*CallOptions[SealFieldOptions])) ([]*Seal, error) {
+	// UpdateSealItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many seals: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableSeals, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Seal{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateSealItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_seal", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetSealsInput{
+			Filter: &SealFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many seals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Seal), nil
+}
+
+// UpdateWhere updates all seals matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *sealClient) UpdateWhere(ctx context.Context, filter *SealFilter, input *UpdateSealInput, opts ...func(*CallOptions[SealFieldOptions])) ([]*Seal, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update seals where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableSeals, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetSealsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[SealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated seal id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetSealsInput{
+			Filter: &SealFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update seals where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Seal), nil
+}
+
+// HardDelete permanently removes a seal from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *sealClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[SealFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableSeals, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete seal: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple seals from the database.
+func (c *sealClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[SealFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableSeals, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted seal key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many seals: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all seals matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *sealClient) HardDeleteWhere(ctx context.Context, filter *SealFilter, opts ...func(*CallOptions[SealFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableSeals, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted seal id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete seals where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *sealClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// SealConflictTarget identifies a unique constraint for upsert conflict detection.
+type SealConflictTarget int
+
+const (
+	SealConflictPK SealConflictTarget = iota // PRIMARY KEY (id)
+)
+
+// sealConflictColumns maps each conflict target to its column set.
+var sealConflictColumns = map[SealConflictTarget][]string{
+	SealConflictPK: {"id"},
+}
+
+// Upsert inserts a seal or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *sealClient) Upsert(ctx context.Context, input *CreateSealInput, target SealConflictTarget, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateSealInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert seal: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableSeals, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"name"}
+		args := []any{input.Name}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := sealConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert seal: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Seal), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *sealClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *sealClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple seals in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// seals.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *sealClient) UpsertMany(ctx context.Context, inputs []*CreateSealInput, target SealConflictTarget, opts ...func(*CallOptions[SealFieldOptions])) ([]*Seal, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many seals: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableSeals, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Seal{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"name"}
+		conflictColumns := sealConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateSealInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.Name,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateSealInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetSealsInput{
+			Filter: &SealFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many seals: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Seal), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// seals.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *sealClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level sealConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanSeals
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanSeals(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = sealColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// sealColumnValue returns one column's value off a scanned
+// Seal, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanSeals.
+func sealColumnValue(s *Seal, column string) any {
+	switch column {
+	case "id":
+		return s.ID
+	case "name":
+		return s.Name
+	}
+	return nil
+}
+
+// CreateSealWithRelatedInput holds the fields for creating a seals record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateSealWithRelatedInput struct {
+	// Seal holds the parent's own columns — identical to the input Create accepts.
+	Seal CreateSealInput `json:"seal"`
+
+	// Crates - many-to-many relationship with the crates table.
+	Crates *SealCratesCreateNested `json:"crates,omitempty"`
+}
+
+// UpdateSealWithRelatedInput holds the fields for updating a seals record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateSealWithRelatedInput struct {
+	// Seal holds the parent's own columns — identical to the input Update accepts.
+	Seal UpdateSealInput `json:"seal"`
+
+	// Crates - many-to-many relationship with the crates table.
+	Crates *SealCratesUpdateNested `json:"crates,omitempty"`
+}
+
+// UpsertSealWithRelatedInput holds the fields for upserting a seals record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateSealInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertSealWithRelatedInput struct {
+	// Seal holds the parent's own columns — identical to the input Upsert accepts.
+	Seal CreateSealInput `json:"seal"`
+
+	// Crates - many-to-many relationship with the crates table.
+	Crates *SealCratesUpdateNested `json:"crates,omitempty"`
+}
+
+// SealCratesCreateNested is the create-side verb block for Seal.Crates.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type SealCratesCreateNested struct {
+	Create  []*CreateCrateInput `json:"create,omitempty"`
+	Connect []int64             `json:"connect,omitempty"`
+}
+
+// SealCratesUpdateNested is the update-side verb block for Seal.Crates,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type SealCratesUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear   bool                `json:"clear,omitempty"`
+	Create  []*CreateCrateInput `json:"create,omitempty"`
+	Connect []int64             `json:"connect,omitempty"`
+}
+
+// sealCratesNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func sealCratesNestedFromCreate(n *SealCratesCreateNested) *SealCratesUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &SealCratesUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// sealNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+func sealNestedParentFieldOptions(fo *SealFieldOptions) *SealFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.Crates = nil
+	scalars.ID = true
+	return &scalars
+}
+
+// sealNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func sealNestedSelectsRelationship(fo *SealFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.Crates != nil
+}
+
+// CreateWithRelated creates a seal together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *sealClient) CreateWithRelated(ctx context.Context, input *CreateSealWithRelatedInput, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create seal with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Seal
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err := database.WithTransaction(ctx, c.querier, "create_seal_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.Seal, func(o *CallOptions[SealFieldOptions]) {
+			*o = options
+			o.FieldOptions = sealNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applySealCratesNested(ctx, parent, sealCratesNestedFromCreate(input.Crates), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if sealNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[SealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create seal with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a seal together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *sealClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdateSealWithRelatedInput, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update seal with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Seal
+	err := database.WithTransaction(ctx, c.querier, "update_seal_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.Seal, func(o *CallOptions[SealFieldOptions]) {
+			*o = options
+			o.FieldOptions = sealNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applySealCratesNested(ctx, parent, input.Crates, options); err != nil {
+			return err
+		}
+
+		if sealNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[SealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update seal with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a seal together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *sealClient) UpsertWithRelated(ctx context.Context, input *UpsertSealWithRelatedInput, target SealConflictTarget, opts ...func(*CallOptions[SealFieldOptions])) (*Seal, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert seal with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Seal
+	err := database.WithTransaction(ctx, c.querier, "upsert_seal_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.Seal, target, func(o *CallOptions[SealFieldOptions]) {
+			*o = options
+			o.FieldOptions = sealNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applySealCratesNested(ctx, parent, input.Crates, options); err != nil {
+			return err
+		}
+
+		if sealNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[SealFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert seal with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applySealCratesNested applies the Seal.Crates block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// link, disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *sealClient) applySealCratesNested(ctx context.Context, parent *Seal, nested *SealCratesUpdateNested, options CallOptions[SealFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	pid := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if err := c.crateSealClient.HardDeleteWhere(ctx, &CrateSealFilter{
+			SealID: &comparator.Number[int64]{Eq: new(pid)},
+		}, func(o *CallOptions[CrateSealFieldOptions]) {
+			nestedChildOptions(o, options)
+		}); err != nil {
+			return nestedError("Crates", "clear", nil, err)
+		}
+	}
+
+	targetIDs := make([]int64, 0, len(nested.Create)+len(connectIDs))
+
+	if len(nested.Create) > 0 {
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Crates", "create", nil, ErrNilInput)
+			}
+		}
+		// No traversed FK to elide on an M2M target — the parent's key goes
+		// into the junction row below — so this is the target's own create
+		// input verbatim. The PK-only selection is what the link step needs.
+		created, err := c.crateClient.CreateMany(ctx, nested.Create, func(o *CallOptions[CrateFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &CrateFieldOptions{ID: true}
+		})
+		if err != nil {
+			return nestedError("Crates", "create", nil, err)
+		}
+		for _, row := range created {
+			targetIDs = append(targetIDs, row.ID)
+		}
+	}
+
+	// The junction FK proves existence, not visibility. Reading through the
+	// target's OWN client applies its tenant filter, soft-delete default and
+	// access rules, so a target in another tenant is NOT_FOUND here rather
+	// than a junction row nobody can ever read.
+	if len(connectIDs) > 0 {
+		found := make(map[int64]bool, len(connectIDs))
+		// Chunked at c.batchSize. A single statement over the caller's
+		// whole list hits a bind-parameter ceiling that is dialect-dependent
+		// and lowest on SQLite (32766), and every dialect's error for it names
+		// no table, column, edge or verb, so it cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.crateClient.GetMany(ctx, &GetCratesInput{
+				Filter: &CrateFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[CrateFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &CrateFieldOptions{ID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Crates", "connect", nil, err)
+			}
+			for _, row := range visible {
+				found[row.ID] = true
+			}
+		}
+		for _, tid := range connectIDs {
+			if !found[tid] {
+				return nestedError("Crates", "connect", tid, ErrNotFound)
+			}
+		}
+		targetIDs = append(targetIDs, connectIDs...)
+	}
+
+	// link — UpsertMany, not CreateMany: re-adding an existing link is a set
+	// operation whose answer is "linked", and CreateMany raises a primary-key
+	// violation on it. The junction is a pure link table, so this compiles to
+	// ON CONFLICT DO NOTHING on every dialect.
+	if len(targetIDs) > 0 {
+		links := make([]*CreateCrateSealInput, 0, len(targetIDs))
+		seen := make(map[int64]bool, len(targetIDs))
+		for _, tid := range targetIDs {
+			if seen[tid] {
+				continue
+			}
+			seen[tid] = true
+			links = append(links, &CreateCrateSealInput{
+				SealID:  parent.ID,
+				CrateID: tid,
+			})
+		}
+		if _, err := c.crateSealClient.UpsertMany(ctx, links, CrateSealConflictCrateIDSealID, func(o *CallOptions[CrateSealFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &CrateSealFieldOptions{}
+		}); err != nil {
+			return nestedError("Crates", "link", nil, err)
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a seal with the given primary key exists.
+func (c *sealClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[SealFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableSeals, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists seal: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any seal matches the given filter.
+func (c *sealClient) ExistsWhere(ctx context.Context, filter *SealFilter, opts ...func(*CallOptions[SealFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableSeals, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists seals where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of seals matching the given filter.
+// A nil filter counts all seals.
+func (c *sealClient) Count(ctx context.Context, filter *SealFilter, opts ...func(*CallOptions[SealFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableSeals, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count seals: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of seals with total count for offset-based pagination.
+// A nil filter paginates all seals.
+func (c *sealClient) Paginate(ctx context.Context, input PaginateInput[SealFilter], opts ...func(*CallOptions[SealFieldOptions])) (*PaginateResult[Seal], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate seals: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableSeals, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		seals, err := c.GetMany(ctx, &GetSealsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[Seal]{
+			Items:      seals,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate seals: %w", err)
+	}
+	return result.(*PaginateResult[Seal]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of seals.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *sealClient) Connection(ctx context.Context, input ConnectionInput[SealFilter], opts ...func(*CallOptions[SealFieldOptions])) (*Connection[Seal], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection seals: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableSeals, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SealFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeSealCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeSealCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		seals, err := c.GetMany(ctx, &GetSealsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(seals) > limit
+		if hasMore {
+			seals = seals[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(seals)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Seal], len(seals))
+		for i, row := range seals {
+			cursor, err := encodeSealCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Seal]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Seal]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection seals: %w", err)
+	}
+	return result.(*Connection[Seal]), nil
+}
+
+// encodeSealCursor encodes cursor key values as a base64 JSON string.
+func encodeSealCursor(keys []string, s *Seal) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = s.ID
+		case "name":
+			out["name"] = s.Name
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode seal cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeSealCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeSealCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Seal
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamSealsInput holds query parameters for streaming seals records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamSealsInput struct {
+	Filter *SealFilter `json:"filter"`
+	Sorts  []sql.Sort  `json:"sorts"`
+}
+
+// StreamSealFieldOptions controls scalar column selection for seals streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamSealFieldOptions struct {
+	ID   bool `json:"id"`
+	Name bool `json:"name"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamSealFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamSealFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	return false
+}
+
+// scanSealRow scans a single row into a Seal entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanSealRow(rows database.Rows, columns []string) (*Seal, error) {
+	s := &Seal{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &s.ID
+		case "name":
+			targets[idx] = &s.Name
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan seal: %w", err)
+	}
+
+	return s, nil
+}
+
+// Stream returns an iterator over seals matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *sealClient) Stream(ctx context.Context, input *StreamSealsInput, opts ...func(*CallOptions[StreamSealFieldOptions])) iter.Seq2[*Seal, error] {
+	return func(yield func(*Seal, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamSealsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream seals: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *Seal, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream seals: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableSeals, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := sealAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				s, err := scanSealRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(s, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate seal rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream seals: %w", err))
+		}
+	}
+}
+
+// SealFilter provides type-safe filtering for the seals table.
+type SealFilter struct {
+	ID     *comparator.Number[int64] `json:"id"`
+	Name   *comparator.String        `json:"name"`
+	Crates *CrateFilter              `json:"crates"`
+	And    []*SealFilter             `json:"and"`
+	Or     []*SealFilter             `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *SealFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Name != nil {
+		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	if f.Crates != nil {
+		conds = append(conds, sealCratesFilterExists(f.Crates, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// sealCratesFilterExists compiles a CrateFilter set on the
+// Crates relationship into a correlated EXISTS over crates, joined through the crate_seals junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func sealCratesFilterExists(f *CrateFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "crate_seals"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "", Name: "crates"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("id") + " = " + jn + "." + dialect.QuoteIdentifier("crate_id") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("seal_id") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("id", sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// SealFieldOptions controls column selection and relationship loading for seals queries.
+type SealFieldOptions struct {
+	ID     bool                      `json:"id"`
+	Name   bool                      `json:"name"`
+	Crates *CrateRelationshipOptions `json:"crates"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *SealFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *SealFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":   "id",
+		"Name": "name",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *SealFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	if fo.Crates != nil {
+		return true
+	}
+	return false
+}
+
+// CreateSealInput holds the fields for creating a seals record.
+type CreateSealInput struct {
+	Name string `json:"name"`
+}
+
+// UpdateSealInput holds the fields for updating a seals record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateSealInput struct {
+	Name omittable.Value[string] `json:"name,omitzero"`
+}
+
+// GetSealsInput holds query parameters for retrieving seals records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetSealsInput struct {
+	Filter *SealFilter `json:"filter"`
+	Limit  *int        `json:"limit"`
+	Offset *int        `json:"offset"`
+	Sorts  []sql.Sort  `json:"sorts"`
 	// conditions holds additional SQL conditions injected by internal callers
 	// (e.g., Connection keyset conditions). Not part of the public API.
 	conditions []sql.Condition

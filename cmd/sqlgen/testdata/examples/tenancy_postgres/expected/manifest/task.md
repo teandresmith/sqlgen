@@ -36,6 +36,7 @@
 | --- | --- | --- | --- | --- |
 | badges | m2m | Badge | public.task_badges (task_id → badge_code) |  |
 | labels | m2m | Label | public.task_labels ((workspace_id, task_id) → (workspace_id, label_id)) |  |
+| reviewers | m2m | Reviewer | public.task_reviewers ((workspace_id, task_id) → (workspace_id, reviewer_id)) |  |
 
 ## Query methods
 
@@ -250,21 +251,21 @@ INSERT INTO "public"."tasks" (<columns>) VALUES <values> ON CONFLICT (<conflict_
 - Params: `input *CreateTaskWithRelatedInput`
 - Returns: `*Task`, `error`
 - Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Badges, Labels), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Badges, Labels, Reviewers), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
 
 ### UpdateWithRelated
 
 - Params: `id int64`, `input *UpdateTaskWithRelatedInput`
 - Returns: `*Task`, `error`
 - Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Badges, Labels), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Badges, Labels, Reviewers), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
 
 ### UpsertWithRelated
 
 - Params: `input *UpsertTaskWithRelatedInput`, `target TaskConflictTarget`
 - Returns: `*Task`, `error`
 - Errors: `ErrNilInput`, `ErrNotFound`, `ErrNestedVerbConflict`, `ErrConstraintViolation`, `tenancy.ErrMissing`, `tenancy.ErrMismatch`
-- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Badges, Labels), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
+- Notes: Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Badges, Labels, Reviewers), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none.
 
 ### HardDelete
 

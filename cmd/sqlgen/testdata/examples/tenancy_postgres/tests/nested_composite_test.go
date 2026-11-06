@@ -388,6 +388,76 @@ func TestUpdateWithRelated_MatchFullDisconnectNullsEveryMember(t *testing.T) {
 	}
 }
 
+// A surrogate-keyed junction links through the UNIQUE over the union of its two
+// keys. A re-link keeps the row and its surrogate, and the tenant comes from the
+// resolver as it does on a junction keyed by that union.
+func TestUpdateWithRelated_SurrogateTenantJunctionLinksThroughItsUnique(t *testing.T) {
+	resetDB(t)
+	env := newTenantEnv(t)
+	ctx := context.Background()
+
+	task := mkTask(t, env.clientA, "t")
+	connected, err := env.clientA.Reviewers().Create(ctx, &models.CreateReviewerInput{Name: "connected"})
+	if err != nil {
+		t.Fatalf("create reviewer: %v", err)
+	}
+	foreign, err := env.clientB.Reviewers().Create(ctx, &models.CreateReviewerInput{Name: "foreign"})
+	if err != nil {
+		t.Fatalf("create reviewer: %v", err)
+	}
+
+	links := func() map[int64]int64 {
+		t.Helper()
+		rows, err := testPool.Query(ctx, "SELECT reviewer_id, id FROM task_reviewers WHERE task_id = $1 AND workspace_id = $2", task.ID, tenantA)
+		if err != nil {
+			t.Fatalf("read links: %v", err)
+		}
+		defer rows.Close()
+		got := map[int64]int64{}
+		for rows.Next() {
+			var reviewer, id int64
+			if err := rows.Scan(&reviewer, &id); err != nil {
+				t.Fatalf("scan link: %v", err)
+			}
+			got[reviewer] = id
+		}
+		return got
+	}
+	update := func(block *models.TaskReviewersUpdateNested) error {
+		_, err := env.clientA.Tasks().UpdateWithRelated(ctx, task.ID, &models.UpdateTaskWithRelatedInput{Reviewers: block})
+		return err
+	}
+
+	if err := update(&models.TaskReviewersUpdateNested{
+		Connect: []int64{connected.ID},
+		Create:  []*models.CreateReviewerInput{{Name: "created"}},
+	}); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	first := links()
+	if len(first) != 2 {
+		t.Fatalf("links = %v, want the connected and the created reviewer", first)
+	}
+
+	if err := update(&models.TaskReviewersUpdateNested{Connect: []int64{connected.ID}}); err != nil {
+		t.Fatalf("re-link: %v", err)
+	}
+	got := links()
+	if len(got) != 2 || got[connected.ID] != first[connected.ID] {
+		t.Errorf("links after a re-link = %v, want %v", got, first)
+	}
+
+	err = update(&models.TaskReviewersUpdateNested{Connect: []int64{foreign.ID}})
+	assertNestedError(t, err, models.ErrNotFound, "Reviewers", "connect", foreign.ID)
+
+	if err := update(&models.TaskReviewersUpdateNested{Clear: true}); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if n := len(links()); n != 0 {
+		t.Errorf("links after clear = %d, want 0", n)
+	}
+}
+
 func TestUpdateWithRelated_TenantJunctionLinksAndUnlinksThroughEveryColumn(t *testing.T) {
 	resetDB(t)
 	env := newTenantEnv(t)

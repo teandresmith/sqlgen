@@ -1254,19 +1254,12 @@ func resolveNestedM2M(
 	if ineligible != nil {
 		return ineligible
 	}
-	conflict := ""
-	for _, ct := range junction.ConflictTargets {
-		if ct.CoversPK {
-			conflict = ct.ConstantName
-			break
-		}
-	}
+	conflict := junctionLinkTarget(junction, local, reference)
 	if conflict == "" {
-		// The upsert conflict-target rule one level down: a table whose
-		// uniqueness is app-enforced through `primary_key.columns` emits no
-		// conflict-target constant (PRD §9.5), and the link step has to pass
-		// one.
-		return reject("the junction table emits no PK-covering conflict-target constant for the link step to pass")
+		// The link step is `<Junction>().UpsertMany(dedup(created ∪ connected))`
+		// (PRD §9.9.6), and it runs for `create` as much as for `connect`, which
+		// is why this takes the whole edge rather than a verb.
+		return reject("the junction table emits no conflict-target constant equal to the union of its two keys for the link step to pass")
 	}
 
 	edge.JunctionStructName = junction.StructName
@@ -1383,11 +1376,32 @@ func resolveNestedM2MUnlink(
 	return nil
 }
 
+// junctionLinkTarget returns the junction's conflict target whose columns are
+// exactly the union of its two keys, or "" when it has none (PRD §9.9.4).
+//
+// A link row's keys are that union. A wider target names a column the row does
+// not supply, which is what a surrogate primary key is: UpsertMany refuses it at
+// run time or, on an application-generated key, inserts a fresh row per link. A
+// narrower one fires on any row sharing part of the pair, and its update half
+// rewrites that row into the new link.
+func junctionLinkTarget(junction *TableContext, local, reference []parser.KeyPair) string {
+	union := make(map[string]bool, len(local)+len(reference))
+	for _, p := range slices.Concat(local, reference) {
+		union[p.Local] = true
+	}
+	for _, ct := range junction.ConflictTargets {
+		if len(ct.Columns) == len(union) &&
+			!slices.ContainsFunc(ct.Columns, func(c string) bool { return !union[c] }) {
+			return ct.ConstantName
+		}
+	}
+	return ""
+}
+
 // resolveNestedJunction answers the eligibility rules that depend on the M2M
-// junction alone: it is generated, it emits the conflict target the link step's
-// UpsertMany takes, it declares every member of both keys, and it carries no
-// column beyond them that a link row could not populate or a re-link would
-// reset.
+// junction's columns: it is generated, it declares every member of both keys,
+// and it carries no column beyond them that a link row could not populate or a
+// re-link would reset.
 func resolveNestedJunction(rel RelationshipContext, local, reference []parser.KeyPair, byTable tableIndex) (*TableContext, *nestedIneligible) {
 	reject := func(reason string) (*TableContext, *nestedIneligible) {
 		return nil, &nestedIneligible{edge: rel.FieldName, reason: reason}
@@ -1396,14 +1410,6 @@ func resolveNestedJunction(rel RelationshipContext, local, reference []parser.Ke
 	junction, ok := byTable.lookup(rel.JunctionSchema, rel.JunctionTable)
 	if !ok {
 		return reject(fmt.Sprintf("the junction table %q is not in the generated set, so there is no client to write link rows through", rel.JunctionTable))
-	}
-	if len(junction.ConflictTargets) == 0 {
-		// The link step is `<Junction>().UpsertMany(dedup(created ∪ connected))`
-		// (PRD §9.9.6), and a junction with no conflict-target constant has
-		// its upsert operations resolved off (PRD §9.5), so there is neither a
-		// target to pass nor a method to call. It runs for `create` as much as
-		// for `connect`, which is why it takes the whole edge.
-		return reject("the junction table emits no PK-covering conflict-target constant for the link step to pass")
 	}
 	union := make(map[string]bool, len(local)+len(reference))
 	for _, p := range local {
@@ -1422,7 +1428,7 @@ func resolveNestedJunction(rel RelationshipContext, local, reference []parser.Ke
 	// The junction carries no column beyond its two keys. A required one
 	// is a column a nested link row cannot populate. An optional one is
 	// worse, because it fails silently: the link step upserts on the
-	// junction's key and UpsertMany puts every other insert column but a
+	// union of both keys and UpsertMany puts every other insert column but a
 	// sequence column in the update half, so re-linking an existing pair
 	// resets the column to its default and reports success. Measured on the
 	// mysql example: re-connecting a linked category took

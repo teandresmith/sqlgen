@@ -27,11 +27,13 @@ const fingerprintLabel = "958199e0"
 const fingerprintLineItem = "f12802fa"
 const fingerprintMilestone = "8b2d619d"
 const fingerprintProject = "cce3e94c"
+const fingerprintReviewer = "6da96b4c"
 const fingerprintSite = "ea1427e2"
 const fingerprintSprint = "4bd9698d"
 const fingerprintTask = "0edb5138"
 const fingerprintTaskBadge = "cc6db23f"
 const fingerprintTaskLabel = "28070e57"
+const fingerprintTaskReviewer = "8754cce4"
 const fingerprintTemplate = "91c0fe08"
 const fingerprintTemplateLabel = "2e330fb5"
 const fingerprintTemplateStep = "891f2663"
@@ -278,6 +280,22 @@ func (c *Cache) handleInvalidation(ctx context.Context, signal cache.Invalidatio
 		// Tenant lives inside the primary key — each signal PK carries it,
 		// so the receive side is precise even without a tenant stamp.
 		return c.invalidateAffectedTenanted(ctx, signal.Table, nil, signal.PKs)
+	case TableReviewers:
+		// Rebuild the exact per-PK key from the signal's tenant stamp: the
+		// %v round-trip makes the string form byte-identical to the local
+		// key, and the fingerprint is this receiver's own
+		// codegen constant — a rolling deploy only ever evicts keys this
+		// instance itself wrote. A tenant-less signal (out-of-band or
+		// pre-stamp publisher) degrades to the full-table pattern instead
+		// of erroring or going stale.
+		if signal.Tenant == "" {
+			return c.invalidateTenantedFallback(ctx, signal.Table, "invalidation signal carries no tenant")
+		}
+		tenants := make([]any, len(signal.PKs))
+		for i := range tenants {
+			tenants[i] = signal.Tenant
+		}
+		return c.invalidateAffectedTenanted(ctx, signal.Table, tenants, signal.PKs)
 	case TableSites:
 		// Rebuild the exact per-PK key from the signal's tenant stamp: the
 		// %v round-trip makes the string form byte-identical to the local
@@ -330,6 +348,22 @@ func (c *Cache) handleInvalidation(ctx context.Context, signal cache.Invalidatio
 		// Tenant lives inside the primary key — each signal PK carries it,
 		// so the receive side is precise even without a tenant stamp.
 		return c.invalidateAffectedTenanted(ctx, signal.Table, nil, signal.PKs)
+	case TableTaskReviewers:
+		// Rebuild the exact per-PK key from the signal's tenant stamp: the
+		// %v round-trip makes the string form byte-identical to the local
+		// key, and the fingerprint is this receiver's own
+		// codegen constant — a rolling deploy only ever evicts keys this
+		// instance itself wrote. A tenant-less signal (out-of-band or
+		// pre-stamp publisher) degrades to the full-table pattern instead
+		// of erroring or going stale.
+		if signal.Tenant == "" {
+			return c.invalidateTenantedFallback(ctx, signal.Table, "invalidation signal carries no tenant")
+		}
+		tenants := make([]any, len(signal.PKs))
+		for i := range tenants {
+			tenants[i] = signal.Tenant
+		}
+		return c.invalidateAffectedTenanted(ctx, signal.Table, tenants, signal.PKs)
 	case TableTemplateLabels:
 		// Tenant lives inside the primary key — each signal PK carries it,
 		// so the receive side is precise even without a tenant stamp.
@@ -2541,6 +2575,273 @@ func (c *Cache) hydrateProject(tenant uuid.UUID, pk ProjectPK, next hook.QueryHa
 	}()
 }
 
+// keyForReviewer builds the cache key for Reviewer by PK.
+// Tenanted form: tenant: segment lands before fingerprint:
+// so per-tenant pattern invalidation works with a single trailing wildcard.
+func (c *Cache) keyForReviewer(tenant uuid.UUID, pk int64) string {
+	return cache.BuildTenantKey(c.prefix, "public", "reviewers", fingerprintReviewer, tenant, pk)
+}
+
+// ttlForReviewer returns the resolved TTL for Reviewer cache entries.
+func (c *Cache) ttlForReviewer() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipReviewer reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipReviewer(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*ReviewerFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	if typed.Tasks != nil {
+		return true
+	}
+	return false
+}
+
+// fullParentFieldOptionsReviewer returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsReviewer() *ReviewerFieldOptions {
+	return &ReviewerFieldOptions{
+		ID:          true,
+		WorkspaceID: true,
+		Name:        true,
+	}
+}
+
+// readThroughReviewer implements the cache read-through path for Reviewer:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+// Tenanted: tenant comes from q.Tenant — resolved once at the entity-method
+// boundary and reused here without re-invoking TenantResolver.
+func (c *Cache) readThroughReviewer(ctx context.Context, tenant uuid.UUID, pk int64, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForReviewer(tenant, pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*Reviewer](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableReviewers, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableReviewers, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableReviewers)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableReviewers)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableReviewers)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateReviewer(tenant, pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*Reviewer](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*Reviewer)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForReviewer())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableReviewers, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableReviewers, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableReviewers)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setReviewer caches a full Reviewer entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+// Tenanted: tenant is supplied by the mutation hook from the row itself —
+// the PK struct when the tenant is part of the primary key, the structurally
+// captured m.AffectedTenants value otherwise — never the resolver, so
+// SkipTenancy creates write through under the correct key.
+func (c *Cache) setReviewer(ctx context.Context, tenant uuid.UUID, entity *Reviewer) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForReviewer(tenant, entity.ID)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForReviewer())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableReviewers, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableReviewers, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableReviewers)
+	}
+}
+
+// hydrateReviewer launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+// Tenanted: tenant comes from the readThrough caller — resolved once at the
+// entity-method boundary, threaded through both the cache key and the
+// hydration QueryContext.Tenant.
+func (c *Cache) hydrateReviewer(tenant uuid.UUID, pk int64, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForReviewer(tenant, pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableReviewers)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableReviewers,
+			Schema: schema,
+			PK:     pk,
+			Tenant: tenant,
+			CallOptions: CallOptions[ReviewerFieldOptions]{
+				FieldOptions: fullParentFieldOptionsReviewer(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableReviewers, err)
+			}
+			return
+		}
+		entity, ok := result.(*Reviewer)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableReviewers, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableReviewers, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForReviewer())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableReviewers, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableReviewers, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableReviewers, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableReviewers)
+			c.metrics.HydrationComplete(schema, TableReviewers, nil)
+		}
+	}()
+}
+
 // keyForSite builds the cache key for Site by PK.
 // Tenanted form: tenant: segment lands before fingerprint:
 // so per-tenant pattern invalidation works with a single trailing wildcard.
@@ -3100,6 +3401,9 @@ func hasAnyRelationshipTask(fo any) bool {
 		return true
 	}
 	if typed.Labels != nil {
+		return true
+	}
+	if typed.Reviewers != nil {
 		return true
 	}
 	return false
@@ -3879,6 +4183,272 @@ func (c *Cache) hydrateTaskLabel(tenant uuid.UUID, pk TaskLabelPK, next hook.Que
 		if c.metrics != nil {
 			c.metrics.Set(schema, TableTaskLabels)
 			c.metrics.HydrationComplete(schema, TableTaskLabels, nil)
+		}
+	}()
+}
+
+// keyForTaskReviewer builds the cache key for TaskReviewer by PK.
+// Tenanted form: tenant: segment lands before fingerprint:
+// so per-tenant pattern invalidation works with a single trailing wildcard.
+func (c *Cache) keyForTaskReviewer(tenant uuid.UUID, pk int64) string {
+	return cache.BuildTenantKey(c.prefix, "public", "task_reviewers", fingerprintTaskReviewer, tenant, pk)
+}
+
+// ttlForTaskReviewer returns the resolved TTL for TaskReviewer cache entries.
+func (c *Cache) ttlForTaskReviewer() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipTaskReviewer reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipTaskReviewer(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*TaskReviewerFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	_ = typed
+	return false
+}
+
+// fullParentFieldOptionsTaskReviewer returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsTaskReviewer() *TaskReviewerFieldOptions {
+	return &TaskReviewerFieldOptions{
+		ID:          true,
+		WorkspaceID: true,
+		TaskID:      true,
+		ReviewerID:  true,
+	}
+}
+
+// readThroughTaskReviewer implements the cache read-through path for TaskReviewer:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+// Tenanted: tenant comes from q.Tenant — resolved once at the entity-method
+// boundary and reused here without re-invoking TenantResolver.
+func (c *Cache) readThroughTaskReviewer(ctx context.Context, tenant uuid.UUID, pk int64, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForTaskReviewer(tenant, pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*TaskReviewer](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableTaskReviewers, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableTaskReviewers, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableTaskReviewers)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableTaskReviewers)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableTaskReviewers)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateTaskReviewer(tenant, pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*TaskReviewer](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*TaskReviewer)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForTaskReviewer())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableTaskReviewers, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableTaskReviewers, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableTaskReviewers)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setTaskReviewer caches a full TaskReviewer entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+// Tenanted: tenant is supplied by the mutation hook from the row itself —
+// the PK struct when the tenant is part of the primary key, the structurally
+// captured m.AffectedTenants value otherwise — never the resolver, so
+// SkipTenancy creates write through under the correct key.
+func (c *Cache) setTaskReviewer(ctx context.Context, tenant uuid.UUID, entity *TaskReviewer) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForTaskReviewer(tenant, entity.ID)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForTaskReviewer())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableTaskReviewers, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableTaskReviewers, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableTaskReviewers)
+	}
+}
+
+// hydrateTaskReviewer launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+// Tenanted: tenant comes from the readThrough caller — resolved once at the
+// entity-method boundary, threaded through both the cache key and the
+// hydration QueryContext.Tenant.
+func (c *Cache) hydrateTaskReviewer(tenant uuid.UUID, pk int64, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForTaskReviewer(tenant, pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableTaskReviewers)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableTaskReviewers,
+			Schema: schema,
+			PK:     pk,
+			Tenant: tenant,
+			CallOptions: CallOptions[TaskReviewerFieldOptions]{
+				FieldOptions: fullParentFieldOptionsTaskReviewer(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTaskReviewers, err)
+			}
+			return
+		}
+		entity, ok := result.(*TaskReviewer)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTaskReviewers, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTaskReviewers, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForTaskReviewer())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableTaskReviewers, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableTaskReviewers, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTaskReviewers, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableTaskReviewers)
+			c.metrics.HydrationComplete(schema, TableTaskReviewers, nil)
 		}
 	}()
 }
@@ -5542,6 +6112,8 @@ func (c *Cache) keysFor(table hook.TableName, pks []any) ([]string, error) {
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
 	case TableProjects:
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	case TableReviewers:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
 	case TableSites:
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
 	case TableSprints:
@@ -5549,6 +6121,8 @@ func (c *Cache) keysFor(table hook.TableName, pks []any) ([]string, error) {
 	case TableTasks:
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
 	case TableTaskLabels:
+		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
+	case TableTaskReviewers:
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
 	case TableTemplateLabels:
 		return nil, fmt.Errorf("cache: InvalidateMany(%q): table is tenanted; use cache hook auto-invalidation or InvalidateTable / BuildTenantTablePattern", table)
@@ -5684,6 +6258,18 @@ func (c *Cache) invalidateAffectedTenanted(ctx context.Context, table hook.Table
 			}
 			keys = append(keys, c.keyForProject(pk.WorkspaceID, pk))
 		}
+	case TableReviewers:
+		if len(tenants) < len(pks) {
+			return c.invalidateTenantedFallback(ctx, table, "captured tenant carrier missing")
+		}
+		for i, pk := range pks {
+			if tenants[i] == nil {
+				// Row not materialized by the mutation — nothing cached
+				// changed for this PK; skip (hook.AffectedTenants contract).
+				continue
+			}
+			keys = append(keys, cache.BuildTenantKey(c.prefix, "public", "reviewers", fingerprintReviewer, tenants[i], pk))
+		}
 	case TableSites:
 		if len(tenants) < len(pks) {
 			return c.invalidateTenantedFallback(ctx, table, "captured tenant carrier missing")
@@ -5729,6 +6315,18 @@ func (c *Cache) invalidateAffectedTenanted(ctx context.Context, table hook.Table
 				return c.invalidateTenantedFallback(ctx, table, fmt.Sprintf("unexpected PK type %T", rawPK))
 			}
 			keys = append(keys, c.keyForTaskLabel(pk.WorkspaceID, pk))
+		}
+	case TableTaskReviewers:
+		if len(tenants) < len(pks) {
+			return c.invalidateTenantedFallback(ctx, table, "captured tenant carrier missing")
+		}
+		for i, pk := range pks {
+			if tenants[i] == nil {
+				// Row not materialized by the mutation — nothing cached
+				// changed for this PK; skip (hook.AffectedTenants contract).
+				continue
+			}
+			keys = append(keys, cache.BuildTenantKey(c.prefix, "public", "task_reviewers", fingerprintTaskReviewer, tenants[i], pk))
 		}
 	case TableTemplateLabels:
 		// Tenant lives inside the primary key — read it from each PK
@@ -5836,6 +6434,8 @@ func cacheRelationFor(table hook.TableName) (schema, name string, ok bool) {
 		return "public", "milestones", true
 	case TableProjects:
 		return "public", "projects", true
+	case TableReviewers:
+		return "public", "reviewers", true
 	case TableSites:
 		return "public", "sites", true
 	case TableSprints:
@@ -5846,6 +6446,8 @@ func cacheRelationFor(table hook.TableName) (schema, name string, ok bool) {
 		return "public", "task_badges", true
 	case TableTaskLabels:
 		return "public", "task_labels", true
+	case TableTaskReviewers:
+		return "public", "task_reviewers", true
 	case TableTemplates:
 		return "public", "templates", true
 	case TableTemplateLabels:
@@ -6089,6 +6691,21 @@ func (c *Cache) QueryHook() hook.QueryHook {
 					return next(ctx, q)
 				}
 				return c.readThroughProject(ctx, tenant, pk, q, next)
+			case TableReviewers:
+				pk, ok := q.PK.(int64)
+				if !ok {
+					return next(ctx, q)
+				}
+				// Tenanted table: tenant must be resolved by the entity
+				// method and threaded via q.Tenant. A nil/wrong-type
+				// Tenant means the caller bypassed tenant resolution
+				// (e.g. SkipTenancy = true) — fall through to the DB
+				// rather than risking a cross-tenant cache hit.
+				tenant, ok := q.Tenant.(uuid.UUID)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughReviewer(ctx, tenant, pk, q, next)
 			case TableSites:
 				pk, ok := q.PK.(int64)
 				if !ok {
@@ -6155,6 +6772,21 @@ func (c *Cache) QueryHook() hook.QueryHook {
 					return next(ctx, q)
 				}
 				return c.readThroughTaskLabel(ctx, tenant, pk, q, next)
+			case TableTaskReviewers:
+				pk, ok := q.PK.(int64)
+				if !ok {
+					return next(ctx, q)
+				}
+				// Tenanted table: tenant must be resolved by the entity
+				// method and threaded via q.Tenant. A nil/wrong-type
+				// Tenant means the caller bypassed tenant resolution
+				// (e.g. SkipTenancy = true) — fall through to the DB
+				// rather than risking a cross-tenant cache hit.
+				tenant, ok := q.Tenant.(uuid.UUID)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughTaskReviewer(ctx, tenant, pk, q, next)
 			case TableTemplates:
 				pk, ok := q.PK.(int64)
 				if !ok {
@@ -6383,6 +7015,20 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 					// by fieldOptsSet above.
 					c.setProject(ctx, entity.WorkspaceID, entity)
 				}
+			case TableReviewers:
+				if entity, ok := result.(*Reviewer); ok {
+					// Tenant sourced from the structural capture —
+					// never the resolver — so a
+					// SkipTenancy create writes through under the correct
+					// tenant-scoped key. A nil capture (no tenant value
+					// reached the INSERT) skips the write-through:
+					// safe-lossy, the next read hydrates the cache.
+					if len(affectedTenants) > 0 {
+						if tenant, ok := affectedTenants[0].(uuid.UUID); ok {
+							c.setReviewer(ctx, tenant, entity)
+						}
+					}
+				}
 			case TableSites:
 				if entity, ok := result.(*Site); ok {
 					// Tenant sourced from the structural capture —
@@ -6435,6 +7081,20 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 					// (full) entity's PK field; partial results are gated
 					// by fieldOptsSet above.
 					c.setTaskLabel(ctx, entity.WorkspaceID, entity)
+				}
+			case TableTaskReviewers:
+				if entity, ok := result.(*TaskReviewer); ok {
+					// Tenant sourced from the structural capture —
+					// never the resolver — so a
+					// SkipTenancy create writes through under the correct
+					// tenant-scoped key. A nil capture (no tenant value
+					// reached the INSERT) skips the write-through:
+					// safe-lossy, the next read hydrates the cache.
+					if len(affectedTenants) > 0 {
+						if tenant, ok := affectedTenants[0].(uuid.UUID); ok {
+							c.setTaskReviewer(ctx, tenant, entity)
+						}
+					}
 				}
 			case TableTemplates:
 				if entity, ok := result.(*Template); ok {
@@ -6655,6 +7315,27 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 						c.setProject(ctx, entity.WorkspaceID, entity)
 					}
 				}
+			case TableReviewers:
+				if entities, ok := result.([]*Reviewer); ok {
+					// GetMany result order is not guaranteed to match
+					// AffectedPKs, so the captured tenants are re-aligned to
+					// entities via their PK — the same reason setReviewer
+					// reads the PK off the entity.
+					tenantByPK := make(map[int64]any, len(affected))
+					for i, rawPK := range affected {
+						if i >= len(affectedTenants) {
+							break
+						}
+						if pk, ok := rawPK.(int64); ok {
+							tenantByPK[pk] = affectedTenants[i]
+						}
+					}
+					for _, entity := range entities {
+						if tenant, ok := tenantByPK[entity.ID].(uuid.UUID); ok {
+							c.setReviewer(ctx, tenant, entity)
+						}
+					}
+				}
 			case TableSites:
 				if entities, ok := result.([]*Site); ok {
 					// GetMany result order is not guaranteed to match
@@ -6730,6 +7411,27 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 						// Tenant lives in the primary key — read it from
 						// each (full) entity's PK field.
 						c.setTaskLabel(ctx, entity.WorkspaceID, entity)
+					}
+				}
+			case TableTaskReviewers:
+				if entities, ok := result.([]*TaskReviewer); ok {
+					// GetMany result order is not guaranteed to match
+					// AffectedPKs, so the captured tenants are re-aligned to
+					// entities via their PK — the same reason setTaskReviewer
+					// reads the PK off the entity.
+					tenantByPK := make(map[int64]any, len(affected))
+					for i, rawPK := range affected {
+						if i >= len(affectedTenants) {
+							break
+						}
+						if pk, ok := rawPK.(int64); ok {
+							tenantByPK[pk] = affectedTenants[i]
+						}
+					}
+					for _, entity := range entities {
+						if tenant, ok := tenantByPK[entity.ID].(uuid.UUID); ok {
+							c.setTaskReviewer(ctx, tenant, entity)
+						}
 					}
 				}
 			case TableTemplates:
@@ -6876,6 +7578,10 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 				// Tenanted tables rebuild each key from the row's own
 				// captured tenant — never a cross-tenant clear.
 				return c.invalidateAffectedTenanted(ctx, table, affectedTenants, affected)
+			case TableReviewers:
+				// Tenanted tables rebuild each key from the row's own
+				// captured tenant — never a cross-tenant clear.
+				return c.invalidateAffectedTenanted(ctx, table, affectedTenants, affected)
 			case TableSites:
 				// Tenanted tables rebuild each key from the row's own
 				// captured tenant — never a cross-tenant clear.
@@ -6889,6 +7595,10 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 				// captured tenant — never a cross-tenant clear.
 				return c.invalidateAffectedTenanted(ctx, table, affectedTenants, affected)
 			case TableTaskLabels:
+				// Tenanted tables rebuild each key from the row's own
+				// captured tenant — never a cross-tenant clear.
+				return c.invalidateAffectedTenanted(ctx, table, affectedTenants, affected)
+			case TableTaskReviewers:
 				// Tenanted tables rebuild each key from the row's own
 				// captured tenant — never a cross-tenant clear.
 				return c.invalidateAffectedTenanted(ctx, table, affectedTenants, affected)
@@ -7020,6 +7730,8 @@ func hasAnyRelationshipFieldOptions(table hook.TableName, callOpts any) bool {
 		return hasAnyRelationshipMilestone(fo)
 	case TableProjects:
 		return hasAnyRelationshipProject(fo)
+	case TableReviewers:
+		return hasAnyRelationshipReviewer(fo)
 	case TableSites:
 		return hasAnyRelationshipSite(fo)
 	case TableSprints:
@@ -7030,6 +7742,8 @@ func hasAnyRelationshipFieldOptions(table hook.TableName, callOpts any) bool {
 		return hasAnyRelationshipTaskBadge(fo)
 	case TableTaskLabels:
 		return hasAnyRelationshipTaskLabel(fo)
+	case TableTaskReviewers:
+		return hasAnyRelationshipTaskReviewer(fo)
 	case TableTemplates:
 		return hasAnyRelationshipTemplate(fo)
 	case TableTemplateLabels:

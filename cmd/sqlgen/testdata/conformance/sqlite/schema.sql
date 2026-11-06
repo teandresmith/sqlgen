@@ -163,3 +163,16 @@ CREATE TABLE crate_items (
     PRIMARY KEY (crate_id, order_id, product_id),
     FOREIGN KEY (order_id, product_id) REFERENCES order_items (order_id, product_id)
 );
+
+-- A junction keyed by a surrogate: the link step has to target its UNIQUE.
+CREATE TABLE seals (
+    id   INTEGER PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE crate_seals (
+    id       INTEGER PRIMARY KEY,
+    crate_id BIGINT NOT NULL REFERENCES crates (id),
+    seal_id  BIGINT NOT NULL REFERENCES seals (id),
+    UNIQUE (crate_id, seal_id)
+);

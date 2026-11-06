@@ -1,6 +1,7 @@
 package gen_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -290,11 +291,12 @@ func TestNestedEligibility_TenantJunctionUnlinkNeedsPKOverTheUnion(t *testing.T)
 CREATE TABLE teams (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id));
 CREATE TABLE labels (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id));`
 	tests := []struct {
-		name, junction string
-		want           verbs
+		name, junction, target string
+		want                   verbs
 	}{
 		{
-			name: "pk equals union",
+			name:   "pk equals union",
+			target: "TeamLabelConflictPK",
 			junction: `CREATE TABLE team_labels (workspace_id bigint NOT NULL, team_id bigint NOT NULL, label_id bigint NOT NULL,
   PRIMARY KEY (workspace_id, team_id, label_id),
   FOREIGN KEY (workspace_id, team_id) REFERENCES teams (workspace_id, id),
@@ -302,7 +304,8 @@ CREATE TABLE labels (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE
 			want: verbs{create: true, connect: true, disconnect: true, clear: true},
 		},
 		{
-			name: "surrogate pk has no disconnect",
+			name:   "surrogate pk has no disconnect",
+			target: "TeamLabelConflictWorkspaceIDTeamIDLabelID",
 			junction: `CREATE TABLE team_labels (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, workspace_id bigint NOT NULL,
   team_id bigint NOT NULL, label_id bigint NOT NULL,
   UNIQUE (workspace_id, team_id, label_id),
@@ -314,8 +317,77 @@ CREATE TABLE labels (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			teams := keyMembersContexts(t, config.DialectPostgres, parents+tt.junction, nil)["teams"]
-			if got := edgeVerbs(nestedEdge(t, teams, "Labels")); got != tt.want {
+			e := nestedEdge(t, teams, "Labels")
+			if got := edgeVerbs(e); got != tt.want {
 				t.Errorf("teams.Labels verbs = %+v, want %+v", got, tt.want)
+			}
+			if e.JunctionConflictTarget != tt.target {
+				t.Errorf("teams.Labels link target = %q, want %q", e.JunctionConflictTarget, tt.target)
+			}
+		})
+	}
+}
+
+// The link step targets the conflict target equal to the union of both junction
+// keys, and an edge with neither a PRIMARY KEY nor a UNIQUE equal to it is
+// refused: a listed edge fails generation, an auto-included one is omitted.
+func TestNestedEligibility_JunctionLinkTargetIsTheUnionOfItsKeys(t *testing.T) {
+	const parents = `
+CREATE TABLE teams (id bigint PRIMARY KEY, name text NOT NULL);
+CREATE TABLE labels (id bigint PRIMARY KEY, name text NOT NULL);`
+	const fks = `team_id bigint NOT NULL REFERENCES teams (id), label_id bigint NOT NULL REFERENCES labels (id)`
+	const surrogate = `CREATE TABLE team_labels (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, ` + fks
+	tests := []struct {
+		name, junction string
+		// target is the constant the link step passes, "" when the edge is refused.
+		target string
+	}{
+		{name: "unique over the union", junction: surrogate + `, UNIQUE (team_id, label_id));`, target: "TeamLabelConflictTeamIDLabelID"},
+		{name: "column order does not matter", junction: surrogate + `, UNIQUE (label_id, team_id));`, target: "TeamLabelConflictLabelIDTeamID"},
+		{name: "a unique index counts", junction: surrogate + `); CREATE UNIQUE INDEX team_labels_uq ON team_labels (team_id, label_id);`, target: "TeamLabelConflictTeamIDLabelID"},
+		{name: "no unique", junction: surrogate + `);`},
+		{name: "partial unique", junction: surrogate + `, deleted_at timestamptz); CREATE UNIQUE INDEX team_labels_uq ON team_labels (team_id, label_id) WHERE deleted_at IS NULL;`},
+		{name: "unique narrower than the union", junction: surrogate + `, UNIQUE (team_id));`},
+		{name: "unique wider than the union", junction: surrogate + `, UNIQUE (id, team_id, label_id));`},
+		{name: "unique of the union's size over other columns", junction: surrogate + `, UNIQUE (id, team_id));`},
+		{name: "pk narrower than the union", junction: `CREATE TABLE team_labels (team_id bigint PRIMARY KEY REFERENCES teams (id), label_id bigint NOT NULL REFERENCES labels (id));`},
+	}
+	declared := func(listed bool) func(*config.RootConfig) {
+		return func(cfg *config.RootConfig) {
+			tc := config.TableConfig{Relationships: []config.TableRelationship{{
+				Name: "Labels", Type: "many_to_many", Table: "labels", Junction: "team_labels",
+				JunctionLocalFK: config.KeyColumns{"team_id"}, JunctionReferenceFK: config.KeyColumns{"label_id"},
+			}}}
+			if listed {
+				tc.NestedMutations = &config.TableNestedMutationsConfig{Relationships: []config.TableNestedRelationship{{Name: "Labels"}}}
+			}
+			cfg.Tables["teams"] = tc
+		}
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ddl := parents + tt.junction
+			_, listedErr := buildKeyMembersContexts(t, config.DialectPostgres, ddl, declared(true))
+			teams := keyMembersContexts(t, config.DialectPostgres, ddl, declared(false))["teams"]
+			if tt.target == "" {
+				const want = "conflict-target constant equal to the union of its two keys"
+				if listedErr == nil || !strings.Contains(listedErr.Error(), want) {
+					t.Errorf("listed: error = %v, want it to contain %q", listedErr, want)
+				}
+				if slices.Contains(nestedEdgeNames(teams), "Labels") {
+					t.Error("auto-included edge survived with no conflict target equal to the union")
+				}
+				return
+			}
+			if listedErr != nil {
+				t.Fatalf("listed: error = %v, want nil", listedErr)
+			}
+			e := nestedEdge(t, teams, "Labels")
+			if e.JunctionConflictTarget != tt.target {
+				t.Errorf("link target = %q, want %q", e.JunctionConflictTarget, tt.target)
+			}
+			if want := (verbs{create: true, connect: true, clear: true}); edgeVerbs(e) != want {
+				t.Errorf("verbs = %+v, want %+v", edgeVerbs(e), want)
 			}
 		})
 	}

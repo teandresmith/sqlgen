@@ -94,11 +94,13 @@ type Client struct {
 	lineItem           *lineItemClient
 	milestone          *milestoneClient
 	project            *projectClient
+	reviewer           *reviewerClient
 	site               *siteClient
 	sprint             *sprintClient
 	task               *taskClient
 	taskBadge          *taskBadgeClient
 	taskLabel          *taskLabelClient
+	taskReviewer       *taskReviewerClient
 	template           *templateClient
 	templateLabel      *templateLabelClient
 	templateStep       *templateStepClient
@@ -143,11 +145,13 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		lineItem:           newLineItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		milestone:          newMilestoneClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		project:            newProjectClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		reviewer:           newReviewerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		site:               newSiteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		sprint:             newSprintClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		task:               newTaskClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		taskBadge:          newTaskBadgeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		taskLabel:          newTaskLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		taskReviewer:       newTaskReviewerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		template:           newTemplateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		templateLabel:      newTemplateLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		templateStep:       newTemplateStepClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -189,10 +193,12 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.lineItem.tenantResolver = options.tenantResolver
 	c.milestone.tenantResolver = options.tenantResolver
 	c.project.tenantResolver = options.tenantResolver
+	c.reviewer.tenantResolver = options.tenantResolver
 	c.site.tenantResolver = options.tenantResolver
 	c.sprint.tenantResolver = options.tenantResolver
 	c.task.tenantResolver = options.tenantResolver
 	c.taskLabel.tenantResolver = options.tenantResolver
+	c.taskReviewer.tenantResolver = options.tenantResolver
 	c.template.tenantResolver = options.tenantResolver
 	c.templateLabel.tenantResolver = options.tenantResolver
 	c.templateStep.tenantResolver = options.tenantResolver
@@ -210,6 +216,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.cycle.callbackMode = options.callbackMode
 	c.label.callbackMode = options.callbackMode
 	c.milestone.callbackMode = options.callbackMode
+	c.reviewer.callbackMode = options.callbackMode
 	c.sprint.callbackMode = options.callbackMode
 	c.task.callbackMode = options.callbackMode
 	c.template.callbackMode = options.callbackMode
@@ -227,11 +234,15 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.label.templateLabelClient = c.templateLabel
 	c.milestone.checkpointClient = c.checkpoint
 	c.project.taskClient = c.task
+	c.reviewer.taskClient = c.task
+	c.reviewer.taskReviewerClient = c.taskReviewer
 	c.sprint.taskClient = c.task
 	c.task.badgeClient = c.badge
 	c.task.labelClient = c.label
+	c.task.reviewerClient = c.reviewer
 	c.task.taskBadgeClient = c.taskBadge
 	c.task.taskLabelClient = c.taskLabel
+	c.task.taskReviewerClient = c.taskReviewer
 	c.template.templateStepClient = c.templateStep
 	c.template.labelClient = c.label
 	c.template.templateLabelClient = c.templateLabel
@@ -286,6 +297,11 @@ func (c *Client) Projects() ProjectClient {
 	return c.project
 }
 
+// Reviewers returns the ReviewerClient for Reviewer operations.
+func (c *Client) Reviewers() ReviewerClient {
+	return c.reviewer
+}
+
 // Sites returns the SiteClient for Site operations.
 func (c *Client) Sites() SiteClient {
 	return c.site
@@ -309,6 +325,11 @@ func (c *Client) TaskBadges() TaskBadgeClient {
 // TaskLabels returns the TaskLabelClient for TaskLabel operations.
 func (c *Client) TaskLabels() TaskLabelClient {
 	return c.taskLabel
+}
+
+// TaskReviewers returns the TaskReviewerClient for TaskReviewer operations.
+func (c *Client) TaskReviewers() TaskReviewerClient {
+	return c.taskReviewer
 }
 
 // Templates returns the TemplateClient for Template operations.

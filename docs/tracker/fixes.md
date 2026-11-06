@@ -23,72 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-364
-
-- **Status:** Open
-- **Severity:** blocking
-- **Origin:** phase 32, cmd/sqlgen/gen
-- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe on PostgreSQL
-- **Vetted:** corrected at `e48ece8b` (2026-11-06)
-
-**Issue.** **On a surrogate-PK junction every M2M link fails, on the first link and not only on a
-re-link.** PRD §9.9.3 makes `create` and `connect` eligible on such a junction, and the generator
-emits both, but the call fails with `upsert many team_labels: conflict target names a column the
-input does not supply, so the written rows cannot be identified`. A verb that is generated and can
-never succeed is the failure E13 exists to prevent. The Completion Record's "It loses `disconnect`
-only" was wrong and is corrected. `TestNestedEligibility_TenantJunctionUnlinkNeedsPKOverTheUnion/surrogate pk has no disconnect`
-pins `create: true, connect: true` and never checks the link target. Those verbs are right once
-the target is the fixture's `UNIQUE (workspace_id, team_id, label_id)`.
-
-**Root cause.** `resolveNestedM2M` (`cmd/sqlgen/gen/context_nested.go:1198`, the `ct.CoversPK` loop at `:1234`) takes the junction's
-`<Junction>ConflictPK`, here `(id)`, and the link input never supplies `id`. The one-column shape
-fails the same way, so the bug predates 32.6, which extends it to composite tenant junctions.
-`docs/tracker/backlog.md` (2026-10-02, `[reading]`) predicted a re-link failure; the measured
-failure is earlier.
-
-**Suggested fix.**
-- **Ruled 2026-11-06:** the link step targets the conflict target whose columns equal the union of
-  both keys, and an edge with no such target is refused under E13.
-- `junctionLinkTarget` in `context_nested.go` selects it by set equality. The rejection reads "the
-  junction table emits no conflict-target constant equal to the union of its two keys for the link
-  step to pass". The early zero-targets check in `resolveNestedJunction` goes, so a no-target junction
-  that also fails E5 now reports E5.
-- Amend PRD E13, E5's wording, §9.9.6 and §9.9.7 (a UNIQUE link target adds one read-back statement per
-  sub-batch). Rewrite `gen.nested.e13-junction-conflict-target`, add `gen.nested.e13-no-union-target-refused`
-  and `update-with-related.surrogate-junction-link`, and add the example test to `nested.junction-key-union`.
-- Tests: `TestNestedEligibility_JunctionLinkTargetIsTheUnionOfItsKeys` (9 rows, listed a hard error and
-  auto-included omitted), a link-target assertion on the surrogate fixture, conformance
-  `UpdateWithRelated/a junction keyed by a surrogate links through its UNIQUE, and a re-link keeps the
-  row` (new `seals`, `crate_seals`), and tenancy_postgres
-  `TestUpdateWithRelated_SurrogateTenantJunctionLinksThroughItsUnique` (new `reviewers`, `task_reviewers`).
-- Remove the 2026-10-02 surrogate-junction line from `docs/tracker/backlog.md` when this lands.
-- Corrected from the original: no verb expectation changes, since the fixture's UNIQUE equals the union;
-  the PRD scope widens to §9.9.7 and E5; the changing registry row is the E13 one, not E5.
-- Outcomes, measured: surrogate plus UNIQUE equal to the union survives with `create`, `connect`, `clear`
-  (`create` and `connect` only with a soft-delete column). A `primary_key.columns` override over the pair
-  with such a UNIQUE is newly admitted, measured at context level only. A PK narrower than the union is
-  newly refused: at HEAD on SQLite the second link silently moved the first (`narrow=1 → narrow=2`).
-  Nothing else that worked at HEAD is refused.
-- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced on sqlite, postgres and mysql
-  conformance and tenancy_postgres with `conflict target names a column the input does not supply, so
-  the written rows cannot be identified`, on the first link. Gates: `go test -race ./gen`, `TestE2EGoldenFiles`,
-  conformance on all four legs, tenancy_postgres, `golangci-lint`, `make req-check` and `make refs-check`
-  green. Fail-first: reverting the selection to `ct.CoversPK` fails the surrogate fixture with
-  `teams.Labels link target = "TeamLabelConflictPK", want "TeamLabelConflictWorkspaceIDTeamIDLabelID"` and
-  all 9 new rows; dropping the length check or the membership check each fails its row; the live tests fail
-  under the base CLI with the message above; the existing suite passes without the fix. Golden churn: none
-  from the ruling, which leaves every existing example byte-identical; the new fixtures add
-  tenancy_postgres +4/~12 in each of `expected/` and `models/`, and conformance ~4 per dialect. Not measured:
-  the read-back statement count, since the harness records no statements inside a transaction.
-  `docs/conformance/REPORT.md` needs `make conformance`. Patch: `.claude/prototypes/FIX-364.patch`.
-
-**References.**
-- PRD §9.9.3, §9.9.4 (E5, E13), §9.9.6.
-- Registry: `nested.junction-key-union`, `gen.nested.e13-junction-conflict-target`.
-- FIX-365 touches the same region of `context_nested.go`.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-366
 
 - **Status:** Open
@@ -694,6 +628,95 @@ mismatch), `:1016` (composite no-op) and `:1018` (single-column no-op), with the
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-364
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe on PostgreSQL
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **On a surrogate-PK junction every M2M link fails, on the first link and not only on a
+re-link.** PRD §9.9.3 makes `create` and `connect` eligible on such a junction, and the generator
+emits both, but the call fails with `upsert many team_labels: conflict target names a column the
+input does not supply, so the written rows cannot be identified`. A verb that is generated and can
+never succeed is the failure E13 exists to prevent. The Completion Record's "It loses `disconnect`
+only" was wrong and is corrected. `TestNestedEligibility_TenantJunctionUnlinkNeedsPKOverTheUnion/surrogate pk has no disconnect`
+pins `create: true, connect: true` and never checks the link target. Those verbs are right once
+the target is the fixture's `UNIQUE (workspace_id, team_id, label_id)`.
+
+**Root cause.** `resolveNestedM2M` (`cmd/sqlgen/gen/context_nested.go:1223`, the `ct.CoversPK` loop, now `junctionLinkTarget` at `:1386`) took the junction's
+`<Junction>ConflictPK`, here `(id)`, and the link input never supplies `id`. The one-column shape
+fails the same way, so the bug predates 32.6, which extends it to composite tenant junctions.
+`docs/tracker/backlog.md` (2026-10-02, `[reading]`) predicted a re-link failure; the measured
+failure is earlier.
+
+**Suggested fix.**
+- **Ruled 2026-11-06:** the link step targets the conflict target whose columns equal the union of
+  both keys, and an edge with no such target is refused under E13.
+- `junctionLinkTarget` in `context_nested.go` selects it by set equality. The rejection reads "the
+  junction table emits no conflict-target constant equal to the union of its two keys for the link
+  step to pass". The early zero-targets check in `resolveNestedJunction` goes, so a no-target junction
+  that also fails E5 now reports E5.
+- Amend PRD E13, E5's wording, §9.9.6 and §9.9.7 (a UNIQUE link target adds one read-back statement per
+  sub-batch). Rewrite `gen.nested.e13-junction-conflict-target`, add `gen.nested.e13-no-union-target-refused`
+  and `update-with-related.surrogate-junction-link`, and add the example test to `nested.junction-key-union`.
+- Tests: `TestNestedEligibility_JunctionLinkTargetIsTheUnionOfItsKeys` (9 rows, listed a hard error and
+  auto-included omitted), a link-target assertion on the surrogate fixture, conformance
+  `UpdateWithRelated/a junction keyed by a surrogate links through its UNIQUE, and a re-link keeps the
+  row` (new `seals`, `crate_seals`), and tenancy_postgres
+  `TestUpdateWithRelated_SurrogateTenantJunctionLinksThroughItsUnique` (new `reviewers`, `task_reviewers`).
+- Remove the 2026-10-02 surrogate-junction line from `docs/tracker/backlog.md` when this lands.
+- Corrected from the original: no verb expectation changes, since the fixture's UNIQUE equals the union;
+  the PRD scope widens to §9.9.7 and E5; the changing registry row is the E13 one, not E5.
+- Outcomes, measured: surrogate plus UNIQUE equal to the union survives with `create`, `connect`, `clear`
+  (`create` and `connect` only with a soft-delete column). A `primary_key.columns` override over the pair
+  with such a UNIQUE is newly admitted, measured at context level only. A PK narrower than the union is
+  newly refused: at HEAD on SQLite the second link silently moved the first (`narrow=1 → narrow=2`).
+  The one other refusal: a surrogate on an application-generated key with no UNIQUE was eligible at HEAD and, by
+  reading, wrote a duplicate on each re-link, so refusing it is right under the ruling.
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): does the tenant column count
+  as part of the link row, so `UNIQUE (workspace_id, team_id, label_id)` over single-column foreign keys serves
+  → no, it stays refused, because the ruling reads "equal to the union", the code is gated green, no golden moves,
+  no public surface changes, and the PRD says nothing that it reverses. The reviewer raised the question without
+  recommending a side; the recommendation is the implementer's, and composite tenant foreign keys are the
+  supported route.
+- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced on sqlite, postgres and mysql
+  conformance and tenancy_postgres with `conflict target names a column the input does not supply, so
+  the written rows cannot be identified`, on the first link. Gates: `go test -race ./gen`, `TestE2EGoldenFiles`,
+  conformance on all four legs, tenancy_postgres, `golangci-lint`, `make req-check` and `make refs-check`
+  green. Fail-first: reverting the selection to `ct.CoversPK` fails the surrogate fixture with
+  `teams.Labels link target = "TeamLabelConflictPK", want "TeamLabelConflictWorkspaceIDTeamIDLabelID"` and
+  all 9 new rows; dropping the length check or the membership check each fails its row; the live tests fail
+  under the base CLI with the message above; the existing suite passes without the fix. Golden churn: none
+  from the ruling, which leaves every existing example byte-identical; the new fixtures add
+  tenancy_postgres +4/~12 in each of `expected/` and `models/`, and conformance ~4 per dialect. Not measured:
+  the read-back statement count, since the harness records no statements inside a transaction.
+  `docs/conformance/REPORT.md` needs `make conformance`. Patch: `.claude/prototypes/FIX-364.patch`.
+
+**References.**
+- PRD §9.9.3, §9.9.4 (E5, E13), §9.9.6, §9.9.7.
+- Registry: `nested.junction-key-union`, `gen.nested.e13-junction-conflict-target`,
+  `gen.nested.e13-no-union-target-refused`, `update-with-related.surrogate-junction-link`.
+- FIX-365 touches the same region of `context_nested.go`.
+
+**Resolution notes.** `junctionLinkTarget` in `context_nested.go` selects the conflict target whose
+columns equal the union of both junction keys, by set equality, and an edge with no such target is refused
+under E13. The early zero-targets check in `resolveNestedJunction` is gone, so a no-target junction that
+also fails E5 reports E5. PRD E13, E5, §9.9.6 and §9.9.7 amended; `gen.nested.e13-junction-conflict-target`
+rewritten, `gen.nested.e13-no-union-target-refused` and `update-with-related.surrogate-junction-link` added,
+`nested.junction-key-union` extended. New tests: `TestNestedEligibility_JunctionLinkTargetIsTheUnionOfItsKeys`,
+a link-target assertion on the surrogate fixture, conformance `seals` / `crate_seals` on every leg and
+tenancy_postgres `reviewers` / `task_reviewers`. The prototype applied with `--3way`; only the registry's §9.9
+anchors conflicted, since FIX-365 changed §9.9, and §9.9, §9.9.6 and §9.9.7 were rehashed. Golden churn matches
+the vet. FIX-365's refusal of a NULL target stands on this shape:
+`TestNestedEligibility_NullableReferencedColumnIsNotWriteEligible/reference side, nullable junction column` is
+a surrogate junction with a UNIQUE equal to the union, and E1 refuses it before the link target is read. The
+2026-10-02 surrogate-junction line left `docs/tracker/backlog.md`. `/verify` corrections applied: the MySQL
+`crate_seals` fixture uses table-level foreign keys, since MySQL ignores an inline `REFERENCES`; E13 names the
+application-key outcome; the E13 registry row cites the primary-key case; `docs/tracker/phase-32.md` updated.
+
 ### FIX-365
 
 - **Status:** Resolved

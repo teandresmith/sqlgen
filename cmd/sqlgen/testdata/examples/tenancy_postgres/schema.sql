@@ -75,6 +75,25 @@ CREATE TABLE task_labels (
     FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id)
 );
 
+-- A tenant junction keyed by a surrogate: the link step targets the UNIQUE over
+-- the union of its two keys, and the edge has no `disconnect`.
+CREATE TABLE reviewers (
+    id BIGSERIAL PRIMARY KEY,
+    workspace_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (workspace_id, id)
+);
+
+CREATE TABLE task_reviewers (
+    id BIGSERIAL PRIMARY KEY,
+    workspace_id UUID NOT NULL,
+    task_id BIGINT NOT NULL,
+    reviewer_id BIGINT NOT NULL,
+    UNIQUE (workspace_id, task_id, reviewer_id),
+    FOREIGN KEY (workspace_id, task_id) REFERENCES tasks (workspace_id, id),
+    FOREIGN KEY (workspace_id, reviewer_id) REFERENCES reviewers (workspace_id, id)
+);
+
 -- A junction into a UNIQUE column: the link row takes badge_code off the target.
 CREATE TABLE badges (
     id BIGSERIAL PRIMARY KEY,
