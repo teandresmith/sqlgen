@@ -97,3 +97,74 @@ CREATE TABLE posts (
     deleted_at TIMESTAMP(6) NULL,
     FOREIGN KEY (author_id) REFERENCES authors(id)
 );
+
+-- Edges through composite foreign keys. item_notes (O2M) and item_receipts (O2O,
+-- a unique member) reach the composite primary key of order_items. parcels (O2M)
+-- reach a UNIQUE pair with a nullable referenced column, through nullable
+-- members. item_stations links order_items and stations through two composite
+-- keys that share product_id, the shape of a tenant junction. stations carries
+-- no foreign key of its own, so products keeps its edges.
+CREATE TABLE item_notes (
+    id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+    order_id   BIGINT NOT NULL,
+    product_id BIGINT NOT NULL,
+    body       VARCHAR(64) NOT NULL,
+    deleted_at TIMESTAMP(6) NULL,
+    FOREIGN KEY (order_id, product_id) REFERENCES order_items (order_id, product_id)
+);
+
+CREATE TABLE item_receipts (
+    id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+    order_id   BIGINT NOT NULL UNIQUE,
+    product_id BIGINT NOT NULL,
+    code       VARCHAR(64) NOT NULL,
+    FOREIGN KEY (order_id, product_id) REFERENCES order_items (order_id, product_id)
+);
+
+CREATE TABLE shelves (
+    id     BIGINT AUTO_INCREMENT PRIMARY KEY,
+    region VARCHAR(64) NOT NULL,
+    bin    BIGINT,
+    tag    VARCHAR(64) UNIQUE,
+    UNIQUE (region, bin)
+);
+
+CREATE TABLE parcels (
+    id     BIGINT AUTO_INCREMENT PRIMARY KEY,
+    region VARCHAR(64),
+    bin    BIGINT,
+    label  VARCHAR(64) NOT NULL,
+    FOREIGN KEY (region, bin) REFERENCES shelves (region, bin)
+);
+
+CREATE TABLE stations (
+    id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+    product_id BIGINT NOT NULL,
+    name       VARCHAR(64) NOT NULL,
+    UNIQUE (product_id, id)
+);
+
+CREATE TABLE item_stations (
+    order_id   BIGINT NOT NULL,
+    product_id BIGINT NOT NULL,
+    station_id BIGINT NOT NULL,
+    PRIMARY KEY (order_id, product_id, station_id),
+    FOREIGN KEY (order_id, product_id) REFERENCES order_items (order_id, product_id),
+    FOREIGN KEY (product_id, station_id) REFERENCES stations (product_id, id)
+);
+
+-- A one-column key into a nullable UNIQUE column, and an M2M from a one-column
+-- key into a composite primary key.
+CREATE TABLE crates (
+    id        BIGINT AUTO_INCREMENT PRIMARY KEY,
+    shelf_tag VARCHAR(64) REFERENCES shelves (tag),
+    label     VARCHAR(64) NOT NULL
+);
+
+CREATE TABLE crate_items (
+    crate_id   BIGINT NOT NULL REFERENCES crates (id),
+    order_id   BIGINT NOT NULL,
+    product_id BIGINT NOT NULL,
+    PRIMARY KEY (crate_id, order_id, product_id),
+    FOREIGN KEY (order_id, product_id) REFERENCES order_items (order_id, product_id)
+);

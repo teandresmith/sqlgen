@@ -100,7 +100,7 @@ func keyMembersContexts(t *testing.T, dialect config.Dialect, ddl string, mutate
 // buildKeyMembersContexts is keyMembersContexts returning the build error.
 func buildKeyMembersContexts(t *testing.T, dialect config.Dialect, ddl string, mutate func(*config.RootConfig)) (map[string]gen.TableContext, error) {
 	t.Helper()
-	gen.GenerateCompositeKeyEdgesForTest(t)
+	gen.WriteCompositeKeyEdgesForTest(t)
 	schema := parseDDLForTest(t, dialect, ddl)
 	parser.DetectRelationships(schema)
 	cfg := testInput(schema).Config
@@ -119,6 +119,84 @@ func buildKeyMembersContexts(t *testing.T, dialect config.Dialect, ddl string, m
 		byName[tc.TableName] = tc
 	}
 	return byName, nil
+}
+
+// A composite-key edge generates its reads, and nested writes do not reach it:
+// listing one is an error with that reason, and an unlisted one carries no
+// surface (PRD §9.9.4).
+func TestNestedEligibility_CompositeKeyEdgeIsNotWriteEligibleYet(t *testing.T) {
+	const ddl = `
+CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id));
+CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_id bigint,
+  FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`
+	build := func(t *testing.T, listed bool) (map[string]gen.TableContext, error) {
+		t.Helper()
+		schema := parseDDLForTest(t, config.DialectPostgres, ddl)
+		parser.DetectRelationships(schema)
+		cfg := testInput(schema).Config
+		cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
+		if listed {
+			cfg.Tables["cycles"] = config.TableConfig{NestedMutations: &config.TableNestedMutationsConfig{
+				Relationships: []config.TableNestedRelationship{{Name: "Tasks"}},
+			}}
+		}
+		contexts, err := gen.BuildTableContextsFromSchema(schema, cfg)
+		byName := make(map[string]gen.TableContext, len(contexts))
+		for _, tc := range contexts {
+			byName[tc.TableName] = tc
+		}
+		return byName, err
+	}
+
+	t.Run("unlisted", func(t *testing.T) {
+		tables, err := build(t, false)
+		if err != nil {
+			t.Fatalf("BuildTableContextsFromSchema() error: %v", err)
+		}
+		cycles := tables["cycles"]
+		if len(cycles.O2MRelationships) != 1 {
+			t.Fatalf("cycles O2M relationships = %d, want the composite edge", len(cycles.O2MRelationships))
+		}
+		if got := nestedEdgeNames(cycles); len(got) != 0 {
+			t.Errorf("cycles nested edges = %q, want none", got)
+		}
+	})
+
+	t.Run("listed", func(t *testing.T) {
+		_, err := build(t, true)
+		const want = "the edge joins through a composite key, which nested writes do not reach yet"
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("BuildTableContextsFromSchema() error = %v, want it to contain %q", err, want)
+		}
+	})
+}
+
+// A key referencing a nullable UNIQUE column loads, and has no nested surface: a
+// parent holding NULL there has no key to give a child.
+func TestNestedEligibility_NullableReferencedColumnIsNotWriteEligible(t *testing.T) {
+	schema := parseDDLForTest(t, config.DialectPostgres, `
+CREATE TABLE teams (id bigint PRIMARY KEY, code text UNIQUE);
+CREATE TABLE members (id bigint PRIMARY KEY, team_code text REFERENCES teams(code));`)
+	parser.DetectRelationships(schema)
+	cfg := testInput(schema).Config
+	cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
+	contexts, err := gen.BuildTableContextsFromSchema(schema, cfg)
+	if err != nil {
+		t.Fatalf("BuildTableContextsFromSchema() error: %v", err)
+	}
+	for _, tc := range contexts {
+		if tc.TableName != "teams" {
+			continue
+		}
+		if len(tc.O2MRelationships) != 1 {
+			t.Fatalf("teams O2M relationships = %d, want the edge to members", len(tc.O2MRelationships))
+		}
+		if got := nestedEdgeNames(tc); len(got) != 0 {
+			t.Errorf("teams nested edges = %q, want none", got)
+		}
+		return
+	}
+	t.Fatal("no context for teams")
 }
 
 // verbs is the rewrite half of a nested edge's verb set.

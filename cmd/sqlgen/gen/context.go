@@ -318,6 +318,14 @@ type RelationshipContext struct {
 	// the MATCH type of the edge's own FOREIGN KEY, SIMPLE when it has none.
 	SharedMembers []string
 	Match         parser.MatchType
+	// LoadKey is what a keyed loader reads: the O2M or has-one key, or an M2M
+	// junction's key into this table. LoadReferenceKey is the M2M junction's
+	// key into the target. Empty when KeyedLoad is false.
+	LoadKey          []KeyMemberContext
+	LoadReferenceKey []KeyMemberContext
+	// JunctionColumns are the junction columns an M2M load scans, each once:
+	// a tenant junction's two keys share the tenant column.
+	JunctionColumns []JunctionColumnContext
 	// ParentKey is the column on this table that the edge's key references:
 	// the parent side of an O2M, has-one or M2M edge, which the loaders
 	// collect off each row and the nested writers copy into the key. It is
@@ -545,6 +553,13 @@ type RelationshipFilterContext struct {
 	// is joined to, the target's PK unless it references a UNIQUE column.
 	// Only set for M2M.
 	TargetPKColumn string
+	// CorrelationColumns and CorrelationKey are a composite key's pairs, the
+	// parent's columns and the child's or junction's columns equal to them.
+	// TargetJoin is an M2M junction's key into the target. CompositeKey says
+	// when they replace the one-column fields above.
+	CorrelationColumns []string
+	CorrelationKey     []string
+	TargetJoin         []parser.KeyPair
 	// Discriminator is the relationship's config `discriminator:` predicate
 	// (PRD §13.4.1), or nil. Mutually exclusive with StaticFilterExpr.
 	//
@@ -1471,6 +1486,8 @@ type O2OJoinDetail struct {
 	// OnRemote is the target-side column: the target's first PK, or the FK on
 	// the target when FKOnTarget (has-one).
 	OnRemote string
+	// ExtraOn are the key's further pairs, each ANDed onto the ON clause.
+	ExtraOn []O2OOnPair
 	// Filter is the polymorphic filter expression (empty if none).
 	Filter string
 
@@ -1711,8 +1728,52 @@ func (t TableContext) resolvesTenantDirectly() bool {
 		t.HasTenantedO2OChild || t.HasTenantedRelationshipFilter
 }
 
-// O2MLoadUnchunked reports that the O2M loaders fetch every parent's children
-// in one statement instead of one per chunk of parent keys (PRD §25.1). On
+// CompositeKey reports that the EXISTS correlates or joins on several columns.
+func (f RelationshipFilterContext) CompositeKey() bool {
+	return len(f.CorrelationKey) > 1 || len(f.TargetJoin) > 1
+}
+
+// O2OOnPair is one further equality of an O2O join's ON clause.
+type O2OOnPair struct {
+	Local  string
+	Remote string
+}
+
+// KeyMemberContext is one pair of a composite key as the loaders read it.
+type KeyMemberContext struct {
+	// Column, FieldName and GoType describe the column holding the key: the
+	// child's FK column, or the junction's. A junction member has no Go field.
+	Column    string
+	FieldName string
+	GoType    string
+	// Var is the local an M2M load scans a junction column into.
+	Var string
+	// Referenced is the column it references on the parent or the target.
+	Referenced ColumnContext
+}
+
+// JunctionColumnContext is one column an M2M load scans off the junction.
+type JunctionColumnContext struct {
+	Name   string
+	GoType string
+	Var    string
+}
+
+// KeyedLoad reports that the edge loads by key tuples: its key has several
+// columns on some side, or a referenced column that can hold a NULL, which the
+// one-column loader's plain list cannot skip. Every other edge keeps that
+// loader.
+func (r RelationshipContext) KeyedLoad() bool {
+	return len(r.LoadKey) > 0
+}
+
+// CompositeKey reports that the edge's key has several columns on some side.
+func (r RelationshipContext) CompositeKey() bool {
+	return len(r.Key) > 1 || len(r.JunctionLocal) > 1 || len(r.JunctionReference) > 1
+}
+
+// O2MLoadUnchunked reports that the plain O2M loader (KeyedLoad false) fetches every parent's
+// children in one statement instead of one per chunk of parent keys (PRD §25.1). On
 // PostgreSQL with pgx the FK filter's comparator binds the whole key list as
 // one array parameter (= ANY($1), PRD Appendix A), so the parent count never
 // reaches the bind-parameter limit. Every other dialect and driver chunks,

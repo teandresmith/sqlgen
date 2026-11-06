@@ -23,6 +23,12 @@ tables:
   revisions:
     batch_size: 2
   order_items:
+    # Detection gives an O2O its belongs-to side; the has-one side is declared.
+    relationships:
+      - name: Receipt
+        type: one_to_one
+        table: item_receipts
+        fk: [order_id, product_id]
     # Smaller than the rows a zero-input Connection subtest seeds, so the
     # default page size is observable.
     page_size: 2

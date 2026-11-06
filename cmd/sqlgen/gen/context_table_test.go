@@ -1111,6 +1111,38 @@ func TestBuildRelationshipContexts_DeclaredReplacesInferred(t *testing.T) {
 	}
 }
 
+// A one-pair manual relationship over a composite foreign key replaces the
+// detected edge it duplicates, with the warning, so a config declaring the edge
+// by hand keeps generating what it declared (PRD §13.4).
+func TestBuildRelationshipContexts_DeclaredOverCompositeFK(t *testing.T) {
+	schema := parseDDLForTest(t, config.DialectPostgres, `
+CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id));
+CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, cycle_id bigint,
+  FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id));`)
+	parser.DetectRelationships(schema)
+	in := testInput(schema)
+	in.Config.Tables["cycles"] = config.TableConfig{Relationships: []config.TableRelationship{
+		{Name: "Tasks", Type: "one_to_many", Table: "tasks", FK: config.KeyColumns{"cycle_id"}},
+	}}
+	contexts, err := gen.BuildTableContexts(in, nil)
+	if err != nil {
+		t.Fatalf("BuildTableContexts() error: %v", err)
+	}
+	i := slices.IndexFunc(contexts, func(tc gen.TableContext) bool { return tc.TableName == "cycles" })
+	if i < 0 {
+		t.Fatal("no cycles context")
+	}
+	if got := relationshipNames(contexts[i].Relationships); !slices.Equal(got, []string{"Tasks"}) {
+		t.Errorf("cycles relationships = %q, want the declared Tasks only", got)
+	}
+	if got := contexts[i].Relationships[0].Key; len(got) != 1 {
+		t.Errorf("key = %v, want the declared pair", got)
+	}
+	if !slices.ContainsFunc(in.Warnings, func(w string) bool { return strings.Contains(w, `"Tasks"`) && strings.Contains(w, "§13.4") }) {
+		t.Errorf("warnings = %q, want the replacement notice", in.Warnings)
+	}
+}
+
 // TestValidateResolvedFieldNames_DuplicateRelationshipField pins the
 // §13.7.3 row 2 rule that nothing enforced: two relationships on one table
 // resolving to the same Go field. config.validateRelationships compares

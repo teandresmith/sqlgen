@@ -32,7 +32,7 @@ func declaredJunctionKeys(schema *parser.Schema, r config.TableRelationship, sou
 
 // junctionKeyColumn resolves one side of declaredJunctionKeys: the override's
 // first column, else the column inferred from the linked table (tSchema,
-// tName). checkDeclaredKeyColumns rejects an override of more than one column.
+// tName). The pairs carry every column of an override.
 func junctionKeyColumn(schema *parser.Schema, r config.TableRelationship, source, key string, override config.KeyColumns, tSchema, tName string) (string, error) {
 	if len(override) > 0 {
 		return override[0], nil
@@ -98,29 +98,4 @@ func declaredKey(cols config.KeyColumns, pk []string) []parser.KeyPair {
 		pairs[i] = parser.KeyPair{Local: cols[i], Referenced: pk[i]}
 	}
 	return pairs
-}
-
-// checkDeclaredKeyColumns rejects a declared key of more than one column until
-// relationships through a composite key generate.
-func checkDeclaredKeyColumns(r config.TableRelationship, source string) error {
-	if generateCompositeKeyEdges {
-		return nil
-	}
-	var errs []error
-	for _, k := range []struct {
-		name string
-		cols config.KeyColumns
-	}{
-		{"fk", r.FK},
-		{"junction_local_fk", r.JunctionLocalFK},
-		{"junction_reference_fk", r.JunctionReferenceFK},
-	} {
-		if len(k.cols) > 1 {
-			errs = append(errs, fmt.Errorf(
-				"tables.%s.relationships: %q declares %s: %s, a key of %d columns; relationships through a composite key are not generated yet (PRD §13.4)",
-				source, r.Name, k.name, k.cols, len(k.cols),
-			))
-		}
-	}
-	return errors.Join(errs...)
 }

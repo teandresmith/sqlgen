@@ -50,6 +50,9 @@ type Capabilities struct {
 	// RowLocks: a LockMode other than LockNone adds a row-lock clause to a
 	// read inside a transaction. Without it, any such LockMode is an error.
 	RowLocks bool
+	// CompositeLoadChunk is how many keys of two columns one loader statement
+	// binds (PRD §25.1).
+	CompositeLoadChunk int
 }
 
 // Capability names one Capabilities field.

@@ -6,7 +6,7 @@ PRD Sections: 4.6, 4.8, 4.13, 5.3, 8.1.7, 8.2, 8.6, 8.7, 9.8.13, 9.9, 11.1, 13.1
 > **Design.** `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (option D, ruled 2026-10-20) is the
 > source for every sub-item below. Its §6 lists sub-items N.0–N.8, which are 32.0–32.8 here. Its §10
 > behavior contract (retrofitted 2026-11-05) lists, in §10.5, the contract rows each sub-item turns
-> from planned to passing, and §10.2 the regression guards; its §12 records contract rulings Q1–Q5.
+> from planned to passing, and §10.2 the regression guards; its §12 records contract rulings Q1–Q7.
 > Its §7 records rulings R1–R7, each taking the recommended option from a measured probe (§9.4):
 > - R1: pinned set = tenant column, child-PK members, members shared with another FK; E1 over
 >   every non-tenant member; every member in the model on both sides.
@@ -937,32 +937,32 @@ rerun after the review fix; goldens regenerated again with no change.
 
 **PRD Reference:** Sections 11.1, 13.2, 25.1, 29.10
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] O2O inline JOIN (`get.go.tmpl`): `ON` ANDs every pair. `JoinClause.On` stays opaque.
-- [ ] O2M loader: collect the parent's referenced-column tuples; filter the child on its FK
+- [x] O2O inline JOIN (`get.go.tmpl`): `ON` ANDs every pair. `JoinClause.On` stays opaque.
+- [x] O2M loader: collect the parent's referenced-column tuples; filter the child on its FK
   members through `Get<T>Input.conditions` (append, never replace; `Filter.PKs` is not reused);
   group by `[N]string` of `fkLoadKey`s. N = 1 keeps today's `IN` / pgx `= ANY($1)` shape.
-- [ ] M2M loader (`relationships.go.tmpl`): the junction step filters on a tuple per parent
+- [x] M2M loader (`relationships.go.tmpl`): the junction step filters on a tuple per parent
   chunk; the target fetch matches the target key against
   `(SELECT j.ref … FROM junction j WHERE (j.local …) IN (chunk))`, FIX-359's subquery with tuple
   IN; maps key on `[N]string`.
-- [ ] Chunk every step with `loadChunkSize N` (funcmap, FIX-359), passing the key's column count.
-  `O2MLoadUnchunked` (`context.go:1674`) is true only for N = 1 on pgx.
-- [ ] Force every referenced column on in the parent's `FieldOptions` and every FK member on in
+- [x] Chunk every step with `loadChunkSize N` (funcmap, FIX-359), passing the key's column count.
+  `O2MLoadUnchunked` is true for any pgx table; the template branches on `KeyedLoad` first, so only a plain one-column key stays unchunked.
+- [x] Force every referenced column on in the parent's `FieldOptions` and every FK member on in
   the child's.
-- [ ] Skip NULL members before the query: a child with any NULL member and a parent key with a
+- [x] Skip NULL members before the query: a child with any NULL member and a parent key with a
   NULL member match nothing (R2).
-- [ ] Relationship filters (`EXISTS`): correlate on every pair through the 32.1 `Exists`; lift the
-  composite-PK-parent skip (`context_relfilter.go:139`, `len(tc.PKColumns) != 1`).
-- [ ] Conformance schema (design §12 Q1): on every dialect, add a table with a composite FK into
+- [x] Relationship filters (`EXISTS`): correlate on every pair through the 32.1 `Exists`; lift the
+  composite-PK-parent skip (`len(tc.PKColumns) != 1` in `context_relfilter.go`, removed).
+- [x] Conformance schema (design §12 Q1): on every dialect, add a table with a composite FK into
   `order_items(order_id, product_id)` (a composite-PK target) and one with a composite FK into a
   UNIQUE pair, with a nullable member and a nullable referenced UNIQUE column. Regenerate the
   suite's goldens; only the new tables change. The `conformance:` rows of design §10.1 run here
   and fail first against the staging guard.
-- [ ] Lift the staging guard for reads: a detected edge with more than one pair is generated, and
+- [x] Lift the staging guard for reads: a detected edge with more than one pair is generated, and
   a declared one no longer errors. Invert 32.2's staging-guard test. Until 32.6 such an edge is
   nested-ineligible with that reason.
 
@@ -971,28 +971,121 @@ rerun after the review fix; goldens regenerated again with no change.
 - The tenant pattern loads `Cycle.Tasks` through `(workspace_id, cycle_id) → (workspace_id, id)`,
   and the O2O join and the `EXISTS` filter use both pairs.
 - A composite-PK parent gets relationship filters (read surfaces only, R3).
-- Every step binds at most `floor(L / 2 / N)` parent keys. PRD §25.1's count holds with `s = C`
+- Every step binds at most `floor(L / 2 / N)` parent keys, and at most 4000 on PostgreSQL for a key of several columns (design §12 Q6). PRD §25.1's count holds with `s = C`
   for a composite O2M on pgx.
 - Go goldens of existing examples are unchanged.
 
 ### Tests Required
 
-- [ ] Gen pattern tests (`get_test.go`) for the N = 2 O2O join, O2M and M2M loaders, and the
+- [x] Gen pattern tests (`get_test.go`) for the N = 2 O2O join, O2M and M2M loaders, and the
   2-pair `EXISTS`.
-- [ ] Loaders: an N = 2 load past one chunk on every dialect, checking every child set (extend
+- [x] Loaders: an N = 2 load past one chunk on every dialect, checking every child set (extend
   FIX-359's `relationship_bind_limit_test.go` pattern). Fails first against the staging guard.
-- [ ] NULL members: a child with a NULL member and a parent UNIQUE key with a NULL member load
+- [x] NULL members: a child with a NULL member and a parent UNIQUE key with a NULL member load
   nothing and raise no error.
-- [ ] A consumer filter with a soft-delete comparator is ANDed with the tuple filter, not
+- [x] A consumer filter with a soft-delete comparator is ANDed with the tuple filter, not
   replaced (the FIX-359 regression shape at N = 2).
-- [ ] The conformance rows (composite O2O / O2M / M2M loads, NULL members, the relationship
+- [x] The conformance rows (composite O2O / O2M / M2M loads, NULL members, the relationship
   filter, a narrowed projection) on every dialect and driver.
-- [ ] Every design §10.5 row for 32.5 passes, and its registry row lists the test.
-- [ ] `TestE2EGoldenFiles` green with no golden change.
+- [x] Every design §10.5 row for 32.5 passes, and its registry row lists the test.
+- [x] `TestE2EGoldenFiles` green with no golden change.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-11-05 on `design/tenant-composite-fk-relationships`. Verified and accepted 2026-11-06.
+
+**Regression guards, green before any change** (`cb0666f2`): the design §10.2 rows on this sub-item's
+paths in `gen` and `sql`, including `TestGetTemplate_o2mRelationshipLoading`,
+`TestGetTemplate_m2mRelationshipLoading`, the one-pair O2O and filter tests,
+`TestNestedEligibility_*` and `TestRelationshipCallOptions`. `TestE2EGoldenFiles` is skipped under
+`-short` and lives in `cmd/sqlgen`; `make update-golden-e2e` is the run that counts.
+
+**Fail first.** Against the guard, before any non-test change:
+`TestGetTemplate_o2mCompositeKeyLoading` (3 subtests), `TestGetTemplate_m2mCompositeKeyLoading`,
+`TestGetTemplate_m2mIntoCompositePKTarget`, `TestRequiredColumns_compositeKeyMembers`,
+`TestBuildO2OJoinDetails_CompositeKeyJoinsEveryPair/belongs-to`,
+`TestFilterTemplate_CompositeKeyCorrelatesEveryPair` (2) and
+`TestRelationshipFilters_MemberForAnyKey/composite-PK parent`, `/m2m into a composite-PK target`
+all failed on the missing edge. The conformance suite, with the new schema generated by `cb0666f2` on
+the SQLite module, failed to compile (`it.ItemNotes undefined`, `s.Parcels undefined`).
+`TestRelationshipFilters_MemberForAnyKey/edge into a unique key` passed: 32.4 already made that N = 1
+shape work, so it is a guard. Written after the code, so not seen failing first:
+`TestTupleInSubquery`, the has-one subtests and `TestGenerate_CompositeKeyStructFields`, the
+exclusion and declared-key tests, `TestNestedEligibility_CompositeKeyEdgeIsNotWriteEligibleYet`,
+`TestNestedEligibility_NullableReferencedColumnIsNotWriteEligible`,
+`TestGenerate_CompositeKeyEdgeIsGenerated`, `/fk to a nullable unique column`, and the review-added
+conformance rows `Get/a has-one…`, `GetMany/a soft-delete comparator…`, `/a one-column key into a
+nullable unique column…` and `/an M2M from a one-column key…`. `/verify` failed the has-one,
+soft-delete and one-column M2M rows by mutation, and the chained-join subtest likewise.
+
+**Files.**
+- `sql/`: `TupleInSubquery`; `tupleInCondition.Subquery`. The M2M target fetch needs a tuple left of
+  `IN (SELECT …)` that survives `PrefixConditions`, which 32.1 did not provide.
+- `gen/context.go`: `KeyMemberContext`, `JunctionColumnContext`, `O2OOnPair`;
+  `RelationshipContext.LoadKey`, `LoadReferenceKey`, `JunctionColumns`, `KeyedLoad()`,
+  `CompositeKey()`; `O2OJoinDetail.ExtraOn`; `RelationshipFilterContext` correlation fields.
+- `gen/context_table.go`: the guard is gone; `wireKeyedLoad`, `loadKeyMembers`,
+  `wireJunctionColumns`, `o2oExtraOn`, `inferredFKOnTarget`; `loadKeyColumns` unions every referenced
+  column.
+- `gen/context_relfilter.go`: composite-PK and M2M skips lifted; `keyColumns`.
+- `gen/funcmap.go`: `keyTuple`, `keyGuard`, `keyValues`, `keyedLoad`; the PostgreSQL chunk cap.
+- `gen/relationship_targets.go`, `gen/junction_keys.go`, `gen/context_nested.go`: the read guard and
+  `checkDeclaredKeyColumns` removed; `compositeKeyWriteGuard` keeps these edges out of nested writes
+  until 32.6, behind the test seam `writeCompositeKeyEdges`.
+- Templates: `get.go.tmpl` (`table/load-o2m-keyed`, `table/load-m2m-keyed`), `relationships.go.tmpl`,
+  `shared/_filter.tmpl`.
+- Conformance: eight tables on every dialect, `suite/composite_key.go`, `Capabilities.CompositeLoadChunk`.
+- Tests: `gen/composite_key_load_test.go` (new), and the staging-guard tests inverted or removed.
+- Docs: PRD §9.9.4 E1, §25.1, `guidelines/SQL.md`, the registry, design §10.1, §10.4, §12.
+
+**Behavior and interpretation.**
+- **PostgreSQL tuple `IN` cap (ruling 2026-11-05, design §12 Q6).** The conformance load past one
+  chunk failed on both PostgreSQL drivers with `stack depth limit exceeded`: R4's 16383 was measured at
+  N = 1 only. `(a, b) IN (…)` at the default 2MB stack passed 7500 and failed at 8000 on PostgreSQL 16,
+  and passed 7000 and failed at 7500 on 17; three columns matched. A key of several columns is capped
+  at 4000 on PostgreSQL. A server with a lower `max_stack_depth` could still hit the limit. A one-column
+  `(a) IN ((…), …)` passed at 32767 on PostgreSQL 16.
+- **Bind-limit rows moved to the conformance suite (design §12 Q7, confirmed 2026-11-06).**
+- **`KeyedLoad` covers one more shape than a composite key.** A one-column key referencing a nullable
+  UNIQUE column did not compile (`*string` into `[]string`), and UNIQUE columns are nullable by
+  default. It now takes the keyed loader, which skips the NULL parent (PRD §13.3). This shape takes
+  `s = C` on pgx, which differs from a one-column key's `s = 1` only past one chunk; PRD §25.1 amended
+  to state it (ruling 2026-11-06).
+- **Nullable referenced key and nested writes.** Such an edge is not write-eligible; the writers
+  cannot copy the pointer into the key. PRD §9.9.4 E1 amended to state it (ruling 2026-11-06).
+- **`FKOnTarget` of a composite key.** A tenant column exists on both tables, so column presence
+  cannot place the key: a detected edge takes its side from its type, and a declared key is on the
+  target only when every member is.
+- **O2O naming.** A key with no naming member keeps the base name, so `item_receipts`' single edge is
+  the field `OrderItems` (`*OrderItem`), as §5.3 rule 5 step 4 gives.
+- **GraphQL.** Composite edges reach the generated schema. A full gqlgen build is 32.7's.
+
+**Auto-review (sqlgen-reviewer).** It confirmed fail first by restoring the guard. Closed from its
+report: the soft-delete comparator case had no test (now `GetMany/a soft-delete comparator in a
+consumer filter…`, with `deleted_at` on `item_notes`); composite has-one and the one-column keyed
+shapes never ran (now conformance rows, with `crates` and `crate_items`); `/chained o2o` matched a
+direct join (now scoped to the resolver). Its doc corrections are applied. The composite-PK batch
+sites' exposure to the tuple `IN` limit went to the backlog.
+
+**Verify (2026-11-06).** The independent reviewer found no runtime bug; its coverage gaps are closed
+here. New `TestTenancyTemplate_keyedLoadPropagatesTenantOptions` fails if the keyed loaders stop passing
+`SkipTenancy` and `Tenant`. `/an M2M from a one-column key…` now needs both key columns (it passed
+with mapping on `product_id` only); the E1 test can no longer pass with the edge absent;
+`load.key-condition-appended`, `query-count.nullable-referenced-pgx` and
+`gen.relationships.composite-key-edge` now cite tests that show their wording.
+
+**Tenant pattern (first acceptance criterion).** No live database run at 32.5: conformance has no
+tenancy and no example has a composite edge. The reviewer's SQLite probe saw correct tenant, `SkipTenancy`
+and explicit-tenant behavior on O2M, M2M and filters, and the unit test above pins the propagation.
+The live row is `example: tenancy_postgres: TestCompositeTenantFK_LoadStaysInTenant`, due at 32.8.
+The user accepted 32.5 on this basis (`/done`, 2026-11-06).
+
+**Goldens.** `make update-golden` and `make update-golden-e2e` changed no example or gen golden; the
+`go.sum` drift 32.3 noted reappeared and was reverted. Only the conformance models moved.
+
+**Checks.** `make check` and `make check-examples` green; conformance passes on pgx, stdlib, MySQL and
+SQLite.
+
 
 ## 32.6 Nested writes through composite FKs
 
@@ -1002,6 +1095,7 @@ _Filled in when complete: files changed, commit references, notes._
 
 ### Tasks
 
+- [ ] E1's nullable-referenced check reads every referenced member. It reads `nestedParentKey` (`rel.ParentKey`), the first pair only, and `compositeKeyWriteGuard` hides that until it is lifted: `shelves(region NOT NULL, bin NULL)` would otherwise pass.
 - [ ] `tenancy_postgres` schema (moved from 32.8, so the nested `example:` rows fail first):
   - a composite tenant FK (`(workspace_id, x_id) → (workspace_id, id)`);
   - a tenant junction (M2M);

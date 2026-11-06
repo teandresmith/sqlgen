@@ -128,12 +128,20 @@ type Client struct {
 	authorProfile *authorProfileClient
 	authorTag     *authorTagClient
 	counter       *counterClient
+	crate         *crateClient
+	crateItem     *crateItemClient
 	document      *documentClient
+	itemNote      *itemNoteClient
+	itemReceipt   *itemReceiptClient
+	itemStation   *itemStationClient
 	label         *labelClient
 	orderItem     *orderItemClient
+	parcel        *parcelClient
 	post          *postClient
 	product       *productClient
 	revision      *revisionClient
+	shelf         *shelfClient
+	station       *stationClient
 	tag           *tagClient
 }
 
@@ -156,12 +164,20 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		authorProfile: newAuthorProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		authorTag:     newAuthorTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		counter:       newCounterClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		crate:         newCrateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		crateItem:     newCrateItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		document:      newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		itemNote:      newItemNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		itemReceipt:   newItemReceiptClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		itemStation:   newItemStationClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		label:         newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		orderItem:     newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		parcel:        newParcelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		post:          newPostClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		product:       newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		revision:      newRevisionClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		shelf:         newShelfClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		station:       newStationClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		tag:           newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 	}
 
@@ -171,7 +187,10 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// deferred events and cache invalidation flush the way the client was
 	// configured rather than on NewTransaction's default.
 	c.author.callbackMode = options.callbackMode
+	c.crate.callbackMode = options.callbackMode
 	c.product.callbackMode = options.callbackMode
+	c.shelf.callbackMode = options.callbackMode
+	c.station.callbackMode = options.callbackMode
 	c.tag.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
@@ -180,7 +199,16 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.author.tagClient = c.tag
 	c.author.authorProfileClient = c.authorProfile
 	c.author.authorTagClient = c.authorTag
+	c.crate.orderItemClient = c.orderItem
+	c.crate.crateItemClient = c.crateItem
+	c.orderItem.itemNoteClient = c.itemNote
+	c.orderItem.crateClient = c.crate
+	c.orderItem.stationClient = c.station
 	c.product.orderItemClient = c.orderItem
+	c.shelf.crateClient = c.crate
+	c.shelf.parcelClient = c.parcel
+	c.station.orderItemClient = c.orderItem
+	c.station.itemStationClient = c.itemStation
 	c.tag.authorClient = c.author
 	c.tag.authorTagClient = c.authorTag
 
@@ -207,9 +235,34 @@ func (c *Client) Counters() CounterClient {
 	return c.counter
 }
 
+// Crates returns the CrateClient for Crate operations.
+func (c *Client) Crates() CrateClient {
+	return c.crate
+}
+
+// CrateItems returns the CrateItemClient for CrateItem operations.
+func (c *Client) CrateItems() CrateItemClient {
+	return c.crateItem
+}
+
 // Documents returns the DocumentClient for Document operations.
 func (c *Client) Documents() DocumentClient {
 	return c.document
+}
+
+// ItemNotes returns the ItemNoteClient for ItemNote operations.
+func (c *Client) ItemNotes() ItemNoteClient {
+	return c.itemNote
+}
+
+// ItemReceipts returns the ItemReceiptClient for ItemReceipt operations.
+func (c *Client) ItemReceipts() ItemReceiptClient {
+	return c.itemReceipt
+}
+
+// ItemStations returns the ItemStationClient for ItemStation operations.
+func (c *Client) ItemStations() ItemStationClient {
+	return c.itemStation
 }
 
 // Labels returns the LabelClient for Label operations.
@@ -220,6 +273,11 @@ func (c *Client) Labels() LabelClient {
 // OrderItems returns the OrderItemClient for OrderItem operations.
 func (c *Client) OrderItems() OrderItemClient {
 	return c.orderItem
+}
+
+// Parcels returns the ParcelClient for Parcel operations.
+func (c *Client) Parcels() ParcelClient {
+	return c.parcel
 }
 
 // Posts returns the PostClient for Post operations.
@@ -235,6 +293,16 @@ func (c *Client) Products() ProductClient {
 // Revisions returns the RevisionClient for Revision operations.
 func (c *Client) Revisions() RevisionClient {
 	return c.revision
+}
+
+// Shelves returns the ShelfClient for Shelf operations.
+func (c *Client) Shelves() ShelfClient {
+	return c.shelf
+}
+
+// Stations returns the StationClient for Station operations.
+func (c *Client) Stations() StationClient {
+	return c.station
 }
 
 // Tags returns the TagClient for Tag operations.

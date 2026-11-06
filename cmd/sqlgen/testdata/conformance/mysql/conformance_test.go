@@ -69,10 +69,12 @@ func TestConformance(t *testing.T) {
 		Client:   models.New(q),
 		Querier:  q,
 		Base:     q,
-		Caps:     suite.Capabilities{RowLocks: true},
+		Caps:     suite.Capabilities{RowLocks: true, CompositeLoadChunk: 16383},
 		Reset: func(t *testing.T) {
 			// TRUNCATE refuses a table another table's foreign key references.
-			exec(t, "DELETE FROM order_items", "DELETE FROM products", "DELETE FROM documents",
+			exec(t, "DELETE FROM crate_items", "DELETE FROM crates", "DELETE FROM item_stations", "DELETE FROM stations", "DELETE FROM parcels",
+				"DELETE FROM shelves", "DELETE FROM item_receipts", "DELETE FROM item_notes",
+				"DELETE FROM order_items", "DELETE FROM products", "DELETE FROM documents",
 				"DELETE FROM revisions", "DELETE FROM labels", "DELETE FROM counters",
 				"DELETE FROM author_tags", "DELETE FROM posts", "DELETE FROM author_profiles",
 				"DELETE FROM tags", "DELETE FROM authors")

@@ -50,12 +50,14 @@ type existsCondition struct {
 }
 
 // tupleInCondition is the structured value behind a composite-key batch
-// predicate, (c1, c2) IN ((…), …). Columns are quoted. It is a value rather
-// than a clause so [PrefixConditions] can qualify each column; prepending the
-// alias to the clause would give c.(c1, c2), a syntax error.
+// predicate, (c1, c2) IN ((…), …), or (c1, c2) IN (SELECT …) when Subquery is
+// set. Columns are quoted. It is a value rather than a clause so
+// [PrefixConditions] can qualify each column; prepending the alias to the
+// clause would give c.(c1, c2), a syntax error.
 type tupleInCondition struct {
-	Columns []string
-	Rows    [][]any
+	Columns  []string
+	Rows     [][]any
+	Subquery *Subquery
 }
 
 // CorrelationToken marks the parent-side reference to the first correlation
@@ -309,7 +311,8 @@ func prefixCondition(alias string, c Condition) Condition {
 		for i, col := range t.Columns {
 			cols[i] = alias + "." + col
 		}
-		c.Value = tupleInCondition{Columns: cols, Rows: t.Rows}
+		t.Columns = cols
+		c.Value = t
 		return c
 	}
 	if c.Clause == "" {

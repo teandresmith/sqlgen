@@ -384,7 +384,6 @@ Tests in this file's packages that back no PRD behavior. Tests in `cmd/sqlgen/cl
 | cmd/sqlgen/cli: TestStaleCleanup_nonGenFilesPreserved | The kept file carries no sqlgen header, so it would survive without the suffix rule |
 | cmd/sqlgen/cli: TestVerboseOutput | Superseded by TestVerbose_ReportsTablesFilesAndTiming; returns early on a generation error |
 | cmd/sqlgen/cli: TestGenerate_DatabaseSourceCompiles | Build smoke test of `source: database` output; no PRD clause beyond naming the source |
-| cmd/sqlgen/cli: TestGenerate_CompositeKeyEdgeIsOmitted | Staging guard: composite-key edges stay out of generation until the planned composite-FK relationship work lands, when this test is replaced |
 | cmd/sqlgen: TestE2EDiscovery | Test of the E2E harness (example discovery) |
 | cmd/sqlgen: TestE2EGoldenFiles | Golden home: rows cite it as `golden: <example>`; the top-level test is harness |
 | cmd/sqlgen: TestRewriteToDatabaseSource | Test of the E2E harness (database-twin config rewrite) |

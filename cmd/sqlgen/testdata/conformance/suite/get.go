@@ -420,6 +420,8 @@ func get(t *testing.T, h *Harness) {
 			t.Errorf("Get inside a transaction loaded %d posts and %d tags, want 1 and 1", len(got.Posts), len(got.Tags))
 		}
 	})
+
+	getCompositeKey(t, h)
 }
 
 // getMany: GetMany returns the rows a filter matches, sorted and paged.
@@ -1050,6 +1052,8 @@ func getMany(t *testing.T, h *Harness) {
 			t.Error("the posts load was not canceled when the tags load failed")
 		}
 	})
+
+	getManyCompositeKey(t, h)
 }
 
 // exists: Exists reports whether a live row has the given key.

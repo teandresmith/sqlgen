@@ -2,13 +2,13 @@ package cli
 
 import (
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
-
-	"github.com/google/go-cmp/cmp"
 )
 
 // runCommand writes schema and cfg to a fresh directory and runs the given
@@ -86,28 +86,65 @@ CREATE TABLE task_tags (workspace_id uuid NOT NULL, task_id uuid NOT NULL, tag_i
 		fk("FOREIGN KEY (workspace_id, tag_id) REFERENCES tags (workspace_id, id)") + `);`
 }
 
-// Detection finds edges through composite foreign keys, but the loaders, the
-// relationship filter and the nested writers join one column per side, so
-// generation omits every such edge, O2M, O2O (also when a chained O2O join
-// reaches it) and M2M: the package is byte-identical to the one generated
-// without those foreign keys.
-func TestGenerate_CompositeKeyEdgeIsOmitted(t *testing.T) {
-	withFK, stderr, err := runCommand(t, "generate", compositeKeySchema(true), tenantConfig)
+// An edge through a composite foreign key is generated, O2M, O2O (also when a
+// chained O2O join reaches it) and M2M through a tenant junction, and the
+// package builds.
+func TestGenerate_CompositeKeyEdgeIsGenerated(t *testing.T) {
+	root, err := filepath.Abs("../../..")
 	if err != nil {
-		t.Fatalf("generate with the composite foreign keys: %v\nstderr: %s", err, stderr)
+		t.Fatal(err)
 	}
-	withoutFK, stderr, err := runCommand(t, "generate", compositeKeySchema(false), tenantConfig)
+	dir, stderr, err := runCommand(t, "generate", compositeKeySchema(true), tenantConfig)
 	if err != nil {
-		t.Fatalf("generate without them: %v\nstderr: %s", err, stderr)
+		t.Fatalf("generate: %v\nstderr: %s", err, stderr)
 	}
-
-	got, want := generatedGo(t, withFK), generatedGo(t, withoutFK)
-	if len(want) == 0 {
-		t.Fatal("generate wrote no .go files")
+	src := strings.Join(slices.Sorted(maps.Values(generatedGo(t, dir))), "\n")
+	tests := []struct {
+		name  string
+		wants []string
+	}{
+		{"composite o2m", []string{
+			"func (c *cycleClient) loadRelationships(",
+			`sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "cycle_id"}, chunk),`,
+		}},
+		{"composite o2o", []string{
+			"func (c *taskReportClient) resolveO2OJoins(",
+			`fmt.Sprintf(" AND t2.%s = t.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("task_id"))`,
+		}},
+		{"chained o2o", []string{
+			`fmt.Sprintf("t.%s = r.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("report_id"))`,
+		}},
+		{"tenant junction m2m", []string{
+			`Columns:    []string{"workspace_id", "task_id", "tag_id"},`,
+			`sql.TupleInSubquery(c.dialect, []string{"workspace_id", "id"}, sql.Subquery{`,
+		}},
 	}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("composite foreign keys changed the generated Go (-without +with):\n%s", diff)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, want := range tt.wants {
+				if !strings.Contains(src, want) {
+					t.Errorf("generated Go is missing %q", want)
+				}
+			}
+		})
 	}
+	// The second hop's join lives in the first table's own resolver, so the
+	// assertion cannot match task_reports' direct join of the same pair.
+	t.Run("chained o2o joins every pair of the second hop", func(t *testing.T) {
+		_, body, ok := strings.Cut(src, "func (c *reportNoteClient) resolveO2OJoins(")
+		if !ok {
+			t.Fatal("generated Go has no report_notes resolver")
+		}
+		body, _, _ = strings.Cut(body, "\n}\n")
+		want := `fmt.Sprintf(" AND t2.%s = t.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("task_id"))`
+		if !strings.Contains(body, want) {
+			t.Errorf("report_notes resolver is missing %q:\n%s", want, body)
+		}
+	})
+	if testing.Short() && os.Getenv("SQLGEN_BUILD_GENERATED") == "" {
+		return
+	}
+	buildGenerated(t, root, dir)
 }
 
 // An edge joins the column its foreign key references, which need not be the
@@ -143,6 +180,19 @@ CREATE TABLE badges (id integer PRIMARY KEY, owner_email text UNIQUE REFERENCES 
 				`return sql.Exists("email", sql.Subquery{`,
 				`On:    fmt.Sprintf("u.%s = b.%s", d.QuoteIdentifier("email"), d.QuoteIdentifier("owner_email")),`,
 				"(*cur) == parent.Email:",
+			},
+		},
+		{
+			name: "fk to a nullable unique column",
+			schema: `CREATE TABLE teams (id integer PRIMARY KEY, code text UNIQUE);
+CREATE TABLE members (id integer PRIMARY KEY, team_code text REFERENCES teams(code));
+CREATE TABLE labels (id integer PRIMARY KEY, code text UNIQUE);
+CREATE TABLE team_labels (team_code text NOT NULL REFERENCES teams(code), label_code text NOT NULL REFERENCES labels(code),
+  PRIMARY KEY (team_code, label_code));`,
+			loader: "func (c *teamClient) loadRelationships(",
+			wants: []string{
+				"if !(t.Code != nil) {",
+				`sql.BuildCompositePKBatchCondition(c.dialect, []string{"team_code"}, chunk),`,
 			},
 		},
 		{

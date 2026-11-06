@@ -81,6 +81,10 @@ func FuncMapWithResolver(dialect sql.Dialect, resolver *gotype.Resolver) templat
 		"fkNullGuard":        funcFKNullGuard,
 		"fkLoadGuard":        funcFKLoadGuard(resolver),
 		"fkLoadKey":          funcFKLoadKey(resolver),
+		"keyedLoad":          funcKeyedLoad,
+		"keyTuple":           funcKeyTuple(resolver),
+		"keyGuard":           funcKeyGuard(resolver),
+		"keyValues":          funcKeyValues(resolver),
 		"isO2O":              funcIsO2O,
 		"isM2M":              funcIsM2M,
 		"reverseO2OTargets":  funcReverseO2OTargets,
@@ -875,6 +879,87 @@ func funcFKLoadKey(resolver *gotype.Resolver) func(string, string) string {
 	}
 }
 
+// keyedLoadData is what the keyed loader templates read: one edge of one table,
+// and the locals the loader body keeps its keys in.
+type keyedLoadData struct {
+	Table     TableContext
+	Rel       RelationshipContext
+	ResultVar string
+	RelVar    string
+	KeysVar   string
+	KeyedVar  string
+}
+
+// funcKeyedLoad packs an edge for its keyed loader template. The locals are
+// built from the struct name, so no table's result slice shadows them.
+func funcKeyedLoad(table TableContext, rel RelationshipContext, resultVar string) keyedLoadData {
+	stem := toCamelCase(table.StructName)
+	return keyedLoadData{
+		Table:     table,
+		Rel:       rel,
+		ResultVar: resultVar,
+		RelVar:    "related" + rel.FieldName,
+		KeysVar:   stem + "Keys",
+		KeyedVar:  stem + "Keyed",
+	}
+}
+
+// keyRead returns the Go type and expression of a key member. side is
+// "referenced" for the referenced column off the row recv, "junction" for the
+// scanned junction column, and "holder" for the FK column off the row recv.
+func keyRead(m KeyMemberContext, side, recv string) (goType, expr string) {
+	switch side {
+	case "referenced":
+		return m.Referenced.GoType, recv + "." + m.Referenced.FieldName
+	case "junction":
+		return m.GoType, m.Var
+	}
+	return m.GoType, recv + "." + m.FieldName
+}
+
+// funcKeyTuple returns the [N]string map key of a composite key, each member
+// stringified as fkLoadKey does for one column.
+func funcKeyTuple(resolver *gotype.Resolver) func([]KeyMemberContext, string, string) string {
+	loadKey := funcFKLoadKey(resolver)
+	return func(members []KeyMemberContext, side, recv string) string {
+		parts := make([]string, len(members))
+		for i, m := range members {
+			goType, expr := keyRead(m, side, recv)
+			parts[i] = loadKey(goType, expr)
+		}
+		return fmt.Sprintf("[%d]string{%s}", len(members), strings.Join(parts, ", "))
+	}
+}
+
+// funcKeyGuard returns the condition that every member of a composite key is
+// non-NULL, or "" when none can be NULL.
+func funcKeyGuard(resolver *gotype.Resolver) func([]KeyMemberContext, string, string) string {
+	guard := funcFKLoadGuard(resolver)
+	return func(members []KeyMemberContext, side, recv string) string {
+		var parts []string
+		for _, m := range members {
+			goType, expr := keyRead(m, side, recv)
+			if g := guard(goType, expr); g != "" {
+				parts = append(parts, g)
+			}
+		}
+		return strings.Join(parts, " && ")
+	}
+}
+
+// funcKeyValues returns the []any a tuple IN binds for one key, each member
+// unwrapped from its nullable form. Callers guard with keyGuard first.
+func funcKeyValues(resolver *gotype.Resolver) func([]KeyMemberContext, string, string) string {
+	return func(members []KeyMemberContext, side, recv string) string {
+		parts := make([]string, len(members))
+		for i, m := range members {
+			goType, expr := keyRead(m, side, recv)
+			parts[i] = strings.ReplaceAll(resolver.DeriveScalarExtraction(goType).UnwrapExpr, "$v", expr)
+		}
+		return "[]any{" + strings.Join(parts, ", ") + "}"
+	}
+}
+
 // funcFKNullGuard returns a Go null-guard expression for a nullable FK column.
 // Returns an empty string if the column is not nullable.
 func funcFKNullGuard(col ColumnContext) string {
@@ -960,14 +1045,26 @@ func bindParamLimit(dialect string) int {
 	}
 }
 
+// postgresTupleINKeys caps the rows of one PostgreSQL tuple IN. PostgreSQL nests
+// the list's row comparisons one level per row, and at the default
+// max_stack_depth of 2MB it refuses a list of 7000 to 8000 rows with error
+// 54001, however many columns each row has.
+const postgresTupleINKeys = 4000
+
 // funcLoadChunkSize returns a function giving how many parent keys one
 // relationship-loader statement binds: half the dialect's bind-parameter limit,
 // divided by the key's column count. The other half is left for the
 // relationship's filter, tenancy, soft-delete and static `filter:` parameters.
+// A key of several columns on PostgreSQL also stays under postgresTupleINKeys.
 func funcLoadChunkSize(d sql.Dialect) func(keyColumns int) int {
 	limit := bindParamLimit(d.Name())
+	postgres := d.Name() == string(config.DialectPostgres)
 	return func(keyColumns int) int {
-		return limit / 2 / keyColumns
+		size := limit / 2 / keyColumns
+		if postgres && keyColumns > 1 {
+			return min(size, postgresTupleINKeys)
+		}
+		return size
 	}
 }
 

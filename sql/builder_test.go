@@ -4025,3 +4025,38 @@ func TestExists_SubstitutedColumnIsNotRescanned(t *testing.T) {
 		t.Errorf("BuildSelect sql =\n  %q\nwant\n  %q", got, want)
 	}
 }
+
+// A tuple IN over a subquery renders on every dialect, numbers the subquery's
+// arguments into the statement, and qualifies each column on the join path.
+func TestTupleInSubquery(t *testing.T) {
+	tests := []struct {
+		name    string
+		dialect sql.Dialect
+		alias   string
+		want    string
+	}{
+		{"postgres", pg, "", `("x", "y") IN (SELECT j.x, j.y FROM links j WHERE (j."a", j."b") IN (($2, $3), ($4, $5)))`},
+		{"postgres qualified", pg, "t", `(t."x", t."y") IN (SELECT j.x, j.y FROM links j WHERE (j."a", j."b") IN (($2, $3), ($4, $5)))`},
+		{"mysql", my, "", "(`x`, `y`) IN (SELECT j.x, j.y FROM links j WHERE (j.`a`, j.`b`) IN ((?, ?), (?, ?)))"},
+		{"sqlite", lite, "", `("x", "y") IN (SELECT j.x, j.y FROM links j WHERE (j."a", j."b") IN ((?, ?), (?, ?)))`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			where, whereArgs := sql.SubqueryWhere(tt.dialect, "j", []sql.Condition{
+				sql.BuildCompositePKBatchCondition(tt.dialect, []string{"a", "b"}, [][]any{{1, 2}, {3, 4}}),
+			})
+			cond := sql.TupleInSubquery(tt.dialect, []string{"x", "y"}, sql.Subquery{
+				SQL:  "SELECT j.x, j.y FROM links j WHERE " + where,
+				Args: whereArgs,
+			})
+			conds := sql.PrefixConditions(tt.alias, []sql.Condition{sql.Where("z").Eq(7), cond})
+			query, args := sql.BuildSelect(tt.dialect, sql.Table{Name: "t"}, sql.SelectOptions{Conditions: conds})
+			if !strings.Contains(query, tt.want) {
+				t.Errorf("query = %s, want it to contain %s", query, tt.want)
+			}
+			if diff := cmp.Diff([]any{7, 1, 2, 3, 4}, args); diff != "" {
+				t.Errorf("args mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

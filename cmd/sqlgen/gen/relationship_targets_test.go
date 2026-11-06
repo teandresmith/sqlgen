@@ -909,6 +909,44 @@ func TestRelationshipTargets_ExcludedKeyMemberDropsInferredEdge(t *testing.T) {
 	}
 }
 
+// Every member of a composite key must be in the model on both sides: excluding
+// one drops the edge with a warning naming it.
+func TestRelationshipTargets_ExcludedCompositeKeyMemberDropsInferredEdge(t *testing.T) {
+	const ddl = `
+CREATE TABLE cycles (id bigint PRIMARY KEY, code text NOT NULL, UNIQUE (code, id));
+CREATE TABLE tasks (id bigint PRIMARY KEY, cycle_code text, cycle_id bigint,
+  FOREIGN KEY (cycle_code, cycle_id) REFERENCES cycles (code, id));`
+	tests := []struct {
+		name       string
+		table      string
+		column     string
+		wantMember string
+	}{
+		{"composite key member on the child", "tasks", "cycle_code", "public.tasks.cycle_code"},
+		{"composite key member on the parent", "cycles", "code", "public.cycles.code"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := parseDDLForTest(t, config.DialectPostgres, ddl)
+			parser.DetectRelationships(schema)
+			input := testInput(schema)
+			input.Config.Tables[tt.table] = config.TableConfig{ExcludeColumns: []string{tt.column}}
+			contexts, err := gen.BuildTableContexts(input, nil)
+			if err != nil {
+				t.Fatalf("BuildTableContexts() error: %v", err)
+			}
+			for _, tc := range contexts {
+				if tc.TableName == "cycles" && len(tc.Relationships) != 0 {
+					t.Errorf("cycles relationships = %v, want none", tc.Relationships)
+				}
+			}
+			if !slices.Contains(input.Warnings, omittedWarning("public.cycles", "tasks", tt.wantMember)) {
+				t.Errorf("warnings = %q, want the omission naming %s", input.Warnings, tt.wantMember)
+			}
+		})
+	}
+}
+
 // A declared relationship whose link column `exclude_columns` removes is an
 // error naming the column, since the user asked for the edge by name (PRD
 // §4.13).
@@ -972,7 +1010,6 @@ func TestRelationshipTargets_DeclaredExcludedLinkColumnErrors(t *testing.T) {
 
 	// Every column of a declared key is a link column, not only the first.
 	t.Run("composite key member", func(t *testing.T) {
-		gen.GenerateCompositeKeyEdgesForTest(t)
 		schema := parseDDLForTest(t, config.DialectPostgres, `
 CREATE TABLE seasons (league_id integer, id integer, PRIMARY KEY (league_id, id));
 CREATE TABLE games (id integer PRIMARY KEY, league_id integer, season_id integer);`)

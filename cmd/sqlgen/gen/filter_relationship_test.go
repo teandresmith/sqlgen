@@ -307,21 +307,6 @@ func TestRelationshipFilters_NoneWithoutTenancy(t *testing.T) {
 	}
 }
 
-// TestRelationshipFilters_CompositePKParentEmitsNone covers the shape the
-// relationship-filter context cannot express: one correlation column, so a
-// parent whose identity spans several columns has nothing single to correlate
-// on. The member is dropped rather than emitted against an arbitrary PK column.
-func TestRelationshipFilters_CompositePKParentEmitsNone(t *testing.T) {
-	tables := relFilterTables(t, "")
-	uc := tables["user_categories"]
-	if !uc.CompositePK {
-		t.Fatal("fixture no longer produces a composite-PK user_categories; the assertion below is vacuous")
-	}
-	if len(uc.RelationshipFilters) != 0 {
-		t.Errorf("user_categories relationship filters = %v, want none (composite PK)", relFilterNames(uc.RelationshipFilters))
-	}
-}
-
 // --- Emitted code ---
 
 func renderRelFilter(t *testing.T, tc gen.TableContext) string {

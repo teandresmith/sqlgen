@@ -388,7 +388,7 @@ func resolveNestedEdges(
 // single-keyed target, and a non-empty create input. No rule requires the
 // target's Create and CreateMany: the client has no operations toggle (PRD
 // §4.6), so every generated target has both.
-func resolveNestedTarget(rel RelationshipContext, byTable tableIndex) (*TableContext, *nestedIneligible) {
+func resolveNestedTarget(tc *TableContext, rel RelationshipContext, byTable tableIndex) (*TableContext, *nestedIneligible) {
 	reject := func(reason string) (*TableContext, *nestedIneligible) {
 		return nil, &nestedIneligible{edge: rel.FieldName, reason: reason}
 	}
@@ -409,6 +409,12 @@ func resolveNestedTarget(rel RelationshipContext, byTable tableIndex) (*TableCon
 	}
 	if len(target.PKColumns) != 1 {
 		return reject("the target has a composite primary key, which the link and visibility reads cannot key on")
+	}
+	if compositeKeyWriteGuard(rel) {
+		return reject("the edge joins through a composite key, which nested writes do not reach yet")
+	}
+	if key := nestedParentKey(tc, rel); key.Nullable {
+		return reject(fmt.Sprintf("the edge's key references the nullable column %q, which a nested write cannot copy into the key", key.Name))
 	}
 
 	// A write surface into a table with nothing writable writes nothing.
@@ -441,7 +447,7 @@ func buildNestedEdge(
 	isM2M := rel.Type == parser.ManyToMany
 	hasOne := rel.Type == parser.OneToOne
 
-	target, ineligible := resolveNestedTarget(rel, byTable)
+	target, ineligible := resolveNestedTarget(tc, rel, byTable)
 	if ineligible != nil {
 		return NestedEdgeContext{}, []nestedIneligible{*ineligible}
 	}
@@ -780,8 +786,8 @@ func resolveNestedToMany(
 // fields is the schema saying so at compile time (PRD §9.9.3, §9.9.4).
 //
 // A key of several columns stops at its verb set: its statements compare and
-// write every member, and no template renders one yet (compositeKeyEdge keeps
-// such an edge out of generation).
+// write every member, and no template renders one yet
+// (compositeKeyWriteGuard keeps such an edge out of nested writes).
 func settleNestedKeyRewrite(edge *NestedEdgeContext, rel RelationshipContext, members []keyMember, want nestedVerbMask) bool {
 	rewrite := keyRewriteVerbs(members, rel.Match, edge.AllowReparent)
 	if !rewrite.connect && !rewrite.unlink {

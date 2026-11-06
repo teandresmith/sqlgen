@@ -136,14 +136,20 @@ func wireRelationshipFKMetadata(contexts []TableContext) {
 	}
 }
 
-// loadKeyColumns returns each O2M and M2M edge's ParentKey once, in edge
-// order.
+// loadKeyColumns returns every parent column the O2M and M2M edges' keys
+// reference, once, in edge order.
 func loadKeyColumns(tc *TableContext) []ColumnContext {
 	var cols []ColumnContext
+	add := func(col ColumnContext) {
+		if col.Name != "" && !slices.ContainsFunc(cols, func(c ColumnContext) bool { return c.Name == col.Name }) {
+			cols = append(cols, col)
+		}
+	}
 	for _, rels := range [][]RelationshipContext{tc.O2MRelationships, tc.M2MRelationships} {
 		for _, r := range rels {
-			if r.ParentKey.Name != "" && !slices.ContainsFunc(cols, func(c ColumnContext) bool { return c.Name == r.ParentKey.Name }) {
-				cols = append(cols, r.ParentKey)
+			add(r.ParentKey)
+			for _, m := range r.LoadKey {
+				add(m.Referenced)
 			}
 		}
 	}
@@ -203,6 +209,75 @@ func wireRelFKMetadata(r *RelationshipContext, parent *TableContext, pkColumns m
 	}
 
 	applyRelFKFallbacks(r, parent, fkCol)
+	wireKeyedLoad(r, parent, colsByTable)
+}
+
+// wireKeyedLoad fills LoadKey, LoadReferenceKey and JunctionColumns for an edge
+// that loads by key tuples (RelationshipContext.KeyedLoad).
+func wireKeyedLoad(r *RelationshipContext, parent *TableContext, colsByTable map[string]map[string]ColumnContext) {
+	parentCols := make(map[string]ColumnContext, len(parent.Columns))
+	for _, c := range parent.Columns {
+		parentCols[c.Name] = c
+	}
+	targetCols := lookupTableCols(colsByTable, r.TargetSchema, r.TargetTable)
+	switch {
+	case r.Type == parser.ManyToMany:
+		junction := lookupTableCols(colsByTable, r.JunctionSchema, r.JunctionTable)
+		local := loadKeyMembers(r.JunctionLocal, junction, parentCols)
+		reference := loadKeyMembers(r.JunctionReference, junction, targetCols)
+		if r.CompositeKey() || referencesNullable(local) || referencesNullable(reference) {
+			r.LoadKey, r.LoadReferenceKey = local, reference
+			wireJunctionColumns(r)
+		}
+	case r.Type == parser.OneToMany || r.FKOnTarget:
+		key := loadKeyMembers(r.Key, targetCols, parentCols)
+		if r.CompositeKey() || referencesNullable(key) {
+			r.LoadKey = key
+		}
+	}
+}
+
+func referencesNullable(key []KeyMemberContext) bool {
+	return slices.ContainsFunc(key, func(m KeyMemberContext) bool { return m.Referenced.Nullable })
+}
+
+// loadKeyMembers resolves key pairs against the table holding the key and the
+// table it references. A holder with no generated columns (an excluded
+// junction) takes each column's type from the column it references.
+func loadKeyMembers(key []parser.KeyPair, holder, referenced map[string]ColumnContext) []KeyMemberContext {
+	members := make([]KeyMemberContext, len(key))
+	for i, p := range key {
+		ref, ok := referenced[p.Referenced]
+		if !ok {
+			ref = ColumnContext{Name: p.Referenced, FieldName: FieldName(p.Referenced)}
+		}
+		m := KeyMemberContext{Column: p.Local, FieldName: FieldName(p.Local), GoType: ref.GoType, Referenced: ref}
+		if col, ok := holder[p.Local]; ok {
+			m.FieldName, m.GoType = col.FieldName, col.GoType
+		}
+		if m.Referenced.GoType == "" {
+			m.Referenced.GoType = m.GoType
+		}
+		members[i] = m
+	}
+	return members
+}
+
+// wireJunctionColumns gives each distinct junction column of an M2M key one
+// scan local, shared by every member over that column.
+func wireJunctionColumns(r *RelationshipContext) {
+	vars := make(map[string]string, len(r.LoadKey)+len(r.LoadReferenceKey))
+	for _, key := range [][]KeyMemberContext{r.LoadKey, r.LoadReferenceKey} {
+		for i := range key {
+			v, ok := vars[key[i].Column]
+			if !ok {
+				v = fmt.Sprintf("key%d", len(r.JunctionColumns))
+				vars[key[i].Column] = v
+				r.JunctionColumns = append(r.JunctionColumns, JunctionColumnContext{Name: key[i].Column, GoType: key[i].GoType, Var: v})
+			}
+			key[i].Var = v
+		}
+	}
 }
 
 // applyRelFKFallbacks fills what wireRelFKMetadata's cross-table lookup left
@@ -1549,7 +1624,7 @@ func buildRelationshipContexts(
 		// never asked for, so it is omitted rather than failing a build that
 		// the skipped table is otherwise not part of (§4.13's auto-included
 		// rule).
-		if !targets.generates(r.TargetTable) || compositeKeyEdge(r) {
+		if !targets.generates(r.TargetTable) {
 			continue
 		}
 		// A key column `exclude_columns` removes has no field for the loader,
@@ -1626,7 +1701,7 @@ func mergeDeclaredRelationships(
 			errs = append(errs, errors.Join(targetErr, junctionErr))
 			continue
 		}
-		if err := errors.Join(checkDeclaredJunctionKeys(schema, r, qualifiedName, targets), checkDeclaredKeyColumns(r, qualifiedName)); err != nil {
+		if err := checkDeclaredJunctionKeys(schema, r, qualifiedName, targets); err != nil {
 			errs = append(errs, err)
 			continue
 		}
@@ -1705,8 +1780,8 @@ func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets
 		sorts = append(sorts, SortContext{Column: s.Column, Direction: sortDirection(s.Direction)})
 	}
 
-	// Callers omit an edge with more than one key pair (compositeKeyEdge), so
-	// each key here is one column.
+	// The one-column fields name a composite key's first column; its loaders
+	// and filters read the pairs.
 	var fkCol, localFK, referenceFK string
 	constraints := []string{r.Constraint}
 	if r.Type == parser.ManyToMany {
@@ -1729,7 +1804,7 @@ func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets
 		Key:                 r.Key,
 		JunctionLocal:       r.JunctionLocal,
 		JunctionReference:   r.JunctionReference,
-		FKOnTarget:          fkColumnOnTarget(schema, r.Type, tSchema, tName, fkCol),
+		FKOnTarget:          inferredFKOnTarget(schema, r, tSchema, tName, fkCol),
 		JunctionTable:       jName,
 		JunctionSchema:      jSchema,
 		JunctionLocalFK:     localFK,
@@ -1790,10 +1865,10 @@ func configRelationshipToContext(schema *parser.Schema, r config.TableRelationsh
 		junctionLocal = declaredKey(declaredJunctionKey(r.JunctionLocalFK, localFK), sourcePK)
 		junctionReference = declaredKey(declaredJunctionKey(r.JunctionReferenceFK, referenceFK), target.PK)
 	} else if len(r.FK) > 0 {
-		// Callers reject a declared key of more than one column
-		// (checkDeclaredKeyColumns), so the FK is its first column.
 		fkCol = r.FK[0]
-		fkOnTarget = fkColumnOnTarget(schema, relType, target.Schema, tName, fkCol)
+		fkOnTarget = !slices.ContainsFunc(r.FK, func(column string) bool {
+			return !fkColumnOnTarget(schema, relType, target.Schema, tName, column)
+		})
 		// An O2M FK, and a has-one O2O FK, is on the target and references
 		// this table; a belongs-to FK references the target.
 		referenced := target.PK
@@ -1870,6 +1945,17 @@ func fkColumnOnTarget(schema *parser.Schema, relType parser.RelationshipType, ta
 	return slices.ContainsFunc(target.Columns, func(c parser.Column) bool {
 		return c.Name == fkColumn
 	})
+}
+
+// inferredFKOnTarget is fkColumnOnTarget for a detected edge. A composite key's
+// members can share their names with the referenced table's, as a tenant column
+// does, so its side comes from detection: the FK holder is the target of an O2M
+// edge and the source of an O2O one.
+func inferredFKOnTarget(schema *parser.Schema, r parser.Relationship, targetSchema, targetTable, fkColumn string) bool {
+	if len(r.Key) > 1 {
+		return r.Type == parser.OneToMany
+	}
+	return fkColumnOnTarget(schema, r.Type, targetSchema, targetTable, fkColumn)
 }
 
 // declaredRelationshipDescription returns the doc comment of a declared
@@ -2760,6 +2846,22 @@ func buildO2OJoinDetails(input *GenerateInput, o2oRels []RelationshipContext, pa
 	return details, allTargets, nil
 }
 
+// o2oExtraOn returns the ON equalities of an O2O edge's key past its first pair.
+func o2oExtraOn(rel RelationshipContext) []O2OOnPair {
+	if len(rel.Key) < 2 {
+		return nil
+	}
+	extra := make([]O2OOnPair, 0, len(rel.Key)-1)
+	for _, p := range rel.Key[1:] {
+		pair := O2OOnPair{Local: p.Local, Remote: p.Referenced}
+		if rel.FKOnTarget {
+			pair = O2OOnPair{Local: p.Referenced, Remote: p.Local}
+		}
+		extra = append(extra, pair)
+	}
+	return extra
+}
+
 // buildSingleO2ODetail builds one O2O join detail, recursively discovering chains.
 // parentFOPath is the FieldOptions path up to the parent (e.g., "fo" or "fo.Users").
 // parentPKColumn is the SQL name of the parent's first PK column — the
@@ -2840,6 +2942,7 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 		OnLocalAlias:        parentAlias,
 		OnLocal:             onLocal,
 		OnRemote:            onRemote,
+		ExtraOn:             o2oExtraOn(rel),
 		Filter:              qualifiedFilter,
 		StructName:          rel.TargetStructName,
 		VarName:             varName,
@@ -2899,7 +3002,7 @@ func findO2ORelationships(schema *parser.Schema, table *parser.Table, tableCfg c
 			continue
 		}
 		// Skipped rather than reported: buildRelationshipContexts reports it.
-		if !targets.generates(r.TargetTable) || compositeKeyEdge(r) || targets.excludedKeyMember(schema, r) != "" {
+		if !targets.generates(r.TargetTable) || targets.excludedKeyMember(schema, r) != "" {
 			continue
 		}
 		results = append(results, chainedRelInfo{

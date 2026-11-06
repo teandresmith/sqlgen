@@ -145,23 +145,18 @@ func backfillRelationshipFilterTenancy(tables []TableContext) {
 }
 
 // buildRelationshipFilters returns one entry per list relationship on tc that
-// can be compiled into a correlated EXISTS.
+// can be compiled into a correlated EXISTS, which correlates on every pair of
+// the edge's key.
 //
-// A relationship is skipped — rather than emitted half-formed — when the shape
-// cannot be expressed by the one correlation column the context carries: a
-// parent without a single-column PK has no single column to correlate on, and
-// an M2M whose target has no single-column PK has nothing to join the junction
-// to. The same applies to a target outside the generated set (a table in
-// another package), which has no filter type to reference; a view target is
-// inside it, since a view generates its own <View>Filter. Every list
-// relationship's `filter:` is parsed first, so an unreadable one fails
+// A relationship is skipped — rather than emitted half-formed — when its target
+// is outside the generated set (a table in another package), which has no
+// filter type to reference; a view target is inside it, since a view generates
+// its own <View>Filter. A parent with no key has nothing to correlate on. Every
+// list relationship's `filter:` is parsed first, so an unreadable one fails
 // generation even on an edge skipped here.
 func buildRelationshipFilters(tc *TableContext, targets map[string]*TableContext) ([]RelationshipFilterContext, error) {
 	if err := parseListRelationshipFilters(tc); err != nil {
 		return nil, err
-	}
-	if len(tc.PKColumns) != 1 {
-		return nil, nil
 	}
 
 	taken := make(map[string]bool, len(tc.FilterFields)+3)
@@ -376,6 +371,13 @@ func lookupTarget(targets map[string]*TableContext, rel RelationshipContext) (*T
 // relationshipFilterEntry builds the entry for one list relationship, or
 // reports false when the edge's join metadata is incomplete for its shape.
 func relationshipFilterEntry(tc *TableContext, rel RelationshipContext, target *TableContext) (RelationshipFilterContext, bool) {
+	if rel.ParentKey.Name == "" && len(tc.PKColumns) == 0 {
+		return RelationshipFilterContext{}, false
+	}
+	correlation := rel.ParentKey.Name
+	if correlation == "" {
+		correlation = tc.PKColumns[0].Name
+	}
 	entry := RelationshipFilterContext{
 		FieldName:         rel.FieldName,
 		SQLName:           rel.Name,
@@ -384,13 +386,13 @@ func relationshipFilterEntry(tc *TableContext, rel RelationshipContext, target *
 		TargetTable:       target.TableName,
 		TargetSchema:      target.Schema,
 		HelperName:        toCamelCase(tc.StructName) + rel.FieldName + "FilterExists",
-		CorrelationColumn: cmp.Or(rel.ParentKey.Name, tc.PKColumns[0].Name),
+		CorrelationColumn: correlation,
 		SoftDelete:        relationshipFilterSoftDelete(target),
 		TenantColumn:      relationshipFilterTenantColumn(target),
 	}
 
 	if rel.Type == parser.ManyToMany {
-		if len(target.PKColumns) != 1 || rel.JunctionTable == "" ||
+		if len(target.PKColumns) == 0 || rel.JunctionTable == "" ||
 			rel.JunctionLocalFK == "" || rel.JunctionReferenceFK == "" {
 			return RelationshipFilterContext{}, false
 		}
@@ -400,6 +402,10 @@ func relationshipFilterEntry(tc *TableContext, rel RelationshipContext, target *
 		entry.JunctionLocalFK = rel.JunctionLocalFK
 		entry.JunctionReferenceFK = rel.JunctionReferenceFK
 		entry.TargetPKColumn = cmp.Or(rel.TargetPKColumn, target.PKColumns[0].Name)
+		if rel.CompositeKey() {
+			entry.CorrelationColumns, entry.CorrelationKey = keyColumns(rel.JunctionLocal)
+			entry.TargetJoin = rel.JunctionReference
+		}
 		return entry, true
 	}
 
@@ -407,7 +413,19 @@ func relationshipFilterEntry(tc *TableContext, rel RelationshipContext, target *
 		return RelationshipFilterContext{}, false
 	}
 	entry.FKColumn = rel.FKColumn
+	if rel.CompositeKey() {
+		entry.CorrelationColumns, entry.CorrelationKey = keyColumns(rel.Key)
+	}
 	return entry, true
+}
+
+// keyColumns splits key pairs into the referenced columns and the key's own.
+func keyColumns(key []parser.KeyPair) (referenced, local []string) {
+	for _, p := range key {
+		referenced = append(referenced, p.Referenced)
+		local = append(local, p.Local)
+	}
+	return referenced, local
 }
 
 // relationshipFilterSoftDelete returns the soft-delete predicate the subquery

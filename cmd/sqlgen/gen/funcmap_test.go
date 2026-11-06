@@ -182,7 +182,11 @@ func TestFuncLoadChunkSize(t *testing.T) {
 		want       int
 	}{
 		{"postgres single key", sql.NewPostgresDialect(), 1, 32767},
-		{"postgres pair", sql.NewPostgresDialect(), 2, 16383},
+		{"postgres pair", sql.NewPostgresDialect(), 2, 4000},
+		{"postgres triple", sql.NewPostgresDialect(), 3, 4000},
+		{"postgres stdlib pair", sql.NewPostgresStdlibDialect(), 2, 4000},
+		{"mysql pair", sql.NewMySQLDialect(), 2, 16383},
+		{"sqlite pair", sql.NewSQLiteDialect(), 2, 8191},
 		{"mysql single key", sql.NewMySQLDialect(), 1, 32767},
 		{"sqlite single key", sql.NewSQLiteDialect(), 1, 16383},
 		{"sqlite triple", sql.NewSQLiteDialect(), 3, 5461},

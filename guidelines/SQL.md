@@ -577,7 +577,7 @@ The target fetch binds the parent keys, not one key per junction row, so parents
 
 ### Chunking at the bind-parameter limit
 
-Every loader step binds parent keys in chunks of `floor(L / 2 / N)`, where `N` is the key's column count and `L` is the dialect's bind-parameter limit (SQLite 32766, MySQL and PostgreSQL 65535). The funcmap's `loadChunkSize N` bakes the size into the template as a literal: 16383 on SQLite and 32767 on MySQL and PostgreSQL for `N = 1`. Half the budget is left for the relationship filter, tenancy, soft-delete and static `filter:` parameters; a chunk of the full limit fails once the consumer filter adds one. The pgx O2M step is the one exception: its `= ANY($1)` binds one parameter at any count, so it runs unchunked (`TableContext.O2MLoadUnchunked`). PRD §25.1 gives the resulting query count.
+Every loader step binds parent keys in chunks of `floor(L / 2 / N)`, where `N` is the key's column count and `L` is the dialect's bind-parameter limit (SQLite 32766, MySQL and PostgreSQL 65535). The funcmap's `loadChunkSize N` bakes the size into the template as a literal: 16383 on SQLite and 32767 on MySQL and PostgreSQL for `N = 1`. On PostgreSQL a key of several columns is also capped at 4000 keys, because a longer tuple `IN` fails with `stack depth limit exceeded` at the default `max_stack_depth`. Half the budget is left for the relationship filter, tenancy, soft-delete and static `filter:` parameters; a chunk of the full limit fails once the consumer filter adds one. The pgx O2M step for a one-column key over a NOT NULL column is the one exception: its `= ANY($1)` binds one parameter at any count, so it runs unchunked (`TableContext.O2MLoadUnchunked`). PRD §25.1 gives the resulting query count.
 
 ---
 

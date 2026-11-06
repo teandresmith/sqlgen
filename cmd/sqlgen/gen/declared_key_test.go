@@ -1,7 +1,6 @@
 package gen_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -196,21 +195,21 @@ func TestBuildRelationshipContexts_DeclaredKeyListMapsOntoPrimaryKey(t *testing.
 	})
 }
 
-// TestBuildRelationshipContexts_DeclaredCompositeKeyIsAnError is a staging
-// guard: a declared key of more than one column is a generation error naming
-// the relationship and the key until relationships through a composite key
-// generate.
-func TestBuildRelationshipContexts_DeclaredCompositeKeyIsAnError(t *testing.T) {
+// TestBuildRelationshipContexts_DeclaredCompositeKey pins a declared key of
+// more than one column: it generates, mapped onto the referenced key.
+func TestBuildRelationshipContexts_DeclaredCompositeKey(t *testing.T) {
 	rel := config.TableRelationship{Name: "Team", Type: "o2o", Table: "teams", FK: config.KeyColumns{"team_code", "team_region"}}
-	_, err := declaredKeyRelationship(t, "members", rel, func(cfg *config.RootConfig) {
+	got, err := declaredKeyRelationship(t, "members", rel, func(cfg *config.RootConfig) {
 		cfg.Tables["teams"] = config.TableConfig{PrimaryKey: &config.TablePrimaryKeyConfig{Columns: []string{"code", "region"}}}
 	})
-	if err == nil {
-		t.Fatal("BuildTableContextsFromSchema() = nil, want an error")
+	if err != nil {
+		t.Fatalf("BuildTableContextsFromSchema() error: %v", err)
 	}
-	for _, want := range []string{`"Team"`, "fk: [team_code, team_region]", "a key of 2 columns", "not generated yet"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error = %q, want it to contain %q", err, want)
-		}
+	want := []parser.KeyPair{{Local: "team_code", Referenced: "code"}, {Local: "team_region", Referenced: "region"}}
+	if diff := cmp.Diff(want, got.Key); diff != "" {
+		t.Errorf("key mismatch (-want +got):\n%s", diff)
+	}
+	if got.FKOnTarget {
+		t.Error("FKOnTarget = true, want false: the key's columns are on members")
 	}
 }

@@ -1,4 +1,5 @@
 {{- define "table/resolve-join" -}}
+{{- $join := . -}}
 	if {{ .FieldOptionsCheck }} {
 		joins = append(joins, sql.JoinClause{
 			Table:   sql.Table{Schema: {{ printf "%q" .TargetSchema }}, Name: {{ printf "%q" .TargetTable }}},
@@ -9,9 +10,9 @@
 			// unwrapped `filter:` carrying a top-level OR would pull the
 			// correlation into the disjunction and join other parents' rows.
 			// Same reason the EXISTS form wraps (shared/_filter.tmpl).
-			On:      fmt.Sprintf("{{ .Alias }}.%s = {{ .OnLocalAlias }}.%s", d.QuoteIdentifier({{ printf "%q" .OnRemote }}), d.QuoteIdentifier({{ printf "%q" .OnLocal }})) + " AND (" + {{ printf "%q" .Filter }} + ")",
+			On:      fmt.Sprintf("{{ .Alias }}.%s = {{ .OnLocalAlias }}.%s", d.QuoteIdentifier({{ printf "%q" .OnRemote }}), d.QuoteIdentifier({{ printf "%q" .OnLocal }})){{ range .ExtraOn }} + fmt.Sprintf(" AND {{ $join.Alias }}.%s = {{ $join.OnLocalAlias }}.%s", d.QuoteIdentifier({{ printf "%q" .Remote }}), d.QuoteIdentifier({{ printf "%q" .Local }})){{ end }} + " AND (" + {{ printf "%q" .Filter }} + ")",
 {{- else }}
-			On:      fmt.Sprintf("{{ .Alias }}.%s = {{ .OnLocalAlias }}.%s", d.QuoteIdentifier({{ printf "%q" .OnRemote }}), d.QuoteIdentifier({{ printf "%q" .OnLocal }})),
+			On:      fmt.Sprintf("{{ .Alias }}.%s = {{ .OnLocalAlias }}.%s", d.QuoteIdentifier({{ printf "%q" .OnRemote }}), d.QuoteIdentifier({{ printf "%q" .OnLocal }})){{ range .ExtraOn }} + fmt.Sprintf(" AND {{ $join.Alias }}.%s = {{ $join.OnLocalAlias }}.%s", d.QuoteIdentifier({{ printf "%q" .Remote }}), d.QuoteIdentifier({{ printf "%q" .Local }})){{ end }},
 {{- end }}
 			// The NULL-detection below reads the target's PK off the scanned
 			// row, so the join carries it even when FieldOptions did not ask

@@ -487,6 +487,17 @@ func BuildCompositePKBatchCondition(d Dialect, columns []string, valueSets [][]a
 	return Condition{Value: tupleInCondition{Columns: quoted, Rows: valueSets}}
 }
 
+// TupleInSubquery returns ("c1", "c2") IN (SELECT …), matching a key of several
+// columns against the rows sub selects. sub takes the bare "$" tokens
+// [SubqueryWhere] renders.
+func TupleInSubquery(d Dialect, columns []string, sub Subquery) Condition {
+	quoted := make([]string, len(columns))
+	for i, col := range columns {
+		quoted[i] = d.QuoteIdentifier(col)
+	}
+	return Condition{Value: tupleInCondition{Columns: quoted, Subquery: &sub}}
+}
+
 // --- Internal helpers ---
 
 // buildWhere generates a WHERE clause from conditions, joining them with AND.
@@ -608,8 +619,12 @@ func expandExists(d Dialect, e existsCondition, pos int, qualifier string) (stri
 }
 
 // expandTupleIN renders a composite-key batch predicate, binding the rows'
-// values in row order.
+// values in row order, or its subquery.
 func expandTupleIN(d Dialect, t tupleInCondition, pos int) (string, []any, int) {
+	if t.Subquery != nil {
+		clause, args, next := expandSubquery(d, "$", *t.Subquery, pos)
+		return "(" + strings.Join(t.Columns, ", ") + ") IN " + clause, args, next
+	}
 	var b strings.Builder
 	b.WriteString("(")
 	b.WriteString(strings.Join(t.Columns, ", "))

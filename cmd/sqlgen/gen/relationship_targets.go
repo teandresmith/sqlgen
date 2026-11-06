@@ -234,20 +234,18 @@ func (t *relationshipTargets) generates(qualifiedTarget string) bool {
 	return res == targetGenerated
 }
 
-// generateCompositeKeyEdges lifts the guard compositeKeyEdge and
-// checkDeclaredKeyColumns keep. It stays off while the templates join one
-// column per side; tests turn it on to reach the context code, which already
-// handles every pair.
-var generateCompositeKeyEdges bool
+// writeCompositeKeyEdges lifts the guard compositeKeyWriteGuard keeps. It stays
+// off while the nested writers compare and write one column per key; tests turn
+// it on to reach the eligibility code, which already handles every member.
+var writeCompositeKeyEdges bool
 
-// compositeKeyEdge reports whether an FK-inferred edge joins through more than
-// one column pair. The loaders, the relationship filter and the nested writers
-// join one column per side, so such an edge is omitted silently.
-func compositeKeyEdge(r parser.Relationship) bool {
-	if generateCompositeKeyEdges {
+// compositeKeyWriteGuard reports whether an edge joins through more than one
+// column pair, which nested writes do not reach yet.
+func compositeKeyWriteGuard(rel RelationshipContext) bool {
+	if writeCompositeKeyEdges {
 		return false
 	}
-	return len(r.Key) > 1 || len(r.JunctionLocal) > 1 || len(r.JunctionReference) > 1
+	return rel.CompositeKey()
 }
 
 // excludedKeyMember returns the first key column of an FK-inferred edge that

@@ -225,7 +225,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert.field-selection | A `FieldOptions` that selects some columns makes `Upsert` return a partial entity. An empty `&FieldOptions{}` performs the write but skips the entity read and returns `nil` | `conformance: Upsert/returns only the selected columns`; `conformance: Upsert/an empty FieldOptions upserts and returns nil` | all | client-methods: Upsert × field-selection |
 | upsert-many.field-selection | A `FieldOptions` that selects some columns makes `UpsertMany` return partial entities. An empty `&FieldOptions{}` performs the write but skips the entity read and returns `nil` | `conformance: UpsertMany/returns only the selected columns`; `conformance: UpsertMany/an empty FieldOptions upserts and returns nil` | all | client-methods: UpsertMany × field-selection |
 | nested.empty-field-options-returns-nil | An empty `&FieldOptions{}` makes `CreateWithRelated`, `UpdateWithRelated` and `UpsertWithRelated` perform their writes, nested ones included, and return `nil` | `unit: cmd/sqlgen/gen: TestNestedTemplate_EmptyFieldOptionsReturnsNil`; `conformance: CreateWithRelated/an empty FieldOptions writes every edge and returns nil`; `conformance: UpdateWithRelated/an empty FieldOptions performs every write and returns nil`; `conformance: UpsertWithRelated/an empty FieldOptions writes, nested rows included, and returns nil` | all |  |
-| get-many.required-columns-composite-key | A narrowed projection still unions every referenced parent column and every child FK member of a composite key, so the edge loads |  | all |  |
+| get-many.required-columns-composite-key | A narrowed projection still unions every referenced parent column and every child FK member of a composite key, so the edge loads | `unit: cmd/sqlgen/gen: TestRequiredColumns_compositeKeyMembers`; `conformance: GetMany/a projection without key columns still loads a composite edge` | all |  |
 
 ## §9.6a Lock Modes
 <!-- prd: 9.6a sha256: 35c89472430124e1 -->
@@ -471,7 +471,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | increment.composite-pk | On a composite-PK table `Increment` takes the `{Table}PK` struct and matches all PK columns, so only that tuple changes, and it records that tuple as its affected key | `conformance: Increment/a composite key increments only its own tuple` | all | client-methods: Increment × composite-pk |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: 45dbebc3b6e19c77 -->
+<!-- prd: 9.9 sha256: fe743642d1b2da2f -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -577,7 +577,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | load.m2m-target-key | The M2M target fetch matches the target's own referenced key column against the junction rows, and maps targets to parents on that key | `unit: cmd/sqlgen/gen: TestGetTemplate_m2mTargetFilterUsesTargetPKField/string key`; `unit: cmd/sqlgen/gen: TestGetTemplate_m2mTargetFilterUsesTargetPKField/integer key` | all |  |
 | load.fanout-no-tx-bound | The O2M/M2M loader fan-out sets no concurrency bound of its own, inside a transaction or out | `unit: cmd/sqlgen/gen: TestGetTemplate_relationshipFanOutIsUnbounded` | all |  |
 | load.fanout-in-tx-serializes | Inside a transaction the O2M/M2M loads of one read are dispatched in parallel and the transaction's connection reservation serializes their statements, so a read whose two such loads overlap still loads both | `conformance: Get/selecting two fanned-out relationships inside a transaction loads both` | all |  |
-| load.key-condition-appended | The composite key condition is appended to the child query's conditions, so a consumer filter still applies |  | all |  |
+| load.key-condition-appended | The composite key condition is appended to the child query's conditions, so a consumer filter still applies | `conformance: GetMany/a consumer filter on a composite edge applies with the key condition`; `conformance: GetMany/a soft-delete comparator in a consumer filter narrows a composite edge's default`; `conformance: GetMany/a composite key load past one chunk binds at most its chunk per statement` | all |  |
 
 ## §14.1 Offset-Based
 <!-- prd: 14.1 sha256: 49980305eb959c7f -->
@@ -853,12 +853,13 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | error-prefix.tenant-mismatch | A `tenancy.ErrMismatch` is returned under the method's prefix like any other error, on `Get`, `Update` and `Create` alike | `example: tenancy: TestErrMismatch_CarriesTheMethodPrefix` | sqlite |  |
 
 ## §25.1 Query Count Guarantee
-<!-- prd: 25.1 sha256: 56257757d02b513e -->
+<!-- prd: 25.1 sha256: 8767d2332a3a8270 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| load.chunk-size | Each relationship loader step binds parent keys in chunks of `floor(L / 2 / N)` keys, `L` being 32766 on SQLite and 65535 on MySQL and PostgreSQL: 16383 and 32767 for a single-column key; on PostgreSQL with pgx a one-column O2M FK filter binds every parent key as one array parameter instead | `unit: cmd/sqlgen/gen: TestFuncLoadChunkSize`; `unit: cmd/sqlgen/gen: TestGetTemplate_o2mRelationshipLoading`; `unit: cmd/sqlgen/gen: TestGetTemplate_m2mRelationshipLoading` | all |  |
-| query-count.composite-o2m-pgx | A composite-key O2M on pgx takes one statement per chunk (`s = C`), not one `= ANY` statement |  | postgres, pgx |  |
+| load.chunk-size | Each relationship loader step binds parent keys in chunks of `floor(L / 2 / N)` keys, `L` being 32766 on SQLite and 65535 on MySQL and PostgreSQL: 16383 and 32767 for a single-column key, and 4000 at most per statement for a key of several columns on PostgreSQL; on PostgreSQL with pgx a one-column O2M FK filter over a NOT NULL referenced column binds every parent key as one array parameter instead | `unit: cmd/sqlgen/gen: TestFuncLoadChunkSize`; `unit: cmd/sqlgen/gen: TestGetTemplate_o2mRelationshipLoading`; `unit: cmd/sqlgen/gen: TestGetTemplate_m2mRelationshipLoading`; `conformance: GetMany/a composite key load past one chunk binds at most its chunk per statement` | all |  |
+| query-count.composite-o2m-pgx | A composite-key O2M on pgx takes one statement per chunk (`s = C`), not one `= ANY` statement | `unit: cmd/sqlgen/gen: TestGetTemplate_o2mCompositeKeyLoading/pgx`; `conformance: GetMany/a composite key load past one chunk binds at most its chunk per statement` | postgres, pgx |  |
+| query-count.nullable-referenced-pgx | A one-column O2M whose key references a nullable column takes one statement per chunk on pgx (`s = C`), and skips a parent holding NULL | `unit: cmd/sqlgen/cli: TestGenerate_EdgeJoinsReferencedColumns/fk to a nullable unique column`; `conformance: GetMany/a one-column key into a nullable unique column skips a NULL parent` | postgres, pgx |  |
 
 ## §25.3 Batch Operations
 <!-- prd: 25.3 sha256: 17070ea1e3317227 -->
@@ -940,7 +941,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | tenant-rel.skip-tenancy-propagates | A parent read's `SkipTenancy` is forwarded to the child `GetMany` that loads its O2M relationship | `unit: cmd/sqlgen/gen: TestTenancyTemplate_loadRelationships_propagatesSkipTenancy` | all |  |
-| tenant-rel.composite-load-in-tenant | A composite tenant edge's load runs the child's tenant-scoped `GetMany` |  | all |  |
+| tenant-rel.composite-load-in-tenant | A composite tenant edge's load runs the child's tenant-scoped `GetMany` | `unit: cmd/sqlgen/gen: TestTenancyTemplate_keyedLoadPropagatesTenantOptions/o2m`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_keyedLoadPropagatesTenantOptions/m2m` | all |  |
 
 ## Not applicable
 

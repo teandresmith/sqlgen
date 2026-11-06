@@ -98,6 +98,50 @@ func (s CounterSorter) UpdatedAt(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "updated_at", Direction: direction}
 }
 
+// CrateSorter provides type-safe sort helpers for the Crate entity.
+// Each method returns a sql.Sort for the corresponding column.
+type CrateSorter struct{}
+
+// NewCrateSorter returns a new CrateSorter.
+func NewCrateSorter() CrateSorter { return CrateSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s CrateSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s CrateSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// ShelfTag returns a sort for the shelf_tag column in the given direction.
+func (s CrateSorter) ShelfTag(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "shelf_tag", Direction: direction}
+}
+
+// CrateItemSorter provides type-safe sort helpers for the CrateItem entity.
+// Each method returns a sql.Sort for the corresponding column.
+type CrateItemSorter struct{}
+
+// NewCrateItemSorter returns a new CrateItemSorter.
+func NewCrateItemSorter() CrateItemSorter { return CrateItemSorter{} }
+
+// CrateID returns a sort for the crate_id column in the given direction.
+func (s CrateItemSorter) CrateID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "crate_id", Direction: direction}
+}
+
+// OrderID returns a sort for the order_id column in the given direction.
+func (s CrateItemSorter) OrderID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "order_id", Direction: direction}
+}
+
+// ProductID returns a sort for the product_id column in the given direction.
+func (s CrateItemSorter) ProductID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "product_id", Direction: direction}
+}
+
 // DocumentSorter provides type-safe sort helpers for the Document entity.
 // Each method returns a sql.Sort for the corresponding column.
 type DocumentSorter struct{}
@@ -118,6 +162,87 @@ func (s DocumentSorter) ID(direction sql.SortDirection) sql.Sort {
 // Title returns a sort for the title column in the given direction.
 func (s DocumentSorter) Title(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "title", Direction: direction}
+}
+
+// ItemNoteSorter provides type-safe sort helpers for the ItemNote entity.
+// Each method returns a sql.Sort for the corresponding column.
+type ItemNoteSorter struct{}
+
+// NewItemNoteSorter returns a new ItemNoteSorter.
+func NewItemNoteSorter() ItemNoteSorter { return ItemNoteSorter{} }
+
+// Body returns a sort for the body column in the given direction.
+func (s ItemNoteSorter) Body(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "body", Direction: direction}
+}
+
+// DeletedAt returns a sort for the deleted_at column in the given direction.
+func (s ItemNoteSorter) DeletedAt(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "deleted_at", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s ItemNoteSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// OrderID returns a sort for the order_id column in the given direction.
+func (s ItemNoteSorter) OrderID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "order_id", Direction: direction}
+}
+
+// ProductID returns a sort for the product_id column in the given direction.
+func (s ItemNoteSorter) ProductID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "product_id", Direction: direction}
+}
+
+// ItemReceiptSorter provides type-safe sort helpers for the ItemReceipt entity.
+// Each method returns a sql.Sort for the corresponding column.
+type ItemReceiptSorter struct{}
+
+// NewItemReceiptSorter returns a new ItemReceiptSorter.
+func NewItemReceiptSorter() ItemReceiptSorter { return ItemReceiptSorter{} }
+
+// Code returns a sort for the code column in the given direction.
+func (s ItemReceiptSorter) Code(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "code", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s ItemReceiptSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// OrderID returns a sort for the order_id column in the given direction.
+func (s ItemReceiptSorter) OrderID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "order_id", Direction: direction}
+}
+
+// ProductID returns a sort for the product_id column in the given direction.
+func (s ItemReceiptSorter) ProductID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "product_id", Direction: direction}
+}
+
+// ItemStationSorter provides type-safe sort helpers for the ItemStation entity.
+// Each method returns a sql.Sort for the corresponding column.
+type ItemStationSorter struct{}
+
+// NewItemStationSorter returns a new ItemStationSorter.
+func NewItemStationSorter() ItemStationSorter { return ItemStationSorter{} }
+
+// OrderID returns a sort for the order_id column in the given direction.
+func (s ItemStationSorter) OrderID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "order_id", Direction: direction}
+}
+
+// ProductID returns a sort for the product_id column in the given direction.
+func (s ItemStationSorter) ProductID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "product_id", Direction: direction}
+}
+
+// StationID returns a sort for the station_id column in the given direction.
+func (s ItemStationSorter) StationID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "station_id", Direction: direction}
 }
 
 // LabelSorter provides type-safe sort helpers for the Label entity.
@@ -157,6 +282,33 @@ func (s OrderItemSorter) ProductID(direction sql.SortDirection) sql.Sort {
 // Quantity returns a sort for the quantity column in the given direction.
 func (s OrderItemSorter) Quantity(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "quantity", Direction: direction}
+}
+
+// ParcelSorter provides type-safe sort helpers for the Parcel entity.
+// Each method returns a sql.Sort for the corresponding column.
+type ParcelSorter struct{}
+
+// NewParcelSorter returns a new ParcelSorter.
+func NewParcelSorter() ParcelSorter { return ParcelSorter{} }
+
+// Bin returns a sort for the bin column in the given direction.
+func (s ParcelSorter) Bin(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "bin", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s ParcelSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s ParcelSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// Region returns a sort for the region column in the given direction.
+func (s ParcelSorter) Region(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "region", Direction: direction}
 }
 
 // PostSorter provides type-safe sort helpers for the Post entity.
@@ -238,6 +390,55 @@ func (s RevisionSorter) DocumentID(direction sql.SortDirection) sql.Sort {
 // Number returns a sort for the number column in the given direction.
 func (s RevisionSorter) Number(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "number", Direction: direction}
+}
+
+// ShelfSorter provides type-safe sort helpers for the Shelf entity.
+// Each method returns a sql.Sort for the corresponding column.
+type ShelfSorter struct{}
+
+// NewShelfSorter returns a new ShelfSorter.
+func NewShelfSorter() ShelfSorter { return ShelfSorter{} }
+
+// Bin returns a sort for the bin column in the given direction.
+func (s ShelfSorter) Bin(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "bin", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s ShelfSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Region returns a sort for the region column in the given direction.
+func (s ShelfSorter) Region(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "region", Direction: direction}
+}
+
+// Tag returns a sort for the tag column in the given direction.
+func (s ShelfSorter) Tag(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "tag", Direction: direction}
+}
+
+// StationSorter provides type-safe sort helpers for the Station entity.
+// Each method returns a sql.Sort for the corresponding column.
+type StationSorter struct{}
+
+// NewStationSorter returns a new StationSorter.
+func NewStationSorter() StationSorter { return StationSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s StationSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s StationSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// ProductID returns a sort for the product_id column in the given direction.
+func (s StationSorter) ProductID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "product_id", Direction: direction}
 }
 
 // TagSorter provides type-safe sort helpers for the Tag entity.

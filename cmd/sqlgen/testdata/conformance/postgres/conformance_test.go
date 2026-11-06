@@ -62,9 +62,9 @@ func TestConformance(t *testing.T) {
 		Client:   models.New(base),
 		Querier:  q,
 		Base:     base,
-		Caps:     suite.Capabilities{RowLocks: true},
+		Caps:     suite.Capabilities{RowLocks: true, CompositeLoadChunk: 4000},
 		Reset: func(t *testing.T) {
-			if _, err := pool.Exec(ctx, "TRUNCATE order_items, products, documents, revisions, labels, counters, author_tags, posts, author_profiles, tags, authors RESTART IDENTITY"); err != nil {
+			if _, err := pool.Exec(ctx, "TRUNCATE crate_items, crates, item_stations, stations, parcels, shelves, item_receipts, item_notes, order_items, products, documents, revisions, labels, counters, author_tags, posts, author_profiles, tags, authors RESTART IDENTITY"); err != nil {
 				t.Fatal(err)
 			}
 		},
