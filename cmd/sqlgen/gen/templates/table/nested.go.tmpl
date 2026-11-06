@@ -921,7 +921,7 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 				// to this caller, and all NOT_FOUND. Never CONFLICT: that would
 				// confirm the row exists.
 				return nestedError({{ printf "%q" .FieldName }}, "connect", v, ErrNotFound)
-			case {{ .FKOwnerGuard }} && {{ .FKOwnerKey }} == parent.{{ $pk }}:
+			case {{ .FKOwnerGuard }} && {{ .FKOwnerKey }} == parent.{{ .ParentKeyField }}:
 				// Already ours — the requested end state holds, so this is a
 				// no-op rather than a conflict.
 				continue

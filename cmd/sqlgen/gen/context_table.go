@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -87,7 +88,9 @@ func buildTableContextsPartial(input *GenerateInput, collisions map[string]bool)
 // and FKFieldName fields on each relationship by looking up cross-table data
 // from the built contexts.
 //
-// FKGoType comes from the parent/target table's PK Go type. FKNullable comes
+// ParentKey is the parent column the edge's key references, and FKGoType its
+// Go type (for M2M, the type of the target column the junction references;
+// for a belongs-to O2O, the parent's PK type). FKNullable comes
 // from the FK column on the target table (O2M/O2O) or the junction's local FK
 // column (M2M); it is the nullability the *target* table's filter struct will
 // expect for the FK field, which determines whether relationship loaders must
@@ -129,7 +132,22 @@ func wireRelationshipFKMetadata(contexts []TableContext) {
 		wireRelListFKMetadata(tc.M2MRelationships, tc, pkColumns, colsByTable)
 		wireRelListFKMetadata(tc.O2ORelationships, tc, pkColumns, colsByTable)
 		wireRelListFKMetadata(tc.Relationships, tc, pkColumns, colsByTable)
+		tc.LoadKeyColumns = loadKeyColumns(tc)
 	}
+}
+
+// loadKeyColumns returns each O2M and M2M edge's ParentKey once, in edge
+// order.
+func loadKeyColumns(tc *TableContext) []ColumnContext {
+	var cols []ColumnContext
+	for _, rels := range [][]RelationshipContext{tc.O2MRelationships, tc.M2MRelationships} {
+		for _, r := range rels {
+			if r.ParentKey.Name != "" && !slices.ContainsFunc(cols, func(c ColumnContext) bool { return c.Name == r.ParentKey.Name }) {
+				cols = append(cols, r.ParentKey)
+			}
+		}
+	}
+	return cols
 }
 
 func wireRelListFKMetadata(rels []RelationshipContext, parent *TableContext, pkColumns map[string]ColumnContext, colsByTable map[string]map[string]ColumnContext) {
@@ -143,8 +161,11 @@ func wireRelListFKMetadata(rels []RelationshipContext, parent *TableContext, pkC
 // relationship by consulting the cross-table lookup. Split out to keep the
 // per-relationship-type branching readable.
 func wireRelFKMetadata(r *RelationshipContext, parent *TableContext, pkColumns map[string]ColumnContext, colsByTable map[string]map[string]ColumnContext) {
+	if r.Type == parser.ManyToMany || r.Type == parser.OneToMany || r.FKOnTarget {
+		r.ParentKey, _ = parentKeyColumn(*r, parent)
+	}
 	if r.FKGoType == "" {
-		r.FKGoType = resolveFKGoType(r, parent, pkColumns)
+		r.FKGoType = resolveFKGoType(r, parent, pkColumns, colsByTable)
 	}
 
 	fkCol := r.FKColumn
@@ -171,13 +192,13 @@ func wireRelFKMetadata(r *RelationshipContext, parent *TableContext, pkColumns m
 		if col, ok := lookupTableCols(colsByTable, r.JunctionSchema, r.JunctionTable)[r.JunctionReferenceFK]; ok {
 			r.JunctionReferenceGoType = col.GoType
 		}
-		// The M2M loader keys its target-to-parent map on the *target's* PK
-		// field and declares that column on the target fetch, so both
-		// spellings have to come from the target table rather than the parent's
-		// PK.
-		if pk, ok := lookupPKColumn(pkColumns, r.TargetSchema, r.TargetTable); ok {
-			r.TargetPKFieldName = pk.FieldName
-			r.TargetPKColumn = pk.Name
+		// The M2M loader keys its target-to-parent map on the target column
+		// the junction references and declares that column on the target
+		// fetch, so both spellings have to come from the target table rather
+		// than the parent's PK.
+		if key, ok := targetKeyColumn(r, pkColumns, colsByTable); ok {
+			r.TargetPKFieldName = key.FieldName
+			r.TargetPKColumn = key.Name
 		}
 	}
 
@@ -202,8 +223,8 @@ func applyRelFKFallbacks(r *RelationshipContext, parent *TableContext, fkCol str
 	// junction's reference column; an M2M local column references the parent.
 	if r.FKColumnGoType == "" {
 		r.FKColumnGoType = r.FKGoType
-		if r.Type == parser.ManyToMany && len(parent.PKColumns) > 0 {
-			r.FKColumnGoType = parent.PKColumns[0].GoType
+		if r.Type == parser.ManyToMany && r.ParentKey.GoType != "" {
+			r.FKColumnGoType = r.ParentKey.GoType
 		}
 	}
 	if r.Type == parser.ManyToMany && r.JunctionReferenceGoType == "" {
@@ -243,22 +264,35 @@ func wireRelFKFromTable(r *RelationshipContext, fkCol, schema, name string, cols
 	return true
 }
 
-// resolveFKGoType returns the FK Go type for a relationship: the parent's PK
-// type for O2M/O2O (the FK column on the target matches the parent's PK), and
-// the target table's PK type for M2M.
-func resolveFKGoType(r *RelationshipContext, parent *TableContext, pkColumns map[string]ColumnContext) string {
-	switch r.Type {
-	case parser.OneToMany, parser.OneToOne:
+// resolveFKGoType returns the FK Go type for a relationship: the type of the
+// parent column an O2M or has-one key references, the parent's PK type for a
+// belongs-to O2O, and the type of the target column an M2M junction references.
+func resolveFKGoType(r *RelationshipContext, parent *TableContext, pkColumns map[string]ColumnContext, colsByTable map[string]map[string]ColumnContext) string {
+	switch {
+	case r.ParentKey.GoType != "" && r.Type != parser.ManyToMany:
+		return r.ParentKey.GoType
+	case r.Type == parser.OneToMany || r.Type == parser.OneToOne:
 		if len(parent.PKColumns) > 0 {
 			return parent.PKColumns[0].GoType
 		}
-	case parser.ManyToMany:
-		// By the target's schema, as the TargetPKColumn wiring reads it.
-		if pk, ok := lookupPKColumn(pkColumns, r.TargetSchema, r.TargetTable); ok {
-			return pk.GoType
+	case r.Type == parser.ManyToMany:
+		if key, ok := targetKeyColumn(r, pkColumns, colsByTable); ok {
+			return key.GoType
 		}
 	}
 	return "string"
+}
+
+// targetKeyColumn resolves the target column an M2M junction's reference key
+// references, by the target's schema: the first referenced column, or the
+// target's first PK column for an edge built without key pairs.
+func targetKeyColumn(r *RelationshipContext, pkColumns map[string]ColumnContext, colsByTable map[string]map[string]ColumnContext) (ColumnContext, bool) {
+	if len(r.JunctionReference) > 0 {
+		if col, ok := lookupTableCols(colsByTable, r.TargetSchema, r.TargetTable)[r.JunctionReference[0].Referenced]; ok {
+			return col, true
+		}
+	}
+	return lookupPKColumn(pkColumns, r.TargetSchema, r.TargetTable)
 }
 
 // lookupPKColumn resolves a table's first PK column from the cross-table
@@ -342,6 +376,7 @@ func buildTableColumns(input *GenerateInput, table *parser.Table, tableCfg confi
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("building column %s.%s: %w", qualifiedTableOrName(table), col.Name, err)
 		}
+		cc.InForeignKey = inForeignKey(table, col.Name)
 		columns = append(columns, cc)
 		if warning != "" {
 			unmapped = append(unmapped, warning)
@@ -1270,18 +1305,19 @@ func detectPKStrategy(input *GenerateInput, _ *parser.Table, pkColumns []ColumnC
 }
 
 func autoDetectPKStrategy(dialect config.Dialect, pk ColumnContext) config.PKStrategy {
-	// A single-column PK that is also a foreign key is caller-supplied by
-	// definition (PRD §8.6): its value must equal an existing parent row's
-	// key, so neither the database nor the generated client may mint it.
-	// Without this clause the dialect arms below classify such a PK on type
-	// alone — a UUID 1:1 extension key resolved to `app`, and Create then
-	// minted a fresh UUID that could not satisfy the foreign key.
+	// A single-column PK that is a member of a foreign key, a composite one
+	// included, is caller-supplied by definition (PRD §8.6): its value must
+	// equal an existing parent row's key, so neither the database nor the
+	// generated client may mint it. Without this clause the dialect arms below
+	// classify such a PK on type alone — a UUID 1:1 extension key resolved to
+	// `app`, and Create then minted a fresh UUID that could not satisfy the
+	// foreign key.
 	//
 	// Synthetic references are excluded: they are invented from a config
 	// `relationships.fk` and can land on a column that holds no foreign key,
 	// including a table's own surrogate PK, which would demote a healthy
 	// `db` key to `caller`.
-	if pk.FKReference != nil && !pk.FKReference.Synthetic {
+	if pk.InForeignKey || (pk.FKReference != nil && !pk.FKReference.Synthetic) {
 		return config.PKStrategyCaller
 	}
 	switch dialect {
@@ -1636,6 +1672,7 @@ func mergeDeclaredRelationships(
 
 func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets *relationshipTargets) RelationshipContext {
 	tSchema, tName := splitQualifiedName(r.TargetTable)
+	sSchema, sName := splitQualifiedName(r.SourceTable)
 	// Callers drop an edge whose target does not generate before building it.
 	target, _ := targets.resolve(tSchema, tName)
 	targetStruct := target.StructName
@@ -1680,7 +1717,7 @@ func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets
 	}
 
 	jSchema, jName := splitQualifiedName(r.JunctionTable)
-	return RelationshipContext{
+	rel := RelationshipContext{
 		Name:                name,
 		Type:                r.Type,
 		Side:                r.Side,
@@ -1704,6 +1741,8 @@ func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets
 		Description:         relationshipDescription(r.Type, tName),
 		JSONTag:             toSnakeName(name),
 	}
+	stampKeyConstraintFacts(schema, &rel, sSchema, sName)
+	return rel
 }
 
 // sortDirection normalizes a relationship `sort:` direction to the sql package's
@@ -1763,7 +1802,7 @@ func configRelationshipToContext(schema *parser.Schema, r config.TableRelationsh
 		}
 		key = declaredKey(r.FK, referenced)
 	}
-	return RelationshipContext{
+	rel := RelationshipContext{
 		Name:                r.Name,
 		Type:                relType,
 		Side:                parseRelationshipSide(r.Side),
@@ -1787,6 +1826,9 @@ func configRelationshipToContext(schema *parser.Schema, r config.TableRelationsh
 		Description:         declaredRelationshipDescription(r, relType),
 		JSONTag:             toSnakeName(r.Name),
 	}
+	sSchema, sName := splitQualifiedName(source)
+	stampKeyConstraintFacts(schema, &rel, sSchema, sName)
+	return rel
 }
 
 // fkColumnOnTarget derives RelationshipContext.FKOnTarget: whether the edge's
@@ -2121,7 +2163,7 @@ func buildIncrementColumns(columns []ColumnContext) []ColumnContext {
 // callers reached during assembly see it unset. buildIncrementColumns is
 // therefore re-run once tenancy lands; see attachTenancyToTables.
 func isIncrementEligible(col ColumnContext) bool {
-	return !col.PrimaryKey && col.FKReference == nil && !col.Tenant && !col.IsComputed &&
+	return !col.PrimaryKey && col.FKReference == nil && !col.InForeignKey && !col.Tenant && !col.IsComputed &&
 		isIncrementableGoType(col.GoType) && isArithmeticSQLColumn(col)
 }
 
@@ -2142,7 +2184,7 @@ func isArithmeticSQLColumn(col ColumnContext) bool {
 // ColumnContext.Tenant, so testing it would be dead — and the warning is about
 // the override, which is worth naming whatever else disqualifies the column.
 func incrementBlockedBySQLType(col ColumnContext) bool {
-	return !col.PrimaryKey && col.FKReference == nil &&
+	return !col.PrimaryKey && col.FKReference == nil && !col.InForeignKey &&
 		isIncrementableGoType(col.GoType) && !isArithmeticSQLColumn(col)
 }
 
@@ -2690,8 +2732,9 @@ func buildAllColumnNames(columns []ColumnContext) []string {
 // buildO2OJoinDetails builds the O2O join detail tree for the relationships template.
 // It walks O2O relationships, resolves target table metadata, and discovers chains.
 // parentPKColumn is the SQL name of the parent table's first PK column, which a
-// has-one edge joins its target's FK to. Every table that reaches here has one:
-// BuildTableContexts skips a table with no resolved PK.
+// has-one edge built without key pairs joins its target's FK to. Every table
+// that reaches here has one: BuildTableContexts skips a table with no resolved
+// PK.
 func buildO2OJoinDetails(input *GenerateInput, o2oRels []RelationshipContext, parentAlias, parentPKColumn string) (details []O2OJoinDetail, allTargets []O2OJoinDetail, err error) {
 	usedAliases := map[string]bool{parentAlias: true}
 
@@ -2766,15 +2809,21 @@ func buildSingleO2ODetail(input *GenerateInput, rel RelationshipContext, parentA
 	// target, swap the ON clause sides. The fact itself is derived once, in
 	// fkColumnOnTarget, and read here (PRD §13.1).
 	//
-	// The swapped parent side is the parent's own PK, the column a nested
-	// has-one create writes into the FK (PRD §9.9.1 shape 2) — not pkCol,
-	// which is the target's and only coincides when both tables spell their
-	// key the same. pkCol stays the target-side scan / HasData key.
-	onLocal := rel.FKColumn // FK column (on parent by default)
-	onRemote := pkCol.Name  // PK column (on target by default)
+	// The referenced side is the column the key references, the PK unless
+	// the key references a UNIQUE column (PRD §13.1). Swapped, it is the
+	// parent's column, the one a nested has-one create writes into the FK
+	// (PRD §9.9.1 shape 2) — not pkCol, which is the target's and only
+	// coincides when both tables spell their key the same. pkCol stays the
+	// target-side scan / HasData key.
+	referenced := ""
+	if len(rel.Key) > 0 {
+		referenced = rel.Key[0].Referenced
+	}
+	onLocal := rel.FKColumn                    // FK column (on parent by default)
+	onRemote := cmp.Or(referenced, pkCol.Name) // referenced column (on target by default)
 	if rel.FKOnTarget {
-		onLocal = parentPKColumn // PK on the parent
-		onRemote = rel.FKColumn  // FK on the target
+		onLocal = cmp.Or(referenced, parentPKColumn) // referenced column on the parent
+		onRemote = rel.FKColumn                      // FK on the target
 	}
 
 	qualifiedFilter, err := o2oJoinPredicate(rel, alias, input.Config.Input.Dialect)
@@ -3075,14 +3124,15 @@ func classifyRelationships(rels []RelationshipContext) (o2o, o2m, m2m []Relation
 // and is read by nothing — for comparator typing, only the existence of the
 // reference matters.
 //
-// Every reference minted here is flagged Synthetic, and that flag *is* read.
-// `fk` names a column the config author asserts is a foreign key, which is not
-// the same as the schema declaring one: markSyntheticFK resolves it against the
-// *related* table and will mark any column matching the name, including that
-// table's own surrogate primary key. So a consumer reasoning about the
-// referential contract rather than about comparator typing must skip these —
-// see autoDetectPKStrategy, where treating one as real demotes a `db` PK to
-// `caller`.
+// A reference minted here is flagged Synthetic unless a composite FOREIGN KEY
+// on the column into the declaring table already enforces it, and that flag
+// *is* read. `fk` names a column the config author asserts is a foreign key,
+// which is not the same as the schema declaring one: markSyntheticFK resolves
+// it against the *related* table and will mark any column matching the name,
+// including that table's own surrogate primary key. So a consumer reasoning
+// about the referential contract rather than about comparator typing must skip
+// these — see autoDetectPKStrategy, where treating one as real demotes a `db`
+// PK to `caller`.
 //
 // Relationship detection never sees these references: it reads the FOREIGN
 // KEY constraints, which this adds none of.
@@ -3120,7 +3170,7 @@ func markSyntheticFK(schema *parser.Schema, targetTable, fkCol, parentSchema, pa
 			col.FKReference = &parser.FKReference{
 				Table:     parentName,
 				Schema:    parentSchema,
-				Synthetic: true,
+				Synthetic: !foreignKeyInto(t, fkCol, parentSchema, parentName),
 			}
 		}
 	}

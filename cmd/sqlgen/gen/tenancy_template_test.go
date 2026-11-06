@@ -705,6 +705,7 @@ func TestTenancyTemplate_loadRelationships_propagatesSkipTenancy(t *testing.T) {
 			FieldName: "Reviews", GoType: "[]*Review", JSONTag: "reviews", FKGoType: "uuid.UUID",
 		},
 	}
+	tc = withParentKeys(tc)
 
 	out := renderTenancyTableBody(t, tc, "table/get")
 

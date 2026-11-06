@@ -103,6 +103,9 @@ func declaredKey(cols config.KeyColumns, pk []string) []parser.KeyPair {
 // checkDeclaredKeyColumns rejects a declared key of more than one column until
 // relationships through a composite key generate.
 func checkDeclaredKeyColumns(r config.TableRelationship, source string) error {
+	if generateCompositeKeyEdges {
+		return nil
+	}
 	var errs []error
 	for _, k := range []struct {
 		name string

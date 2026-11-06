@@ -2525,6 +2525,32 @@ func TestNestedEligibility_TargetShapeFailuresAreNotWriteEligible(t *testing.T) 
 			}
 		})
 	}
+
+	// E1 covers every member of the traversed key: a generated one that is
+	// not its first member still makes the edge read-only.
+	t.Run("generated member of a composite key", func(t *testing.T) {
+		ddl := `
+CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id));
+CREATE TABLE gen_tasks (
+	id bigint PRIMARY KEY,
+	workspace_id bigint NOT NULL,
+	cycle_id bigint GENERATED ALWAYS AS (id) STORED,
+	FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id)
+);`
+		contexts := keyMembersContexts(t, config.DialectPostgres, ddl, nil)
+		if contexts["cycles"].Nested != nil {
+			t.Errorf("auto-included: cycles has nested edges %v, want GenTasks not write-eligible", nestedEdgeNames(contexts["cycles"]))
+		}
+		_, err := buildKeyMembersContexts(t, config.DialectPostgres, ddl, func(cfg *config.RootConfig) {
+			cfg.Tables["cycles"] = config.TableConfig{NestedMutations: &config.TableNestedMutationsConfig{
+				Relationships: []config.TableNestedRelationship{{Name: "GenTasks"}},
+			}}
+		})
+		want := `the traversed FK column "cycle_id" is absent from the target's create input`
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("listed: error = %v, want it to contain %q", err, want)
+		}
+	})
 }
 
 // TestNestedEligibility_M2MIntoOpaqueKeyedTargetIsRefused pins the M2M half of

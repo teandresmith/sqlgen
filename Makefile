@@ -15,7 +15,7 @@ CONFORMANCE_DIALECT_DIRS = $(filter-out %/suite/,$(CONFORMANCE_DIRS))
 # detector, not a budget. The example suites keep their own tighter bound.
 TEST_TIMEOUT ?= 30m
 
-.PHONY: refs-check req-check req-rehash test test-integration test-examples test-conformance conformance-fresh conformance check-conformance lint-conformance static-examples lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
+.PHONY: refs-check req-check req-rehash test test-integration test-examples build-generated test-conformance conformance-fresh conformance check-conformance lint-conformance static-examples lint lint-examples tools-check check check-all fmt vet update-golden update-golden-e2e coverage coverage-html clean help
 
 ## Testing
 
@@ -220,7 +220,13 @@ req-rehash: ## Record that changed PRD sections were reviewed: SECTIONS=9.4c,4.1
 
 check: tools-check tracker-check refs-check req-check fmt lint vet test ## Run lint + unit tests (pre-push check)
 
-check-examples: static-examples test-examples test-conformance ## Run lint + tests on E2E example modules and the conformance suite (requires Docker)
+check-examples: static-examples build-generated test-examples test-conformance ## Run lint + tests on E2E example modules and the conformance suite (requires Docker)
+
+# The CLI unit tests with the generated-package builds that -short skips, so the
+# packages generated from their schemas compile under `make check-examples` too.
+build-generated: ## Build the packages the CLI unit tests generate (go build, no Docker)
+	@echo "==> build-generated cmd/sqlgen/cli"
+	@cd cmd/sqlgen && SQLGEN_BUILD_GENERATED=1 go test -short -count=1 -timeout=$(TEST_TIMEOUT) ./cli/
 
 # The static half of check-examples. /close-phase runs it before `make
 # conformance`, which runs the example and conformance tests itself.

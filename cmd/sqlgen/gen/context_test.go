@@ -350,6 +350,7 @@ func TestPKStrategyDetection(t *testing.T) {
 		name     string
 		dialect  config.Dialect
 		columns  []parser.Column
+		fks      []parser.Constraint
 		override *config.TablePrimaryKeyConfig
 		want     config.PKStrategy
 	}{
@@ -466,6 +467,38 @@ func TestPKStrategyDetection(t *testing.T) {
 			},
 			want: config.PKStrategyDB,
 		},
+		// A PK that is a member of a composite foreign key has no reference
+		// of its own, and is caller-supplied all the same.
+		{
+			name:    "postgres UUID PK in a composite FK → caller",
+			dialect: "postgres",
+			columns: []parser.Column{
+				{Name: "id", Type: "uuid", PrimaryKey: true},
+				{Name: "workspace_id", Type: "uuid"},
+			},
+			fks:  []parser.Constraint{compositeFKOnID("workspace_id")},
+			want: config.PKStrategyCaller,
+		},
+		{
+			name:    "mysql auto-increment bigint PK in a composite FK → caller",
+			dialect: "mysql",
+			columns: []parser.Column{
+				{Name: "id", Type: "bigint", PrimaryKey: true, AutoIncrement: true},
+				{Name: "workspace_id", Type: "bigint"},
+			},
+			fks:  []parser.Constraint{compositeFKOnID("workspace_id")},
+			want: config.PKStrategyCaller,
+		},
+		{
+			name:    "sqlite autoincrement integer PK in a composite FK → caller",
+			dialect: "sqlite",
+			columns: []parser.Column{
+				{Name: "id", Type: "integer", PrimaryKey: true, AutoIncrement: true},
+				{Name: "workspace_id", Type: "integer"},
+			},
+			fks:  []parser.Constraint{compositeFKOnID("workspace_id")},
+			want: config.PKStrategyCaller,
+		},
 		{
 			// An explicit strategy still wins over the FK clause — the
 			// documented escape hatch for schemas that mint the child key
@@ -484,7 +517,7 @@ func TestPKStrategyDetection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			schema := &parser.Schema{
 				Tables: []parser.Table{
-					{Name: "test_table", Columns: tt.columns},
+					{Name: "test_table", Columns: tt.columns, Constraints: tt.fks},
 				},
 			}
 			input := testInput(schema)
@@ -510,6 +543,15 @@ func TestPKStrategyDetection(t *testing.T) {
 				t.Errorf("PKStrategy = %q, want %q", contexts[0].PKStrategy, tt.want)
 			}
 		})
+	}
+}
+
+// compositeFKOnID is a two-column FOREIGN KEY (other, id) on test_table into
+// a parent outside the schema, which makes the table's PK a member of it.
+func compositeFKOnID(other string) parser.Constraint {
+	return parser.Constraint{
+		Name: "test_table_parent_fkey", Type: parser.ForeignKey,
+		Columns: []string{other, "id"}, ReferenceTable: "parents", ReferenceColumns: []string{other, "id"},
 	}
 }
 
@@ -599,6 +641,43 @@ func TestConfigDeclaredFKDoesNotDemoteSurrogatePK(t *testing.T) {
 	if tc.PKStrategy != config.PKStrategyDB {
 		t.Errorf("customers PKStrategy = %q, want %q (synthetic FK must not demote a surrogate key)",
 			tc.PKStrategy, config.PKStrategyDB)
+	}
+}
+
+// A declared `fk` into a column a composite FOREIGN KEY already holds is
+// enforced by the database, so its reference is not synthetic; one into a
+// column with no FOREIGN KEY is (design COMPOSITE_FK_RELATIONSHIPS.md §1.4).
+func TestConfigDeclaredFKOverACompositeKeyIsNotSynthetic(t *testing.T) {
+	schema := parseDDLForTest(t, config.DialectPostgres, `
+CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id));
+CREATE TABLE tasks (
+	id bigint PRIMARY KEY,
+	workspace_id bigint NOT NULL,
+	cycle_id bigint,
+	prev_cycle_id bigint,
+	FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id)
+);`)
+	input := testInput(schema)
+	input.Config.Tables["cycles"] = config.TableConfig{Relationships: []config.TableRelationship{
+		{Name: "Tasks", Type: "o2m", Table: "tasks", FK: config.KeyColumns{"cycle_id"}},
+		{Name: "NextTasks", Type: "o2m", Table: "tasks", FK: config.KeyColumns{"prev_cycle_id"}},
+	}}
+	contexts, err := gen.BuildTableContexts(input, nil)
+	if err != nil {
+		t.Fatalf("BuildTableContexts() error: %v", err)
+	}
+	tasks, ok := tableContextByName(contexts, "tasks")
+	if !ok {
+		t.Fatal("BuildTableContexts() did not build tasks")
+	}
+	for column, want := range map[string]bool{"cycle_id": false, "prev_cycle_id": true} {
+		col := columnByName(t, tasks.Columns, column)
+		if col.FKReference == nil {
+			t.Fatalf("tasks.%s has no FK reference", column)
+		}
+		if col.FKReference.Synthetic != want {
+			t.Errorf("tasks.%s FKReference.Synthetic = %v, want %v", column, col.FKReference.Synthetic, want)
+		}
 	}
 }
 

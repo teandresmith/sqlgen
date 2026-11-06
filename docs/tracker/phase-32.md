@@ -756,16 +756,16 @@ It found three test gaps, all closed inline, each failing under the mutation tha
 
 **PRD Reference:** Sections 8.2, 8.6, 9.9.4, 13.2, 29.10
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] Replace the `PKColumns[0]` relationship reads with key pairs: `context_table.go` (incl. the
+- [x] Replace the `PKColumns[0]` relationship reads with key pairs: `context_table.go` (incl. the
   `TargetPKColumn` wiring at ~167 and ~205), `context_relfilter.go` (~384), `context_nested.go`.
   The parent side of every edge is the FK's referenced columns, not the parent's PK. The context
   types (`context.go:385-394`, `:512-514`) carry key-pair lists. `PKColumns[0]` reads that are
   about the table's own key stay.
-- [ ] Pinned and free members (design §4.3, R1), computed in `gen` because pinning needs the
+- [x] Pinned and free members (design §4.3, R1), computed in `gen` because pinning needs the
   tenancy config. A member is pinned when it is:
   - the tenant column;
   - a child-PK member;
@@ -774,24 +774,24 @@ It found three test gaps, all closed inline, each failing under the mutation tha
   An O2O / O2M edge with no free member keeps `create` and loses `connect`, `disconnect`,
   `clear` and reparent, silently, as a NOT NULL edge does (design §7.1). M2M has no pinned
   members.
-- [ ] E1 over every member, the tenant column included: each is a field of the target's create
+- [x] E1 over every member, the tenant column included: each is a field of the target's create
   input (design §7.1). A generated
   member makes the edge read-only.
-- [ ] `FKNullable` from the free members; disconnect eligibility under SIMPLE vs FULL
+- [x] `FKNullable` from the free members; disconnect eligibility under SIMPLE vs FULL
   (`Constraint.Match`); under FULL with a pinned member, `connect` only with `allow_reparent`
   (design §7.1).
-- [ ] The nested child input (`<Parent><Edge>CreateInput`) drops every member of the traversed
+- [x] The nested child input (`<Parent><Edge>CreateInput`) drops every member of the traversed
   key, the tenant column included (PRD §9.9.5, design §7.1).
-- [ ] Every member must be in the generated model on both sides: extend `relationshipTargets`'
+- [x] Every member must be in the generated model on both sides: extend `relationshipTargets`'
   FIX-358 exclusion index from one column to every member, on the child and the parent.
-- [ ] FK membership from the constraints, not `col.FKReference`:
+- [x] FK membership from the constraints, not `col.FKReference`:
   - `isIncrementEligible` and `incrementBlockedBySQLType` (`context_table.go:1967,1988`);
   - `autoDetectPKStrategy` (`context_table.go:1164`): a single-column PK in any FK constraint is
     `caller`.
-- [ ] `applyConfigDeclaredFKs` (`context_table.go:2925`): no longer marks a declared reference
+- [x] `applyConfigDeclaredFKs` (`context_table.go:2925`): no longer marks a declared reference
   `Synthetic` when a composite FK already enforces it (design §1.4); `autoDetectPKStrategy` is
   its only reader.
-- [ ] Until 32.5, the staging guard keeps every edge with more than one pair out of the template
+- [x] Until 32.5, the staging guard keeps every edge with more than one pair out of the template
   data.
 
 ### Acceptance Criteria
@@ -806,24 +806,132 @@ It found three test gaps, all closed inline, each failing under the mutation tha
 
 ### Tests Required
 
-- [ ] Pinned / free classification, table-driven: tenant column, PK member, shared member, an
+- [x] Pinned / free classification, table-driven: tenant column, PK member, shared member, an
   all-pinned key, a free member.
-- [ ] E1: a generated member → read-only, with the reason.
-- [ ] Disconnect eligibility: SIMPLE with nullable free members; FULL with a pinned member →
+- [x] E1: a generated member → read-only, with the reason.
+- [x] Disconnect eligibility: SIMPLE with nullable free members; FULL with a pinned member →
   ineligible; FULL with all members free and nullable → eligible.
-- [ ] Increment and PK-strategy treatment of composite-FK members (`bigint` and UUID keys).
-- [ ] The two §4.9 non-PK-UNIQUE schemas compile and load (fail first: the `cannot use
+- [x] Increment and PK-strategy treatment of composite-FK members (`bigint` and UUID keys).
+- [x] The two §4.9 non-PK-UNIQUE schemas compile and load (fail first: the `cannot use
   &comparator.NullableNumber[int32]…` / `cannot use &comparator.NullableID…` errors).
-- [ ] An excluded member on the parent side drops the edge with a warning.
-- [ ] `TestIncrementColumns_ExcludeForeignKeys` and `TestPKStrategyDetection` gain a composite-FK
+- [x] An excluded member on the parent side drops the edge with a warning.
+- [x] `TestIncrementColumns_ExcludeForeignKeys` and `TestPKStrategyDetection` gain a composite-FK
   member case, and `gen.increment.fk-excluded` / `gen.pk-strategy.fk-pk-caller` list them (both
   rows claim the composite case today with single-column tests only, design §9.5).
-- [ ] Every design §10.5 row for 32.4 passes, and its registry row lists the test.
-- [ ] `TestE2EGoldenFiles` green with no golden change.
+- [x] Every design §10.5 row for 32.4 passes, and its registry row lists the test.
+- [x] `TestE2EGoldenFiles` green with no golden change.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-11-05 on `design/tenant-composite-fk-relationships`, uncommitted.
+
+**Regression guards, green before any change.** The design §10.2 rows on this sub-item's paths
+passed at `1f765d2a`: `TestNestedEligibility_SingleColumnPinnedFKIsCreateOnly`,
+`…_ChildInputDropsTenantFKColumn`, `…_VerbSetPerShape`, `…_TargetShapeFailuresAreNotWriteEligible`,
+`…_CompositePKParentKeepsItsLoaders`, `TestBuildRelationshipContexts_DeclaredReplacesInferred`, the
+one-column O2M / M2M / O2O loader and filter tests, `TestGenerate_O2MIntoCompositePKTable_LoaderFiltersOnFK`,
+`TestRelationshipTargets_ExcludedKeyMemberDropsInferredEdge`, `TestIncrementColumns_ExcludeForeignKeys`
+and `TestPKStrategyDetection`.
+
+**Fail first.** Each new test ran against `1f765d2a`, with only the test seam and the two
+`NestedEdgeContext` member fields added (data, no logic):
+- `TestGenerate_EdgeJoinsReferencedColumns`: every assertion missed. At HEAD the loader collected
+  `u.ID` into a `NullableNumber[int32]` filter on `invites.email`, the filter correlated on `id`, the
+  O2O join was `u.id = b.owner_email`, and the M2M mapped targets on `t.ID`. The two §4.9 schemas
+  also fail `go build` at HEAD with the measured `cannot use &comparator.NullableNumber[int32]…` /
+  `cannot use &comparator.NullableID…` errors (scratch probe).
+- `TestIncrementColumns_ExcludeForeignKeys/composite FK member` got
+  `["workspace_id" "cycle_id" "points"]`; the three `TestPKStrategyDetection/… in a composite FK →
+  caller` cases got `app`, `db`, `db`.
+- `TestNestedEligibility_PinnedAndFreeMembers`: all five subtests failed (no member split; the
+  tenant and shared cases had no rewrite verb). Two keys list their nullable free member first,
+  since HEAD read the first member only and a NOT NULL first member made two cases pass vacuously.
+- `TestNestedEligibility_MatchFull`: three of five failed. `/full with every member free keeps
+  disconnect` and `/mysql and sqlite read full as simple` pass at HEAD by nature: HEAD reads every
+  key as SIMPLE. They guard that the FULL rule narrows nothing else.
+- Confirmed by mutation instead, since each needs the new code to reach the case:
+  - `…TargetShapeFailuresAreNotWriteEligible/generated member of a composite key` (E1 on the first
+    member only);
+  - the child-input check in `…PinnedAndFreeMembers` (drop the first member only);
+  - `TestRelationshipTargets_DeclaredExcludedLinkColumnErrors/composite key member` (check the
+    first declared column only);
+  - `TestConfigDeclaredFKOverACompositeKeyIsNotSynthetic` (always `Synthetic`);
+  - `TestNestedEligibility_M2MIntoAUniqueKeyIsNotWriteEligible` (no target-key check: the edge
+    was write-eligible and would write the target's PK into `tag_legacy_id`).
+
+**Files.**
+- `gen/key_members.go` (new): FK membership (`inForeignKey`, `foreignKeyInto`), the edge's own
+  constraint and shared members (`stampKeyConstraintFacts`), `parentKeyColumn`, the member split
+  (`edgeKeyMembers`) and E8's key rules (`keyRewriteVerbs`).
+- `gen/context.go`: `ColumnContext.InForeignKey`; `RelationshipContext.SharedMembers`, `Match`,
+  `ParentKey`; `NestedEdgeContext.PinnedMembers`, `FreeMembers`; `TableContext.LoadKeyColumns`.
+  Docs of `FKGoType`, `TargetPKFieldName` / `TargetPKColumn` and the filter context say "referenced".
+- `gen/context_table.go`: `wireRelFKMetadata` sets `ParentKey`, `FKGoType` and the M2M target key
+  from the referenced columns (`targetKeyColumn`); `loadKeyColumns`; the O2O join's ON uses
+  `Key[0].Referenced`; both edge builders stamp the key facts; increments and `autoDetectPKStrategy`
+  read `InForeignKey`; `markSyntheticFK` leaves a reference a composite FK enforces non-synthetic.
+- `gen/context_relfilter.go`: correlation and the M2M target join on the referenced columns.
+- `gen/context_nested.go`: the parent key is the edge's `ParentKey` (`parentPK` → `parentKey`);
+  E1 over every member, the member split and the child-input drop (`splitNestedKeyMembers`,
+  `resolveNestedChildInput`); `settleNestedKeyRewrite`; an M2M whose junction references a target
+  UNIQUE column is refused (E5's binding clause).
+- `gen/relationship_targets.go`, `gen/junction_keys.go`: `excludedDeclaredMember` checks every
+  member; the test seam `generateCompositeKeyEdges` lifts both staging guards.
+- `gen/templates/table/get.go.tmpl`: the O2M and M2M loaders read `.ParentKey`; GetMany unions
+  `.LoadKeyColumns`.
+- Tests: `cli/relationship_detection_test.go` (`TestGenerate_EdgeJoinsReferencedColumns`, three
+  subtests, `go build` outside `-short`; the staging-guard fixture's keys became `uuid`, see below),
+  `gen/nested_key_members_test.go` (new), subtests in `increment_fk_test.go`, `context_test.go`,
+  `nested_test.go`, `relationship_targets_test.go`; `export_test.go`
+  (`GenerateCompositeKeyEdgesForTest`); `withParentKeys` for the hand-built loader fixtures
+  (`get_test.go`, `tenancy_template_test.go`, TESTING.md §11).
+- Docs: the registry (`cli/gen.md`, 8 rows), design §10.1 statuses and test names.
+
+**Behavior and interpretation.**
+- `FKNullable` keeps its meaning, the FK column's nullability, because the loaders type their filter
+  comparator by it. "Nullable from the free members" (PRD §9.9.2, E8) is `keyRewriteVerbs`, which
+  replaces the nested `!rel.FKNullable` gate. For a single-column key the two agree, except that a
+  nullable pinned member (a tenant column, or a column two FKs share) now loses the rewrite verbs,
+  as the PRD says.
+- Staging. `compositeKeyEdge` still keeps every multi-pair edge out of generation; the seam is the
+  only way in. Its tests must not run in parallel. 32.5 deletes the seam with the guard. A key of
+  several columns stops at its verb set in the nested resolver: the single-column rendering checks
+  (`= parent` term, unlink and adoption bindings) are skipped, since 32.6 replaces them with tuple
+  forms.
+- An M2M edge whose junction references a target UNIQUE column, not its PK, is not write-eligible
+  (E5: the link step writes the target's PK). It is reported when listed. Its reads now work
+  (`TargetPKColumn` is the referenced column). No example has the shape. 32.6 lifts it by reading the
+  target's referenced columns on connect.
+- A belongs-to O2O's `FKGoType` keeps the parent's PK type, as before; nothing reads it for that
+  shape.
+
+**Goldens.** `make update-golden` and `make update-golden-e2e` changed no golden. The e2e run added
+testcontainers `postgres` lines to the `mysql` and `sqlite` `go.sum` again, the drift 32.3 noted;
+reverted. `TestGenerate_CompositeKeyEdgeIsOmitted` compares output with and without composite FKs,
+and composite-FK members now lose their increment operators (§4.6), so its fixture's keys are
+`uuid` (no increment) and it still pins edge omission only.
+
+**Auto-review (sqlgen-reviewer).** It confirmed fail first by reverting the filter correlation.
+One high-confidence finding, fixed:
+- With nested mutations on, a §4.9 edge became nested-eligible (its FK now builds from
+  `ParentKey`), but the adoption guard in `nested.go.tmpl` still compared the owner against
+  `parent.<PK>`. Neither schema built: `(*cur) == parent.ID (mismatched types string and int32)`
+  and `(*cur) == parent.Code (mismatched types int32 and string)`. `NestedEdgeContext.ParentKeyField`
+  now spells the guard, and `TestGenerate_EdgeJoinsReferencedColumns` generates with nested
+  mutations on and asserts it. Reverting the template line reproduces both build errors.
+
+Doc fixes applied inline: the `funcFKToStringByGoType` doc, the `keyMembersDDL` bullet order, and
+the registry and design wording for `gen.relationships.joins-referenced-columns` (nested writers
+included; the build runs outside `-short`).
+
+**Ruling (2026-11-05): the generated-package build runs under `make check-examples`.** The §4.9
+compile proof is skipped under `-short` unless `SQLGEN_BUILD_GENERATED` is set. The new
+`make build-generated` target runs the CLI unit tests with it set, and `check-examples` depends on
+it (`guidelines/CI.md` target table). Restoring the old adoption guard fails the target with the
+`mismatched types` build error.
+
+**Checks.** `make check` green (`refs-check`, `req-check` included). `make check-examples` green,
+rerun after the review fix; goldens regenerated again with no change.
 
 ## 32.5 Read templates — tuple-key loaders and relationship filters
 

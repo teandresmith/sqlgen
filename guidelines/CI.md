@@ -748,7 +748,8 @@ sqlgen diff
 | `make update-golden` | Regenerate unit-level template golden files |
 | `make test-examples` | Test every E2E example module (real DBs, requires Docker) |
 | `make lint-examples` | Lint every E2E example module |
-| `make check-examples` | `make tools-check` + `make lint-examples` + `make test-examples` |
+| `make build-generated` | Run the CLI unit tests with `SQLGEN_BUILD_GENERATED=1`, so their generated-package `go build` steps run despite `-short` |
+| `make check-examples` | `make tools-check` + `make lint-examples` + `make build-generated` + `make test-examples` |
 | `make update-golden-e2e` | Regenerate the `expected/` tree per example module |
 
 > **Note**: The CI workflows in `.github/workflows/` matrix all 8 modules and run the same commands these targets dispatch locally — `make check` and PR CI should agree on pass/fail.

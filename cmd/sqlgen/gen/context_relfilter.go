@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"slices"
@@ -383,7 +384,7 @@ func relationshipFilterEntry(tc *TableContext, rel RelationshipContext, target *
 		TargetTable:       target.TableName,
 		TargetSchema:      target.Schema,
 		HelperName:        toCamelCase(tc.StructName) + rel.FieldName + "FilterExists",
-		CorrelationColumn: tc.PKColumns[0].Name,
+		CorrelationColumn: cmp.Or(rel.ParentKey.Name, tc.PKColumns[0].Name),
 		SoftDelete:        relationshipFilterSoftDelete(target),
 		TenantColumn:      relationshipFilterTenantColumn(target),
 	}
@@ -398,7 +399,7 @@ func relationshipFilterEntry(tc *TableContext, rel RelationshipContext, target *
 		entry.JunctionSchema = rel.JunctionSchema
 		entry.JunctionLocalFK = rel.JunctionLocalFK
 		entry.JunctionReferenceFK = rel.JunctionReferenceFK
-		entry.TargetPKColumn = target.PKColumns[0].Name
+		entry.TargetPKColumn = cmp.Or(rel.TargetPKColumn, target.PKColumns[0].Name)
 		return entry, true
 	}
 

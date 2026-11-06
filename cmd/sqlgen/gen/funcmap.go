@@ -824,8 +824,8 @@ func funcFKToString(col ColumnContext, varExpr string) string {
 
 // funcFKToStringByGoType is funcFKToString driven by a Go type string instead
 // of a ColumnContext. Used by relationship loaders for the M2M target side
-// where only the target's PK Go type (RelationshipContext.FKGoType) is in
-// scope — picking the conversion via the parent's PK FKConvert mismatches
+// where only the Go type of the target column the junction references
+// (RelationshipContext.FKGoType) is in scope — picking the conversion via the parent's PK FKConvert mismatches
 // when target and parent PK types differ.
 func funcFKToStringByGoType(goType, varExpr string) string {
 	switch gotype.DeriveFKMethod(goType) {

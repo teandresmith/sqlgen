@@ -143,6 +143,22 @@ func testGetContext_compositePK() gen.TableContext {
 	}
 }
 
+// withParentKeys sets what wireRelationshipFKMetadata sets for keys into the
+// table's primary key: each O2M and M2M edge's ParentKey is the PK column, and
+// LoadKeyColumns holds it once.
+func withParentKeys(ctx gen.TableContext) gen.TableContext {
+	pk := ctx.PKColumns[0]
+	for _, rels := range [][]gen.RelationshipContext{ctx.O2MRelationships, ctx.M2MRelationships} {
+		for i := range rels {
+			rels[i].ParentKey = pk
+		}
+	}
+	if len(ctx.O2MRelationships)+len(ctx.M2MRelationships) > 0 {
+		ctx.LoadKeyColumns = []gen.ColumnContext{pk}
+	}
+	return ctx
+}
+
 func testGetContext_withRelationships() gen.TableContext {
 	ctx := testGetContext_singlePK()
 	ctx.Imports = append(ctx.Imports, "golang.org/x/sync/errgroup")
@@ -199,7 +215,7 @@ func testGetContext_withRelationships() gen.TableContext {
 		ctx.O2MRelationships[0],
 		ctx.M2MRelationships[0],
 	)
-	return ctx
+	return withParentKeys(ctx)
 }
 
 func testGetContext_withO2O() gen.TableContext {
@@ -1077,7 +1093,7 @@ func testGetContext_selfRefNullableFK_numeric() gen.TableContext {
 		},
 	}
 	ctx.Relationships = append(ctx.Relationships, ctx.O2MRelationships[0])
-	return ctx
+	return withParentKeys(ctx)
 }
 
 func TestGetTemplate_o2mRelationshipLoading_nullableNumericFK(t *testing.T) {
@@ -1160,7 +1176,7 @@ func testGetContext_selfRefNullableFK_string() gen.TableContext {
 		},
 	}
 	ctx.Relationships = append(ctx.Relationships, ctx.O2MRelationships[0])
-	return ctx
+	return withParentKeys(ctx)
 }
 
 func TestGetTemplate_o2mRelationshipLoading_nullableStringFK(t *testing.T) {
@@ -1230,7 +1246,7 @@ func testGetContext_subCategorizedO2M() gen.TableContext {
 		ctx.O2MRelationships[0],
 		ctx.O2MRelationships[1],
 	)
-	return ctx
+	return withParentKeys(ctx)
 }
 
 func TestGetTemplate_subCategorizedO2MFilter(t *testing.T) {
@@ -1303,7 +1319,7 @@ func TestGetTemplate_subCategorizedM2MFilter(t *testing.T) {
 	ctx.HasO2MRelationships = true // M2M loaders live behind this flag too
 	ctx.Relationships = append(ctx.Relationships, ctx.M2MRelationships[0])
 
-	output := executeGetTemplate(t, ctx)
+	output := executeGetTemplate(t, withParentKeys(ctx))
 
 	want := "\n\t\t\t\t\tsql.Raw(\"scope = 'asset'\"),\n"
 	if !strings.Contains(output, want) {

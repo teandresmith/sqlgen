@@ -969,4 +969,22 @@ func TestRelationshipTargets_DeclaredExcludedLinkColumnErrors(t *testing.T) {
 			}
 		})
 	}
+
+	// Every column of a declared key is a link column, not only the first.
+	t.Run("composite key member", func(t *testing.T) {
+		gen.GenerateCompositeKeyEdgesForTest(t)
+		schema := parseDDLForTest(t, config.DialectPostgres, `
+CREATE TABLE seasons (league_id integer, id integer, PRIMARY KEY (league_id, id));
+CREATE TABLE games (id integer PRIMARY KEY, league_id integer, season_id integer);`)
+		input := testInput(schema)
+		input.Config.Tables["games"] = config.TableConfig{ExcludeColumns: []string{"season_id"}}
+		input.Config.Tables["seasons"] = config.TableConfig{Relationships: []config.TableRelationship{
+			{Name: "Games", Type: "o2m", Table: "games", FK: config.KeyColumns{"league_id", "season_id"}},
+		}}
+		_, err := gen.BuildTableContexts(input, nil)
+		want := `tables.public.seasons.relationships: "Games" links through public.games.season_id, which ` + "`exclude_columns`" + ` removes`
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("BuildTableContexts() error = %v, want it to contain %q", err, want)
+		}
+	})
 }

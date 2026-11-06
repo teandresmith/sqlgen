@@ -234,10 +234,19 @@ func (t *relationshipTargets) generates(qualifiedTarget string) bool {
 	return res == targetGenerated
 }
 
+// generateCompositeKeyEdges lifts the guard compositeKeyEdge and
+// checkDeclaredKeyColumns keep. It stays off while the templates join one
+// column per side; tests turn it on to reach the context code, which already
+// handles every pair.
+var generateCompositeKeyEdges bool
+
 // compositeKeyEdge reports whether an FK-inferred edge joins through more than
 // one column pair. The loaders, the relationship filter and the nested writers
 // join one column per side, so such an edge is omitted silently.
 func compositeKeyEdge(r parser.Relationship) bool {
+	if generateCompositeKeyEdges {
+		return false
+	}
 	return len(r.Key) > 1 || len(r.JunctionLocal) > 1 || len(r.JunctionReference) > 1
 }
 
@@ -283,16 +292,21 @@ func (t *relationshipTargets) excludedKeyMember(schema *parser.Schema, r parser.
 	return ""
 }
 
-// excludedDeclaredMember is excludedKeyMember for a declared relationship: its
-// `fk` on the table that holds it, or an M2M's junction columns. A declared
-// `fk` joins the primary key on the other side, so only the link columns are
-// checked.
+// excludedDeclaredMember is excludedKeyMember for a declared relationship:
+// every column of its `fk` on the table that holds it, or of an M2M's junction
+// keys. A declared key joins the primary key on the other side, so only the
+// link columns are checked.
 func (t *relationshipTargets) excludedDeclaredMember(schema *parser.Schema, rel RelationshipContext, source string) string {
-	holder, cols := source, []string{rel.FKColumn}
+	holder, cols := source, keyLocals(rel)
 	switch {
 	case rel.Type == parser.ManyToMany:
 		holder = qualifiedTableName(rel.JunctionSchema, rel.JunctionTable)
 		cols = []string{rel.JunctionLocalFK, rel.JunctionReferenceFK}
+		for _, p := range slices.Concat(rel.JunctionLocal, rel.JunctionReference) {
+			if !slices.Contains(cols, p.Local) {
+				cols = append(cols, p.Local)
+			}
+		}
 	case rel.Type == parser.OneToMany || rel.FKOnTarget:
 		holder = qualifiedTableName(rel.TargetSchema, rel.TargetTable)
 	}

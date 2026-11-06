@@ -3,6 +3,7 @@ package cli
 import (
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -61,7 +62,9 @@ output:
 // compositeKeySchema holds a composite O2M (tasks → cycles), a composite O2O
 // (task_reports → tasks) reached through a single-column O2O
 // (report_notes → task_reports), and a tenant junction (task_tags). fks is
-// spliced in as each table's composite foreign keys, or left empty.
+// spliced in as each table's composite foreign keys, or left empty. The keys
+// are uuid, which has no increment operator, so the foreign keys change only
+// the edges.
 func compositeKeySchema(fks bool) string {
 	fk := func(clause string) string {
 		if !fks {
@@ -69,15 +72,15 @@ func compositeKeySchema(fks bool) string {
 		}
 		return ",\n  " + clause
 	}
-	return `CREATE TABLE workspaces (id bigint PRIMARY KEY);
-CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFERENCES workspaces(id), UNIQUE (workspace_id, id));
-CREATE TABLE tasks (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFERENCES workspaces(id), cycle_id bigint,
+	return `CREATE TABLE workspaces (id uuid PRIMARY KEY);
+CREATE TABLE cycles (id uuid PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES workspaces(id), UNIQUE (workspace_id, id));
+CREATE TABLE tasks (id uuid PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES workspaces(id), cycle_id uuid,
   UNIQUE (workspace_id, id)` + fk("FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id)") + `);
-CREATE TABLE task_reports (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, task_id bigint NOT NULL UNIQUE` +
+CREATE TABLE task_reports (id uuid PRIMARY KEY, workspace_id uuid NOT NULL, task_id uuid NOT NULL UNIQUE` +
 		fk("FOREIGN KEY (workspace_id, task_id) REFERENCES tasks (workspace_id, id)") + `);
-CREATE TABLE report_notes (id bigint PRIMARY KEY, report_id bigint UNIQUE REFERENCES task_reports(id));
-CREATE TABLE tags (id bigint PRIMARY KEY, workspace_id bigint NOT NULL REFERENCES workspaces(id), UNIQUE (workspace_id, id));
-CREATE TABLE task_tags (workspace_id bigint NOT NULL, task_id bigint NOT NULL, tag_id bigint NOT NULL,
+CREATE TABLE report_notes (id uuid PRIMARY KEY, report_id uuid UNIQUE REFERENCES task_reports(id));
+CREATE TABLE tags (id uuid PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES workspaces(id), UNIQUE (workspace_id, id));
+CREATE TABLE task_tags (workspace_id uuid NOT NULL, task_id uuid NOT NULL, tag_id uuid NOT NULL,
   PRIMARY KEY (workspace_id, task_id, tag_id)` +
 		fk("FOREIGN KEY (workspace_id, task_id) REFERENCES tasks (workspace_id, id)") +
 		fk("FOREIGN KEY (workspace_id, tag_id) REFERENCES tags (workspace_id, id)") + `);`
@@ -104,6 +107,124 @@ func TestGenerate_CompositeKeyEdgeIsOmitted(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("composite foreign keys changed the generated Go (-without +with):\n%s", diff)
+	}
+}
+
+// An edge joins the column its foreign key references, which need not be the
+// parent's primary key: a UNIQUE column, or the declared key once
+// `primary_key` overrides it. The loader collects that column off each parent,
+// the parent's narrowed projection keeps it, the relationship filter and the
+// O2O join correlate on it, the nested writers copy it into the key, and the
+// generated package builds.
+func TestGenerate_EdgeJoinsReferencedColumns(t *testing.T) {
+	// Nested writers copy the referenced column into the key too.
+	const nestedOn = `generation:
+  nested_mutations:
+    enabled: true
+`
+	tests := []struct {
+		name, schema, tables string
+		// loader is the parent's loadRelationships header; wants are lines it
+		// and the parent's GetMany must contain.
+		loader string
+		wants  []string
+	}{
+		{
+			name: "fk to a non-PK unique column",
+			schema: `CREATE TABLE users (id integer PRIMARY KEY, email text NOT NULL UNIQUE);
+CREATE TABLE invites (id integer PRIMARY KEY, email text REFERENCES users(email));
+CREATE TABLE badges (id integer PRIMARY KEY, owner_email text UNIQUE REFERENCES users(email));`,
+			loader: "func (c *userClient) loadRelationships(",
+			wants: []string{
+				"userIDs[idx] = u.Email",
+				"Email: &comparator.NullableID{ID: comparator.ID{In: userIDs}}",
+				"byFK[users[i].Email]",
+				`columns = unionColumns(columns, "email")`,
+				`return sql.Exists("email", sql.Subquery{`,
+				`On:    fmt.Sprintf("u.%s = b.%s", d.QuoteIdentifier("email"), d.QuoteIdentifier("owner_email")),`,
+				"(*cur) == parent.Email:",
+			},
+		},
+		{
+			name: "m2m junction into a non-PK unique column",
+			schema: `CREATE TABLE users (id bigint PRIMARY KEY);
+CREATE TABLE tags (id bigint PRIMARY KEY, legacy_id bigint NOT NULL UNIQUE);
+CREATE TABLE user_tags (user_id bigint NOT NULL REFERENCES users(id), tag_legacy_id bigint NOT NULL REFERENCES tags(legacy_id),
+  PRIMARY KEY (user_id, tag_legacy_id));`,
+			loader: "func (c *tagClient) loadRelationships(",
+			wants: []string{
+				"tagIDs[idx] = t.LegacyID",
+				`columns = unionColumns(columns, "legacy_id")`,
+				"parentsByTarget[fmt.Sprint(t.LegacyID)]",
+				`requiredColumns: []string{"legacy_id"},`,
+			},
+		},
+		{
+			name: "fk into the declared key under a primary-key override",
+			schema: `CREATE TABLE cycles (id integer PRIMARY KEY, code text NOT NULL UNIQUE);
+CREATE TABLE tasks (id integer PRIMARY KEY, cycle_id integer REFERENCES cycles(id));`,
+			tables: `tables:
+  cycles:
+    primary_key:
+      columns: [code]
+`,
+			loader: "func (c *cycleClient) loadRelationships(",
+			wants: []string{
+				"cycleIDs[idx] = c.ID",
+				"CycleID: &comparator.NullableNumber[int32]{Number: comparator.Number[int32]{In: cycleIDs}}",
+				`columns = unionColumns(columns, "id")`,
+				`return sql.Exists("id", sql.Subquery{`,
+				"(*cur) == parent.ID:",
+			},
+		},
+	}
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, stderr, err := runCommand(t, "generate", tt.schema, tenantConfig+nestedOn+tt.tables)
+			if err != nil {
+				t.Fatalf("generate: %v\nstderr: %s", err, stderr)
+			}
+			src := generatedGo(t, dir)["models_gen.go"]
+			start := strings.Index(src, tt.loader)
+			if start < 0 {
+				t.Fatalf("models_gen.go has no %q", tt.loader)
+			}
+			for _, want := range tt.wants {
+				if !strings.Contains(src, want) {
+					t.Errorf("models_gen.go is missing %q; the parent's loader:\n%s", want, src[start:min(start+4000, len(src))])
+				}
+			}
+			if testing.Short() && os.Getenv("SQLGEN_BUILD_GENERATED") == "" {
+				return
+			}
+			buildGenerated(t, root, dir)
+		})
+	}
+}
+
+// buildGenerated builds the package generate wrote under dir/out as a consumer
+// module would, against the runtime of the checkout at root. Callers skip it
+// under -short unless SQLGEN_BUILD_GENERATED is set, which `make
+// build-generated` (part of `make check-examples`) does.
+func buildGenerated(t *testing.T, root, dir string) {
+	t.Helper()
+	goSum, err := os.ReadFile(filepath.Join(root, "go.sum")) //nolint:gosec // the repo's own go.sum
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "go.mod", "module example.com/app\n\ngo 1.27.0\n\n"+
+		"require github.com/teandresmith/sqlgen v0.0.0\n\n"+
+		"replace github.com/teandresmith/sqlgen => "+filepath.ToSlash(root)+"\n")
+	writeFile(t, dir, "go.sum", string(goSum))
+	build := exec.CommandContext(t.Context(), "go", "build", "./...")
+	build.Dir = dir
+	build.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
 	}
 }
 

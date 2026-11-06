@@ -11,6 +11,16 @@ import (
 // Test-only export surface. Bridges package-internal helpers to the external
 // `gen_test` test package without widening the production API.
 
+// GenerateCompositeKeyEdgesForTest builds edges through composite keys for
+// the rest of t, so tests reach the context code that handles every key pair
+// while generation still omits them. Tests that call it must not run in
+// parallel.
+func GenerateCompositeKeyEdgesForTest(t *testing.T) {
+	t.Helper()
+	generateCompositeKeyEdges = true
+	t.Cleanup(func() { generateCompositeKeyEdges = false })
+}
+
 // AttachTenancyToTablesForTest invokes the unexported attachTenancyToTables
 // so external tests can exercise the annotation pass (including the
 // annotateO2OChildTenancy side-effect) end-to-end.

@@ -175,7 +175,7 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 				columns = unionColumns(selected, input.requiredColumns...)
 {{- if .HasO2MRelationships }}
 				if fieldOptions.loadsRelationships() {
-					columns = unionColumns(columns, {{ printf "%q" (index .PKColumns 0).Name }})
+					columns = unionColumns(columns{{ range .LoadKeyColumns }}, {{ printf "%q" .Name }}{{ end }})
 				}
 {{- end }}
 			}
@@ -361,11 +361,10 @@ func (c *{{ .StructName | toCamelCase }}Client) GetMany(ctx context.Context, inp
 }
 {{- if .HasO2MRelationships }}
 
-{{ $pkField := index .PKColumns 0 -}}
 {{ $parentIDsVar := printf "%sIDs" (.StructName | toCamelCase) -}}
 // loadsRelationships reports whether any O2M or M2M relationship is selected.
-// GetMany unions the {{ $pkField.Name }} column into a narrowed projection when one is:
-// loadRelationships maps every child back through {{ $.VarName }}.{{ $pkField.FieldName }}, which
+// GetMany unions the {{ range $i, $c := .LoadKeyColumns }}{{ if $i }} and {{ end }}{{ $c.Name }}{{ end }} column{{ if gt (len .LoadKeyColumns) 1 }}s{{ end }} into a narrowed projection when one is:
+// loadRelationships maps every child back through {{ range $i, $c := .LoadKeyColumns }}{{ if $i }} and {{ end }}{{ $.VarName }}.{{ $c.FieldName }}{{ end }}, which
 // an unselected column would leave at its zero value.
 func (fo *{{ .StructName }}FieldOptions) loadsRelationships() bool {
 {{- range .O2MRelationships }}
@@ -419,17 +418,17 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 
 	if fo.{{ .FieldName }} != nil {
 		g.Go(func() error {
-{{- if pkIsStringType $pkField }}
+{{- if pkIsStringType .ParentKey }}
 			// Collect parent FK values as strings
 			{{ $parentIDsVar }} := make([]string, len({{ $resultVar }}))
 			for idx, {{ $.VarName }} := range {{ $resultVar }} {
-				{{ $parentIDsVar }}[idx] = {{ fkToString $pkField (printf "%s.%s" $.VarName $pkField.FieldName) }}
+				{{ $parentIDsVar }}[idx] = {{ fkToString .ParentKey (printf "%s.%s" $.VarName .ParentKey.FieldName) }}
 			}
 {{- else }}
 			// Collect parent FK values
-			{{ $parentIDsVar }} := make([]{{ $pkField.GoType }}, len({{ $resultVar }}))
+			{{ $parentIDsVar }} := make([]{{ .ParentKey.GoType }}, len({{ $resultVar }}))
 			for idx, {{ $.VarName }} := range {{ $resultVar }} {
-				{{ $parentIDsVar }}[idx] = {{ printf "%s.%s" $.VarName $pkField.FieldName }}
+				{{ $parentIDsVar }}[idx] = {{ printf "%s.%s" $.VarName .ParentKey.FieldName }}
 			}
 {{- end }}
 
@@ -469,7 +468,7 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 
 				// Build FK-based filter, merged with consumer filter
 				filter := &{{ .TargetStructName }}Filter{
-					{{ .FKFieldName }}: {{ pkFilterInExpr $pkField $keysVar .FKNullable }},
+					{{ .FKFieldName }}: {{ pkFilterInExpr .ParentKey $keysVar .FKNullable }},
 				}
 				if fo.{{ .FieldName }}.Filter != nil {
 					filter.And = append(filter.And, fo.{{ .FieldName }}.Filter)
@@ -531,7 +530,7 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 				byFK[key] = append(byFK[key], r)
 			}
 			for i := range {{ $resultVar }} {
-				{{ $resultVar }}[i].{{ .FieldName }} = byFK[{{ fkToString $pkField (printf "%s[i].%s" $resultVar $pkField.FieldName) }}]
+				{{ $resultVar }}[i].{{ .FieldName }} = byFK[{{ fkToString .ParentKey (printf "%s[i].%s" $resultVar .ParentKey.FieldName) }}]
 			}
 			return nil
 		})
@@ -542,17 +541,17 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 
 	if fo.{{ .FieldName }} != nil {
 		g.Go(func() error {
-{{- if pkIsStringType $pkField }}
+{{- if pkIsStringType .ParentKey }}
 			// Collect parent IDs as strings
 			{{ $parentIDsVar }} := make([]string, len({{ $resultVar }}))
 			for idx, {{ $.VarName }} := range {{ $resultVar }} {
-				{{ $parentIDsVar }}[idx] = {{ fkToString $pkField (printf "%s.%s" $.VarName $pkField.FieldName) }}
+				{{ $parentIDsVar }}[idx] = {{ fkToString .ParentKey (printf "%s.%s" $.VarName .ParentKey.FieldName) }}
 			}
 {{- else }}
 			// Collect parent IDs
-			{{ $parentIDsVar }} := make([]{{ $pkField.GoType }}, len({{ $resultVar }}))
+			{{ $parentIDsVar }} := make([]{{ .ParentKey.GoType }}, len({{ $resultVar }}))
 			for idx, {{ $.VarName }} := range {{ $resultVar }} {
-				{{ $parentIDsVar }}[idx] = {{ printf "%s.%s" $.VarName $pkField.FieldName }}
+				{{ $parentIDsVar }}[idx] = {{ printf "%s.%s" $.VarName .ParentKey.FieldName }}
 			}
 {{- end }}
 
@@ -701,7 +700,7 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 				// junction rows instead would keep junction order and drop the sort.
 				parentsByTarget := make(map[string][]int, len({{ $relVar }}))
 				for i := start; i < start+len(chunk); i++ {
-					for _, tID := range parentToTargetIDs[{{ fkToString $pkField (printf "%s[i].%s" $resultVar $pkField.FieldName) }}] {
+					for _, tID := range parentToTargetIDs[{{ fkToString .ParentKey (printf "%s[i].%s" $resultVar .ParentKey.FieldName) }}] {
 						parentsByTarget[tID] = append(parentsByTarget[tID], i)
 					}
 				}

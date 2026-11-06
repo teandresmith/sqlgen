@@ -208,6 +208,10 @@ type ColumnContext struct {
 	FKConvert gotype.FKStringMethod
 	// FKReference points to the referenced table/column, or nil.
 	FKReference *FKReferenceContext
+	// InForeignKey reports that the column is a member of a FOREIGN KEY
+	// constraint on its table, a composite one included. FKReference is set
+	// for a single-column key only, since it types the column's comparator.
+	InForeignKey bool
 	// Unique indicates a single-column UNIQUE constraint.
 	Unique bool
 	// Tenant reports that this column is the entity's resolved tenant column
@@ -309,6 +313,18 @@ type RelationshipContext struct {
 	Key               []parser.KeyPair
 	JunctionLocal     []parser.KeyPair
 	JunctionReference []parser.KeyPair
+	// SharedMembers are the O2O / O2M key's columns that another FOREIGN KEY
+	// on the holding table also holds, which pins them (PRD §9.9.2). Match is
+	// the MATCH type of the edge's own FOREIGN KEY, SIMPLE when it has none.
+	SharedMembers []string
+	Match         parser.MatchType
+	// ParentKey is the column on this table that the edge's key references:
+	// the parent side of an O2M, has-one or M2M edge, which the loaders
+	// collect off each row and the nested writers copy into the key. It is
+	// the primary key unless the key references a UNIQUE column or the
+	// declared key under a primary_key override (PRD §13.1). Unset on a
+	// belongs-to edge, whose referenced column is on the target.
+	ParentKey ColumnContext
 	// FKFieldName is the Go field name for the FK column (e.g., "ProductID").
 	// The FK column lives on the *target* table for O2M edges, so this is
 	// resolved cross-table in wireRelationshipFKMetadata rather than derived
@@ -372,8 +388,8 @@ type RelationshipContext struct {
 	// JSONTag is the json struct tag value (snake_case relationship name).
 	JSONTag string
 	// FKGoType is the Go type of the FK column (e.g., "int64", "string").
-	// For O2M: the FK column on the child table (matches parent PK type).
-	// For M2M: the target table's PK type.
+	// For O2M: the type of the parent column the key references.
+	// For M2M: the type of the target column the junction references.
 	// Used by templates to generate the correct comparator type for FK/PK filtering.
 	FKGoType string
 	// FKNullable indicates whether the FK column is nullable.
@@ -394,15 +410,16 @@ type RelationshipContext struct {
 	// reference FK column (M2M only). The loader scans the junction into
 	// FKColumnGoType and this type, so each key keeps its own type.
 	JunctionReferenceGoType string
-	// TargetPKFieldName is the Go field name of the target table's first PK
-	// column (e.g. "ID"), and TargetPKColumn is that column's SQL name (e.g.
-	// "id"). Only M2M consumes them: the loader filters the target fetch on the
-	// field, maps loaded targets back to their parents through a map keyed on
-	// it, and declares the column on the fetch's requiredColumns so a narrowed
-	// projection cannot leave the key at its zero value. Filled cross-table by
-	// wireRelationshipFKMetadata; the field name falls back to the parent's PK
-	// spelling when the target is outside the generated set (unit fixtures,
-	// bare tables).
+	// TargetPKFieldName is the Go field name of the target column the M2M
+	// junction's reference key references (e.g. "ID"), the target's PK unless
+	// it references a UNIQUE column, and TargetPKColumn is that column's SQL
+	// name (e.g. "id"). Only M2M consumes them: the loader filters the target
+	// fetch on the field, maps loaded targets back to their parents through a
+	// map keyed on it, and declares the column on the fetch's requiredColumns
+	// so a narrowed projection cannot leave the key at its zero value. Filled
+	// cross-table by wireRelationshipFKMetadata; the field name falls back to
+	// the parent's PK spelling when the target is outside the generated set
+	// (unit fixtures, bare tables).
 	TargetPKFieldName string
 	TargetPKColumn    string
 }
@@ -509,7 +526,8 @@ type RelationshipFilterContext struct {
 	// HelperName is the generated compile function (e.g. "userPostsFilterExists").
 	HelperName string
 	// CorrelationColumn is the parent-side column the subquery correlates on —
-	// the parent's single PK column. Emitted without a qualifier: the builder
+	// the column the edge's key references, the parent's PK unless it
+	// references a UNIQUE column. Emitted without a qualifier: the builder
 	// resolves it per read path (PRD §11.5).
 	CorrelationColumn string
 	// FKColumn is the target-side FK for an O2M edge. Empty for M2M.
@@ -523,8 +541,9 @@ type RelationshipFilterContext struct {
 	JunctionSchema      string
 	JunctionLocalFK     string
 	JunctionReferenceFK string
-	// TargetPKColumn is the target's single PK column, joined to
-	// JunctionReferenceFK. Only set for M2M.
+	// TargetPKColumn is the target column JunctionReferenceFK references and
+	// is joined to, the target's PK unless it references a UNIQUE column.
+	// Only set for M2M.
 	TargetPKColumn string
 	// Discriminator is the relationship's config `discriminator:` predicate
 	// (PRD §13.4.1), or nil. Mutually exclusive with StaticFilterExpr.
@@ -786,6 +805,19 @@ type NestedEdgeContext struct {
 	// comparator.Opaque, which take the key's own Go type. ConnectKeyGoType
 	// and ConnectKeyExpr below are the rendered form of that decision.
 	TargetPKIsString bool
+
+	// --- traversed key ---
+
+	// PinnedMembers / FreeMembers split the traversed key's columns on the
+	// target, in key order (PRD §9.9.2). A member is pinned when it is the
+	// target's tenant column, a member of its primary key or a member of
+	// another of its FOREIGN KEYs; the rewrite verbs write only the free ones.
+	// Both are empty on M2M, whose verbs never rewrite a member.
+	PinnedMembers []string
+	FreeMembers   []string
+	// ParentKeyField is the parent's Go field for the column the key
+	// references, the PK field unless the key references a UNIQUE column.
+	ParentKeyField string
 
 	// --- create verb ---
 
@@ -1087,6 +1119,10 @@ type TableContext struct {
 	HasO2ORelationships bool
 	// HasO2MRelationships indicates whether the table has any O2M or M2M relationships.
 	HasO2MRelationships bool
+	// LoadKeyColumns are the columns of this table its O2M and M2M loaders
+	// read off each row, each edge's ParentKey once, in edge order. GetMany
+	// keeps them in a narrowed projection that selects an edge.
+	LoadKeyColumns []ColumnContext
 	// O2ORelationships holds only the O2O relationships, sorted by name.
 	O2ORelationships []RelationshipContext
 	// O2MRelationships holds only the O2M relationships, sorted by name.
