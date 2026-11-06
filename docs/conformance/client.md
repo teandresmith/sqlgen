@@ -471,7 +471,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | increment.composite-pk | On a composite-PK table `Increment` takes the `{Table}PK` struct and matches all PK columns, so only that tuple changes, and it records that tuple as its affected key | `conformance: Increment/a composite key increments only its own tuple` | all | client-methods: Increment × composite-pk |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: b4cf2ee9ff168550 -->
+<!-- prd: 9.9 sha256: e53990409a23b8d5 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

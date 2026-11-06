@@ -89,62 +89,6 @@ failure is earlier.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-365
-
-- **Status:** Open
-- **Severity:** blocking
-- **Origin:** phase 32, cmd/sqlgen/gen
-- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe
-- **Vetted:** corrected at `e48ece8b` (2026-11-06)
-
-**Issue.** **E1's nullable-referenced rule is not applied to the M2M reference side.** PRD §9.9.4
-E1 refuses "an edge whose key references a nullable column". With a NOT NULL junction column not shared
-with the local key, the edge is refused with a misleading reason (`the junction's reference FK "tag_code"
-binds to string, which sqlgen cannot construct from the target's key`). With a nullable junction column
-the generator emits `TagCode: omittable.Set(row.Code)` for `tags.code TEXT UNIQUE`, on all three dialects.
-With a nullable `labels.region` shared with the local key, the edge is eligible on a composite-PK junction,
-because `junctionLinks` skips that pair. Today FIX-364 stops every surrogate link. Under FIX-364's ruling a
-target holding NULL fails loud, measured on SQLite: `link: upsert many z_parent_codes: input 0 supplies no
-definite value for every conflict column, so its generated id cannot be resolved`. So the eligible verb
-fails on some rows rather than writing a silent NULL link, as this entry first said. A live NULL link was
-never run.
-
-**Root cause.** `resolveNestedTarget` (`cmd/sqlgen/gen/context_nested.go:435`) checks
-`nestedParentKeys` only, and `junctionLinks` copies a target column without reading its nullability.
-
-**Suggested fix.**
-- Add `nestedReferencedColumns(tc, rel, target)`: the parent keys plus every `rel.JunctionReference`
-  target column, shared ones included. `resolveNestedTarget`'s E1 loop ranges over it, so the reason
-  wording stays the parent side's single literal.
-- Make `TestNestedEligibility_NullableReferencedColumnIsNotWriteEligible` table-driven: parent side, NOT
-  NULL junction column, nullable junction column, shared column. Each asserts reads survive, the auto edge
-  is omitted and the listed edge errors with the E1 reason.
-- PRD §9.9.4 E1 gains: "On an M2M edge the rule covers both junction keys, because a target holding NULL
-  has no key to give a link row."
-- Corrected from the original: the site moved from `junctionLinks` / `resolveNestedM2M` to
-  `resolveNestedTarget`, because the check there exceeds the lint limit (`calculated cyclomatic complexity
-  for function resolveNestedM2M is 18, max is 15 (cyclop)`). It reads `rel.JunctionReference`, not the links,
-  so the shared-column case is refused too.
-- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): should E1's PRD text name
-  the M2M reference side → add one sentence, because gates are green, no goldens move, no public surface
-  changes, and it adds text for an unspecified case without reversing a ruling.
-- Prototype results, run at `e48ece8b` on 2026-11-06: generation measured through a throwaway probe and a
-  sibling `tenancy_postgres` copy (`models_gen.go:65625 TagCode:  omittable.Set(row.Code),`, which builds).
-  Gates: `go test -race ./...` in `cmd/sqlgen` green, root and `./cli` needing `-timeout=30m` (the default 10m
-  was exceeded with other vetters running, no assertion failed); `TestE2EGoldenFiles`, `golangci-lint`, `make
-  req-check`, `make refs-check`, tenancy_postgres, mysql and graphql suites green. Fail-first: reverting the
-  loop to `nestedParentKeys` fails the three reference-side subtests, e.g. `teams nested edges = ["Labels"],
-  want none`; only those fail, so the existing suite passes without the fix. Golden churn: none. Both this
-  patch and FIX-364's change PRD §9.9, so the second to land reruns `make req-rehash SECTIONS=9.9`. Patch:
-  `.claude/prototypes/FIX-365.patch`.
-
-**References.**
-- PRD §9.9.4 (E1).
-- Registry: `gen.nested.e1-nullable-referenced-key`, `gen.nested.e1-target-shape`.
-- FIX-364.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-366
 
 - **Status:** Open
@@ -750,6 +694,62 @@ mismatch), `:1016` (composite no-op) and `:1018` (single-column no-op), with the
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-365
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **E1's nullable-referenced rule is not applied to the M2M reference side.** PRD §9.9.4
+E1 refuses "an edge whose key references a nullable column". With a NOT NULL junction column not shared
+with the local key, the edge is refused with a misleading reason (`the junction's reference FK "tag_code"
+binds to string, which sqlgen cannot construct from the target's key`). With a nullable junction column
+the generator emits `TagCode: omittable.Set(row.Code)` for `tags.code TEXT UNIQUE`, on all three dialects.
+With a nullable `labels.region` shared with the local key, the edge is eligible on a composite-PK junction,
+because `junctionLinks` skips that pair. Today FIX-364 stops every surrogate link. Under FIX-364's ruling a
+target holding NULL fails loud, measured on SQLite: `link: upsert many z_parent_codes: input 0 supplies no
+definite value for every conflict column, so its generated id cannot be resolved`. So the eligible verb
+fails on some rows rather than writing a silent NULL link, as this entry first said. A live NULL link was
+never run.
+
+**Root cause.** `resolveNestedTarget` (`cmd/sqlgen/gen/context_nested.go:435`) checks
+`nestedParentKeys` only, and `junctionLinks` copies a target column without reading its nullability.
+
+**Suggested fix.**
+- Add `nestedReferencedColumns(tc, rel, target)`: the parent keys plus every `rel.JunctionReference`
+  target column, shared ones included. `resolveNestedTarget`'s E1 loop ranges over it, so the reason
+  wording stays the parent side's single literal.
+- Make `TestNestedEligibility_NullableReferencedColumnIsNotWriteEligible` table-driven: parent side, NOT
+  NULL junction column, nullable junction column, shared column. Each asserts reads survive, the auto edge
+  is omitted and the listed edge errors with the E1 reason.
+- PRD §9.9.4 E1 gains: "On an M2M edge the rule covers both junction keys, because a target holding NULL
+  has no key to give a link row."
+- Corrected from the original: the site moved from `junctionLinks` / `resolveNestedM2M` to
+  `resolveNestedTarget`, because the check there exceeds the lint limit (`calculated cyclomatic complexity
+  for function resolveNestedM2M is 18, max is 15 (cyclop)`). It reads `rel.JunctionReference`, not the links,
+  so the shared-column case is refused too.
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): should E1's PRD text name
+  the M2M reference side → add one sentence, because gates are green, no goldens move, no public surface
+  changes, and it adds text for an unspecified case without reversing a ruling.
+- Prototype results, run at `e48ece8b` on 2026-11-06: generation measured through a throwaway probe and a
+  sibling `tenancy_postgres` copy (`models_gen.go:65625 TagCode:  omittable.Set(row.Code),`, which builds).
+  Gates: `go test -race ./...` in `cmd/sqlgen` green, root and `./cli` needing `-timeout=30m` (the default 10m
+  was exceeded with other vetters running, no assertion failed); `TestE2EGoldenFiles`, `golangci-lint`, `make
+  req-check`, `make refs-check`, tenancy_postgres, mysql and graphql suites green. Fail-first: reverting the
+  loop to `nestedParentKeys` fails the three reference-side subtests, e.g. `teams nested edges = ["Labels"],
+  want none`; only those fail, so the existing suite passes without the fix. Golden churn: none. Both this
+  patch and FIX-364's change PRD §9.9, so the second to land reruns `make req-rehash SECTIONS=9.9`. Patch:
+  `.claude/prototypes/FIX-365.patch`.
+
+**References.**
+- PRD §9.9.4 (E1).
+- Registry: `gen.nested.e1-nullable-referenced-key`, `gen.nested.e1-target-shape`.
+- FIX-364.
+
+**Resolution notes.** Applied the vetted prototype clean at `1c009361`. `resolveNestedTarget`'s E1 loop now ranges over the new `nestedReferencedColumns`, the parent keys plus every `rel.JunctionReference` target column, shared ones included, so all three reference-side shapes are refused with the E1 reason and keep their reads. `TestNestedEligibility_NullableReferencedColumnIsNotWriteEligible` is table-driven over the four shapes; reverting the loop fails exactly the three reference-side subtests. PRD §9.9.4 E1 gains the M2M sentence and §9.9's anchors are rehashed. Trimmed the prototype's helper comment and dropped a rule label from the test comment. Golden churn: none, matching the vet. Verify added the M2M clause and `TestNestedEligibility_ReferencedNullableMemberIsNotWriteEligible` to registry row `gen.nested.e1-nullable-referenced-key`.
+
 ### FIX-363
 
 - **Status:** Resolved

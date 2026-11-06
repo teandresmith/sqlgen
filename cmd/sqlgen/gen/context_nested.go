@@ -432,7 +432,7 @@ func resolveNestedTarget(tc *TableContext, rel RelationshipContext, byTable tabl
 	if len(target.PKColumns) != 1 {
 		return reject("the target has a composite primary key, which the link and visibility reads cannot key on")
 	}
-	for _, key := range nestedParentKeys(tc, rel) {
+	for _, key := range nestedReferencedColumns(tc, rel, target) {
 		if key.Nullable {
 			return reject(fmt.Sprintf("the edge's key references the nullable column %q, which a nested write cannot copy into the key", key.Name))
 		}
@@ -686,6 +686,20 @@ func nestedParentKeys(tc *TableContext, rel RelationshipContext) []ColumnContext
 		pairs = rel.JunctionLocal
 	}
 	return keyParents(tc, pairs, nestedParentKey(tc, rel))
+}
+
+// nestedReferencedColumns lists every column the edge's key references: the
+// parent's, and on M2M the target's, whichever side supplies a junction column
+// the two keys share. An M2M edge with no reference pairs references the
+// target's primary key, which is never nullable.
+func nestedReferencedColumns(tc *TableContext, rel RelationshipContext, target *TableContext) []ColumnContext {
+	columns := nestedParentKeys(tc, rel)
+	for _, p := range rel.JunctionReference {
+		if col, ok := columnBySQLName(target.Columns, p.Referenced); ok {
+			columns = append(columns, col)
+		}
+	}
+	return columns
 }
 
 // splitNestedKeyMembers records the traversed key's pinned and free members on

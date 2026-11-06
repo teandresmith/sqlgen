@@ -1,6 +1,7 @@
 package gen_test
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -119,32 +120,75 @@ func buildKeyMembersContexts(t *testing.T, dialect config.Dialect, ddl string, m
 	return byName, nil
 }
 
-// A key referencing a nullable UNIQUE column loads, and has no nested surface: a
-// parent holding NULL there has no key to give a child.
+// A key referencing a nullable UNIQUE column loads, and has no nested surface:
+// a parent holding NULL there has no key to give a child, and a target holding
+// NULL has none to give a link row. On M2M the junction column's own
+// nullability changes what the generator reaches, not the rule (PRD §9.9.4).
 func TestNestedEligibility_NullableReferencedColumnIsNotWriteEligible(t *testing.T) {
-	schema := parseDDLForTest(t, config.DialectPostgres, `
+	const m2mParents = `
+CREATE TABLE users (id bigint PRIMARY KEY, name text NOT NULL);
+CREATE TABLE tags (id bigint PRIMARY KEY, code text UNIQUE);`
+	const sharedParents = `
+CREATE TABLE teams (id bigint PRIMARY KEY, region text NOT NULL, UNIQUE (region, id));
+CREATE TABLE labels (id bigint PRIMARY KEY, region text, UNIQUE (region, id));`
+	tests := []struct {
+		name         string
+		ddl          string
+		parent, edge string
+		column       string
+	}{
+		{
+			name: "parent side",
+			ddl: `
 CREATE TABLE teams (id bigint PRIMARY KEY, code text UNIQUE);
-CREATE TABLE members (id bigint PRIMARY KEY, team_code text REFERENCES teams(code));`)
-	parser.DetectRelationships(schema)
-	cfg := testInput(schema).Config
-	cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
-	contexts, err := gen.BuildTableContextsFromSchema(schema, cfg)
-	if err != nil {
-		t.Fatalf("BuildTableContextsFromSchema() error: %v", err)
+CREATE TABLE members (id bigint PRIMARY KEY, team_code text REFERENCES teams(code));`,
+			parent: "teams", edge: "Members", column: "code",
+		},
+		{
+			name: "reference side, not null junction column",
+			ddl: m2mParents + `
+CREATE TABLE user_tags (user_id bigint NOT NULL REFERENCES users(id), tag_code text NOT NULL REFERENCES tags(code),
+  PRIMARY KEY (user_id, tag_code));`,
+			parent: "users", edge: "Tags", column: "code",
+		},
+		{
+			name: "reference side, nullable junction column",
+			ddl: m2mParents + `
+CREATE TABLE user_tags (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id bigint NOT NULL REFERENCES users(id), tag_code text REFERENCES tags(code),
+  UNIQUE (user_id, tag_code));`,
+			parent: "users", edge: "Tags", column: "code",
+		},
+		{
+			name: "reference side, column shared with the local key",
+			ddl: sharedParents + `
+CREATE TABLE team_labels (region text NOT NULL, team_id bigint NOT NULL, label_id bigint NOT NULL,
+  PRIMARY KEY (region, team_id, label_id),
+  FOREIGN KEY (region, team_id) REFERENCES teams (region, id),
+  FOREIGN KEY (region, label_id) REFERENCES labels (region, id));`,
+			parent: "teams", edge: "Labels", column: "region",
+		},
 	}
-	for _, tc := range contexts {
-		if tc.TableName != "teams" {
-			continue
-		}
-		if len(tc.O2MRelationships) != 1 {
-			t.Fatalf("teams O2M relationships = %d, want the edge to members", len(tc.O2MRelationships))
-		}
-		if got := nestedEdgeNames(tc); len(got) != 0 {
-			t.Errorf("teams nested edges = %q, want none", got)
-		}
-		return
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := keyMembersContexts(t, config.DialectPostgres, tt.ddl, nil)[tt.parent]
+			if _, ok := relByField(tc)[tt.edge]; !ok {
+				t.Fatalf("%s has no relationship %s; reads must be unaffected", tt.parent, tt.edge)
+			}
+			if got := nestedEdgeNames(tc); len(got) != 0 {
+				t.Errorf("%s nested edges = %q, want none", tt.parent, got)
+			}
+			_, err := buildKeyMembersContexts(t, config.DialectPostgres, tt.ddl, func(cfg *config.RootConfig) {
+				cfg.Tables[tt.parent] = config.TableConfig{NestedMutations: &config.TableNestedMutationsConfig{
+					Relationships: []config.TableNestedRelationship{{Name: tt.edge}},
+				}}
+			})
+			want := fmt.Sprintf("the edge's key references the nullable column %q", tt.column)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("listed: error = %v, want it to contain %q", err, want)
+			}
+		})
 	}
-	t.Fatal("no context for teams")
 }
 
 // verbs is the rewrite half of a nested edge's verb set.
