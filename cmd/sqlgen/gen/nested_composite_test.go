@@ -279,6 +279,49 @@ CREATE TABLE briefs (id bigint PRIMARY KEY, workspace_id bigint NOT NULL UNIQUE 
 	assertRendered(t, got, []string{"if errors.Is(err, tenancy.ErrMismatch) { err = ErrAlreadyRelated }"}, nil)
 }
 
+// TestNestedTemplate_UnlinkComparesAParentHeldTenant pins PRD §9.9.8: an unlink
+// through a key whose tenant column comes from a parent column other than the
+// parent's own tenant column compares it with the resolved tenant, because the
+// statement would match nothing and raise nothing.
+func TestNestedTemplate_UnlinkComparesAParentHeldTenant(t *testing.T) {
+	const ddl = `
+CREATE TABLE templates (id bigint PRIMARY KEY, owner_workspace bigint NOT NULL, UNIQUE (owner_workspace, id));
+CREATE TABLE notes (
+	id bigint PRIMARY KEY,
+	workspace_id bigint NOT NULL,
+	template_id bigint,
+	FOREIGN KEY (workspace_id, template_id) REFERENCES templates (owner_workspace, id)
+);
+CREATE TABLE labels (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id));
+CREATE TABLE template_labels (
+	workspace_id bigint NOT NULL,
+	template_id bigint NOT NULL,
+	label_id bigint NOT NULL,
+	PRIMARY KEY (workspace_id, template_id, label_id),
+	FOREIGN KEY (workspace_id, template_id) REFERENCES templates (owner_workspace, id),
+	FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id)
+);`
+	out := renderNested(t, keyMembersContexts(t, config.DialectPostgres, ddl, nil)["templates"])
+
+	assertRendered(t, executorOf(t, out, "applyTemplateNotesNested"), []string{
+		"tenant, apply, err := c.noteClient.resolveTenant(ctx, options.Tenant)",
+		"if apply && parent.OwnerWorkspace != tenant {",
+		`if err := tenantKeyConflict("clear"); err != nil {`,
+		`if err := tenantKeyConflict("disconnect"); err != nil {`,
+	}, nil)
+	assertRendered(t, executorOf(t, out, "applyTemplateLabelsNested"), []string{
+		"tenant, apply, err := c.templateLabelClient.resolveTenant(ctx, options.Tenant)",
+		`if err := tenantKeyConflict("clear"); err != nil {`,
+		`if errors.Is(err, tenancy.ErrMismatch) { err = ErrAlreadyRelated } return nestedError("Labels", "disconnect", nil, err)`,
+	}, []string{`tenantKeyConflict("disconnect")`})
+	// The upsert's godoc names the refusal on a fresh parent.
+	assertRendered(t, out, []string{"no-ops, unless an edge's key holds a tenant other than the resolved one,"}, nil)
+
+	// The parent write has already checked the parent's own tenant column.
+	tenanted := keyMembersContexts(t, config.DialectPostgres, compositeNestedDDL, nil)
+	assertRendered(t, renderNested(t, tenanted["cycles"]), nil, []string{"tenantKeyConflict", "unless an edge's key holds a tenant"})
+}
+
 // TestNestedTemplate_ChildCreateInputDropsEveryKeyMember pins PRD §9.9.5: the
 // parent's referenced columns set every member, so the child input declares
 // none of them, the tenant column included.

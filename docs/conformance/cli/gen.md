@@ -230,7 +230,7 @@
 | gen.input.json-tag-only | Input structs (`Create*Input`, `Update*Input`) are never scanned from a row: each field carries a `json` tag naming its column and no `db` tag | `unit: cmd/sqlgen/gen: TestInputTemplates_FieldsCarryJSONTagOnly/create input`; `unit: cmd/sqlgen/gen: TestInputTemplates_FieldsCarryJSONTagOnly/update input` | all |  |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: 5535dc096c27cc9b -->
+<!-- prd: 9.9 sha256: 7cf74319c30aa9aa -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -638,7 +638,7 @@
 | artifacts.filter-struct.tenanted | The filter spells the tenant column through the same resolution as the row struct, CreateInput and PK struct | `unit: cmd/sqlgen/gen: TestBuildEntityContexts_TenancyTypeReachesTenantFilter` | all | generated-artifacts: filter-struct × tenanted |
 
 ## §29.4 Generated Behavior
-<!-- prd: 29.4 sha256: 735749f4011b7aa2 -->
+<!-- prd: 29.4 sha256: 58fb198fde6c2c77 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

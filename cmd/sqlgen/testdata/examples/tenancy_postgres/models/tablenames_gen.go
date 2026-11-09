@@ -23,6 +23,7 @@ const (
 	TableTaskReviewers       hook.TableName = "public.task_reviewers"
 	TableTasks               hook.TableName = "public.tasks"
 	TableTemplateLabels      hook.TableName = "public.template_labels"
+	TableTemplateNotes       hook.TableName = "public.template_notes"
 	TableTemplateStamps      hook.TableName = "public.template_stamps"
 	TableTemplateSteps       hook.TableName = "public.template_steps"
 	TableTemplates           hook.TableName = "public.templates"

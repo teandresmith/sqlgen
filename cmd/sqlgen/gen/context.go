@@ -849,6 +849,13 @@ type NestedEdgeContext struct {
 	// too, so `create` and the link step can find the two disagreeing
 	// (PRD §9.9.6).
 	TenantKeyMember bool
+	// TenantKeyParent spells the parent column that member takes, and
+	// TenantKeyClient the client whose tenant filter the unlink verbs run under.
+	// Both are empty when the column is the parent's own tenant column, which
+	// the parent write has already checked, or the member comes off the target:
+	// only a parent-held value can contradict the tenant filter.
+	TenantKeyParent string
+	TenantKeyClient string
 	// ParentScope is the `fk = parent` filter, one term per member: on the
 	// target for a shape-2 or shape-3 edge, on the junction's local key for
 	// M2M. Every statement scoped to this parent carries all of it, and it is

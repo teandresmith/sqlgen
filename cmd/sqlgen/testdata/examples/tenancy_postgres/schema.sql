@@ -142,6 +142,16 @@ CREATE TABLE template_steps (
     FOREIGN KEY (workspace_id, template_id) REFERENCES templates (owner_workspace, id)
 );
 
+-- The nullable half of template_steps: the key's template_id is free, so the
+-- edge keeps `disconnect` and `clear` under a shared parent.
+CREATE TABLE template_notes (
+    id BIGSERIAL PRIMARY KEY,
+    workspace_id UUID NOT NULL,
+    template_id BIGINT,
+    body TEXT NOT NULL,
+    FOREIGN KEY (workspace_id, template_id) REFERENCES templates (owner_workspace, id)
+);
+
 -- A tenant junction under a shared parent: its workspace_id comes from
 -- owner_workspace and from the resolver.
 CREATE TABLE template_labels (

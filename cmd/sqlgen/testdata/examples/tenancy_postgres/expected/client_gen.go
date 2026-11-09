@@ -104,6 +104,7 @@ type Client struct {
 	taskReviewer       *taskReviewerClient
 	template           *templateClient
 	templateLabel      *templateLabelClient
+	templateNote       *templateNoteClient
 	templateStamp      *templateStampClient
 	templateStep       *templateStepClient
 	workspace          *workspaceClient
@@ -157,6 +158,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		taskReviewer:       newTaskReviewerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		template:           newTemplateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		templateLabel:      newTemplateLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		templateNote:       newTemplateNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		templateStamp:      newTemplateStampClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		templateStep:       newTemplateStepClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		workspace:          newWorkspaceClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -206,6 +208,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.taskReviewer.tenantResolver = options.tenantResolver
 	c.template.tenantResolver = options.tenantResolver
 	c.templateLabel.tenantResolver = options.tenantResolver
+	c.templateNote.tenantResolver = options.tenantResolver
 	c.templateStamp.tenantResolver = options.tenantResolver
 	c.templateStep.tenantResolver = options.tenantResolver
 	c.workspace.tenantResolver = options.tenantResolver
@@ -252,6 +255,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.task.taskBadgeClient = c.taskBadge
 	c.task.taskLabelClient = c.taskLabel
 	c.task.taskReviewerClient = c.taskReviewer
+	c.template.templateNoteClient = c.templateNote
 	c.template.templateStepClient = c.templateStep
 	c.template.labelClient = c.label
 	c.template.stampClient = c.stamp
@@ -356,6 +360,11 @@ func (c *Client) Templates() TemplateClient {
 // TemplateLabels returns the TemplateLabelClient for TemplateLabel operations.
 func (c *Client) TemplateLabels() TemplateLabelClient {
 	return c.templateLabel
+}
+
+// TemplateNotes returns the TemplateNoteClient for TemplateNote operations.
+func (c *Client) TemplateNotes() TemplateNoteClient {
+	return c.templateNote
 }
 
 // TemplateStamps returns the TemplateStampClient for TemplateStamp operations.

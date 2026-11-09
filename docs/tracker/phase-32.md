@@ -1227,7 +1227,7 @@ was not run; it is due at 32.8.
 - The mapping extends to the M2M link step (PRD §9.9.6, §9.9.8). Failed first with the raw
   `tenant on mutation input does not match` error; `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated`.
 
-**Rulings from `/verify 32.6` (2026-11-06, each took the recommended option; FIX-364 and FIX-368 have landed; FIX-369 is open).**
+**Rulings from `/verify 32.6` (2026-11-06, each took the recommended option; FIX-364, FIX-368 and FIX-369 have landed).**
 - A surrogate-PK junction's link targets the UNIQUE equal to the key union, and without one the edge
   is refused under E13 (FIX-364).
 - An M2M `connect` under `SkipTenancy` runs a pinned check on a column both keys share, and a mismatch
@@ -1236,8 +1236,8 @@ was not run; it is due at 32.8.
   removed (FIX-368).
 - A shared parent's tenant mismatch is loud on `disconnect` and `clear` too (FIX-369).
 
-`tenancy_postgres` gains `template_labels`, `workspaces`, `workspace_notes`, `zones` and `sites` for
-these. No fixture renders the nullable pinned guard (`null[i] || …`), so it is neither compiled nor run.
+`tenancy_postgres` gains `template_labels`, `template_notes`, `stamps`, `template_stamps`,
+`workspaces`, `workspace_notes`, `zones` and `sites` for these. No fixture renders the nullable pinned guard (`null[i] || …`), so it is neither compiled nor run.
 
 ## 32.7 GraphQL — relationship fields and filters for composite edges
 

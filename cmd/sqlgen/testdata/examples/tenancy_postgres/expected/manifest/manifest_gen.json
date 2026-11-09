@@ -308,6 +308,13 @@
       "file": "entities/template_label.json"
     },
     {
+      "name": "TemplateNote",
+      "table": "template_notes",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/template_note.json"
+    },
+    {
       "name": "TemplateStamp",
       "table": "template_stamps",
       "schema": "public",

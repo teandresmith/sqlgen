@@ -31,6 +31,7 @@ sqlgen manifest. Start here: [./manifest/_index.md](./manifest/_index.md).
 - **TaskReviewer** (`task_reviewers`, table) — [./manifest/task_reviewer.md](./manifest/task_reviewer.md)
 - **Template** (`templates`, table) — [./manifest/template.md](./manifest/template.md)
 - **TemplateLabel** (`template_labels`, table) — [./manifest/template_label.md](./manifest/template_label.md)
+- **TemplateNote** (`template_notes`, table) — [./manifest/template_note.md](./manifest/template_note.md)
 - **TemplateStamp** (`template_stamps`, table) — [./manifest/template_stamp.md](./manifest/template_stamp.md)
 - **TemplateStep** (`template_steps`, table) — [./manifest/template_step.md](./manifest/template_step.md)
 - **Workspace** (`workspaces`, table) — [./manifest/workspace.md](./manifest/workspace.md)

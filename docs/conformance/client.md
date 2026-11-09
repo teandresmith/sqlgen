@@ -471,7 +471,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | increment.composite-pk | On a composite-PK table `Increment` takes the `{Table}PK` struct and matches all PK columns, so only that tuple changes, and it records that tuple as its affected key | `conformance: Increment/a composite key increments only its own tuple` | all | client-methods: Increment × composite-pk |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: 5535dc096c27cc9b -->
+<!-- prd: 9.9 sha256: 7cf74319c30aa9aa -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -486,6 +486,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert-with-related.transaction | `UpsertWithRelated` runs the parent write and every edge in one transaction: a failure on a later edge rolls back the parent write and the earlier edges' writes. Inside a caller's transaction it runs as a savepoint. A failure rolls back only its own writes, a parent write and an earlier edge's `clear` included, and leaves the caller's earlier and later writes in place and the transaction committable. A success commits with the caller and is undone by the caller's rollback | `conformance: UpsertWithRelated/a failure on a later edge rolls back the parent write and the earlier edges`; `conformance: UpsertWithRelated/the same block with a visible tag commits the parent write and every edge`; `conformance: UpsertWithRelated/inside a caller's transaction a failure rolls back to its savepoint and the caller's transaction commits`; `conformance: UpsertWithRelated/inside a caller's transaction a success commits with the caller`; `conformance: UpsertWithRelated/inside a caller's transaction a success is undone by the caller's rollback` | all | client-methods: UpsertWithRelated × transaction |
 | create-with-related.happy-path | `CreateWithRelated` writes the parent, then per edge: a `create` inserts each child with the FK set to the parent (has-one: one child), an O2M or has-one `connect` adopts the named unparented rows and leaves other rows alone, and an M2M `create` and `connect` link exactly the targets named. A connect list longer than the batch size (visibility read, adoption, M2M visibility read), a post create list longer than the posts batch size, and a link set longer than the junction batch size are written in full | `conformance: CreateWithRelated/writes the parent, then creates and connects on every edge`; `conformance: CreateWithRelated/has-one connect adopts the named unparented profile`; `conformance: CreateWithRelated/connect adopts and links every named row across id-list chunks`; `conformance: CreateWithRelated/creates more posts than the posts batch size and links more tags than the junction batch size` | all | client-methods: CreateWithRelated × happy-path |
 | nested.composite-create-tenant-mismatch | A nested `create` whose tenancy-set tenant column differs from the parent's value is `ErrAlreadyRelated` attributed to `create`, and an M2M link row whose key-set tenant column differs from the resolved tenant is `ErrAlreadyRelated` attributed to `link`, on a key of any length | `example: tenancy_postgres: TestCreateWithRelated_TenancySetTenantMismatchIsAlreadyRelated`; `example: tenancy_postgres: TestCreateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated`; `example: tenancy_postgres: TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated`; `unit: cmd/sqlgen/gen: TestNestedTemplate_HasOneTenantKeyMapsTheMismatch` | all |  |
+| nested.unlink-tenant-mismatch | A `disconnect` or `clear` whose key takes the tenant column from a parent column that differs from the resolved tenant is `ErrAlreadyRelated`, attributed to the verb, with no row unlinked, on O2M and M2M, whether or not it names a row on the edge and on `UpsertWithRelated`'s insert branch too. It writes under the matching tenant, `SkipTenancy` or an explicit tenant, and with the tenants in agreement a miss stays a no-op | `example: tenancy_postgres: TestUpdateWithRelated_UnlinkTenantMismatchIsAlreadyRelated`; `example: tenancy_postgres: TestUpdateWithRelated_UnlinkOnTheParentsTenantWrites`; `example: tenancy_postgres: TestUpdateWithRelated_DisconnectMissOnTheParentsTenantIsANoOp`; `example: tenancy_postgres: TestUpsertWithRelated_UnlinkTenantMismatchRollsBackTheInsert`; `unit: cmd/sqlgen/gen: TestNestedTemplate_UnlinkComparesAParentHeldTenant` | all |  |
 | nested.m2m-create-shared-column-mismatch | A nested M2M `create` whose created target differs from the parent's value on a column both junction keys share is `ErrAlreadyRelated`, attributed to `create`, no id, before the link step, and the created row rolls back | `example: tenancy_postgres: TestUpdateWithRelated_CreateSharedJunctionColumnMismatchIsAlreadyRelated`; `unit: cmd/sqlgen/gen: TestNestedTemplate_CompositeKeyExecutor/m2m create compares the column both keys share` | all |  |
 | nested.composite-connect-pinned-mismatch | A `connect` target whose pinned member, or on an M2M edge a column both junction keys share, differs from the parent's value is `ErrAlreadyRelated` naming it, before the adoption write or the link step, `allow_reparent` included | `example: tenancy_postgres: TestUpdateWithRelated_PinnedMemberMismatchIsAlreadyRelated`; `example: tenancy_postgres: TestUpdateWithRelated_ConnectSharedJunctionColumnMismatchIsAlreadyRelated`; `example: tenancy_postgres: TestUpdateWithRelated_ConnectUnderSharedParentMismatchIsAlreadyRelated`; `unit: cmd/sqlgen/gen: TestNestedTemplate_CompositeKeyExecutor/m2m connect compares the column both keys share`; `unit: cmd/sqlgen/gen: TestNestedTemplate_JunctionSharedColumnAcrossBindings`; `unit: cmd/sqlgen/gen: TestNestedTemplate_JunctionSharedColumnOnTheTargetKey` | all |  |
 | nested.composite-connect-writes-free-members | `connect` and `allow_reparent` write the free members of a composite key only | `unit: cmd/sqlgen/gen: TestNestedTemplate_CompositeKeyExecutor/connect writes the free member alone`; `example: tenancy_postgres: TestUpdateWithRelated_ConnectWritesOnlyFreeMembers` | all |  |
@@ -503,7 +504,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | update-with-related.has-one-connect-current | A has-one `connect` naming the child the edge already holds is a no-op | `conformance: UpdateWithRelated/connect naming the has-one's current child changes nothing` | all |  |
 
 ## §9.9.5 Generated surface
-<!-- prd: 9.9.5 sha256: 92cab5219b3aaa84 -->
+<!-- prd: 9.9.5 sha256: ff1d6c87fd3a0b4e -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -515,7 +516,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | update-with-related.field-selection | A nil `FieldOptions` makes `UpdateWithRelated` return the parent with every relationship member unpopulated, on the edges it wrote as well (§9.9.5). A selected relationship comes back holding the rows as the call left them, including the rows the call itself created, connected and unlinked, and a selected scalar carries the value the call wrote. An empty `&FieldOptions{}` performs every write and returns `nil` (§9.6) | `conformance: UpdateWithRelated/a nil FieldOptions returns the parent with no relationship populated, on the edges it wrote as well`; `conformance: UpdateWithRelated/a selected relationship is returned holding the rows the call wrote`; `conformance: UpdateWithRelated/an empty FieldOptions performs every write and returns nil` | all | client-methods: UpdateWithRelated × field-selection |
 
 ## §9.9.6 Execution order
-<!-- prd: 9.9.6 sha256: d4d0ff17d3a12404 -->
+<!-- prd: 9.9.6 sha256: 0520d3694fd85453 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -548,7 +549,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | nested.id-list-batched | Every id-list statement of a nested verb is chunked at the client's batch size: the `connect` visibility read, the O2M adoption, the O2M `disconnect` and the M2M junction delete; `clear` is not chunked | `unit: cmd/sqlgen/gen: TestNestedTemplate_BatchesEveryIDListStatement`; `conformance: UpdateWithRelated/connect and disconnect lists longer than the batch size write every id, one inner call per chunk` | all |  |
 
 ## §9.9.8 Error attribution
-<!-- prd: 9.9.8 sha256: c5b7085ef0de08dd -->
+<!-- prd: 9.9.8 sha256: cf4757fe8e5aeb25 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -888,7 +889,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | tenancy.upsert-update-set-excludes-tenant | On a tenanted table the `Upsert` conflict clause's update set excludes the tenant column (with the PK columns); a shared table's excludes the PK columns only | `unit: cmd/sqlgen/gen: TestTenancyTemplate_upsert_tenantExcludedFromUpdateSet`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_upsert_sharedTableOmitsTenancy` | all |  |
 
 ## §29.4.2a Nested mutations
-<!-- prd: 29.4.2a sha256: 64bac4a1a48d5d35 -->
+<!-- prd: 29.4.2a sha256: 8d2877128e77a77b -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

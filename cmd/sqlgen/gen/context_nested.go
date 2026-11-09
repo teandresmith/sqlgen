@@ -735,6 +735,9 @@ func resolveNestedKeyAssign(edge *NestedEdgeContext, rel RelationshipContext, ta
 		edge.KeyMembers = append(edge.KeyMembers, NestedKeyMemberContext{
 			Column: m.column, FieldName: field.FieldName, Pinned: m.pinned, AssignExpr: expr,
 		})
+		if m.tenant && !parents[i].Tenant {
+			edge.TenantKeyParent, edge.TenantKeyClient = "parent."+parents[i].FieldName, edge.TargetClientField
+		}
 	}
 	return nil
 }
@@ -1238,6 +1241,20 @@ func resolveJunctionSharedRead(edge *NestedEdgeContext, local, reference []parse
 	edge.JunctionSharedAgrees = strings.Join(agrees, " && ")
 }
 
+// setJunctionTenantParent records the parent column the junction's tenant column
+// takes through the local key. A tenant column only in the reference key comes
+// off the target and cannot contradict the tenant filter on an unlink.
+func setJunctionTenantParent(edge *NestedEdgeContext, junction *TableContext, local []parser.KeyPair, parents []ColumnContext) {
+	if junction.Tenancy == nil || !junction.Tenancy.Tenanted {
+		return
+	}
+	for i, p := range local {
+		if p.Local == junction.Tenancy.Column && !parents[i].Tenant {
+			edge.TenantKeyParent, edge.TenantKeyClient = "parent."+parents[i].FieldName, edge.JunctionClientField
+		}
+	}
+}
+
 // resolveNestedM2M fills the shape-4 half: the junction the link rows go
 // through and the union of its two keys.
 //
@@ -1298,6 +1315,7 @@ func resolveNestedM2M(
 
 	parents := keyParents(tc, local, parentKey)
 	links := junctionLinks(local, reference, parents, target, junction.CreateInputFields)
+	setJunctionTenantParent(edge, junction, local, parents)
 	if !GoTypeIsValidMapKey(target.PKColumns[0].GoType) {
 		// The §9.9.6 link step dedupes `created ∪ connected` through a set
 		// keyed on the target id, so a PK that is not a valid Go map key makes

@@ -805,6 +805,192 @@ func TestUpdateWithRelated_ConnectSharedJunctionColumnMismatchIsAlreadyRelated(t
 	}
 }
 
+// mkLinkedTemplate writes a template owned by tenantB with one note and one
+// label on it, past the client, so a test starts from rows only tenantB can reach.
+func mkLinkedTemplate(t *testing.T, c *models.Client) (template, note, label int64) {
+	t.Helper()
+	ctx := context.Background()
+	created, err := c.Templates().Create(ctx, &models.CreateTemplateInput{OwnerWorkspace: tenantB, Name: "b's"})
+	if err != nil {
+		t.Fatalf("create template: %v", err)
+	}
+	template = created.ID
+	if err := testPool.QueryRow(ctx,
+		"INSERT INTO template_notes (workspace_id, template_id, body) VALUES ($1, $2, 'n') RETURNING id",
+		tenantB, template).Scan(&note); err != nil {
+		t.Fatalf("seed note: %v", err)
+	}
+	if err := testPool.QueryRow(ctx,
+		"INSERT INTO labels (workspace_id, name) VALUES ($1, 'l') RETURNING id", tenantB).Scan(&label); err != nil {
+		t.Fatalf("seed label: %v", err)
+	}
+	if _, err := testPool.Exec(ctx,
+		"INSERT INTO template_labels (workspace_id, template_id, label_id) VALUES ($1, $2, $3)",
+		tenantB, template, label); err != nil {
+		t.Fatalf("seed link: %v", err)
+	}
+	return template, note, label
+}
+
+// linkedRows counts what is still on template's two unlinkable edges.
+func linkedRows(t *testing.T, template int64) (notes, labels int) {
+	t.Helper()
+	ctx := context.Background()
+	if err := testPool.QueryRow(ctx, "SELECT count(*) FROM template_notes WHERE template_id = $1", template).Scan(&notes); err != nil {
+		t.Fatalf("count notes: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, "SELECT count(*) FROM template_labels WHERE template_id = $1", template).Scan(&labels); err != nil {
+		t.Fatalf("count labels: %v", err)
+	}
+	return notes, labels
+}
+
+// A shared parent's column and the resolver disagree on the tenant column in
+// the key. Each unlink fails loud, where it would otherwise match nothing and
+// report success (PRD §9.9.8).
+func TestUpdateWithRelated_UnlinkTenantMismatchIsAlreadyRelated(t *testing.T) {
+	tests := []struct {
+		name, edge, verb string
+		block            func(note, label int64) *models.UpdateTemplateWithRelatedInput
+	}{
+		{
+			name: "o2m disconnect", edge: "TemplateNotes", verb: "disconnect",
+			block: func(note, _ int64) *models.UpdateTemplateWithRelatedInput {
+				return &models.UpdateTemplateWithRelatedInput{TemplateNotes: &models.TemplateTemplateNotesUpdateNested{Disconnect: []int64{note}}}
+			},
+		},
+		{
+			name: "o2m disconnect naming no row", edge: "TemplateNotes", verb: "disconnect",
+			block: func(_, _ int64) *models.UpdateTemplateWithRelatedInput {
+				return &models.UpdateTemplateWithRelatedInput{TemplateNotes: &models.TemplateTemplateNotesUpdateNested{Disconnect: []int64{-1}}}
+			},
+		},
+		{
+			name: "o2m clear", edge: "TemplateNotes", verb: "clear",
+			block: func(_, _ int64) *models.UpdateTemplateWithRelatedInput {
+				return &models.UpdateTemplateWithRelatedInput{TemplateNotes: &models.TemplateTemplateNotesUpdateNested{Clear: true}}
+			},
+		},
+		{
+			name: "m2m disconnect", edge: "Labels", verb: "disconnect",
+			block: func(_, label int64) *models.UpdateTemplateWithRelatedInput {
+				return &models.UpdateTemplateWithRelatedInput{Labels: &models.TemplateLabelsUpdateNested{Disconnect: []int64{label}}}
+			},
+		},
+		{
+			name: "m2m disconnect naming no row", edge: "Labels", verb: "disconnect",
+			block: func(_, _ int64) *models.UpdateTemplateWithRelatedInput {
+				return &models.UpdateTemplateWithRelatedInput{Labels: &models.TemplateLabelsUpdateNested{Disconnect: []int64{-1}}}
+			},
+		},
+		{
+			name: "m2m clear", edge: "Labels", verb: "clear",
+			block: func(_, _ int64) *models.UpdateTemplateWithRelatedInput {
+				return &models.UpdateTemplateWithRelatedInput{Labels: &models.TemplateLabelsUpdateNested{Clear: true}}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetDB(t)
+			env := newTenantEnv(t)
+			template, note, label := mkLinkedTemplate(t, env.clientB)
+
+			_, err := env.clientA.Templates().UpdateWithRelated(context.Background(), template, tt.block(note, label))
+			assertNestedError(t, err, models.ErrAlreadyRelated, tt.edge, tt.verb, nil)
+
+			if notes, labels := linkedRows(t, template); notes != 1 || labels != 1 {
+				t.Errorf("rows left = %d notes, %d labels, want 1 of each", notes, labels)
+			}
+		})
+	}
+}
+
+// The tenant the key holds is the resolved one, or tenancy is off for the
+// call: both unlink, and neither reaches the comparison's refusal.
+func TestUpdateWithRelated_UnlinkOnTheParentsTenantWrites(t *testing.T) {
+	type option = func(*models.CallOptions[models.TemplateFieldOptions])
+	explicit := func(o *models.CallOptions[models.TemplateFieldOptions]) { o.Tenant = new(tenantB) }
+	tests := []struct {
+		name   string
+		client func(*tenantEnv) *models.Client
+		opts   []option
+	}{
+		{name: "the resolved tenant", client: func(e *tenantEnv) *models.Client { return e.clientB }},
+		{name: "SkipTenancy", client: func(e *tenantEnv) *models.Client { return e.clientA }, opts: []option{skipTenancy[models.TemplateFieldOptions]}},
+		{name: "an explicit tenant", client: func(e *tenantEnv) *models.Client { return e.clientA }, opts: []option{explicit}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetDB(t)
+			env := newTenantEnv(t)
+			ctx := context.Background()
+
+			template, note, label := mkLinkedTemplate(t, env.clientB)
+			if _, err := tt.client(env).Templates().UpdateWithRelated(ctx, template, &models.UpdateTemplateWithRelatedInput{
+				TemplateNotes: &models.TemplateTemplateNotesUpdateNested{Disconnect: []int64{note}},
+				Labels:        &models.TemplateLabelsUpdateNested{Disconnect: []int64{label}},
+			}, tt.opts...); err != nil {
+				t.Fatalf("disconnect: %v", err)
+			}
+			if notes, labels := linkedRows(t, template); notes != 0 || labels != 0 {
+				t.Errorf("rows left after disconnect = %d notes, %d labels, want none", notes, labels)
+			}
+
+			template, _, _ = mkLinkedTemplate(t, env.clientB)
+			if _, err := tt.client(env).Templates().UpdateWithRelated(ctx, template, &models.UpdateTemplateWithRelatedInput{
+				TemplateNotes: &models.TemplateTemplateNotesUpdateNested{Clear: true},
+				Labels:        &models.TemplateLabelsUpdateNested{Clear: true},
+			}, tt.opts...); err != nil {
+				t.Fatalf("clear: %v", err)
+			}
+			if notes, labels := linkedRows(t, template); notes != 0 || labels != 0 {
+				t.Errorf("rows left after clear = %d notes, %d labels, want none", notes, labels)
+			}
+		})
+	}
+}
+
+// With the tenants in agreement a disconnect naming no row of this parent is a
+// miss, and a miss stays a no-op (PRD §9.9.6).
+func TestUpdateWithRelated_DisconnectMissOnTheParentsTenantIsANoOp(t *testing.T) {
+	resetDB(t)
+	env := newTenantEnv(t)
+	template, _, _ := mkLinkedTemplate(t, env.clientB)
+
+	if _, err := env.clientB.Templates().UpdateWithRelated(context.Background(), template, &models.UpdateTemplateWithRelatedInput{
+		TemplateNotes: &models.TemplateTemplateNotesUpdateNested{Disconnect: []int64{-1}},
+		Labels:        &models.TemplateLabelsUpdateNested{Disconnect: []int64{-1}},
+	}); err != nil {
+		t.Fatalf("disconnect: %v", err)
+	}
+	if notes, labels := linkedRows(t, template); notes != 1 || labels != 1 {
+		t.Errorf("rows left = %d notes, %d labels, want 1 of each", notes, labels)
+	}
+}
+
+// The executor has no branch detection, so the insert branch refuses the
+// mismatch as the conflict branch does, and the new parent rolls back.
+func TestUpsertWithRelated_UnlinkTenantMismatchRollsBackTheInsert(t *testing.T) {
+	resetDB(t)
+	env := newTenantEnv(t)
+	ctx := context.Background()
+
+	_, err := env.clientA.Templates().UpsertWithRelated(ctx, &models.UpsertTemplateWithRelatedInput{
+		Template:      models.CreateTemplateInput{OwnerWorkspace: tenantB, Name: "fresh"},
+		TemplateNotes: &models.TemplateTemplateNotesUpdateNested{Clear: true},
+	}, models.TemplateConflictPK)
+	assertNestedError(t, err, models.ErrAlreadyRelated, "TemplateNotes", "clear", nil)
+
+	var templates int
+	if err := testPool.QueryRow(ctx, "SELECT count(*) FROM templates").Scan(&templates); err != nil {
+		t.Fatalf("count templates: %v", err)
+	}
+	if templates != 0 {
+		t.Errorf("templates = %d, want the insert rolled back", templates)
+	}
+}
+
 // The same mismatch on a one-column key is the same error (PRD §9.9.8).
 func TestCreateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated(t *testing.T) {
 	resetDB(t)

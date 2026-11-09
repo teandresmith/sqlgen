@@ -29,6 +29,7 @@ Features: cache, events, soft_delete, tenancy, views
 | TaskReviewer | `task_reviewers` | table | [task_reviewer.md](task_reviewer.md) |  |
 | Template | `templates` | table | [template.md](template.md) |  |
 | TemplateLabel | `template_labels` | table | [template_label.md](template_label.md) |  |
+| TemplateNote | `template_notes` | table | [template_note.md](template_note.md) |  |
 | TemplateStamp | `template_stamps` | table | [template_stamp.md](template_stamp.md) |  |
 | TemplateStep | `template_steps` | table | [template_step.md](template_step.md) |  |
 | Workspace | `workspaces` | table | [workspace.md](workspace.md) |  |

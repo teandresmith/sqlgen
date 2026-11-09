@@ -16831,6 +16831,12 @@ func (c *labelClient) applyLabelTasksNested(ctx context.Context, parent *Label, 
 			if err := c.taskLabelClient.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[TaskLabelFieldOptions]) {
 				nestedChildOptions(o, options)
 			}); err != nil {
+				// The junction key holds the parent's tenant column and tenancy
+				// verifies it against the resolver: the same two keys as the
+				// link step.
+				if errors.Is(err, tenancy.ErrMismatch) {
+					err = ErrAlreadyRelated
+				}
 				return nestedError("Tasks", "disconnect", nil, err)
 			}
 		}
@@ -17044,6 +17050,12 @@ func (c *labelClient) applyLabelTemplatesNested(ctx context.Context, parent *Lab
 			if err := c.templateLabelClient.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[TemplateLabelFieldOptions]) {
 				nestedChildOptions(o, options)
 			}); err != nil {
+				// The junction key holds the parent's tenant column and tenancy
+				// verifies it against the resolver: the same two keys as the
+				// link step.
+				if errors.Is(err, tenancy.ErrMismatch) {
+					err = ErrAlreadyRelated
+				}
 				return nestedError("Templates", "disconnect", nil, err)
 			}
 		}
@@ -38781,8 +38793,10 @@ type UpdateStampWithRelatedInput struct {
 // branch detection. Each verb means the same thing on either branch: on
 // a freshly inserted parent, `create` and `connect` behave exactly as they do
 // on the create side, and `disconnect` / `clear` match zero rows and are
-// no-ops. `create` is not idempotent, so repeating an upsert that carries it
-// inserts again, or is refused on a has-one that already holds a child.
+// no-ops, unless an edge's key holds a tenant other than the resolved one,
+// which they refuse on either branch. `create` is not idempotent, so
+// repeating an upsert that carries it inserts again, or is refused on a
+// has-one that already holds a child.
 type UpsertStampWithRelatedInput struct {
 	// Stamp holds the parent's own columns — identical to the input Upsert accepts.
 	Stamp CreateStampInput `json:"stamp"`
@@ -39037,8 +39051,10 @@ func (c *stampClient) UpdateWithRelated(ctx context.Context, id int64, input *Up
 // The nested half is the update-side block verbatim and there is no
 // insert-vs-update branch detection: each verb means the same thing on
 // either branch, so one block is correct on both. On a freshly inserted
-// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
-// is not idempotent, so repeating an upsert that carries it inserts again.
+// parent, `disconnect` and `clear` match zero rows and are no-ops, unless an
+// edge's key holds a tenant other than the resolved one, which they refuse on
+// either branch. `create` is not idempotent, so repeating an upsert that
+// carries it inserts again.
 func (c *stampClient) UpsertWithRelated(ctx context.Context, input *UpsertStampWithRelatedInput, target StampConflictTarget, opts ...func(*CallOptions[StampFieldOptions])) (*Stamp, error) {
 	if input == nil {
 		return nil, fmt.Errorf("upsert stamp with related: %w", ErrNilInput)
@@ -39138,11 +39154,32 @@ func (c *stampClient) applyStampTemplatesNested(ctx context.Context, parent *Sta
 	pid0 := parent.OwnerWorkspace.String()
 	pid1 := parent.ID
 
+	// The key takes the tenant column from the parent and the tenant filter
+	// takes it from the resolver. Disagreeing, the two match no row, so the
+	// unlink would report success and leave the edge as it was. Compared here
+	// because no statement can raise it.
+	tenantKeyConflict := func(verb string) error {
+		if options.SkipTenancy {
+			return nil
+		}
+		tenant, apply, err := c.templateStampClient.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nestedError("Templates", verb, nil, err)
+		}
+		if apply && parent.OwnerWorkspace != tenant {
+			return nestedError("Templates", verb, nil, ErrAlreadyRelated)
+		}
+		return nil
+	}
+
 	// clear — FIRST, and the ordering is load-bearing: running it after create
 	// and connect would unlink the rows they had just linked. One write, no id
 	// list and no visibility read, parent-scoped by construction.
 	// On MySQL the *Where method's pre-SELECT precedes the write.
 	if nested.Clear {
+		if err := tenantKeyConflict("clear"); err != nil {
+			return err
+		}
 		if err := c.templateStampClient.HardDeleteWhere(ctx, &TemplateStampFilter{
 			WorkspaceID: &comparator.ID{Eq: new(pid0)},
 			StampID:     &comparator.Number[int64]{Eq: new(pid1)},
@@ -39294,6 +39331,12 @@ func (c *stampClient) applyStampTemplatesNested(ctx context.Context, parent *Sta
 			if err := c.templateStampClient.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[TemplateStampFieldOptions]) {
 				nestedChildOptions(o, options)
 			}); err != nil {
+				// The junction key holds the parent's tenant column and tenancy
+				// verifies it against the resolver: the same two keys as the
+				// link step.
+				if errors.Is(err, tenancy.ErrMismatch) {
+					err = ErrAlreadyRelated
+				}
 				return nestedError("Templates", "disconnect", nil, err)
 			}
 		}
@@ -50445,6 +50488,12 @@ func (c *taskClient) applyTaskLabelsNested(ctx context.Context, parent *Task, ne
 			if err := c.taskLabelClient.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[TaskLabelFieldOptions]) {
 				nestedChildOptions(o, options)
 			}); err != nil {
+				// The junction key holds the parent's tenant column and tenancy
+				// verifies it against the resolver: the same two keys as the
+				// link step.
+				if errors.Is(err, tenancy.ErrMismatch) {
+					err = ErrAlreadyRelated
+				}
 				return nestedError("Labels", "disconnect", nil, err)
 			}
 		}
@@ -53895,6 +53944,2777 @@ type GetTemplateLabelsInput struct {
 	Limit  *int                 `json:"limit"`
 	Offset *int                 `json:"offset"`
 	Sorts  []sql.Sort           `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type TemplateNote struct {
+	ID          int64     `db:"id" json:"id"`
+	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
+	TemplateID  *int64    `db:"template_id" json:"template_id"`
+	Body        string    `db:"body" json:"body"`
+}
+
+// TemplateNoteClient provides type-safe operations for the template_notes table.
+type TemplateNoteClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single templateNote by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (*TemplateNote, error)
+
+	// GetMany returns template_notes matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetTemplateNotesInput, opts ...func(*CallOptions[TemplateNoteFieldOptions])) ([]*TemplateNote, error)
+
+	// Exists returns true if a templateNote with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any templateNote matches the given filter.
+	ExistsWhere(ctx context.Context, filter *TemplateNoteFilter, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (bool, error)
+
+	// Count returns the number of template_notes matching the given filter.
+	Count(ctx context.Context, filter *TemplateNoteFilter, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new templateNote and returns the created entity.
+	Create(ctx context.Context, input *CreateTemplateNoteInput, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (*TemplateNote, error)
+
+	// CreateMany inserts multiple template_notes in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateTemplateNoteInput, opts ...func(*CallOptions[TemplateNoteFieldOptions])) ([]*TemplateNote, error)
+
+	// Update partially updates a templateNote by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateTemplateNoteInput, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (*TemplateNote, error)
+
+	// UpdateMany updates multiple template_notes and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateTemplateNoteItem, opts ...func(*CallOptions[TemplateNoteFieldOptions])) ([]*TemplateNote, error)
+
+	// UpdateWhere updates all template_notes matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *TemplateNoteFilter, input *UpdateTemplateNoteInput, opts ...func(*CallOptions[TemplateNoteFieldOptions])) ([]*TemplateNote, error)
+
+	// Upsert inserts a templateNote or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateTemplateNoteInput, target TemplateNoteConflictTarget, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (*TemplateNote, error)
+
+	// UpsertMany inserts or updates multiple template_notes in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateTemplateNoteInput, target TemplateNoteConflictTarget, opts ...func(*CallOptions[TemplateNoteFieldOptions])) ([]*TemplateNote, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a templateNote from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[TemplateNoteFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple template_notes from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[TemplateNoteFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all template_notes matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *TemplateNoteFilter, opts ...func(*CallOptions[TemplateNoteFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of template_notes with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[TemplateNoteFilter], opts ...func(*CallOptions[TemplateNoteFieldOptions])) (*PaginateResult[TemplateNote], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of template_notes.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[TemplateNoteFilter], opts ...func(*CallOptions[TemplateNoteFieldOptions])) (*Connection[TemplateNote], error)
+
+	// Stream returns an iterator over template_notes matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamTemplateNotesInput, opts ...func(*CallOptions[StreamTemplateNoteFieldOptions])) iter.Seq2[*TemplateNote, error]
+}
+
+// templateNoteClient implements the TemplateNoteClient interface.
+type templateNoteClient struct {
+	querier        database.Querier
+	dialect        sql.Dialect
+	table          sql.Table
+	batchSize      int
+	queryLimit     int
+	pageSize       int
+	cursorKeys     []string
+	strictUpdates  bool
+	mutationHooks  []hook.MutationHook
+	queryHooks     []hook.QueryHook
+	panicHandler   hook.PanicHandler
+	tenantResolver tenancy.TenantResolver[uuid.UUID]
+}
+
+// newTemplateNoteClient creates a new templateNoteClient.
+func newTemplateNoteClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *templateNoteClient {
+	return &templateNoteClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "template_notes"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *templateNoteClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *templateNoteClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// resolveTenant reads the operation's tenant from tenantValue and applies THIS
+// table's tenancy.required setting to it, returning the value, a bool
+// indicating whether tenancy should be applied to this call, and any resolver
+// error. The split matters: tenantValue's answer is shared across every client
+// the operation touches, while the apply bool below is this table's alone
+// (required is a per-table setting). The apply bool encodes the
+// tenancy.required semantic:
+//
+//   - Non-zero resolver return → apply=true; callers AND the filter into the
+//     WHERE (reads), verify-match against caller-supplied tenant (mutations),
+//     and auto-set the tenant column on INSERT.
+//   - Zero resolver return (resolver returned (zero, nil) or is nil) under
+//     tenancy.required:true → apply=false, err=tenancy.ErrMissing. The op
+//     fails closed before the DB round-trip.
+//   - Zero resolver return under tenancy.required:false → apply=false, err=nil.
+//     The op silently becomes cross-tenant: no filter append, no verify-match,
+//     no auto-set. This is the "missing tenant skips the filter" path
+//     — always-off rather than a silent zero-value write.
+//   - Resolver returns a non-nil error → apply=false, err propagated.
+//
+// Required-at-codegen determinism: the required:true vs required:false branch
+// is picked at template-expansion time per-table, from the table's resolved
+// tenancy config. Runtime callers observe a stable behavior per table.
+//
+// explicit carries CallOptions.Tenant (the explicit-tenant resolution
+// mode): when non-nil, tenancy behaves as normal resolution with
+// the resolver replaced by this constant — filter, auto-set, and verify-match
+// all apply. Precedence over SkipTenancy is normalized in
+// resolveCallOptions, so callers gate on SkipTenancy exactly as before. The
+// pointer distinguishes set from unset; a set zero value is honored verbatim.
+func (c *templateNoteClient) resolveTenant(ctx context.Context, explicit *uuid.UUID) (uuid.UUID, bool, error) {
+	if explicit != nil {
+		return *explicit, true, nil
+	}
+	var zero uuid.UUID
+	v, err := c.tenantValue(ctx)
+	if err != nil {
+		return zero, false, err
+	}
+	if v == zero {
+		return zero, false, tenancy.ErrMissing
+	}
+	return v, true, nil
+}
+
+// tenantValue returns the tenant the user resolver reports for this operation,
+// invoking it at most once per logical operation.
+//
+// It answers the table-independent half of the question and stops there: what
+// the resolver said. The tenancy.required reading of that answer — zero means
+// ErrMissing, or zero means skip the filter — belongs to resolveTenant above,
+// because `required` is a per-table setting while this value is
+// shared across every client the operation touches.
+//
+// Keeping the two apart is load-bearing rather than tidy. The ctx cache is
+// keyed on the tenant type alone, so it is one slot for the whole package;
+// caching the reading instead of the answer let whichever table resolved first
+// impose its `required` on the rest, and a required:false table handing
+// apply=false to a required:true one is a fail-open. A nil resolver
+// yields the zero value and the same per-table branch a zero return takes.
+func (c *templateNoteClient) tenantValue(ctx context.Context) (uuid.UUID, error) {
+	// Short-circuit: an entry point for this logical operation — a chaining
+	// mutation (Create, Update, Upsert, …) or a nested method's hoist — already
+	// resolved and stashed the value via tenancy.WithResolvedTenant. Lookup
+	// uses the same comparable T as the resolver, so collisions across entity
+	// clients with different tenant types are impossible.
+	if v, ok := tenancy.CachedTenant[uuid.UUID](ctx); ok {
+		return v, nil
+	}
+	if c.tenantResolver == nil {
+		var zero uuid.UUID
+		return zero, nil
+	}
+	return c.tenantResolver(ctx)
+}
+
+// templateNoteAllColumns is the column list for full-entity reads, sorted for determinism.
+var templateNoteAllColumns = []string{"body", "id", "template_id", "workspace_id"}
+
+// scanTemplateNotes scans rows into TemplateNote entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanTemplateNotes(rows database.Rows, columns []string) ([]*TemplateNote, error) {
+	var result []*TemplateNote
+	for rows.Next() {
+		t := &TemplateNote{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &t.ID
+			case "workspace_id":
+				targets[idx] = &t.WorkspaceID
+			case "template_id":
+				targets[idx] = &t.TemplateID
+			case "body":
+				targets[idx] = &t.Body
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan template_note: %w", err)
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate template_note rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single template_note by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *templateNoteClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (*TemplateNote, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get template_note: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableTemplateNotes, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	// Resolve tenant once at the entity-method boundary so the
+	// cache read-through hook can build a tenant-scoped key. The terminal
+	// (and the internal GetMany) sees the same value via q.Tenant. apply=false
+	// under tenancy.required:false + zero resolver skips both qctx.Tenant and
+	// the verify-match (cross-tenant read).
+	if !options.SkipTenancy {
+		resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nil, fmt.Errorf("get template_note: resolve tenant: %w", err)
+		}
+		if apply {
+			qctx.Tenant = resolvedTenant
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[TemplateNoteFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[TemplateNoteFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		templateNotes, err := c.GetMany(ctx, &GetTemplateNotesInput{
+			Filter: &TemplateNoteFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(templateNotes) == 0 {
+			return nil, ErrNotFound
+		}
+		return templateNotes[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get template_note: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*TemplateNote), nil
+}
+
+// GetMany returns template_notes matching the given filter, field selection, and sort criteria.
+func (c *templateNoteClient) GetMany(ctx context.Context, input *GetTemplateNotesInput, opts ...func(*CallOptions[TemplateNoteFieldOptions])) ([]*TemplateNote, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetTemplateNotesInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get many template_notes: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableTemplateNotes, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := templateNoteAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter — append tenant = resolved to WHERE.
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// filter (cross-tenant read).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var templateNotes []*TemplateNote
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		templateNotes, err = scanTemplateNotes(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return templateNotes, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many template_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TemplateNote), nil
+}
+
+// Create inserts a new template_note and returns the created entity.
+func (c *templateNoteClient) Create(ctx context.Context, input *CreateTemplateNoteInput, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (*TemplateNote, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateTemplateNoteInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create template_note: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableTemplateNotes, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"body"}
+		args := []any{input.Body}
+		// Tenancy auto-set + mismatch check. Caller-set tenant on
+		// the input is tolerated only when it matches the resolved value — any
+		// mismatch returns ErrMismatch before the DB round-trip. apply=false
+		// under tenancy.required:false + zero resolver falls through to the
+		// SkipTenancy-style branch: caller-supplied value wins, no auto-set,
+		// no verify-match (the DB NOT NULL constraint surfaces if the input is
+		// also empty).
+		// capturedTenant carries the tenant value written to the row into
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// the tenant-scoped key from the row itself, independent of how (or
+		// whether) the tenant was resolved. Stays nil only when
+		// no tenant value reaches the INSERT (a DB default fills the column).
+		var capturedTenant any
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
+			// resolver's answer, not this table's reading of it: a zero return
+			// is cached as a zero, and each table downstream re-applies its own
+			// tenancy.required branch to it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash resolved tenant on MutationContext so the cache hook
+				// builds tenant-scoped keys without re-invoking the resolver
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+				capturedTenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value is used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+				capturedTenant = v
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			// SkipTenancy:true — caller must explicitly set the tenant value.
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+			capturedTenant = v
+		}
+
+		if v, ok := input.TemplateID.Get(); ok {
+			columns = append(columns, "template_id")
+			args = append(args, v)
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[TemplateNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create template_note: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*TemplateNote), nil
+}
+
+// CreateMany inserts multiple template_notes in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *templateNoteClient) CreateMany(ctx context.Context, inputs []*CreateTemplateNoteInput, opts ...func(*CallOptions[TemplateNoteFieldOptions])) ([]*TemplateNote, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many template_notes: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableTemplateNotes, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*TemplateNote{}, nil
+		}
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// (and the per-input verify-match short-circuits via the cache)
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// Filled in lockstep with the PK slice above; feeds m.AffectedTenants
+		// so cache invalidation and event stamping rebuild tenant-scoped keys
+		// from each row's own tenant value.
+		var allTenants []any
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"workspace_id", "template_id", "body"}
+			var valueRows [][]any
+			for _, input := range batch {
+				// Tenancy auto-set + mismatch check.
+				// applyTenancy=false under SkipTenancy OR under required:false
+				// + zero resolver — caller-supplied tenant is used, else the DB
+				// NOT NULL constraint surfaces.
+				// The allTenants append below relies on the tenant-∉-PK column
+				// always being an omittable CreateInput field (promoted by
+				// attachTenancyToTables) so exactly one carrier element is
+				// appended per input, in lockstep with the PK slice.
+				var workspaceID any
+				if applyTenancy {
+					if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+					workspaceID = resolvedTenant
+				} else if v, ok := input.WorkspaceID.Get(); ok {
+					workspaceID = v
+				} else {
+					return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+				}
+				allTenants = append(allTenants, workspaceID)
+				var templateID any = sql.Default
+				if v, ok := input.TemplateID.Get(); ok {
+					templateID = v
+				}
+
+				valueRows = append(valueRows, []any{
+					workspaceID,
+					templateID,
+					input.Body,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+		m.AffectedTenants = allTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetTemplateNotesInput{
+			Filter: &TemplateNoteFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[TemplateNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many template_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TemplateNote), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *templateNoteClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *templateNoteClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan template_note id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a template_note by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *templateNoteClient) Update(ctx context.Context, id int64, input *UpdateTemplateNoteInput, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (*TemplateNote, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update template_note: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableTemplateNotes, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Tenancy mismatch check before any SQL build. applyTenancy
+		// is false under SkipTenancy OR under required:false + zero resolver —
+		// in the second case the WHERE below also drops the tenant predicate.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		// Tenant column excluded from SET under normal operation.
+		// Honored when the caller opted out via SkipTenancy OR when
+		// required:false + zero resolver opted out of tenancy for this call.
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.TemplateID.Get(); ok {
+			setClauses["template_id"] = v
+		}
+		if v, ok := input.Body.Get(); ok {
+			setClauses["body"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[TemplateNoteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if applyTenancy {
+			updateConds = append(updateConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+		}
+
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       updateConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		matched := 0
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan updated template_note tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[TemplateNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update template_note: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*TemplateNote), nil
+}
+
+// UpdateTemplateNoteItem pairs a primary key with an update input for batch updates.
+type UpdateTemplateNoteItem struct {
+	ID    int64                    `json:"id"`
+	Input *UpdateTemplateNoteInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple template_notes and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
+func (c *templateNoteClient) UpdateMany(ctx context.Context, items []UpdateTemplateNoteItem, opts ...func(*CallOptions[TemplateNoteFieldOptions])) ([]*TemplateNote, error) {
+	// UpdateTemplateNoteItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many template_notes: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableTemplateNotes, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*TemplateNote{}, nil
+		}
+
+		// Resolve the tenant once; per-item mismatch checks use the same value.
+		// applyTenancy=false under SkipTenancy OR under required:false + zero
+		// resolver — the per-item verify-match and per-row WHERE both drop.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the per-item verify-match short-circuits via the
+			// cache and the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				for _, item := range items {
+					if v, ok := item.Input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateTemplateNoteItem
+		// Per-item RETURNING captures each updated row's tenant; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from the rows themselves.
+		tenantByPK := make(map[int64]any, len(items))
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			var queuedItems []UpdateTemplateNoteItem
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if !applyTenancy {
+					if v, ok := item.Input.WorkspaceID.Get(); ok {
+						setClauses["workspace_id"] = v
+					}
+				}
+				if v, ok := item.Input.TemplateID.Get(); ok {
+					setClauses["template_id"] = v
+				}
+				if v, ok := item.Input.Body.Get(); ok {
+					setClauses["body"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.ID)
+					continue
+				}
+				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+				if applyTenancy {
+					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses:       setClauses,
+					Conditions:       itemConds,
+					ReturningColumns: []string{"workspace_id"},
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
+				allIDs = append(allIDs, item.ID)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise.
+			// Each statement RETURNING-projects the row's tenant; the scan
+			// below captures it per queued PK.
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for i := range pgxBatch.Len() {
+						rows, err := br.Query()
+						if err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						matched := 0
+						for rows.Next() {
+							var rowTenant uuid.UUID
+							if err := rows.Scan(&rowTenant); err != nil {
+								rows.Close()
+								br.Close()
+								return nil, fmt.Errorf("scan updated template_note tenant: %w", err)
+							}
+							tenantByPK[queuedItems[i].ID] = rowTenant
+							matched++
+						}
+						if err := rows.Err(); err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						rows.Close()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close batch: %w", err)
+					}
+				} else {
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_template_note", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							rows, err := conn.Query(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							matched := 0
+							for rows.Next() {
+								var rowTenant uuid.UUID
+								if err := rows.Scan(&rowTenant); err != nil {
+									rows.Close()
+									return fmt.Errorf("scan updated template_note tenant: %w", err)
+								}
+								tenantByPK[queuedItems[i].ID] = rowTenant
+								matched++
+							}
+							if err := rows.Err(); err != nil {
+								rows.Close()
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							rows.Close()
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
+						}
+						return nil
+					}); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetTemplateNotesInput{
+			Filter: &TemplateNoteFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[TemplateNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many template_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TemplateNote), nil
+}
+
+// UpdateWhere updates all template_notes matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *templateNoteClient) UpdateWhere(ctx context.Context, filter *TemplateNoteFilter, input *UpdateTemplateNoteInput, opts ...func(*CallOptions[TemplateNoteFieldOptions])) ([]*TemplateNote, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update template_notes where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableTemplateNotes, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Tenancy filter + mismatch check. applyTenancy=false
+		// under SkipTenancy OR under required:false + zero resolver — the
+		// filter is not AND'd and the SET-clause tenant override below fires
+		// (only meaningful when the tenant column is NOT in the PK; when it
+		// is, the column is excluded from UpdateInputFields entirely).
+		applyTenancy := false
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.TemplateID.Get(); ok {
+			setClauses["template_id"] = v
+		}
+		if v, ok := input.Body.Get(); ok {
+			setClauses["body"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetTemplateNotesInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[TemplateNoteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan updated template_note id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetTemplateNotesInput{
+			Filter: &TemplateNoteFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[TemplateNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update template_notes where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TemplateNote), nil
+}
+
+// HardDelete permanently removes a template_note from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *templateNoteClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[TemplateNoteFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableTemplateNotes, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       hardConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		var matched int
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan deleted template_note tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete template_note: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple template_notes from the database.
+func (c *templateNoteClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[TemplateNoteFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableTemplateNotes, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var scopeConds []sql.Condition
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Every sub-batch records the tenant of each row it touches, so cache
+		// invalidation and event stamping rebuild tenant-scoped keys from the
+		// rows themselves.
+		tenantByPK := make(map[int64]any, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+			hardConds = append(hardConds, scopeConds...)
+
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id", "workspace_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchTenants := make(map[int64]any, end-start)
+			for rows.Next() {
+				var rowID int64
+				var rowTenant uuid.UUID
+				if err := rows.Scan(&rowID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted template_note tenant: %w", err)
+				}
+				batchTenants[rowID] = rowTenant
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many template_notes: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all template_notes matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *templateNoteClient) HardDeleteWhere(ctx context.Context, filter *TemplateNoteFilter, opts ...func(*CallOptions[TemplateNoteFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableTemplateNotes, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan deleted template_note id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete template_notes where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *templateNoteClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
+}
+
+// TemplateNoteConflictTarget identifies a unique constraint for upsert conflict detection.
+type TemplateNoteConflictTarget int
+
+const (
+	TemplateNoteConflictPK TemplateNoteConflictTarget = iota // PRIMARY KEY (id)
+)
+
+// templateNoteConflictColumns maps each conflict target to its column set.
+var templateNoteConflictColumns = map[TemplateNoteConflictTarget][]string{
+	TemplateNoteConflictPK: {"id"},
+}
+
+// Upsert inserts a template_note or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *templateNoteClient) Upsert(ctx context.Context, input *CreateTemplateNoteInput, target TemplateNoteConflictTarget, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (*TemplateNote, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateTemplateNoteInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert template_note: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableTemplateNotes, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"body"}
+		args := []any{input.Body}
+		// Tenancy auto-set + mismatch check. apply=false under
+		// tenancy.required:false + zero resolver falls through to the
+		// caller-supplied value branch.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// (single-resolve). The resolver's answer is cached, not
+			// this table's reading of it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+		}
+
+		if v, ok := input.TemplateID.Get(); ok {
+			columns = append(columns, "template_id")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := templateNoteConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[TemplateNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert template_note: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*TemplateNote), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves
+// the generated primary key, also capturing the row's tenant column so cache
+// invalidation and event stamping can rebuild the tenant-scoped key from the
+// row itself. On the conflict-update path the existing row keeps
+// its tenant, so the captured value (not the input) is authoritative.
+func (c *templateNoteClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id", "workspace_id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	var id int64
+	var rowTenant uuid.UUID
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id, &rowTenant)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	if found {
+		return id, rowTenant, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *templateNoteClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, any, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, nil, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id", "workspace_id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+
+	var id int64
+	var rowTenant uuid.UUID
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, nil, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, nil, ErrNotFound
+	}
+	// BuildSelect emits its column list sorted, which need not match the order
+	// the columns were requested in, so bind the scan targets by name rather
+	// than by position — the same rule scanTemplateNotes follows.
+	cols, err := rows.Columns()
+	if err != nil {
+		return 0, nil, err
+	}
+	targets := make([]any, len(cols))
+	for i, col := range cols {
+		switch col {
+		case "id":
+			targets[i] = &id
+		case "workspace_id":
+			targets[i] = &rowTenant
+		}
+	}
+	if err := rows.Scan(targets...); err != nil {
+		return 0, nil, err
+	}
+	return id, rowTenant, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple template_notes in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// template_notes.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *templateNoteClient) UpsertMany(ctx context.Context, inputs []*CreateTemplateNoteInput, target TemplateNoteConflictTarget, opts ...func(*CallOptions[TemplateNoteFieldOptions])) ([]*TemplateNote, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many template_notes: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableTemplateNotes, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*TemplateNote{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"workspace_id", "template_id", "body"}
+		conflictColumns := templateNoteConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateTemplateNoteInput, 0, len(inputs))
+		var rowIDs []int64
+		// Filled from the rows themselves after each sub-batch; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from each row's own tenant value. A
+		// conflict leaves the existing row's tenant in place, so the input's
+		// value is not authoritative the way it is for CreateMany.
+		var rowTenants []any
+		for _, input := range inputs {
+			// Tenancy auto-set + mismatch check.
+			// applyTenancy=false under SkipTenancy OR under required:false
+			// + zero resolver — caller-supplied tenant is used, else the DB
+			// NOT NULL constraint surfaces.
+			var workspaceID any
+			if applyTenancy {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				workspaceID = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				workspaceID = v
+			} else {
+				return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+			}
+			var templateID any = sql.Default
+			if v, ok := input.TemplateID.Get(); ok {
+				templateID = v
+			}
+
+			valueRows = append(valueRows, []any{
+				workspaceID,
+				templateID,
+				input.Body,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateTemplateNoteInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, batchTenants, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+		m.AffectedTenants = rowTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetTemplateNotesInput{
+			Filter: &TemplateNoteFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[TemplateNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many template_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*TemplateNote), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key and tenant in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// template_notes.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *templateNoteClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, []any, error) {
+	if len(rows) == 0 {
+		return nil, nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level templateNoteConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanTemplateNotes
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id", "workspace_id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	found, err := scanTemplateNotes(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk     int64
+		tenant any
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = templateNoteColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID, tenant: entity.WorkspaceID}
+	}
+
+	pks := make([]int64, len(rows))
+	tenants := make([]any, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+		tenants[i] = resolved.tenant
+	}
+	return pks, tenants, nil
+}
+
+// templateNoteColumnValue returns one column's value off a scanned
+// TemplateNote, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanTemplateNotes.
+func templateNoteColumnValue(t *TemplateNote, column string) any {
+	switch column {
+	case "id":
+		return t.ID
+	case "workspace_id":
+		return t.WorkspaceID
+	case "template_id":
+		return t.TemplateID
+	case "body":
+		return t.Body
+	}
+	return nil
+}
+
+// Exists returns true if a template_note with the given primary key exists.
+func (c *templateNoteClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableTemplateNotes, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips both the verify-match and the filter append.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists template_note: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any template_note matches the given filter.
+func (c *templateNoteClient) ExistsWhere(ctx context.Context, filter *TemplateNoteFilter, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableTemplateNotes, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant probe).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists template_notes where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of template_notes matching the given filter.
+// A nil filter counts all template_notes.
+func (c *templateNoteClient) Count(ctx context.Context, filter *TemplateNoteFilter, opts ...func(*CallOptions[TemplateNoteFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableTemplateNotes, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant count).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count template_notes: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of template_notes with total count for offset-based pagination.
+// A nil filter paginates all template_notes.
+func (c *templateNoteClient) Paginate(ctx context.Context, input PaginateInput[TemplateNoteFilter], opts ...func(*CallOptions[TemplateNoteFieldOptions])) (*PaginateResult[TemplateNote], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate template_notes: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableTemplateNotes, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[TemplateNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		templateNotes, err := c.GetMany(ctx, &GetTemplateNotesInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[TemplateNote]{
+			Items:      templateNotes,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate template_notes: %w", err)
+	}
+	return result.(*PaginateResult[TemplateNote]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of template_notes.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *templateNoteClient) Connection(ctx context.Context, input ConnectionInput[TemplateNoteFilter], opts ...func(*CallOptions[TemplateNoteFieldOptions])) (*Connection[TemplateNote], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection template_notes: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableTemplateNotes, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[TemplateNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeTemplateNoteCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeTemplateNoteCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		templateNotes, err := c.GetMany(ctx, &GetTemplateNotesInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(templateNotes) > limit
+		if hasMore {
+			templateNotes = templateNotes[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(templateNotes)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[TemplateNote], len(templateNotes))
+		for i, row := range templateNotes {
+			cursor, err := encodeTemplateNoteCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[TemplateNote]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[TemplateNote]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection template_notes: %w", err)
+	}
+	return result.(*Connection[TemplateNote]), nil
+}
+
+// encodeTemplateNoteCursor encodes cursor key values as a base64 JSON string.
+func encodeTemplateNoteCursor(keys []string, t *TemplateNote) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = t.ID
+		case "workspace_id":
+			out["workspace_id"] = t.WorkspaceID
+		case "template_id":
+			out["template_id"] = t.TemplateID
+		case "body":
+			out["body"] = t.Body
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode template_note cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeTemplateNoteCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeTemplateNoteCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row TemplateNote
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamTemplateNotesInput holds query parameters for streaming template_notes records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamTemplateNotesInput struct {
+	Filter *TemplateNoteFilter `json:"filter"`
+	Sorts  []sql.Sort          `json:"sorts"`
+}
+
+// StreamTemplateNoteFieldOptions controls scalar column selection for template_notes streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamTemplateNoteFieldOptions struct {
+	ID          bool `json:"id"`
+	WorkspaceID bool `json:"workspace_id"`
+	TemplateID  bool `json:"template_id"`
+	Body        bool `json:"body"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamTemplateNoteFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.TemplateID {
+		cols = append(cols, "template_id")
+	}
+	if fo.Body {
+		cols = append(cols, "body")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamTemplateNoteFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.TemplateID {
+		return true
+	}
+	if fo.Body {
+		return true
+	}
+	return false
+}
+
+// scanTemplateNoteRow scans a single row into a TemplateNote entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanTemplateNoteRow(rows database.Rows, columns []string) (*TemplateNote, error) {
+	t := &TemplateNote{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &t.ID
+		case "workspace_id":
+			targets[idx] = &t.WorkspaceID
+		case "template_id":
+			targets[idx] = &t.TemplateID
+		case "body":
+			targets[idx] = &t.Body
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan template_note: %w", err)
+	}
+
+	return t, nil
+}
+
+// Stream returns an iterator over template_notes matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *templateNoteClient) Stream(ctx context.Context, input *StreamTemplateNotesInput, opts ...func(*CallOptions[StreamTemplateNoteFieldOptions])) iter.Seq2[*TemplateNote, error] {
+	return func(yield func(*TemplateNote, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamTemplateNotesInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream template_notes: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *TemplateNote, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream template_notes: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableTemplateNotes, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := templateNoteAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					emit(nil, fmt.Errorf("resolve tenant: %w", err))
+					return nil, nil
+				}
+				if apply {
+					conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				t, err := scanTemplateNoteRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(t, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate template_note rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream template_notes: %w", err))
+		}
+	}
+}
+
+// TemplateNoteFilter provides type-safe filtering for the template_notes table.
+type TemplateNoteFilter struct {
+	Body        *comparator.String                `json:"body"`
+	ID          *comparator.Number[int64]         `json:"id"`
+	TemplateID  *comparator.NullableNumber[int64] `json:"template_id"`
+	WorkspaceID *comparator.ID                    `json:"workspace_id"`
+	And         []*TemplateNoteFilter             `json:"and"`
+	Or          []*TemplateNoteFilter             `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *TemplateNoteFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.Body != nil {
+		conds = append(conds, f.Body.Parse(dialect.QuoteIdentifier("body"), dialect)...)
+	}
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.TemplateID != nil {
+		conds = append(conds, f.TemplateID.Parse(dialect.QuoteIdentifier("template_id"), dialect)...)
+	}
+
+	if f.WorkspaceID != nil {
+		conds = append(conds, f.WorkspaceID.Parse(dialect.QuoteIdentifier("workspace_id"), dialect)...)
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// TemplateNoteFieldOptions controls column selection and relationship loading for template_notes queries.
+type TemplateNoteFieldOptions struct {
+	ID          bool `json:"id"`
+	WorkspaceID bool `json:"workspace_id"`
+	TemplateID  bool `json:"template_id"`
+	Body        bool `json:"body"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *TemplateNoteFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.TemplateID {
+		cols = append(cols, "template_id")
+	}
+	if fo.Body {
+		cols = append(cols, "body")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *TemplateNoteFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":          "id",
+		"WorkspaceID": "workspace_id",
+		"TemplateID":  "template_id",
+		"Body":        "body",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *TemplateNoteFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.TemplateID {
+		return true
+	}
+	if fo.Body {
+		return true
+	}
+	return false
+}
+
+// CreateTemplateNoteInput holds the fields for creating a template_notes record.
+type CreateTemplateNoteInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	TemplateID  omittable.Value[*int64]    `json:"template_id,omitzero"`
+	Body        string                     `json:"body"`
+}
+
+// UpdateTemplateNoteInput holds the fields for updating a template_notes record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateTemplateNoteInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	TemplateID  omittable.Value[*int64]    `json:"template_id,omitzero"`
+	Body        omittable.Value[string]    `json:"body,omitzero"`
+}
+
+// GetTemplateNotesInput holds query parameters for retrieving template_notes records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetTemplateNotesInput struct {
+	Filter *TemplateNoteFilter `json:"filter"`
+	Limit  *int                `json:"limit"`
+	Offset *int                `json:"offset"`
+	Sorts  []sql.Sort          `json:"sorts"`
 	// conditions holds additional SQL conditions injected by internal callers
 	// (e.g., Connection keyset conditions). Not part of the public API.
 	conditions []sql.Condition
@@ -58962,6 +61782,8 @@ type Template struct {
 	Labels []*Label `db:"-" json:"labels"`
 	// Stamps - many-to-many relationship with the stamps table.
 	Stamps []*Stamp `db:"-" json:"stamps"`
+	// TemplateNotes - one-to-many relationship with the template_notes table.
+	TemplateNotes []*TemplateNote `db:"-" json:"template_notes"`
 	// TemplateSteps - one-to-many relationship with the template_steps table.
 	TemplateSteps []*TemplateStep `db:"-" json:"template_steps"`
 }
@@ -59085,11 +61907,13 @@ type templateClient struct {
 	panicHandler             hook.PanicHandler
 	callbackMode             database.CallbackMode
 	tenantResolver           tenancy.TenantResolver[uuid.UUID]
+	templateNotesDefaultSort []sql.Sort
 	templateStepsDefaultSort []sql.Sort
 	labelsDefaultSort        []sql.Sort
 	stampsDefaultSort        []sql.Sort
 	labelClient              *labelClient
 	stampClient              *stampClient
+	templateNoteClient       *templateNoteClient
 	templateStepClient       *templateStepClient
 	templateLabelClient      *templateLabelClient
 	templateStampClient      *templateStampClient
@@ -59459,6 +62283,9 @@ func (c *templateClient) GetMany(ctx context.Context, input *GetTemplatesInput, 
 // loadRelationships maps every child back through t.OwnerWorkspace and t.ID, which
 // an unselected column would leave at its zero value.
 func (fo *TemplateFieldOptions) loadsRelationships() bool {
+	if fo.TemplateNotes != nil {
+		return true
+	}
 	if fo.TemplateSteps != nil {
 		return true
 	}
@@ -59502,6 +62329,78 @@ func (fo *TemplateFieldOptions) loadsRelationships() bool {
 func (c *templateClient) loadRelationships(ctx context.Context, conn database.Querier, templates []*Template, options CallOptions[TemplateFieldOptions]) error {
 	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.TemplateNotes != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			templateKeyed := make([]*Template, 0, len(templates))
+			templateKeys := make([][]any, 0, len(templates))
+			for _, t := range templates {
+				templateKeyed = append(templateKeyed, t)
+				templateKeys = append(templateKeys, []any{t.OwnerWorkspace, t.ID})
+			}
+
+			sorts := fo.TemplateNotes.Sorts
+			if len(sorts) == 0 {
+				sorts = c.templateNotesDefaultSort
+			}
+
+			// Load via related entity client, 4000 parent keys per
+			// statement: within half the dialect's bind-parameter limit, leaving
+			// the rest for the relationship's filters. Each parent's children come
+			// from one statement, so the sorts order every parent's slice.
+			var relatedTemplateNotes []*TemplateNote
+			for start := 0; start < len(templateKeys); start += 4000 {
+				chunk := templateKeys[start:min(start+4000, len(templateKeys))]
+
+				// The consumer filter is ANDed in, so a soft-delete comparator
+				// in it narrows the child's default rather than replacing it.
+				filter := &TemplateNoteFilter{}
+				if fo.TemplateNotes.Filter != nil {
+					filter.And = append(filter.And, fo.TemplateNotes.Filter)
+				}
+
+				loaded, err := c.templateNoteClient.GetMany(ctx, &GetTemplateNotesInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					conditions: []sql.Condition{
+						sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "template_id"}, chunk),
+					},
+					// The mapping below keys every child on its FK columns, so the
+					// fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"workspace_id", "template_id"},
+				}, func(co *CallOptions[TemplateNoteFieldOptions]) {
+					co.FieldOptions = fo.TemplateNotes.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+					co.SkipTenancy = options.SkipTenancy
+					co.Tenant = options.Tenant
+				})
+				if err != nil {
+					return fmt.Errorf("load template template_notes: %w", err)
+				}
+				relatedTemplateNotes = append(relatedTemplateNotes, loaded...)
+			}
+
+			// Map results back to parent entities on every key column. A child
+			// with a NULL member references no parent.
+			byKey := make(map[[2]string][]*TemplateNote)
+			for _, r := range relatedTemplateNotes {
+				if !(r.TemplateID != nil) {
+					continue
+				}
+				key := [2]string{r.WorkspaceID.String(), fmt.Sprint((*r.TemplateID))}
+				byKey[key] = append(byKey[key], r)
+			}
+			for _, parent := range templateKeyed {
+				parent.TemplateNotes = byKey[[2]string{parent.OwnerWorkspace.String(), fmt.Sprint(parent.ID)}]
+			}
+			return nil
+		})
+	}
 
 	if fo.TemplateSteps != nil {
 		g.Go(func() error {
@@ -61022,6 +63921,9 @@ type CreateTemplateWithRelatedInput struct {
 	// Stamps - many-to-many relationship with the stamps table.
 	Stamps *TemplateStampsCreateNested `json:"stamps,omitempty"`
 
+	// TemplateNotes - one-to-many relationship with the template_notes table.
+	TemplateNotes *TemplateTemplateNotesCreateNested `json:"template_notes,omitempty"`
+
 	// TemplateSteps - one-to-many relationship with the template_steps table.
 	TemplateSteps *TemplateTemplateStepsCreateNested `json:"template_steps,omitempty"`
 }
@@ -61042,6 +63944,9 @@ type UpdateTemplateWithRelatedInput struct {
 	// Stamps - many-to-many relationship with the stamps table.
 	Stamps *TemplateStampsUpdateNested `json:"stamps,omitempty"`
 
+	// TemplateNotes - one-to-many relationship with the template_notes table.
+	TemplateNotes *TemplateTemplateNotesUpdateNested `json:"template_notes,omitempty"`
+
 	// TemplateSteps - one-to-many relationship with the template_steps table.
 	TemplateSteps *TemplateTemplateStepsUpdateNested `json:"template_steps,omitempty"`
 }
@@ -61054,8 +63959,10 @@ type UpdateTemplateWithRelatedInput struct {
 // branch detection. Each verb means the same thing on either branch: on
 // a freshly inserted parent, `create` and `connect` behave exactly as they do
 // on the create side, and `disconnect` / `clear` match zero rows and are
-// no-ops. `create` is not idempotent, so repeating an upsert that carries it
-// inserts again, or is refused on a has-one that already holds a child.
+// no-ops, unless an edge's key holds a tenant other than the resolved one,
+// which they refuse on either branch. `create` is not idempotent, so
+// repeating an upsert that carries it inserts again, or is refused on a
+// has-one that already holds a child.
 type UpsertTemplateWithRelatedInput struct {
 	// Template holds the parent's own columns — identical to the input Upsert accepts.
 	Template CreateTemplateInput `json:"template"`
@@ -61065,6 +63972,9 @@ type UpsertTemplateWithRelatedInput struct {
 
 	// Stamps - many-to-many relationship with the stamps table.
 	Stamps *TemplateStampsUpdateNested `json:"stamps,omitempty"`
+
+	// TemplateNotes - one-to-many relationship with the template_notes table.
+	TemplateNotes *TemplateTemplateNotesUpdateNested `json:"template_notes,omitempty"`
 
 	// TemplateSteps - one-to-many relationship with the template_steps table.
 	TemplateSteps *TemplateTemplateStepsUpdateNested `json:"template_steps,omitempty"`
@@ -61158,6 +64068,58 @@ func templateStampsNestedFromCreate(n *TemplateStampsCreateNested) *TemplateStam
 	}
 }
 
+// TemplateTemplateNotesCreateNested is the create-side verb block for Template.TemplateNotes.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type TemplateTemplateNotesCreateNested struct {
+	Create  []*TemplateTemplateNotesCreateInput `json:"create,omitempty"`
+	Connect []int64                             `json:"connect,omitempty"`
+}
+
+// TemplateTemplateNotesUpdateNested is the update-side verb block for Template.TemplateNotes,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type TemplateTemplateNotesUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool                                `json:"clear,omitempty"`
+	Create     []*TemplateTemplateNotesCreateInput `json:"create,omitempty"`
+	Connect    []int64                             `json:"connect,omitempty"`
+	Disconnect []int64                             `json:"disconnect,omitempty"`
+}
+
+// TemplateTemplateNotesCreateInput is CreateTemplateNoteInput with the traversed
+// foreign key removed — that column is always set from the parent's primary key,
+// so leaving it would force the caller to supply a value that is then
+// overwritten.
+type TemplateTemplateNotesCreateInput struct {
+	Body string `json:"body"`
+}
+
+// templateTemplateNotesNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func templateTemplateNotesNestedFromCreate(n *TemplateTemplateNotesCreateNested) *TemplateTemplateNotesUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &TemplateTemplateNotesUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
 // TemplateTemplateStepsCreateNested is the create-side verb block for Template.TemplateSteps.
 // `disconnect` and `clear` are meaningless on a row that does not exist yet, so
 // they are not expressible here rather than accepted and ignored.
@@ -61213,6 +64175,7 @@ func templateNestedParentFieldOptions(fo *TemplateFieldOptions) *TemplateFieldOp
 	scalars := *fo
 	scalars.Labels = nil
 	scalars.Stamps = nil
+	scalars.TemplateNotes = nil
 	scalars.TemplateSteps = nil
 	scalars.ID = true
 	scalars.OwnerWorkspace = true
@@ -61227,7 +64190,7 @@ func templateNestedSelectsRelationship(fo *TemplateFieldOptions) bool {
 	if fo == nil {
 		return false
 	}
-	return fo.Labels != nil || fo.Stamps != nil || fo.TemplateSteps != nil
+	return fo.Labels != nil || fo.Stamps != nil || fo.TemplateNotes != nil || fo.TemplateSteps != nil
 }
 
 // nestedResolvedTenantCtx resolves the tenant once for a whole nested write,
@@ -61313,6 +64276,10 @@ func (c *templateClient) CreateWithRelated(ctx context.Context, input *CreateTem
 			return err
 		}
 
+		if err := c.applyTemplateTemplateNotesNested(ctx, parent, templateTemplateNotesNestedFromCreate(input.TemplateNotes), options); err != nil {
+			return err
+		}
+
 		if err := c.applyTemplateTemplateStepsNested(ctx, parent, templateTemplateStepsNestedFromCreate(input.TemplateSteps), options); err != nil {
 			return err
 		}
@@ -61387,6 +64354,10 @@ func (c *templateClient) UpdateWithRelated(ctx context.Context, id int64, input 
 			return err
 		}
 
+		if err := c.applyTemplateTemplateNotesNested(ctx, parent, input.TemplateNotes, options); err != nil {
+			return err
+		}
+
 		if err := c.applyTemplateTemplateStepsNested(ctx, parent, input.TemplateSteps, options); err != nil {
 			return err
 		}
@@ -61419,8 +64390,10 @@ func (c *templateClient) UpdateWithRelated(ctx context.Context, id int64, input 
 // The nested half is the update-side block verbatim and there is no
 // insert-vs-update branch detection: each verb means the same thing on
 // either branch, so one block is correct on both. On a freshly inserted
-// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
-// is not idempotent, so repeating an upsert that carries it inserts again.
+// parent, `disconnect` and `clear` match zero rows and are no-ops, unless an
+// edge's key holds a tenant other than the resolved one, which they refuse on
+// either branch. `create` is not idempotent, so repeating an upsert that
+// carries it inserts again.
 func (c *templateClient) UpsertWithRelated(ctx context.Context, input *UpsertTemplateWithRelatedInput, target TemplateConflictTarget, opts ...func(*CallOptions[TemplateFieldOptions])) (*Template, error) {
 	if input == nil {
 		return nil, fmt.Errorf("upsert template with related: %w", ErrNilInput)
@@ -61449,6 +64422,10 @@ func (c *templateClient) UpsertWithRelated(ctx context.Context, input *UpsertTem
 		}
 
 		if err := c.applyTemplateStampsNested(ctx, parent, input.Stamps, options); err != nil {
+			return err
+		}
+
+		if err := c.applyTemplateTemplateNotesNested(ctx, parent, input.TemplateNotes, options); err != nil {
 			return err
 		}
 
@@ -61528,11 +64505,32 @@ func (c *templateClient) applyTemplateLabelsNested(ctx context.Context, parent *
 	pid0 := parent.OwnerWorkspace.String()
 	pid1 := parent.ID
 
+	// The key takes the tenant column from the parent and the tenant filter
+	// takes it from the resolver. Disagreeing, the two match no row, so the
+	// unlink would report success and leave the edge as it was. Compared here
+	// because no statement can raise it.
+	tenantKeyConflict := func(verb string) error {
+		if options.SkipTenancy {
+			return nil
+		}
+		tenant, apply, err := c.templateLabelClient.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nestedError("Labels", verb, nil, err)
+		}
+		if apply && parent.OwnerWorkspace != tenant {
+			return nestedError("Labels", verb, nil, ErrAlreadyRelated)
+		}
+		return nil
+	}
+
 	// clear — FIRST, and the ordering is load-bearing: running it after create
 	// and connect would unlink the rows they had just linked. One write, no id
 	// list and no visibility read, parent-scoped by construction.
 	// On MySQL the *Where method's pre-SELECT precedes the write.
 	if nested.Clear {
+		if err := tenantKeyConflict("clear"); err != nil {
+			return err
+		}
 		if err := c.templateLabelClient.HardDeleteWhere(ctx, &TemplateLabelFilter{
 			WorkspaceID: &comparator.ID{Eq: new(pid0)},
 			TemplateID:  &comparator.Number[int64]{Eq: new(pid1)},
@@ -61684,6 +64682,12 @@ func (c *templateClient) applyTemplateLabelsNested(ctx context.Context, parent *
 			if err := c.templateLabelClient.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[TemplateLabelFieldOptions]) {
 				nestedChildOptions(o, options)
 			}); err != nil {
+				// The junction key holds the parent's tenant column and tenancy
+				// verifies it against the resolver: the same two keys as the
+				// link step.
+				if errors.Is(err, tenancy.ErrMismatch) {
+					err = ErrAlreadyRelated
+				}
 				return nestedError("Labels", "disconnect", nil, err)
 			}
 		}
@@ -61741,11 +64745,32 @@ func (c *templateClient) applyTemplateStampsNested(ctx context.Context, parent *
 	pid0 := parent.OwnerWorkspace.String()
 	pid1 := parent.ID
 
+	// The key takes the tenant column from the parent and the tenant filter
+	// takes it from the resolver. Disagreeing, the two match no row, so the
+	// unlink would report success and leave the edge as it was. Compared here
+	// because no statement can raise it.
+	tenantKeyConflict := func(verb string) error {
+		if options.SkipTenancy {
+			return nil
+		}
+		tenant, apply, err := c.templateStampClient.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nestedError("Stamps", verb, nil, err)
+		}
+		if apply && parent.OwnerWorkspace != tenant {
+			return nestedError("Stamps", verb, nil, ErrAlreadyRelated)
+		}
+		return nil
+	}
+
 	// clear — FIRST, and the ordering is load-bearing: running it after create
 	// and connect would unlink the rows they had just linked. One write, no id
 	// list and no visibility read, parent-scoped by construction.
 	// On MySQL the *Where method's pre-SELECT precedes the write.
 	if nested.Clear {
+		if err := tenantKeyConflict("clear"); err != nil {
+			return err
+		}
 		if err := c.templateStampClient.HardDeleteWhere(ctx, &TemplateStampFilter{
 			WorkspaceID: &comparator.ID{Eq: new(pid0)},
 			TemplateID:  &comparator.Number[int64]{Eq: new(pid1)},
@@ -61897,7 +64922,309 @@ func (c *templateClient) applyTemplateStampsNested(ctx context.Context, parent *
 			if err := c.templateStampClient.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[TemplateStampFieldOptions]) {
 				nestedChildOptions(o, options)
 			}); err != nil {
+				// The junction key holds the parent's tenant column and tenancy
+				// verifies it against the resolver: the same two keys as the
+				// link step.
+				if errors.Is(err, tenancy.ErrMismatch) {
+					err = ErrAlreadyRelated
+				}
 				return nestedError("Stamps", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// applyTemplateTemplateNotesNested applies the Template.TemplateNotes block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *templateClient) applyTemplateTemplateNotesNested(ctx context.Context, parent *Template, nested *TemplateTemplateNotesUpdateNested, options CallOptions[TemplateFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("TemplateNotes", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	// The connect adoption's verify read filters on it too.
+	pid0 := parent.OwnerWorkspace.String()
+	pid1 := parent.ID
+
+	// The key takes the tenant column from the parent and the tenant filter
+	// takes it from the resolver. Disagreeing, the two match no row, so the
+	// unlink would report success and leave the edge as it was. Compared here
+	// because no statement can raise it.
+	tenantKeyConflict := func(verb string) error {
+		if options.SkipTenancy {
+			return nil
+		}
+		tenant, apply, err := c.templateNoteClient.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nestedError("TemplateNotes", verb, nil, err)
+		}
+		if apply && parent.OwnerWorkspace != tenant {
+			return nestedError("TemplateNotes", verb, nil, ErrAlreadyRelated)
+		}
+		return nil
+	}
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if err := tenantKeyConflict("clear"); err != nil {
+			return err
+		}
+		if _, err := c.templateNoteClient.UpdateWhere(ctx,
+			&TemplateNoteFilter{
+				WorkspaceID: &comparator.ID{Eq: new(pid0)},
+				TemplateID:  &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+			},
+			&UpdateTemplateNoteInput{TemplateID: omittable.Set[*int64](nil)},
+			func(o *CallOptions[TemplateNoteFieldOptions]) {
+				nestedChildOptions(o, options)
+				// Nothing selected — the inner call does not need its result
+				// back, so it skips the read that would hand the rows over.
+				o.FieldOptions = &TemplateNoteFieldOptions{}
+			}); err != nil {
+			return nestedError("TemplateNotes", "clear", nil, err)
+		}
+	}
+
+	if len(nested.Create) > 0 {
+		inputs := make([]*CreateTemplateNoteInput, 0, len(nested.Create))
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("TemplateNotes", "create", nil, ErrNilInput)
+			}
+			inputs = append(inputs, &CreateTemplateNoteInput{
+				WorkspaceID: omittable.Set(parent.OwnerWorkspace),
+				TemplateID:  omittable.Set(&parent.ID),
+				Body:        n.Body,
+			})
+		}
+		if _, err := c.templateNoteClient.CreateMany(ctx, inputs, func(o *CallOptions[TemplateNoteFieldOptions]) {
+			nestedChildOptions(o, options)
+			// Nothing selected — the inner call does not need its result back,
+			// so it costs one statement rather than a statement plus a read.
+			o.FieldOptions = &TemplateNoteFieldOptions{}
+		}); err != nil {
+			// The key sets the tenant column from the parent and tenancy sets it
+			// from the resolver: disagreeing, the two bind this row to two keys.
+			if errors.Is(err, tenancy.ErrMismatch) {
+				err = ErrAlreadyRelated
+			}
+			return nestedError("TemplateNotes", "create", nil, err)
+		}
+	}
+
+	// connect — adopt unparented rows. The visibility read is not optional:
+	// the UPDATE's row count alone cannot separate "no such row" from "already
+	// parented", and the FK constraint proves a row exists, not that the caller
+	// may see it.
+	if len(connectIDs) > 0 {
+		// Each target's key, as a tuple of strings, which compares every key
+		// type. NULL is held apart: it stringifies like an empty string.
+		owner := make(map[int64][2]string, len(connectIDs))
+		nulls := make(map[int64][2]bool, len(connectIDs))
+		// Chunked at c.batchSize, for the reason the disconnect below is:
+		// a single `IN` over the caller's whole list hits a dialect-dependent
+		// bind ceiling whose error cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.templateNoteClient.GetMany(ctx, &GetTemplateNotesInput{
+				Filter: &TemplateNoteFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[TemplateNoteFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &TemplateNoteFieldOptions{ID: true, WorkspaceID: true, TemplateID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("TemplateNotes", "connect", nil, err)
+			}
+			for _, row := range visible {
+				var key [2]string
+				var null [2]bool
+				key[0] = row.WorkspaceID.String()
+				if row.TemplateID != nil {
+					key[1] = fmt.Sprint((*row.TemplateID))
+				} else {
+					null[1] = true
+				}
+				owner[row.ID], nulls[row.ID] = key, null
+			}
+		}
+
+		adopt := make([]int64, 0, len(connectIDs))
+		// A repeated id is ONE adoption: connect is a set operation, and the
+		// UPDATE matches the row once however many times the caller named it.
+		// Queueing it twice would trip the shortfall check below and report a
+		// conflict that did not happen.
+		queued := make(map[int64]bool, len(connectIDs))
+		want := [2]string{parent.OwnerWorkspace.String(), fmt.Sprint(parent.ID)}
+		for _, v := range connectIDs {
+			cur, ok := owner[v]
+			null := nulls[v]
+			switch {
+			case !ok:
+				// Absent, another tenant's, or soft-deleted — indistinguishable
+				// to this caller, and all NOT_FOUND. Never CONFLICT: that would
+				// confirm the row exists.
+				return nestedError("TemplateNotes", "connect", v, ErrNotFound)
+			case cur[0] != want[0]:
+				// Bound to another key through a member this edge cannot write,
+				// so allow_reparent does not reach it either.
+				return nestedError("TemplateNotes", "connect", v, ErrAlreadyRelated)
+			case !null[1] && cur == want:
+				// Already ours — the requested end state holds, so this is a
+				// no-op rather than a conflict.
+				continue
+			case !null[1]:
+				return nestedError("TemplateNotes", "connect", v, ErrAlreadyRelated)
+			}
+			if queued[v] {
+				continue
+			}
+			queued[v] = true
+			adopt = append(adopt, v)
+		}
+
+		if len(adopt) > 0 {
+			adoptedCount := 0
+			// The adoption is chunked on the same ceiling the read above
+			// is, and the shortfall check sums across chunks: a row lost in one
+			// chunk is a lost race whichever chunk it landed in.
+			for start := 0; start < len(adopt); start += c.batchSize {
+				adopting := adopt[start:min(start+c.batchSize, len(adopt))]
+				if _, err := c.templateNoteClient.UpdateWhere(ctx,
+					&TemplateNoteFilter{
+						ID: &comparator.Number[int64]{In: adopting},
+						// The `IS NULL` guard is what makes the adoption atomic
+						// against a concurrent connect that parented the row
+						// between the read above and this statement.
+						TemplateID: &comparator.NullableNumber[int64]{Null: new(true)},
+					},
+					&UpdateTemplateNoteInput{TemplateID: omittable.Set(&parent.ID)},
+					func(o *CallOptions[TemplateNoteFieldOptions]) {
+						nestedChildOptions(o, options)
+						// Nothing selected — the verify read below counts
+						// the adoption, not the rows UpdateWhere reports.
+						o.FieldOptions = &TemplateNoteFieldOptions{}
+					}); err != nil {
+					return nestedError("TemplateNotes", "connect", nil, err)
+				}
+				// The verify read counts this chunk's ids that now name this
+				// parent. Inside the transaction a plain read sees its own
+				// writes, so it counts what the UPDATE adopted and never a row
+				// another connection parented first — on every dialect, with
+				// no lock. UpdateWhere's report cannot do this on MySQL, where
+				// a pre-SELECT names the rows. Hooks are
+				// skipped as on the terminal re-read: this is part of the write.
+				adopted, err := c.templateNoteClient.GetMany(ctx, &GetTemplateNotesInput{
+					Filter: &TemplateNoteFilter{
+						ID:          &comparator.Number[int64]{In: adopting},
+						WorkspaceID: &comparator.ID{Eq: new(pid0)},
+						TemplateID:  &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+					},
+					Limit: new(0),
+				}, func(o *CallOptions[TemplateNoteFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &TemplateNoteFieldOptions{ID: true}
+					o.SkipHooks = true
+					o.LockMode = sql.LockNone
+				})
+				if err != nil {
+					return nestedError("TemplateNotes", "connect", nil, err)
+				}
+				adoptedCount += len(adopted)
+			}
+			if adoptedCount != len(adopt) {
+				// Lost the race — parented between the read and the UPDATE.
+				// Same outcome, reported the same way.
+				return nestedError("TemplateNotes", "connect", nil, ErrAlreadyRelated)
+			}
+		}
+	}
+
+	// disconnect — unlink, scoped to THIS parent. The `fk = parent` term is
+	// what stops a caller detaching another parent's row by guessing its id,
+	// and it is why a disconnect needs no visibility read where a connect does.
+	// A miss is a no-op, not an error.
+	if len(disconnectIDs) > 0 {
+		if err := tenantKeyConflict("disconnect"); err != nil {
+			return err
+		}
+		// Chunked at c.batchSize. The ceiling is a dialect-dependent bind
+		// limit, lowest on SQLite at 32766, and the error names nothing that
+		// can attribute — so it is removed rather than documented.
+		for start := 0; start < len(disconnectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(disconnectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range disconnectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			if _, err := c.templateNoteClient.UpdateWhere(ctx,
+				&TemplateNoteFilter{
+					ID:          &comparator.Number[int64]{In: ids},
+					WorkspaceID: &comparator.ID{Eq: new(pid0)},
+					TemplateID:  &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+				},
+				&UpdateTemplateNoteInput{TemplateID: omittable.Set[*int64](nil)},
+				func(o *CallOptions[TemplateNoteFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &TemplateNoteFieldOptions{}
+				}); err != nil {
+				return nestedError("TemplateNotes", "disconnect", nil, err)
 			}
 		}
 	}
@@ -62462,6 +65789,7 @@ type TemplateFilter struct {
 	OwnerWorkspace *comparator.ID            `json:"owner_workspace"`
 	Labels         *LabelFilter              `json:"labels"`
 	Stamps         *StampFilter              `json:"stamps"`
+	TemplateNotes  *TemplateNoteFilter       `json:"template_notes"`
 	TemplateSteps  *TemplateStepFilter       `json:"template_steps"`
 	And            []*TemplateFilter         `json:"and"`
 	Or             []*TemplateFilter         `json:"or"`
@@ -62500,6 +65828,10 @@ func (f *TemplateFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption)
 
 	if f.Stamps != nil {
 		conds = append(conds, templateStampsFilterExists(f.Stamps, dialect, opts))
+	}
+
+	if f.TemplateNotes != nil {
+		conds = append(conds, templateTemplateNotesFilterExists(f.TemplateNotes, dialect, opts))
 	}
 
 	if f.TemplateSteps != nil {
@@ -62556,6 +65888,9 @@ func (f *TemplateFilter) usesRelationshipFilter() bool {
 		return true
 	}
 	if f.Stamps != nil {
+		return true
+	}
+	if f.TemplateNotes != nil {
 		return true
 	}
 	if f.TemplateSteps != nil {
@@ -62663,6 +65998,50 @@ func templateStampsFilterExists(f *StampFilter, dialect sql.Dialect, opts []Filt
 	return sql.Exists([]string{"owner_workspace", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
 }
 
+// templateTemplateNotesFilterExists compiles a TemplateNoteFilter set on the
+// TemplateNotes relationship into a correlated EXISTS over template_notes.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func templateTemplateNotesFilterExists(f *TemplateNoteFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "public", Name: "template_notes"}) + " " + tgt +
+		" WHERE " + tgt + "." + dialect.QuoteIdentifier("workspace_id") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("template_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	// The target's tenant rule applies inside the subquery. Without it a
+	// relationship filter would be a cross-tenant existence probe on a table the caller cannot otherwise read.
+	if scope.applyTenant {
+		subSQL += " AND " + tgt + "." + dialect.QuoteIdentifier("workspace_id") + " = $"
+		subArgs = append(subArgs, scope.tenant)
+	}
+
+	return sql.Exists([]string{"owner_workspace", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
 // templateTemplateStepsFilterExists compiles a TemplateStepFilter set on the
 // TemplateSteps relationship into a correlated EXISTS over template_steps.
 //
@@ -62714,6 +66093,7 @@ type TemplateFieldOptions struct {
 	Name           bool                             `json:"name"`
 	Labels         *LabelRelationshipOptions        `json:"labels"`
 	Stamps         *StampRelationshipOptions        `json:"stamps"`
+	TemplateNotes  *TemplateNoteRelationshipOptions `json:"template_notes"`
 	TemplateSteps  *TemplateStepRelationshipOptions `json:"template_steps"`
 }
 
@@ -62760,6 +66140,9 @@ func (fo *TemplateFieldOptions) HasSelectedColumns() bool {
 	if fo.Stamps != nil {
 		return true
 	}
+	if fo.TemplateNotes != nil {
+		return true
+	}
 	if fo.TemplateSteps != nil {
 		return true
 	}
@@ -62771,6 +66154,13 @@ type StampRelationshipOptions struct {
 	FieldOptions *StampFieldOptions `json:"field_options"`
 	Filter       *StampFilter       `json:"filter"`
 	Sorts        []sql.Sort         `json:"sorts"`
+}
+
+// TemplateNoteRelationshipOptions controls loading options for TemplateNote relationships.
+type TemplateNoteRelationshipOptions struct {
+	FieldOptions *TemplateNoteFieldOptions `json:"field_options"`
+	Filter       *TemplateNoteFilter       `json:"filter"`
+	Sorts        []sql.Sort                `json:"sorts"`
 }
 
 // TemplateStepRelationshipOptions controls loading options for TemplateStep relationships.
@@ -67203,8 +70593,10 @@ type UpdateWorkspaceWithRelatedInput struct {
 // branch detection. Each verb means the same thing on either branch: on
 // a freshly inserted parent, `create` and `connect` behave exactly as they do
 // on the create side, and `disconnect` / `clear` match zero rows and are
-// no-ops. `create` is not idempotent, so repeating an upsert that carries it
-// inserts again, or is refused on a has-one that already holds a child.
+// no-ops, unless an edge's key holds a tenant other than the resolved one,
+// which they refuse on either branch. `create` is not idempotent, so
+// repeating an upsert that carries it inserts again, or is refused on a
+// has-one that already holds a child.
 type UpsertWorkspaceWithRelatedInput struct {
 	// Workspace holds the parent's own columns — identical to the input Upsert accepts.
 	Workspace CreateWorkspaceInput `json:"workspace"`
@@ -67453,8 +70845,10 @@ func (c *workspaceClient) UpdateWithRelated(ctx context.Context, id uuid.UUID, i
 // The nested half is the update-side block verbatim and there is no
 // insert-vs-update branch detection: each verb means the same thing on
 // either branch, so one block is correct on both. On a freshly inserted
-// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
-// is not idempotent, so repeating an upsert that carries it inserts again.
+// parent, `disconnect` and `clear` match zero rows and are no-ops, unless an
+// edge's key holds a tenant other than the resolved one, which they refuse on
+// either branch. `create` is not idempotent, so repeating an upsert that
+// carries it inserts again.
 func (c *workspaceClient) UpsertWithRelated(ctx context.Context, input *UpsertWorkspaceWithRelatedInput, target WorkspaceConflictTarget, opts ...func(*CallOptions[WorkspaceFieldOptions])) (*Workspace, error) {
 	if input == nil {
 		return nil, fmt.Errorf("upsert workspace with related: %w", ErrNilInput)

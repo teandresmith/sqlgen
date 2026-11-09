@@ -140,79 +140,6 @@ at the shapes the acceptance criteria name.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-369
-
-- **Status:** Open
-- **Severity:** blocking
-- **Origin:** phase 32, cmd/sqlgen/gen
-- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe; ruled by the user the same day
-- **Vetted:** corrected at `e48ece8b` (2026-11-06)
-
-**Issue.** **A shared parent's tenant mismatch reports differently per verb, and `clear` reports
-success while writing nothing.** Measured on a tenant junction: `link` gives `ErrAlreadyRelated`,
-`disconnect` gives raw `tenancy.ErrMismatch`, and `clear` returns `err=nil` with the row still there.
-The user ruled the asymmetry a bug. A caller told an edge was cleared must be able to rely on that.
-
-**Root cause.** The `tenancy.ErrMismatch` mapping in `nested.go.tmpl` covers `create` and `link` only.
-`disconnect` passes a key holding the parent's tenant value to `HardDeleteMany`, which refuses it
-unmapped. `clear` goes through `HardDeleteWhere`, whose tenant filter and `key = parent` terms
-contradict each other, so it matches no rows and returns nil.
-
-**Suggested fix.**
-- **Ruled 2026-11-06:** `disconnect` and `clear` fail loud on this mismatch, with `ErrAlreadyRelated`
-  attributed to the verb, as `create` and `link` do (PRD §9.9.8).
-- Map the error at M2M `disconnect`. M2M `clear` and O2M `disconnect` and `clear` raise nothing to map:
-  each matches zero rows and returns nil, so they need an explicit comparison of the parent's tenant
-  column with the resolved tenant before the statement. The prototype adds a `tenantKeyConflict(verb)`
-  closure and the edge fields `TenantKeyParent` and `TenantKeyClient`, set only when the tenant member
-  comes from a parent column other than the parent's own tenant column.
-- Has-one is unreachable for these verbs, and its executor arm takes the guard without a test.
-- Add the verbs to the PRD §9.9.8 row, and live tests that fail first with the measured outcomes.
-
-- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): emit the comparison when
-  the key takes the column from the parent's own tenant column → no, skip it, because gates are green, it
-  causes less churn, adds no public surface, and §9.9.6 already says such a mismatch needs a shared parent.
-- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): attribute a missing tenant
-  at the comparison → `tenancy.ErrMissing` through `nestedError`, read through the target's own `required`,
-  because gates are green, there is no churn or public surface, and it is the error the inner statement
-  would give. No live test covers `required: false`, since tenancy_postgres is `required: true`.
-- Prototype results, run at `e48ece8b` on 2026-11-06, recommended options: with a sibling tenancy_postgres
-  copy plus `template_notes`, O2M `disconnect`, O2M `clear` and M2M `clear` by tenant A on a B-owned parent
-  return `err=<nil>` with the row still linked; M2M `disconnect` gives the raw `tenancy: tenant on mutation
-  input does not match resolved tenant`; `SkipTenancy` and an explicit owner tenant unlink correctly; a miss
-  is `err=<nil>`. Gates: `go test -race ./gen/...` (`-run Nested` on the final code), `golangci-lint`,
-  `TestE2EGoldenFiles`, tenancy_postgres suite and lint, `make req-check`, `make refs-check` green. Not run:
-  conformance, graphql and mysql suites, whose goldens are byte-identical. Fail-first: removing the O2M
-  comparison fails `/o2m_disconnect` and `/o2m_disconnect_naming_no_row` (`error = <nil>, want sqlgen: already
-  related to another row`); removing the clear comparison fails `/o2m_clear`, `/m2m_clear` and
-  `TestUpsertWithRelated_UnlinkTenantMismatchRollsBackTheInsert`; removing the M2M mapping fails
-  `/m2m_disconnect` with the raw error; the existing suite passes without the fix. Golden churn:
-  tenancy_postgres +2/~12 in `expected/`, mirrored in `models/`, mostly the `template_notes` fixture; no
-  other example moves. `docs/conformance/REPORT.md` needs `make conformance`. Patch:
-  `.claude/prototypes/FIX-369.patch` (38 files), overlapping FIX-364 and FIX-368 in the nested code.
-- The user ruled on 2026-11-06: option (a) on both questions, which the prototype already implements:
-  1. On a tenant mismatch, does an O2M `disconnect` fail loud, given PRD §9.9.6 and §29.4.2a say "a miss is
-     a no-op"? (a, recommended, prototyped) `ErrAlreadyRelated` on every mismatch, even an id on no row, with
-     the carve-out "a tenant mismatch is not a miss"; it reveals nothing about row existence, and a miss
-     with agreeing tenants stays a no-op. (b) Keep the PRD: O2M `disconnect` stays silent with the row still
-     linked, and the verbs stay asymmetric.
-  2. On `UpsertWithRelated`'s insert branch, does the refusal apply, given §9.9.5 says these verbs "match
-     zero rows and are no-ops" on a fresh parent? (a, recommended, prototyped) Refuse on both branches, so
-     the insert rolls back; the executor has no branch detection and §9.9.5 forbids it, and M2M `disconnect`
-     already fails here. (b) Keep the no-op, which needs insert-versus-update detection. Not prototyped.
-
-- Corrected from the original: M2M `clear` and O2M `disconnect` take a comparison rather than a mapping, and
-  the PRD change reaches §9.9.5, §9.9.6, §9.9.10 and §29.4.2a. FIX-368 keeps the link-step mapping, which stays
-  reachable, and rewords the §9.9.8 row, so this entry adds its verbs to that wording. With FIX-368 a
-  shared-parent `connect` reaches `link` only on a shared target. This patch needs a hand merge over FIX-368's.
-
-**References.**
-- PRD §9.9.6, §9.9.8, §9.9.10.
-- Registry: `nested.composite-create-tenant-mismatch`.
-- `feedback_loud_errors_over_silence`.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-370
 
 - **Status:** Open
@@ -546,6 +473,80 @@ mismatch), `:1016` (composite no-op) and `:1018` (single-column no-op), with the
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-369
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06), reviewer probe; ruled by the user the same day
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **A shared parent's tenant mismatch reports differently per verb, and `clear` reports
+success while writing nothing.** Measured on a tenant junction: `link` gives `ErrAlreadyRelated`,
+`disconnect` gives raw `tenancy.ErrMismatch`, and `clear` returns `err=nil` with the row still there.
+The user ruled the asymmetry a bug. A caller told an edge was cleared must be able to rely on that.
+
+**Root cause.** The `tenancy.ErrMismatch` mapping in `nested.go.tmpl` covers `create` and `link` only.
+`disconnect` passes a key holding the parent's tenant value to `HardDeleteMany`, which refuses it
+unmapped. `clear` goes through `HardDeleteWhere`, whose tenant filter and `key = parent` terms
+contradict each other, so it matches no rows and returns nil.
+
+**Suggested fix.**
+- **Ruled 2026-11-06:** `disconnect` and `clear` fail loud on this mismatch, with `ErrAlreadyRelated`
+  attributed to the verb, as `create` and `link` do (PRD §9.9.8).
+- Map the error at M2M `disconnect`. M2M `clear` and O2M `disconnect` and `clear` raise nothing to map:
+  each matches zero rows and returns nil, so they need an explicit comparison of the parent's tenant
+  column with the resolved tenant before the statement. The prototype adds a `tenantKeyConflict(verb)`
+  closure and the edge fields `TenantKeyParent` and `TenantKeyClient`, set only when the tenant member
+  comes from a parent column other than the parent's own tenant column.
+- Has-one is unreachable for these verbs, and its executor arm takes the guard without a test.
+- Add the verbs to the PRD §9.9.8 row, and live tests that fail first with the measured outcomes.
+
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): emit the comparison when
+  the key takes the column from the parent's own tenant column → no, skip it, because gates are green, it
+  causes less churn, adds no public surface, and §9.9.6 already says such a mismatch needs a shared parent.
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): attribute a missing tenant
+  at the comparison → `tenancy.ErrMissing` through `nestedError`, read through the target's own `required`,
+  because gates are green, there is no churn or public surface, and it is the error the inner statement
+  would give. No live test covers `required: false`, since tenancy_postgres is `required: true`.
+- Prototype results, run at `e48ece8b` on 2026-11-06, recommended options: with a sibling tenancy_postgres
+  copy plus `template_notes`, O2M `disconnect`, O2M `clear` and M2M `clear` by tenant A on a B-owned parent
+  return `err=<nil>` with the row still linked; M2M `disconnect` gives the raw `tenancy: tenant on mutation
+  input does not match resolved tenant`; `SkipTenancy` and an explicit owner tenant unlink correctly; a miss
+  is `err=<nil>`. Gates: `go test -race ./gen/...` (`-run Nested` on the final code), `golangci-lint`,
+  `TestE2EGoldenFiles`, tenancy_postgres suite and lint, `make req-check`, `make refs-check` green. Not run:
+  conformance, graphql and mysql suites, whose goldens are byte-identical. Fail-first: removing the O2M
+  comparison fails `/o2m_disconnect` and `/o2m_disconnect_naming_no_row` (`error = <nil>, want sqlgen: already
+  related to another row`); removing the clear comparison fails `/o2m_clear`, `/m2m_clear` and
+  `TestUpsertWithRelated_UnlinkTenantMismatchRollsBackTheInsert`; removing the M2M mapping fails
+  `/m2m_disconnect` with the raw error; the existing suite passes without the fix. Golden churn:
+  tenancy_postgres +2/~12 in `expected/`, mirrored in `models/`, mostly the `template_notes` fixture; no
+  other example moves. `docs/conformance/REPORT.md` needs `make conformance`. Patch:
+  `.claude/prototypes/FIX-369.patch` (38 files), overlapping FIX-364 and FIX-368 in the nested code.
+- The user ruled on 2026-11-06: option (a) on both questions, which the prototype already implements:
+  1. On a tenant mismatch, does an O2M `disconnect` fail loud, given PRD §9.9.6 and §29.4.2a say "a miss is
+     a no-op"? (a, recommended, prototyped) `ErrAlreadyRelated` on every mismatch, even an id on no row, with
+     the carve-out "a tenant mismatch is not a miss"; it reveals nothing about row existence, and a miss
+     with agreeing tenants stays a no-op. (b) Keep the PRD: O2M `disconnect` stays silent with the row still
+     linked, and the verbs stay asymmetric.
+  2. On `UpsertWithRelated`'s insert branch, does the refusal apply, given §9.9.5 says these verbs "match
+     zero rows and are no-ops" on a fresh parent? (a, recommended, prototyped) Refuse on both branches, so
+     the insert rolls back; the executor has no branch detection and §9.9.5 forbids it, and M2M `disconnect`
+     already fails here. (b) Keep the no-op, which needs insert-versus-update detection. Not prototyped.
+
+- Corrected from the original: M2M `clear` and O2M `disconnect` take a comparison rather than a mapping, and
+  the PRD change reaches §9.9.5, §9.9.6, §9.9.10 and §29.4.2a. FIX-368 keeps the link-step mapping, which stays
+  reachable, and rewords the §9.9.8 row, so this entry adds its verbs to that wording. With FIX-368 a
+  shared-parent `connect` reaches `link` only on a shared target. This patch needs a hand merge over FIX-368's.
+
+**References.**
+- PRD §9.9.5, §9.9.6, §9.9.8, §29.4.2a.
+- Registry: `nested.unlink-tenant-mismatch`, `nested.composite-create-tenant-mismatch`.
+- `feedback_loud_errors_over_silence`.
+
+**Resolution notes.** The prototype applied with `git apply --3way` over FIX-364 and FIX-368, hand-merged in `context_nested.go` (FIX-368's `resolveJunctionSharedRead` and this fix's `setJunctionTenantParent` both kept), `tests/main_test.go` (`template_notes` added to FIX-368's reset list), PRD §9.9.8 (this fix's verbs added to the row FIX-368 reworded, no parallel row) and the registry (`nested.unlink-tenant-mismatch` beside FIX-368's rows; anchors rehashed with `make req-rehash SECTIONS=9.9,9.9.6,9.9.8`; the §9.9.5, §29.4 and §29.4.2a anchors came over from the prototype unchanged, since FIX-368 left those sections alone). Each unlink through a key that takes the tenant column from a parent column other than the parent's own tenant column now compares it with the resolved tenant before the statement: O2M `disconnect` and `clear` and M2M `clear` through the `tenantKeyConflict(verb)` closure, M2M `disconnect` by mapping the junction's `tenancy.ErrMismatch`. Each returns `ErrAlreadyRelated` attributed to the verb, on both `UpsertWithRelated` branches. The prototype carries no `Labels: link` test: FIX-368 had already moved `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated` to `Template.Stamps`, and it still passes there. Fail-first on the final code, by disabling each piece in the generated `models_gen.go`: without the clear comparison, `/o2m_clear`, `/m2m_clear` and `TestUpsertWithRelated_UnlinkTenantMismatchRollsBackTheInsert` give `error = <nil>`; without the O2M disconnect comparison, `/o2m_disconnect` and `/o2m_disconnect_naming_no_row` give `error = <nil>`; without the M2M disconnect mapping, `/m2m_disconnect` gives the raw `tenancy: tenant on mutation input does not match resolved tenant`; without the link mapping, the `Stamps` link test gives the raw error. Golden churn: tenancy_postgres +2/~12 in `expected/`, mirrored in `models/`, the same files as the vet; `models_gen.go` adds the comparison to FIX-368's `Template.Stamps` and `Stamp.Templates` edges too (four closures), so its line count differs from the vet's. The design doc gains the registry row, and the phase-32 Completion Record names `template_notes` and this fix as landed. From `/verify`: the generated `UpsertWithRelated` godoc and its input's godoc said `disconnect` / `clear` are no-ops on a fresh parent; on a table with an edge that takes the comparison they now name the refusal (a template-local flag, so only tenancy_postgres moves), with a render assertion in `TestNestedTemplate_UnlinkComparesAParentHeldTenant`. The References gained §9.9.5, §29.4.2a and the new registry row and dropped §9.9.10, which this fix does not edit. The reviewer's probe found an M2M `disconnect` naming no row refused too; that case is now the subtest `/m2m_disconnect_naming_no_row`, which fails with the raw `tenancy` error without the M2M mapping.
+
 ### FIX-368
 
 - **Status:** Resolved

@@ -42,6 +42,7 @@ type {{ .Nested.UpdateInputName }} struct {
 }
 {{- end }}
 {{- if .Nested.EmitUpsert }}
+{{- $tenantUnlink := false }}{{- range .Nested.Edges }}{{- if .TenantKeyParent }}{{- $tenantUnlink = true }}{{- end }}{{- end }}
 
 // {{ .Nested.UpsertInputName }} holds the fields for upserting a {{ .TableName }} record
 // together with rows on its nested relationships.
@@ -51,8 +52,15 @@ type {{ .Nested.UpdateInputName }} struct {
 // branch detection. Each verb means the same thing on either branch: on
 // a freshly inserted parent, `create` and `connect` behave exactly as they do
 // on the create side, and `disconnect` / `clear` match zero rows and are
+{{- if $tenantUnlink }}
+// no-ops, unless an edge's key holds a tenant other than the resolved one,
+// which they refuse on either branch. `create` is not idempotent, so
+// repeating an upsert that carries it inserts again, or is refused on a
+// has-one that already holds a child.
+{{- else }}
 // no-ops. `create` is not idempotent, so repeating an upsert that carries it
 // inserts again, or is refused on a has-one that already holds a child.
+{{- end }}
 type {{ .Nested.UpsertInputName }} struct {
 	// {{ .StructName }} holds the parent's own columns — identical to the input Upsert accepts.
 	{{ .StructName }} Create{{ .StructName }}Input `json:"{{ .SnakeName }}"`
@@ -381,6 +389,7 @@ func (c *{{ $client }}) UpdateWithRelated(ctx context.Context, id {{ (index .PKC
 }
 {{- end }}
 {{- if .Nested.EmitUpsert }}
+{{- $tenantUnlink := false }}{{- range .Nested.Edges }}{{- if .TenantKeyParent }}{{- $tenantUnlink = true }}{{- end }}{{- end }}
 
 // UpsertWithRelated inserts or updates a {{ .StructName | toCamelCase }} together with rows on
 // its nested relationships, in a single transaction.
@@ -388,8 +397,15 @@ func (c *{{ $client }}) UpdateWithRelated(ctx context.Context, id {{ (index .PKC
 // The nested half is the update-side block verbatim and there is no
 // insert-vs-update branch detection: each verb means the same thing on
 // either branch, so one block is correct on both. On a freshly inserted
+{{- if $tenantUnlink }}
+// parent, `disconnect` and `clear` match zero rows and are no-ops, unless an
+// edge's key holds a tenant other than the resolved one, which they refuse on
+// either branch. `create` is not idempotent, so repeating an upsert that
+// carries it inserts again.
+{{- else }}
 // parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
 // is not idempotent, so repeating an upsert that carries it inserts again.
+{{- end }}
 func (c *{{ $client }}) UpsertWithRelated(ctx context.Context, input *{{ .Nested.UpsertInputName }}, target {{ .StructName }}ConflictTarget, opts ...func(*CallOptions[{{ .StructName }}FieldOptions])) (*{{ .StructName }}, error) {
 	if input == nil {
 		return nil, fmt.Errorf("upsert {{ $singular }} with related: %w", ErrNilInput)
@@ -580,6 +596,26 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 	{{ .ParentVar }} := {{ .ParentKeyExpr }}
 {{- end }}
 {{- end }}
+{{- if and .TenantKeyParent (or .HasClear (and (ne .Shape "m2m") .HasDisconnect)) }}
+
+	// The key takes the tenant column from the parent and the tenant filter
+	// takes it from the resolver. Disagreeing, the two match no row, so the
+	// unlink would report success and leave the edge as it was. Compared here
+	// because no statement can raise it.
+	tenantKeyConflict := func(verb string) error {
+		if options.SkipTenancy {
+			return nil
+		}
+		tenant, apply, err := c.{{ .TenantKeyClient }}.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nestedError({{ printf "%q" .FieldName }}, verb, nil, err)
+		}
+		if apply && {{ .TenantKeyParent }} != tenant {
+			return nestedError({{ printf "%q" .FieldName }}, verb, nil, ErrAlreadyRelated)
+		}
+		return nil
+	}
+{{- end }}
 {{- if .HasClear }}
 
 	// clear — FIRST, and the ordering is load-bearing: running it after create
@@ -587,6 +623,11 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 	// list and no visibility read, parent-scoped by construction.
 	// On MySQL the *Where method's pre-SELECT precedes the write.
 	if nested.Clear {
+{{- if .TenantKeyParent }}
+		if err := tenantKeyConflict("clear"); err != nil {
+			return err
+		}
+{{- end }}
 {{- if eq .Shape "m2m" }}
 		if err := c.{{ .JunctionClientField }}.HardDeleteWhere(ctx, &{{ .JunctionStructName }}Filter{
 {{- range .ParentScope }}
@@ -812,6 +853,14 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 			if err := c.{{ .JunctionClientField }}.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[{{ .JunctionStructName }}FieldOptions]) {
 				nestedChildOptions(o, options)
 			}); err != nil {
+{{- if .TenantKeyMember }}
+				// The junction key holds the parent's tenant column and tenancy
+				// verifies it against the resolver: the same two keys as the
+				// link step.
+				if errors.Is(err, tenancy.ErrMismatch) {
+					err = ErrAlreadyRelated
+				}
+{{- end }}
 				return nestedError({{ printf "%q" .FieldName }}, "disconnect", nil, err)
 			}
 		}
@@ -1148,6 +1197,11 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 	// and it is why a disconnect needs no visibility read where a connect does.
 	// A miss is a no-op, not an error.
 	if len(disconnectIDs) > 0 {
+{{- if .TenantKeyParent }}
+		if err := tenantKeyConflict("disconnect"); err != nil {
+			return err
+		}
+{{- end }}
 		// Chunked at c.batchSize. The ceiling is a dialect-dependent bind
 		// limit, lowest on SQLite at 32766, and the error names nothing that
 		// can attribute — so it is removed rather than documented.

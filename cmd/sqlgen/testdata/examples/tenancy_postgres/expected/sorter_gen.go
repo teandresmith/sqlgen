@@ -441,6 +441,33 @@ func (s TemplateLabelSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "workspace_id", Direction: direction}
 }
 
+// TemplateNoteSorter provides type-safe sort helpers for the TemplateNote entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TemplateNoteSorter struct{}
+
+// NewTemplateNoteSorter returns a new TemplateNoteSorter.
+func NewTemplateNoteSorter() TemplateNoteSorter { return TemplateNoteSorter{} }
+
+// Body returns a sort for the body column in the given direction.
+func (s TemplateNoteSorter) Body(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "body", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s TemplateNoteSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// TemplateID returns a sort for the template_id column in the given direction.
+func (s TemplateNoteSorter) TemplateID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "template_id", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s TemplateNoteSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
 // TemplateStampSorter provides type-safe sort helpers for the TemplateStamp entity.
 // Each method returns a sql.Sort for the corresponding column.
 type TemplateStampSorter struct{}
