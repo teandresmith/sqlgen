@@ -2716,7 +2716,7 @@ func buildAPITableContext(tc TableContext, apiOps ResolvedOperations, g *config.
 	apiFilterRels := buildAPIFilterRelationships(tc.RelationshipFilters, g.FieldCasing, exposedTargets, filterFieldNameSet(apiFilterFields))
 	sortFields, sortEnumType, sortInputType := buildAPISortBindings(ent, fields)
 
-	rowKeys, err := buildAPIRowKeys(tc)
+	rowKeys, err := buildAPIRowKeys(tc, modelsPkg)
 	if err != nil {
 		return APITableContext{}, err
 	}
@@ -2787,8 +2787,8 @@ func buildAPITableContext(tc TableContext, apiOps ResolvedOperations, g *config.
 
 // APIRowKeys is the Go the updates emit to re-read, in one GetMany, the rows
 // they wrote. The spellings fix the loop variable to `row` and the key
-// slice to `keys`, and leave the models package off so the template can
-// qualify them with its own alias.
+// slice to `keys`. Only an enum key's ElemType and FilterMember carry the models
+// package; the template qualifies a composite key's with its own alias.
 type APIRowKeys struct {
 	// Composite reports a composite key: ElemType and FromRow then name the
 	// model's PK struct and need the models package in front.
@@ -2815,11 +2815,11 @@ type APIRowKeys struct {
 // filter's PKs member, a single column through its comparator's `In`, and on
 // a soft-delete table the soft-delete comparator set empty, so a row the
 // update soft-deleted is read back too.
-func buildAPIRowKeys(tc TableContext) (APIRowKeys, error) {
+func buildAPIRowKeys(tc TableContext, modelsPkg string) (APIRowKeys, error) {
 	if len(tc.PKColumns) == 0 {
 		return APIRowKeys{}, nil
 	}
-	keys := buildAPIRowKeyMembers(tc)
+	keys := buildAPIRowKeyMembers(tc, modelsPkg)
 	lit, err := funcSoftDeleteFilterAny(tc)
 	if err != nil {
 		return APIRowKeys{}, err
@@ -2838,7 +2838,7 @@ func buildAPIRowKeys(tc TableContext) (APIRowKeys, error) {
 const comparatorImport = "github.com/teandresmith/sqlgen/comparator"
 
 // buildAPIRowKeyMembers is buildAPIRowKeys without the soft-delete member.
-func buildAPIRowKeyMembers(tc TableContext) APIRowKeys {
+func buildAPIRowKeyMembers(tc TableContext, modelsPkg string) APIRowKeys {
 	if tc.CompositePK {
 		var b strings.Builder
 		b.WriteString(tc.CompositePKStructName + "{")
@@ -2856,14 +2856,20 @@ func buildAPIRowKeyMembers(tc TableContext) APIRowKeys {
 	imports := []string{comparatorImport}
 	family, _ := pkComparatorFamily(base)
 	elem, fromRow, fromKey := base, "row."+col.FieldName, "%s"
-	if family == "ID" {
+	filter := pkFilterInExpr(base, "keys", false)
+	switch {
+	case family == "Enum":
+		// The enum is declared in the models package; the resolver is not.
+		elem = modelsPkg + "." + base
+		filter = "&comparator.Enum[" + elem + "]{In: keys}"
+	case family == "ID":
 		elem = "string"
 		fromRow = funcFKToStringByGoType(base, fromRow)
 		fromKey = funcFKToStringByGoType(base, fromKey)
 		if strings.HasPrefix(fromRow, "fmt.") {
 			imports = append(imports, "fmt")
 		}
-	} else if col.Import != "" {
+	case col.Import != "":
 		// A qualified element type (time.Duration, net.IP) needs its package.
 		imports = append(imports, col.Import)
 	}
@@ -2872,7 +2878,7 @@ func buildAPIRowKeyMembers(tc TableContext) APIRowKeys {
 		ElemType:      elem,
 		FromRow:       fromRow,
 		FromKeyFormat: fromKey,
-		FilterMember:  col.FieldName + ": " + pkFilterInExpr(base, "keys", false),
+		FilterMember:  col.FieldName + ": " + filter,
 		Imports:       imports,
 	}
 }

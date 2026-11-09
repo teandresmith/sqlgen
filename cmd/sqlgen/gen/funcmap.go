@@ -70,9 +70,10 @@ func FuncMapWithResolver(dialect sql.Dialect, resolver *gotype.Resolver) templat
 		"softDeleteSubqueryArg":       funcSoftDeleteSubqueryArg,
 
 		// PK Filtering
-		"pkFilterExpr":   funcPKFilterExpr,
-		"pkFilterInExpr": funcPKFilterInExpr,
-		"pkIsStringType": funcPKIsStringType,
+		"pkFilterExpr":           funcPKFilterExpr,
+		"pkFilterInExpr":         funcPKFilterInExpr,
+		"pkFilterInExprByGoType": pkFilterInExpr,
+		"pkIsStringType":         funcPKIsStringType,
 
 		// Relationships
 		"fkStringExpr":       funcFKStringExpr,
@@ -737,14 +738,15 @@ func funcFKStringExpr(col ColumnContext) string {
 // For string PKs: &comparator.ID{Eq: new(id.String())}
 // For numeric PKs: &comparator.Number[int64]{Eq: new(id)}
 // For binary / network PKs: &comparator.Opaque[[]byte]{Eq: new(id)}
+// For enum PKs: &comparator.Enum[Kind]{Eq: new(id)}
 //
 // The family is resolved by pkComparatorFamily, which mirrors
 // resolveGenericComparator — the expression has to match the type of the
 // filter field it is assigned into.
 func funcPKFilterExpr(col ColumnContext, varExpr string) string {
 	switch family, typeParam := pkComparatorFamily(col.GoType); family {
-	case "Number":
-		return fmt.Sprintf("&comparator.Number[%s]{Eq: new(%s)}", typeParam, varExpr)
+	case "Enum", "Number":
+		return fmt.Sprintf("&comparator.%s[%s]{Eq: new(%s)}", family, typeParam, varExpr)
 	case "Opaque":
 		// The operand is the column's own Go type, so it is passed through
 		// rather than rendered — a binary or network key compared as text
@@ -766,23 +768,18 @@ func funcPKFilterExpr(col ColumnContext, varExpr string) string {
 // For non-nullable numeric PKs: &comparator.Number[int64]{In: ids}
 // For nullable string FKs: &comparator.NullableID{ID: comparator.ID{In: idStrings}}
 // For nullable numeric FKs: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{In: ids}}
+// For enum keys: &comparator.Enum[Kind]{In: ids}, wrapped as a numeric FK is when nullable
 func funcPKFilterInExpr(col ColumnContext, varExpr string, nullable bool) string {
 	baseGoType := strings.TrimPrefix(col.GoType, "*")
 	return pkFilterInExpr(baseGoType, varExpr, nullable)
 }
 
 func pkFilterInExpr(baseGoType, varExpr string, nullable bool) string {
-	switch family, typeParam := pkComparatorFamily(baseGoType); family {
-	case "Number":
+	if family, typeParam := pkComparatorFamily(baseGoType); family != "ID" {
 		if nullable {
-			return fmt.Sprintf("&comparator.NullableNumber[%s]{Number: comparator.Number[%s]{In: %s}}", typeParam, typeParam, varExpr)
+			return fmt.Sprintf("&comparator.Nullable%[1]s[%[2]s]{%[1]s: comparator.%[1]s[%[2]s]{In: %[3]s}}", family, typeParam, varExpr)
 		}
-		return fmt.Sprintf("&comparator.Number[%s]{In: %s}", typeParam, varExpr)
-	case "Opaque":
-		if nullable {
-			return fmt.Sprintf("&comparator.NullableOpaque[%s]{Opaque: comparator.Opaque[%s]{In: %s}}", typeParam, typeParam, varExpr)
-		}
-		return fmt.Sprintf("&comparator.Opaque[%s]{In: %s}", typeParam, varExpr)
+		return fmt.Sprintf("&comparator.%s[%s]{In: %s}", family, typeParam, varExpr)
 	}
 	if nullable {
 		return fmt.Sprintf("&comparator.NullableID{ID: comparator.ID{In: %s}}", varExpr)
@@ -792,9 +789,10 @@ func pkFilterInExpr(baseGoType, varExpr string, nullable bool) string {
 
 // funcPKIsStringType reports whether a PK column uses a string-based comparator
 // (comparator.ID), and therefore whether the templates collect its keys as
-// []string via fmt.Sprint / .String(). Numeric PKs use comparator.Number[T] and
-// binary / network PKs use comparator.Opaque[T]; both take the key's own Go
-// type, so neither needs — or tolerates — the string conversion.
+// []string via fmt.Sprint / .String(). Numeric PKs use comparator.Number[T],
+// binary / network PKs use comparator.Opaque[T] and enum PKs use
+// comparator.Enum[T]; each takes the key's own Go type, so none needs — or
+// tolerates — the string conversion.
 // Accepts either a ColumnContext or a string Go type.
 func funcPKIsStringType(v any) bool {
 	var goType string

@@ -282,7 +282,8 @@ func wireJunctionColumns(r *RelationshipContext) {
 
 // applyRelFKFallbacks fills what wireRelFKMetadata's cross-table lookup left
 // unset, which happens for unit fixtures, bare tables and tables outside the
-// generated set. fkCol is the FK column the lookup read.
+// generated set, and derives FKEnumGoType. fkCol is the FK column the lookup
+// read.
 func applyRelFKFallbacks(r *RelationshipContext, parent *TableContext, fkCol string) {
 	// Final fallback for the field name: a bare table (unit fixture, or a
 	// target outside the generated set) leaves it unresolved, in which case
@@ -304,6 +305,13 @@ func applyRelFKFallbacks(r *RelationshipContext, parent *TableContext, fkCol str
 	}
 	if r.Type == parser.ManyToMany && r.JunctionReferenceGoType == "" {
 		r.JunctionReferenceGoType = r.FKGoType
+	}
+	if r.Type == parser.OneToMany {
+		parentFamily, parentEnum := pkComparatorFamily(r.ParentKey.GoType)
+		fkFamily, fkEnum := pkComparatorFamily(r.FKColumnGoType)
+		if parentFamily == "Enum" && fkFamily == "Enum" && fkEnum != parentEnum {
+			r.FKEnumGoType = fkEnum
+		}
 	}
 
 	// Final fallback for the target PK: with the target outside the generated
@@ -2435,7 +2443,7 @@ func resolveGenericComparator(col ColumnContext, baseGoType string) string {
 
 // pkComparatorFamily classifies which comparator family a PK or FK column's
 // filter field takes, given its Go type. Returns the family's base name
-// ("ID", "Number", "Opaque") and, for the two generic families, the type
+// ("ID", "Enum", "Number", "Opaque") and, for the generic families, the type
 // parameter.
 //
 // This exists so the generated client's own PK-filter expressions
@@ -2449,16 +2457,16 @@ func resolveGenericComparator(col ColumnContext, baseGoType string) string {
 // field and the generated package stopped compiling. The arms below mirror
 // resolveGenericComparator's order exactly; the two must move together.
 //
-// Only the arms reachable for a key column are modelled: IsSet / IsSlice /
-// enum-like columns keep whatever resolveGenericComparator gives them and are
-// not routed here, because the helpers this serves are called only for PK and
-// FK columns.
+// IsSet and IsSlice columns are not modelled: the Go type alone does not
+// identify them, and neither compiles as a key.
 func pkComparatorFamily(goType string) (family, typeParam string) {
 	base := strings.TrimPrefix(goType, "*")
 	if underlying, ok := gotype.StdNullUnderlying(base); ok {
 		base = underlying
 	}
 	switch {
+	case isEnumLikeType(base):
+		return "Enum", base
 	case base == durationGoType:
 		return "Number", base
 	case isComparatorNumericGoType(goType):

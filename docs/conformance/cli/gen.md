@@ -868,6 +868,7 @@ is claimed by a row in this file or another registry file.
 | cmd/sqlgen/gen: TestPKArgImports_UnionsAllPKColumns | Internal invariant: every composite PK arg carries a model field name; presence only |
 | cmd/sqlgen/gen: TestPKConvert_CompositeStructLiteral | Template helper pkConvert (argument to PK literal conversion); no PRD behavior of its own |
 | cmd/sqlgen/gen: TestPKFilterExpr_matchesFilterFieldType | Template helper invariant: the PK filter literal allocates the same comparator type the filter field holds, so generated code compiles |
+| cmd/sqlgen/gen: TestEnumKey_FollowsTheFilterField | Template helper invariant: an enum key's filter literals and API row keys take `comparator.Enum[T]`, the type the filter field holds |
 | cmd/sqlgen/gen: TestPKFromRow | Template helper pkFromRow; no PRD behavior of its own |
 | cmd/sqlgen/gen: TestStdNullUnderlying | Helper table mapping database/sql NullX wrappers to their underlying type; the comparator behavior is gotype.nullable.null-wrapper-comparator, backed by its own tests |
 | cmd/sqlgen/gen: TestStdNullWrappers_fileWithoutDatabaseSQLIsUntouched | Converse control for gotype.nullable.database-sql-alias: a file that needs no database/sql gets no alias; the row's condition (both packages needed) is not exercised |

@@ -140,54 +140,6 @@ at the shapes the acceptance criteria name.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-370
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, cmd/sqlgen/gen
-- **Surfaced by:** FIX-363 vet (2026-11-06), filed on the user's yes
-- **Vetted:** corrected at `e48ece8b` (2026-11-06)
-
-**Issue.** **An enum in a primary key, or a one-column enum FK, generates a package that does not
-compile, with or without nested writes.** `generate` plus `go build`, nested off (PostgreSQL pgx and stdlib, MySQL stdlib; line numbers vary by schema):
-`out/models_gen.go:235:8: cannot use &comparator.ID{…} (value of type *comparator.ID) as
-*comparator.Enum[Kind] value in struct literal`. One-column FK: `out/models_gen.go:436:8: cannot use
-&comparator.NullableID{…} … as *comparator.NullableEnum[Kind] value`. Composite junction PK:
-`out/models_gen.go:2411:15`, the same error.
-
-**Root cause.** `pkComparatorFamily` returns "ID" while the filter field is `comparator.Enum[T]`. Its
-comment (`cmd/sqlgen/gen/context_table.go:2452`) says enum columns are "not routed here", but they are.
-On MySQL each column declares its own enum, so an FK's Go type also differs from its parent key's
-(`ChildrenThingKindEnum` vs `ThingsKindEnum`), and the O2M loader fails separately.
-
-**Suggested fix.**
-- `pkComparatorFamily` gains an `isEnumLikeType` arm returning "Enum", first in the switch to mirror
-  `resolveGenericComparator`. `funcPKFilterExpr` and `pkFilterInExpr` render `comparator.Enum[T]` and
-  `NullableEnum[T]`. `ConnectKeyExpr`, `TargetPKIsString` and the nested paths follow the family unchanged.
-- `buildAPIRowKeyMembers` emits `models.Kind`, with `modelsPkg` threaded through `buildAPIRowKeys`.
-- New `RelationshipContext.FKEnumGoType` and funcmap `pkFilterInExprByGoType`: the O2M loader converts each
-  parent key to the FK's enum when the two types differ.
-- Tests: `TestGenerate_EnumKeysCompile` (`cmd/sqlgen/cli/enum_key_test.go`; pgx, pg stdlib, mysql; enum PK,
-  nullable and NOT NULL one-column FK, enum junction PK, nested on) and `TestEnumKey_FollowsTheFilterField`.
-- Corrected from the original: the family change alone leaves the MySQL per-column enum FK failing (`cannot use
-  &comparator.NullableEnum[ThingsKindEnum]{…} … as *comparator.NullableEnum[ChildrenThingKindEnum]`), and the
-  API row-key caller needs the models qualifier. M2M `clear` on an enum junction has build and text coverage
-  only, since a live test would add tables to an example schema and move goldens.
-- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced on pgx, pg stdlib and mysql with the errors in
-  the Issue. Gates: `go test -race -timeout=30m ./gen/... ./cli/...`, `make update-golden`, `make
-  update-golden-e2e`, `golangci-lint`, `make refs-check`, gofumpt green. Live probes, not in the patch: pgx on a
-  graphql example copy (CRUD, loaders both ways, nested verbs, O2M and M2M `clear`, needing a temporary resolver
-  qualifier) and MySQL 8.0 (CRUD and all three loaders) passed. Fail-first: removing the enum arm, the
-  `funcPKFilterExpr` case, the `pkFilterInExpr` form, the models qualifier and the `FKEnumGoType` wiring each
-  fails `TestEnumKey_FollowsTheFilterField` or `TestGenerate_EnumKeysCompile`; the existing suite passes without
-  the fix. Golden churn: none. Its only shared file with FIX-363's earlier snapshot is `context.go`, in separate
-  hunks; the two have not been built together. Patch: `.claude/prototypes/FIX-370.patch` (7 files, +197/-34).
-
-**References.**
-- PRD §11.2. FIX-363.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-371
 
 - **Status:** Open
@@ -473,6 +425,54 @@ mismatch), `:1016` (composite no-op) and `:1018` (single-column no-op), with the
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-370
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-363 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **An enum in a primary key, or a one-column enum FK, generates a package that does not
+compile, with or without nested writes.** `generate` plus `go build`, nested off (PostgreSQL pgx and stdlib, MySQL stdlib; line numbers vary by schema):
+`out/models_gen.go:235:8: cannot use &comparator.ID{…} (value of type *comparator.ID) as
+*comparator.Enum[Kind] value in struct literal`. One-column FK: `out/models_gen.go:436:8: cannot use
+&comparator.NullableID{…} … as *comparator.NullableEnum[Kind] value`. Composite junction PK:
+`out/models_gen.go:2411:15`, the same error.
+
+**Root cause.** `pkComparatorFamily` returns "ID" while the filter field is `comparator.Enum[T]`. Its
+comment (`cmd/sqlgen/gen/context_table.go:2452`) says enum columns are "not routed here", but they are.
+On MySQL each column declares its own enum, so an FK's Go type also differs from its parent key's
+(`ChildrenThingKindEnum` vs `ThingsKindEnum`), and the O2M loader fails separately.
+
+**Suggested fix.**
+- `pkComparatorFamily` gains an `isEnumLikeType` arm returning "Enum", first in the switch to mirror
+  `resolveGenericComparator`. `funcPKFilterExpr` and `pkFilterInExpr` render `comparator.Enum[T]` and
+  `NullableEnum[T]`. `ConnectKeyExpr`, `TargetPKIsString` and the nested paths follow the family unchanged.
+- `buildAPIRowKeyMembers` emits `models.Kind`, with `modelsPkg` threaded through `buildAPIRowKeys`.
+- New `RelationshipContext.FKEnumGoType` and funcmap `pkFilterInExprByGoType`: the O2M loader converts each
+  parent key to the FK's enum when the two types differ.
+- Tests: `TestGenerate_EnumKeysCompile` (`cmd/sqlgen/cli/enum_key_test.go`; pgx, pg stdlib, mysql; enum PK,
+  nullable and NOT NULL one-column FK, enum junction PK, nested on) and `TestEnumKey_FollowsTheFilterField`.
+- Corrected from the original: the family change alone leaves the MySQL per-column enum FK failing (`cannot use
+  &comparator.NullableEnum[ThingsKindEnum]{…} … as *comparator.NullableEnum[ChildrenThingKindEnum]`), and the
+  API row-key caller needs the models qualifier. M2M `clear` on an enum junction has build and text coverage
+  only, since a live test would add tables to an example schema and move goldens.
+- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced on pgx, pg stdlib and mysql with the errors in
+  the Issue. Gates: `go test -race -timeout=30m ./gen/... ./cli/...`, `make update-golden`, `make
+  update-golden-e2e`, `golangci-lint`, `make refs-check`, gofumpt green. Live probes, not in the patch: pgx on a
+  graphql example copy (CRUD, loaders both ways, nested verbs, O2M and M2M `clear`, needing a temporary resolver
+  qualifier) and MySQL 8.0 (CRUD and all three loaders) passed. Fail-first: removing the enum arm, the
+  `funcPKFilterExpr` case, the `pkFilterInExpr` form, the models qualifier and the `FKEnumGoType` wiring each
+  fails `TestEnumKey_FollowsTheFilterField` or `TestGenerate_EnumKeysCompile`; the existing suite passes without
+  the fix. Golden churn: none. Its only shared file with FIX-363's earlier snapshot is `context.go`, in separate
+  hunks; the two have not been built together. Patch: `.claude/prototypes/FIX-370.patch` (7 files, +197/-34).
+
+**References.**
+- PRD §11.2. FIX-363.
+
+**Resolution notes.** The prototype applied clean at HEAD over FIX-363, 365, 364, 368 and 369; no hand merge. `pkComparatorFamily` now has an enum arm, first as in `resolveGenericComparator`, so `funcPKFilterExpr`, `pkFilterInExpr` and everything that follows the family render `comparator.Enum[T]` / `NullableEnum[T]` for an enum key. The API row keys qualify the enum with the models package. On MySQL, where each column declares its own enum, `RelationshipContext.FKEnumGoType` makes the O2M loader convert each parent key to the FK's enum, through the new funcmap entry `pkFilterInExprByGoType`. Tests: `TestGenerate_EnumKeysCompile` (pgx, pg stdlib, mysql) and `TestEnumKey_FollowsTheFilterField`, both listed as unclaimed helper and build-smoke tests in `docs/conformance/cli/commands.md` and `docs/conformance/cli/gen.md`. Fail-first on the final code: removing the enum arm fails both. Golden churn: none, as in the vet. From `/verify`: the reviewer found the landed source byte-identical to the prototype and confirmed the fail-first; the `gen.md` note no longer claims the unit test covers the O2M loader, and `applyRelFKFallbacks`'s doc names the `FKEnumGoType` derivation. The MySQL O2M loader conversion and M2M `clear` on an enum junction have build and text coverage only.
 
 ### FIX-369
 

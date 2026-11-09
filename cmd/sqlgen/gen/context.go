@@ -414,6 +414,10 @@ type RelationshipContext struct {
 	// guard + unwrap expression when stringifying a FK for bucket lookup.
 	// For M2M: the local junction FK's Go type.
 	FKColumnGoType string
+	// FKEnumGoType names the FK column's enum when it is not the parent key's,
+	// and is empty otherwise. MySQL declares an enum per column, so the O2M
+	// loader converts each parent key to the type the FK's comparator takes.
+	FKEnumGoType string
 	// JunctionReferenceGoType is the resolved Go type of the junction's
 	// reference FK column (M2M only). The loader scans the junction into
 	// FKColumnGoType and this type, so each key keeps its own type.

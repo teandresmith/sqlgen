@@ -429,9 +429,9 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 			}
 {{- else }}
 			// Collect parent FK values
-			{{ $parentIDsVar }} := make([]{{ .ParentKey.GoType }}, len({{ $resultVar }}))
+			{{ $parentIDsVar }} := make([]{{ or .FKEnumGoType .ParentKey.GoType }}, len({{ $resultVar }}))
 			for idx, {{ $.VarName }} := range {{ $resultVar }} {
-				{{ $parentIDsVar }}[idx] = {{ printf "%s.%s" $.VarName .ParentKey.FieldName }}
+				{{ $parentIDsVar }}[idx] = {{ if .FKEnumGoType }}{{ .FKEnumGoType }}({{ end }}{{ printf "%s.%s" $.VarName .ParentKey.FieldName }}{{ if .FKEnumGoType }}){{ end }}
 			}
 {{- end }}
 
@@ -471,7 +471,7 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 
 				// Build FK-based filter, merged with consumer filter
 				filter := &{{ .TargetStructName }}Filter{
-					{{ .FKFieldName }}: {{ pkFilterInExpr .ParentKey $keysVar .FKNullable }},
+					{{ .FKFieldName }}: {{ pkFilterInExprByGoType (or .FKEnumGoType .ParentKey.GoType) $keysVar .FKNullable }},
 				}
 				if fo.{{ .FieldName }}.Filter != nil {
 					filter.And = append(filter.And, fo.{{ .FieldName }}.Filter)
