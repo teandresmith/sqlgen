@@ -2496,6 +2496,28 @@ func TestNestedEligibility_TargetShapeFailuresAreNotWriteEligible(t *testing.T) 
 			},
 			reason: `the traversed FK column "user_id" is absent from the target's create input`,
 		},
+		{
+			name: "nullable FK column of another type than the parent's key",
+			table: parser.Table{
+				Name: "slots", Schema: "public",
+				Columns: []parser.Column{
+					{Name: "id", Type: "uuid", PrimaryKey: true},
+					{Name: "user_id", Type: "text", Nullable: true},
+				},
+			},
+			reason: `the traversed FK column "user_id" binds to omittable.Value[*string], which sqlgen cannot construct from the parent's key`,
+		},
+		{
+			name: "required FK column of another type than the parent's key",
+			table: parser.Table{
+				Name: "slots", Schema: "public",
+				Columns: []parser.Column{
+					{Name: "id", Type: "uuid", PrimaryKey: true},
+					{Name: "user_id", Type: "text"},
+				},
+			},
+			reason: `the traversed FK column "user_id" binds to string, which sqlgen cannot construct from the parent's key`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2547,6 +2569,30 @@ CREATE TABLE gen_tasks (
 			}}
 		})
 		want := `the traversed FK column "cycle_id" is absent from the target's create input`
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("listed: error = %v, want it to contain %q", err, want)
+		}
+	})
+
+	t.Run("mismatched type on a later member of a composite key", func(t *testing.T) {
+		ddl := `
+CREATE TABLE cycles (id bigint PRIMARY KEY, workspace_id bigint NOT NULL, UNIQUE (workspace_id, id));
+CREATE TABLE narrow_tasks (
+	id bigint PRIMARY KEY,
+	workspace_id bigint NOT NULL,
+	cycle_id integer,
+	FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id)
+);`
+		contexts := keyMembersContexts(t, config.DialectPostgres, ddl, nil)
+		if contexts["cycles"].Nested != nil {
+			t.Errorf("auto-included: cycles has nested edges %v, want NarrowTasks not write-eligible", nestedEdgeNames(contexts["cycles"]))
+		}
+		_, err := buildKeyMembersContexts(t, config.DialectPostgres, ddl, func(cfg *config.RootConfig) {
+			cfg.Tables["cycles"] = config.TableConfig{NestedMutations: &config.TableNestedMutationsConfig{
+				Relationships: []config.TableNestedRelationship{{Name: "NarrowTasks"}},
+			}}
+		})
+		want := `the traversed FK column "cycle_id" binds to omittable.Value[*int32], which sqlgen cannot construct from the parent's key`
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("listed: error = %v, want it to contain %q", err, want)
 		}

@@ -24260,6 +24260,2795 @@ type GetMilestonesInput struct {
 	requiredColumns []string
 }
 
+type Plot struct {
+	ID          int64     `db:"id" json:"id"`
+	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
+	ZoneRegion  *string   `db:"zone_region" json:"zone_region"`
+	ZoneID      *int64    `db:"zone_id" json:"zone_id"`
+}
+
+// PlotClient provides type-safe operations for the plots table.
+type PlotClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single plot by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[PlotFieldOptions])) (*Plot, error)
+
+	// GetMany returns plots matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetPlotsInput, opts ...func(*CallOptions[PlotFieldOptions])) ([]*Plot, error)
+
+	// Exists returns true if a plot with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[PlotFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any plot matches the given filter.
+	ExistsWhere(ctx context.Context, filter *PlotFilter, opts ...func(*CallOptions[PlotFieldOptions])) (bool, error)
+
+	// Count returns the number of plots matching the given filter.
+	Count(ctx context.Context, filter *PlotFilter, opts ...func(*CallOptions[PlotFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new plot and returns the created entity.
+	Create(ctx context.Context, input *CreatePlotInput, opts ...func(*CallOptions[PlotFieldOptions])) (*Plot, error)
+
+	// CreateMany inserts multiple plots in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreatePlotInput, opts ...func(*CallOptions[PlotFieldOptions])) ([]*Plot, error)
+
+	// Update partially updates a plot by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdatePlotInput, opts ...func(*CallOptions[PlotFieldOptions])) (*Plot, error)
+
+	// UpdateMany updates multiple plots and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdatePlotItem, opts ...func(*CallOptions[PlotFieldOptions])) ([]*Plot, error)
+
+	// UpdateWhere updates all plots matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *PlotFilter, input *UpdatePlotInput, opts ...func(*CallOptions[PlotFieldOptions])) ([]*Plot, error)
+
+	// Upsert inserts a plot or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreatePlotInput, target PlotConflictTarget, opts ...func(*CallOptions[PlotFieldOptions])) (*Plot, error)
+
+	// UpsertMany inserts or updates multiple plots in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreatePlotInput, target PlotConflictTarget, opts ...func(*CallOptions[PlotFieldOptions])) ([]*Plot, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a plot from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[PlotFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple plots from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[PlotFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all plots matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *PlotFilter, opts ...func(*CallOptions[PlotFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of plots with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[PlotFilter], opts ...func(*CallOptions[PlotFieldOptions])) (*PaginateResult[Plot], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of plots.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[PlotFilter], opts ...func(*CallOptions[PlotFieldOptions])) (*Connection[Plot], error)
+
+	// Stream returns an iterator over plots matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamPlotsInput, opts ...func(*CallOptions[StreamPlotFieldOptions])) iter.Seq2[*Plot, error]
+}
+
+// plotClient implements the PlotClient interface.
+type plotClient struct {
+	querier        database.Querier
+	dialect        sql.Dialect
+	table          sql.Table
+	batchSize      int
+	queryLimit     int
+	pageSize       int
+	cursorKeys     []string
+	strictUpdates  bool
+	mutationHooks  []hook.MutationHook
+	queryHooks     []hook.QueryHook
+	panicHandler   hook.PanicHandler
+	tenantResolver tenancy.TenantResolver[uuid.UUID]
+}
+
+// newPlotClient creates a new plotClient.
+func newPlotClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *plotClient {
+	return &plotClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "plots"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *plotClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *plotClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// resolveTenant reads the operation's tenant from tenantValue and applies THIS
+// table's tenancy.required setting to it, returning the value, a bool
+// indicating whether tenancy should be applied to this call, and any resolver
+// error. The split matters: tenantValue's answer is shared across every client
+// the operation touches, while the apply bool below is this table's alone
+// (required is a per-table setting). The apply bool encodes the
+// tenancy.required semantic:
+//
+//   - Non-zero resolver return → apply=true; callers AND the filter into the
+//     WHERE (reads), verify-match against caller-supplied tenant (mutations),
+//     and auto-set the tenant column on INSERT.
+//   - Zero resolver return (resolver returned (zero, nil) or is nil) under
+//     tenancy.required:true → apply=false, err=tenancy.ErrMissing. The op
+//     fails closed before the DB round-trip.
+//   - Zero resolver return under tenancy.required:false → apply=false, err=nil.
+//     The op silently becomes cross-tenant: no filter append, no verify-match,
+//     no auto-set. This is the "missing tenant skips the filter" path
+//     — always-off rather than a silent zero-value write.
+//   - Resolver returns a non-nil error → apply=false, err propagated.
+//
+// Required-at-codegen determinism: the required:true vs required:false branch
+// is picked at template-expansion time per-table, from the table's resolved
+// tenancy config. Runtime callers observe a stable behavior per table.
+//
+// explicit carries CallOptions.Tenant (the explicit-tenant resolution
+// mode): when non-nil, tenancy behaves as normal resolution with
+// the resolver replaced by this constant — filter, auto-set, and verify-match
+// all apply. Precedence over SkipTenancy is normalized in
+// resolveCallOptions, so callers gate on SkipTenancy exactly as before. The
+// pointer distinguishes set from unset; a set zero value is honored verbatim.
+func (c *plotClient) resolveTenant(ctx context.Context, explicit *uuid.UUID) (uuid.UUID, bool, error) {
+	if explicit != nil {
+		return *explicit, true, nil
+	}
+	var zero uuid.UUID
+	v, err := c.tenantValue(ctx)
+	if err != nil {
+		return zero, false, err
+	}
+	if v == zero {
+		return zero, false, tenancy.ErrMissing
+	}
+	return v, true, nil
+}
+
+// tenantValue returns the tenant the user resolver reports for this operation,
+// invoking it at most once per logical operation.
+//
+// It answers the table-independent half of the question and stops there: what
+// the resolver said. The tenancy.required reading of that answer — zero means
+// ErrMissing, or zero means skip the filter — belongs to resolveTenant above,
+// because `required` is a per-table setting while this value is
+// shared across every client the operation touches.
+//
+// Keeping the two apart is load-bearing rather than tidy. The ctx cache is
+// keyed on the tenant type alone, so it is one slot for the whole package;
+// caching the reading instead of the answer let whichever table resolved first
+// impose its `required` on the rest, and a required:false table handing
+// apply=false to a required:true one is a fail-open. A nil resolver
+// yields the zero value and the same per-table branch a zero return takes.
+func (c *plotClient) tenantValue(ctx context.Context) (uuid.UUID, error) {
+	// Short-circuit: an entry point for this logical operation — a chaining
+	// mutation (Create, Update, Upsert, …) or a nested method's hoist — already
+	// resolved and stashed the value via tenancy.WithResolvedTenant. Lookup
+	// uses the same comparable T as the resolver, so collisions across entity
+	// clients with different tenant types are impossible.
+	if v, ok := tenancy.CachedTenant[uuid.UUID](ctx); ok {
+		return v, nil
+	}
+	if c.tenantResolver == nil {
+		var zero uuid.UUID
+		return zero, nil
+	}
+	return c.tenantResolver(ctx)
+}
+
+// plotAllColumns is the column list for full-entity reads, sorted for determinism.
+var plotAllColumns = []string{"id", "workspace_id", "zone_id", "zone_region"}
+
+// scanPlots scans rows into Plot entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanPlots(rows database.Rows, columns []string) ([]*Plot, error) {
+	var result []*Plot
+	for rows.Next() {
+		p := &Plot{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &p.ID
+			case "workspace_id":
+				targets[idx] = &p.WorkspaceID
+			case "zone_region":
+				targets[idx] = &p.ZoneRegion
+			case "zone_id":
+				targets[idx] = &p.ZoneID
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan plot: %w", err)
+		}
+
+		result = append(result, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate plot rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single plot by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *plotClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[PlotFieldOptions])) (*Plot, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get plot: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TablePlots, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	// Resolve tenant once at the entity-method boundary so the
+	// cache read-through hook can build a tenant-scoped key. The terminal
+	// (and the internal GetMany) sees the same value via q.Tenant. apply=false
+	// under tenancy.required:false + zero resolver skips both qctx.Tenant and
+	// the verify-match (cross-tenant read).
+	if !options.SkipTenancy {
+		resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nil, fmt.Errorf("get plot: resolve tenant: %w", err)
+		}
+		if apply {
+			qctx.Tenant = resolvedTenant
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[PlotFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[PlotFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		plots, err := c.GetMany(ctx, &GetPlotsInput{
+			Filter: &PlotFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(plots) == 0 {
+			return nil, ErrNotFound
+		}
+		return plots[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get plot: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Plot), nil
+}
+
+// GetMany returns plots matching the given filter, field selection, and sort criteria.
+func (c *plotClient) GetMany(ctx context.Context, input *GetPlotsInput, opts ...func(*CallOptions[PlotFieldOptions])) ([]*Plot, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetPlotsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get many plots: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TablePlots, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := plotAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter — append tenant = resolved to WHERE.
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// filter (cross-tenant read).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var plots []*Plot
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		plots, err = scanPlots(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return plots, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many plots: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Plot), nil
+}
+
+// Create inserts a new plot and returns the created entity.
+func (c *plotClient) Create(ctx context.Context, input *CreatePlotInput, opts ...func(*CallOptions[PlotFieldOptions])) (*Plot, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreatePlotInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create plot: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TablePlots, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{}
+		args := []any{}
+		// Tenancy auto-set + mismatch check. Caller-set tenant on
+		// the input is tolerated only when it matches the resolved value — any
+		// mismatch returns ErrMismatch before the DB round-trip. apply=false
+		// under tenancy.required:false + zero resolver falls through to the
+		// SkipTenancy-style branch: caller-supplied value wins, no auto-set,
+		// no verify-match (the DB NOT NULL constraint surfaces if the input is
+		// also empty).
+		// capturedTenant carries the tenant value written to the row into
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// the tenant-scoped key from the row itself, independent of how (or
+		// whether) the tenant was resolved. Stays nil only when
+		// no tenant value reaches the INSERT (a DB default fills the column).
+		var capturedTenant any
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
+			// resolver's answer, not this table's reading of it: a zero return
+			// is cached as a zero, and each table downstream re-applies its own
+			// tenancy.required branch to it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash resolved tenant on MutationContext so the cache hook
+				// builds tenant-scoped keys without re-invoking the resolver
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+				capturedTenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value is used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+				capturedTenant = v
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			// SkipTenancy:true — caller must explicitly set the tenant value.
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+			capturedTenant = v
+		}
+
+		if v, ok := input.ZoneRegion.Get(); ok {
+			columns = append(columns, "zone_region")
+			args = append(args, v)
+		}
+
+		if v, ok := input.ZoneID.Get(); ok {
+			columns = append(columns, "zone_id")
+			args = append(args, v)
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[PlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create plot: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Plot), nil
+}
+
+// CreateMany inserts multiple plots in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *plotClient) CreateMany(ctx context.Context, inputs []*CreatePlotInput, opts ...func(*CallOptions[PlotFieldOptions])) ([]*Plot, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many plots: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TablePlots, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Plot{}, nil
+		}
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// (and the per-input verify-match short-circuits via the cache)
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// Filled in lockstep with the PK slice above; feeds m.AffectedTenants
+		// so cache invalidation and event stamping rebuild tenant-scoped keys
+		// from each row's own tenant value.
+		var allTenants []any
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"workspace_id", "zone_region", "zone_id"}
+			var valueRows [][]any
+			for _, input := range batch {
+				// Tenancy auto-set + mismatch check.
+				// applyTenancy=false under SkipTenancy OR under required:false
+				// + zero resolver — caller-supplied tenant is used, else the DB
+				// NOT NULL constraint surfaces.
+				// The allTenants append below relies on the tenant-∉-PK column
+				// always being an omittable CreateInput field (promoted by
+				// attachTenancyToTables) so exactly one carrier element is
+				// appended per input, in lockstep with the PK slice.
+				var workspaceID any
+				if applyTenancy {
+					if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+					workspaceID = resolvedTenant
+				} else if v, ok := input.WorkspaceID.Get(); ok {
+					workspaceID = v
+				} else {
+					return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+				}
+				allTenants = append(allTenants, workspaceID)
+				var zoneRegion any = sql.Default
+				if v, ok := input.ZoneRegion.Get(); ok {
+					zoneRegion = v
+				}
+				var zoneID any = sql.Default
+				if v, ok := input.ZoneID.Get(); ok {
+					zoneID = v
+				}
+
+				valueRows = append(valueRows, []any{
+					workspaceID,
+					zoneRegion,
+					zoneID,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+		m.AffectedTenants = allTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetPlotsInput{
+			Filter: &PlotFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[PlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many plots: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Plot), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *plotClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *plotClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan plot id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a plot by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *plotClient) Update(ctx context.Context, id int64, input *UpdatePlotInput, opts ...func(*CallOptions[PlotFieldOptions])) (*Plot, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update plot: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TablePlots, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Tenancy mismatch check before any SQL build. applyTenancy
+		// is false under SkipTenancy OR under required:false + zero resolver —
+		// in the second case the WHERE below also drops the tenant predicate.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		// Tenant column excluded from SET under normal operation.
+		// Honored when the caller opted out via SkipTenancy OR when
+		// required:false + zero resolver opted out of tenancy for this call.
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.ZoneRegion.Get(); ok {
+			setClauses["zone_region"] = v
+		}
+		if v, ok := input.ZoneID.Get(); ok {
+			setClauses["zone_id"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[PlotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if applyTenancy {
+			updateConds = append(updateConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+		}
+
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       updateConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		matched := 0
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan updated plot tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[PlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update plot: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Plot), nil
+}
+
+// UpdatePlotItem pairs a primary key with an update input for batch updates.
+type UpdatePlotItem struct {
+	ID    int64            `json:"id"`
+	Input *UpdatePlotInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple plots and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
+func (c *plotClient) UpdateMany(ctx context.Context, items []UpdatePlotItem, opts ...func(*CallOptions[PlotFieldOptions])) ([]*Plot, error) {
+	// UpdatePlotItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many plots: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TablePlots, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Plot{}, nil
+		}
+
+		// Resolve the tenant once; per-item mismatch checks use the same value.
+		// applyTenancy=false under SkipTenancy OR under required:false + zero
+		// resolver — the per-item verify-match and per-row WHERE both drop.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the per-item verify-match short-circuits via the
+			// cache and the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				for _, item := range items {
+					if v, ok := item.Input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdatePlotItem
+		// Per-item RETURNING captures each updated row's tenant; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from the rows themselves.
+		tenantByPK := make(map[int64]any, len(items))
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			var queuedItems []UpdatePlotItem
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if !applyTenancy {
+					if v, ok := item.Input.WorkspaceID.Get(); ok {
+						setClauses["workspace_id"] = v
+					}
+				}
+				if v, ok := item.Input.ZoneRegion.Get(); ok {
+					setClauses["zone_region"] = v
+				}
+				if v, ok := item.Input.ZoneID.Get(); ok {
+					setClauses["zone_id"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.ID)
+					continue
+				}
+				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+				if applyTenancy {
+					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses:       setClauses,
+					Conditions:       itemConds,
+					ReturningColumns: []string{"workspace_id"},
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
+				allIDs = append(allIDs, item.ID)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise.
+			// Each statement RETURNING-projects the row's tenant; the scan
+			// below captures it per queued PK.
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for i := range pgxBatch.Len() {
+						rows, err := br.Query()
+						if err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						matched := 0
+						for rows.Next() {
+							var rowTenant uuid.UUID
+							if err := rows.Scan(&rowTenant); err != nil {
+								rows.Close()
+								br.Close()
+								return nil, fmt.Errorf("scan updated plot tenant: %w", err)
+							}
+							tenantByPK[queuedItems[i].ID] = rowTenant
+							matched++
+						}
+						if err := rows.Err(); err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						rows.Close()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close batch: %w", err)
+					}
+				} else {
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_plot", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							rows, err := conn.Query(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							matched := 0
+							for rows.Next() {
+								var rowTenant uuid.UUID
+								if err := rows.Scan(&rowTenant); err != nil {
+									rows.Close()
+									return fmt.Errorf("scan updated plot tenant: %w", err)
+								}
+								tenantByPK[queuedItems[i].ID] = rowTenant
+								matched++
+							}
+							if err := rows.Err(); err != nil {
+								rows.Close()
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							rows.Close()
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
+						}
+						return nil
+					}); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetPlotsInput{
+			Filter: &PlotFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[PlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many plots: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Plot), nil
+}
+
+// UpdateWhere updates all plots matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *plotClient) UpdateWhere(ctx context.Context, filter *PlotFilter, input *UpdatePlotInput, opts ...func(*CallOptions[PlotFieldOptions])) ([]*Plot, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update plots where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TablePlots, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Tenancy filter + mismatch check. applyTenancy=false
+		// under SkipTenancy OR under required:false + zero resolver — the
+		// filter is not AND'd and the SET-clause tenant override below fires
+		// (only meaningful when the tenant column is NOT in the PK; when it
+		// is, the column is excluded from UpdateInputFields entirely).
+		applyTenancy := false
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.ZoneRegion.Get(); ok {
+			setClauses["zone_region"] = v
+		}
+		if v, ok := input.ZoneID.Get(); ok {
+			setClauses["zone_id"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetPlotsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[PlotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan updated plot id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetPlotsInput{
+			Filter: &PlotFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[PlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update plots where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Plot), nil
+}
+
+// HardDelete permanently removes a plot from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *plotClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[PlotFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TablePlots, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       hardConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		var matched int
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan deleted plot tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete plot: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple plots from the database.
+func (c *plotClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[PlotFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TablePlots, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var scopeConds []sql.Condition
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Every sub-batch records the tenant of each row it touches, so cache
+		// invalidation and event stamping rebuild tenant-scoped keys from the
+		// rows themselves.
+		tenantByPK := make(map[int64]any, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+			hardConds = append(hardConds, scopeConds...)
+
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id", "workspace_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchTenants := make(map[int64]any, end-start)
+			for rows.Next() {
+				var rowID int64
+				var rowTenant uuid.UUID
+				if err := rows.Scan(&rowID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted plot tenant: %w", err)
+				}
+				batchTenants[rowID] = rowTenant
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many plots: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all plots matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *plotClient) HardDeleteWhere(ctx context.Context, filter *PlotFilter, opts ...func(*CallOptions[PlotFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TablePlots, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan deleted plot id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete plots where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *plotClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
+}
+
+// PlotConflictTarget identifies a unique constraint for upsert conflict detection.
+type PlotConflictTarget int
+
+const (
+	PlotConflictPK PlotConflictTarget = iota // PRIMARY KEY (id)
+)
+
+// plotConflictColumns maps each conflict target to its column set.
+var plotConflictColumns = map[PlotConflictTarget][]string{
+	PlotConflictPK: {"id"},
+}
+
+// Upsert inserts a plot or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *plotClient) Upsert(ctx context.Context, input *CreatePlotInput, target PlotConflictTarget, opts ...func(*CallOptions[PlotFieldOptions])) (*Plot, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreatePlotInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert plot: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TablePlots, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{}
+		args := []any{}
+		// Tenancy auto-set + mismatch check. apply=false under
+		// tenancy.required:false + zero resolver falls through to the
+		// caller-supplied value branch.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// (single-resolve). The resolver's answer is cached, not
+			// this table's reading of it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+		}
+
+		if v, ok := input.ZoneRegion.Get(); ok {
+			columns = append(columns, "zone_region")
+			args = append(args, v)
+		}
+
+		if v, ok := input.ZoneID.Get(); ok {
+			columns = append(columns, "zone_id")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := plotConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[PlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert plot: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Plot), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves
+// the generated primary key, also capturing the row's tenant column so cache
+// invalidation and event stamping can rebuild the tenant-scoped key from the
+// row itself. On the conflict-update path the existing row keeps
+// its tenant, so the captured value (not the input) is authoritative.
+func (c *plotClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id", "workspace_id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	var id int64
+	var rowTenant uuid.UUID
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id, &rowTenant)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	if found {
+		return id, rowTenant, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *plotClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, any, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, nil, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id", "workspace_id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+
+	var id int64
+	var rowTenant uuid.UUID
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, nil, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, nil, ErrNotFound
+	}
+	// BuildSelect emits its column list sorted, which need not match the order
+	// the columns were requested in, so bind the scan targets by name rather
+	// than by position — the same rule scanPlots follows.
+	cols, err := rows.Columns()
+	if err != nil {
+		return 0, nil, err
+	}
+	targets := make([]any, len(cols))
+	for i, col := range cols {
+		switch col {
+		case "id":
+			targets[i] = &id
+		case "workspace_id":
+			targets[i] = &rowTenant
+		}
+	}
+	if err := rows.Scan(targets...); err != nil {
+		return 0, nil, err
+	}
+	return id, rowTenant, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple plots in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// plots.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *plotClient) UpsertMany(ctx context.Context, inputs []*CreatePlotInput, target PlotConflictTarget, opts ...func(*CallOptions[PlotFieldOptions])) ([]*Plot, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many plots: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TablePlots, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Plot{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"workspace_id", "zone_region", "zone_id"}
+		conflictColumns := plotConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreatePlotInput, 0, len(inputs))
+		var rowIDs []int64
+		// Filled from the rows themselves after each sub-batch; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from each row's own tenant value. A
+		// conflict leaves the existing row's tenant in place, so the input's
+		// value is not authoritative the way it is for CreateMany.
+		var rowTenants []any
+		for _, input := range inputs {
+			// Tenancy auto-set + mismatch check.
+			// applyTenancy=false under SkipTenancy OR under required:false
+			// + zero resolver — caller-supplied tenant is used, else the DB
+			// NOT NULL constraint surfaces.
+			var workspaceID any
+			if applyTenancy {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				workspaceID = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				workspaceID = v
+			} else {
+				return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+			}
+			var zoneRegion any = sql.Default
+			if v, ok := input.ZoneRegion.Get(); ok {
+				zoneRegion = v
+			}
+			var zoneID any = sql.Default
+			if v, ok := input.ZoneID.Get(); ok {
+				zoneID = v
+			}
+
+			valueRows = append(valueRows, []any{
+				workspaceID,
+				zoneRegion,
+				zoneID,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreatePlotInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, batchTenants, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+		m.AffectedTenants = rowTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetPlotsInput{
+			Filter: &PlotFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[PlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many plots: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Plot), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key and tenant in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// plots.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *plotClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, []any, error) {
+	if len(rows) == 0 {
+		return nil, nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level plotConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanPlots
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id", "workspace_id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	found, err := scanPlots(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk     int64
+		tenant any
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = plotColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID, tenant: entity.WorkspaceID}
+	}
+
+	pks := make([]int64, len(rows))
+	tenants := make([]any, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+		tenants[i] = resolved.tenant
+	}
+	return pks, tenants, nil
+}
+
+// plotColumnValue returns one column's value off a scanned
+// Plot, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanPlots.
+func plotColumnValue(p *Plot, column string) any {
+	switch column {
+	case "id":
+		return p.ID
+	case "workspace_id":
+		return p.WorkspaceID
+	case "zone_region":
+		return p.ZoneRegion
+	case "zone_id":
+		return p.ZoneID
+	}
+	return nil
+}
+
+// Exists returns true if a plot with the given primary key exists.
+func (c *plotClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[PlotFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TablePlots, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips both the verify-match and the filter append.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists plot: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any plot matches the given filter.
+func (c *plotClient) ExistsWhere(ctx context.Context, filter *PlotFilter, opts ...func(*CallOptions[PlotFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TablePlots, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant probe).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists plots where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of plots matching the given filter.
+// A nil filter counts all plots.
+func (c *plotClient) Count(ctx context.Context, filter *PlotFilter, opts ...func(*CallOptions[PlotFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TablePlots, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant count).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count plots: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of plots with total count for offset-based pagination.
+// A nil filter paginates all plots.
+func (c *plotClient) Paginate(ctx context.Context, input PaginateInput[PlotFilter], opts ...func(*CallOptions[PlotFieldOptions])) (*PaginateResult[Plot], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate plots: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TablePlots, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[PlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		plots, err := c.GetMany(ctx, &GetPlotsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[Plot]{
+			Items:      plots,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate plots: %w", err)
+	}
+	return result.(*PaginateResult[Plot]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of plots.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *plotClient) Connection(ctx context.Context, input ConnectionInput[PlotFilter], opts ...func(*CallOptions[PlotFieldOptions])) (*Connection[Plot], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection plots: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TablePlots, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[PlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodePlotCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodePlotCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		plots, err := c.GetMany(ctx, &GetPlotsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(plots) > limit
+		if hasMore {
+			plots = plots[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(plots)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Plot], len(plots))
+		for i, row := range plots {
+			cursor, err := encodePlotCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Plot]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Plot]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection plots: %w", err)
+	}
+	return result.(*Connection[Plot]), nil
+}
+
+// encodePlotCursor encodes cursor key values as a base64 JSON string.
+func encodePlotCursor(keys []string, p *Plot) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = p.ID
+		case "workspace_id":
+			out["workspace_id"] = p.WorkspaceID
+		case "zone_region":
+			out["zone_region"] = p.ZoneRegion
+		case "zone_id":
+			out["zone_id"] = p.ZoneID
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode plot cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodePlotCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodePlotCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Plot
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamPlotsInput holds query parameters for streaming plots records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamPlotsInput struct {
+	Filter *PlotFilter `json:"filter"`
+	Sorts  []sql.Sort  `json:"sorts"`
+}
+
+// StreamPlotFieldOptions controls scalar column selection for plots streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamPlotFieldOptions struct {
+	ID          bool `json:"id"`
+	WorkspaceID bool `json:"workspace_id"`
+	ZoneRegion  bool `json:"zone_region"`
+	ZoneID      bool `json:"zone_id"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamPlotFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.ZoneRegion {
+		cols = append(cols, "zone_region")
+	}
+	if fo.ZoneID {
+		cols = append(cols, "zone_id")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamPlotFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.ZoneRegion {
+		return true
+	}
+	if fo.ZoneID {
+		return true
+	}
+	return false
+}
+
+// scanPlotRow scans a single row into a Plot entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanPlotRow(rows database.Rows, columns []string) (*Plot, error) {
+	p := &Plot{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &p.ID
+		case "workspace_id":
+			targets[idx] = &p.WorkspaceID
+		case "zone_region":
+			targets[idx] = &p.ZoneRegion
+		case "zone_id":
+			targets[idx] = &p.ZoneID
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan plot: %w", err)
+	}
+
+	return p, nil
+}
+
+// Stream returns an iterator over plots matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *plotClient) Stream(ctx context.Context, input *StreamPlotsInput, opts ...func(*CallOptions[StreamPlotFieldOptions])) iter.Seq2[*Plot, error] {
+	return func(yield func(*Plot, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamPlotsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream plots: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *Plot, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream plots: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TablePlots, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := plotAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					emit(nil, fmt.Errorf("resolve tenant: %w", err))
+					return nil, nil
+				}
+				if apply {
+					conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				p, err := scanPlotRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(p, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate plot rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream plots: %w", err))
+		}
+	}
+}
+
+// PlotFilter provides type-safe filtering for the plots table.
+type PlotFilter struct {
+	ID          *comparator.Number[int64]         `json:"id"`
+	WorkspaceID *comparator.ID                    `json:"workspace_id"`
+	ZoneID      *comparator.NullableNumber[int64] `json:"zone_id"`
+	ZoneRegion  *comparator.NullableString        `json:"zone_region"`
+	And         []*PlotFilter                     `json:"and"`
+	Or          []*PlotFilter                     `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *PlotFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.WorkspaceID != nil {
+		conds = append(conds, f.WorkspaceID.Parse(dialect.QuoteIdentifier("workspace_id"), dialect)...)
+	}
+
+	if f.ZoneID != nil {
+		conds = append(conds, f.ZoneID.Parse(dialect.QuoteIdentifier("zone_id"), dialect)...)
+	}
+
+	if f.ZoneRegion != nil {
+		conds = append(conds, f.ZoneRegion.Parse(dialect.QuoteIdentifier("zone_region"), dialect)...)
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// PlotFieldOptions controls column selection and relationship loading for plots queries.
+type PlotFieldOptions struct {
+	ID          bool `json:"id"`
+	WorkspaceID bool `json:"workspace_id"`
+	ZoneRegion  bool `json:"zone_region"`
+	ZoneID      bool `json:"zone_id"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *PlotFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.ZoneRegion {
+		cols = append(cols, "zone_region")
+	}
+	if fo.ZoneID {
+		cols = append(cols, "zone_id")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *PlotFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":          "id",
+		"WorkspaceID": "workspace_id",
+		"ZoneRegion":  "zone_region",
+		"ZoneID":      "zone_id",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *PlotFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.ZoneRegion {
+		return true
+	}
+	if fo.ZoneID {
+		return true
+	}
+	return false
+}
+
+// CreatePlotInput holds the fields for creating a plots record.
+type CreatePlotInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	ZoneRegion  omittable.Value[*string]   `json:"zone_region,omitzero"`
+	ZoneID      omittable.Value[*int64]    `json:"zone_id,omitzero"`
+}
+
+// UpdatePlotInput holds the fields for updating a plots record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdatePlotInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	ZoneRegion  omittable.Value[*string]   `json:"zone_region,omitzero"`
+	ZoneID      omittable.Value[*int64]    `json:"zone_id,omitzero"`
+}
+
+// GetPlotsInput holds query parameters for retrieving plots records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetPlotsInput struct {
+	Filter *PlotFilter `json:"filter"`
+	Limit  *int        `json:"limit"`
+	Offset *int        `json:"offset"`
+	Sorts  []sql.Sort  `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 // ProjectPK - composite primary key for the projects table.
 type ProjectPK struct {
 	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
@@ -30467,6 +33256,10186 @@ type GetReviewersInput struct {
 	Limit  *int            `json:"limit"`
 	Offset *int            `json:"offset"`
 	Sorts  []sql.Sort      `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type SharedGuardian struct {
+	ID          int64     `db:"id" json:"id"`
+	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
+	Org         string    `db:"org" json:"org"`
+
+	// SharedKids - one-to-many relationship with the shared_kids table.
+	SharedKids []*SharedKid `db:"-" json:"shared_kids"`
+}
+
+// SharedGuardianClient provides type-safe operations for the shared_guardians table.
+type SharedGuardianClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single sharedGuardian by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error)
+
+	// GetMany returns shared_guardians matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetSharedGuardiansInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) ([]*SharedGuardian, error)
+
+	// Exists returns true if a sharedGuardian with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any sharedGuardian matches the given filter.
+	ExistsWhere(ctx context.Context, filter *SharedGuardianFilter, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (bool, error)
+
+	// Count returns the number of shared_guardians matching the given filter.
+	Count(ctx context.Context, filter *SharedGuardianFilter, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new sharedGuardian and returns the created entity.
+	Create(ctx context.Context, input *CreateSharedGuardianInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error)
+
+	// CreateMany inserts multiple shared_guardians in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateSharedGuardianInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) ([]*SharedGuardian, error)
+
+	// Update partially updates a sharedGuardian by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateSharedGuardianInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error)
+
+	// UpdateMany updates multiple shared_guardians and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateSharedGuardianItem, opts ...func(*CallOptions[SharedGuardianFieldOptions])) ([]*SharedGuardian, error)
+
+	// UpdateWhere updates all shared_guardians matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *SharedGuardianFilter, input *UpdateSharedGuardianInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) ([]*SharedGuardian, error)
+
+	// Upsert inserts a sharedGuardian or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateSharedGuardianInput, target SharedGuardianConflictTarget, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error)
+
+	// UpsertMany inserts or updates multiple shared_guardians in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateSharedGuardianInput, target SharedGuardianConflictTarget, opts ...func(*CallOptions[SharedGuardianFieldOptions])) ([]*SharedGuardian, error)
+
+	// CreateWithRelated creates a sharedGuardian together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateSharedGuardianWithRelatedInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error)
+
+	// UpdateWithRelated updates a sharedGuardian together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdateSharedGuardianWithRelatedInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error)
+
+	// UpsertWithRelated inserts or updates a sharedGuardian together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertSharedGuardianWithRelatedInput, target SharedGuardianConflictTarget, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a sharedGuardian from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[SharedGuardianFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple shared_guardians from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[SharedGuardianFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all shared_guardians matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *SharedGuardianFilter, opts ...func(*CallOptions[SharedGuardianFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of shared_guardians with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[SharedGuardianFilter], opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*PaginateResult[SharedGuardian], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of shared_guardians.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[SharedGuardianFilter], opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*Connection[SharedGuardian], error)
+
+	// Stream returns an iterator over shared_guardians matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamSharedGuardiansInput, opts ...func(*CallOptions[StreamSharedGuardianFieldOptions])) iter.Seq2[*SharedGuardian, error]
+}
+
+// sharedGuardianClient implements the SharedGuardianClient interface.
+type sharedGuardianClient struct {
+	querier               database.Querier
+	dialect               sql.Dialect
+	table                 sql.Table
+	batchSize             int
+	queryLimit            int
+	pageSize              int
+	cursorKeys            []string
+	strictUpdates         bool
+	mutationHooks         []hook.MutationHook
+	queryHooks            []hook.QueryHook
+	panicHandler          hook.PanicHandler
+	callbackMode          database.CallbackMode
+	tenantResolver        tenancy.TenantResolver[uuid.UUID]
+	sharedKidsDefaultSort []sql.Sort
+	sharedKidClient       *sharedKidClient
+}
+
+// newSharedGuardianClient creates a new sharedGuardianClient.
+func newSharedGuardianClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *sharedGuardianClient {
+	return &sharedGuardianClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "shared_guardians"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *sharedGuardianClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *sharedGuardianClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// resolveTenant reads the operation's tenant from tenantValue and applies THIS
+// table's tenancy.required setting to it, returning the value, a bool
+// indicating whether tenancy should be applied to this call, and any resolver
+// error. The split matters: tenantValue's answer is shared across every client
+// the operation touches, while the apply bool below is this table's alone
+// (required is a per-table setting). The apply bool encodes the
+// tenancy.required semantic:
+//
+//   - Non-zero resolver return → apply=true; callers AND the filter into the
+//     WHERE (reads), verify-match against caller-supplied tenant (mutations),
+//     and auto-set the tenant column on INSERT.
+//   - Zero resolver return (resolver returned (zero, nil) or is nil) under
+//     tenancy.required:true → apply=false, err=tenancy.ErrMissing. The op
+//     fails closed before the DB round-trip.
+//   - Zero resolver return under tenancy.required:false → apply=false, err=nil.
+//     The op silently becomes cross-tenant: no filter append, no verify-match,
+//     no auto-set. This is the "missing tenant skips the filter" path
+//     — always-off rather than a silent zero-value write.
+//   - Resolver returns a non-nil error → apply=false, err propagated.
+//
+// Required-at-codegen determinism: the required:true vs required:false branch
+// is picked at template-expansion time per-table, from the table's resolved
+// tenancy config. Runtime callers observe a stable behavior per table.
+//
+// explicit carries CallOptions.Tenant (the explicit-tenant resolution
+// mode): when non-nil, tenancy behaves as normal resolution with
+// the resolver replaced by this constant — filter, auto-set, and verify-match
+// all apply. Precedence over SkipTenancy is normalized in
+// resolveCallOptions, so callers gate on SkipTenancy exactly as before. The
+// pointer distinguishes set from unset; a set zero value is honored verbatim.
+func (c *sharedGuardianClient) resolveTenant(ctx context.Context, explicit *uuid.UUID) (uuid.UUID, bool, error) {
+	if explicit != nil {
+		return *explicit, true, nil
+	}
+	var zero uuid.UUID
+	v, err := c.tenantValue(ctx)
+	if err != nil {
+		return zero, false, err
+	}
+	if v == zero {
+		return zero, false, tenancy.ErrMissing
+	}
+	return v, true, nil
+}
+
+// tenantValue returns the tenant the user resolver reports for this operation,
+// invoking it at most once per logical operation.
+//
+// It answers the table-independent half of the question and stops there: what
+// the resolver said. The tenancy.required reading of that answer — zero means
+// ErrMissing, or zero means skip the filter — belongs to resolveTenant above,
+// because `required` is a per-table setting while this value is
+// shared across every client the operation touches.
+//
+// Keeping the two apart is load-bearing rather than tidy. The ctx cache is
+// keyed on the tenant type alone, so it is one slot for the whole package;
+// caching the reading instead of the answer let whichever table resolved first
+// impose its `required` on the rest, and a required:false table handing
+// apply=false to a required:true one is a fail-open. A nil resolver
+// yields the zero value and the same per-table branch a zero return takes.
+func (c *sharedGuardianClient) tenantValue(ctx context.Context) (uuid.UUID, error) {
+	// Short-circuit: an entry point for this logical operation — a chaining
+	// mutation (Create, Update, Upsert, …) or a nested method's hoist — already
+	// resolved and stashed the value via tenancy.WithResolvedTenant. Lookup
+	// uses the same comparable T as the resolver, so collisions across entity
+	// clients with different tenant types are impossible.
+	if v, ok := tenancy.CachedTenant[uuid.UUID](ctx); ok {
+		return v, nil
+	}
+	if c.tenantResolver == nil {
+		var zero uuid.UUID
+		return zero, nil
+	}
+	return c.tenantResolver(ctx)
+}
+
+// filterOptions resolves the FilterOption set this client's filters need to
+// compile their relationship members. A relationship filter is a
+// read of the related table, so the target's tenant predicate goes inside the
+// EXISTS subquery — otherwise the filter would be a cross-tenant existence
+// probe on rows the caller cannot otherwise see.
+//
+// The resolve is gated on filter, not performed unconditionally, because the
+// option set is read only by the EXISTS helpers: a filter that sets no
+// relationship member compiles identically with or without it. Resolving anyway
+// would import the tenant's failure modes into calls that have no tenanted
+// component at all — on a shared table the outer WHERE is
+// never tenant-scoped, so a resolver that reports a missing tenant as an error
+// would reject every read that legitimately runs before a tenant is selected.
+//
+// Beyond that gate, nil is the correct answer in exactly the cases where the
+// table's own WHERE gets no tenant filter either: SkipTenancy, and a zero
+// resolver result under tenancy.required:false. The subquery is then unscoped
+// by the same decision that leaves the outer statement unscoped.
+func (c *sharedGuardianClient) filterOptions(ctx context.Context, filter *SharedGuardianFilter, skipTenancy bool, explicit *uuid.UUID) ([]FilterOption, error) {
+	if skipTenancy || !filter.usesRelationshipFilter() {
+		return nil, nil
+	}
+	tenant, apply, err := c.resolveTenant(ctx, explicit)
+	if err != nil {
+		return nil, err
+	}
+	if !apply {
+		return nil, nil
+	}
+	return []FilterOption{WithFilterTenant(tenant)}, nil
+}
+
+// sharedGuardianAllColumns is the column list for full-entity reads, sorted for determinism.
+var sharedGuardianAllColumns = []string{"id", "org", "workspace_id"}
+
+// scanSharedGuardians scans rows into SharedGuardian entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanSharedGuardians(rows database.Rows, columns []string) ([]*SharedGuardian, error) {
+	var result []*SharedGuardian
+	for rows.Next() {
+		s := &SharedGuardian{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &s.ID
+			case "workspace_id":
+				targets[idx] = &s.WorkspaceID
+			case "org":
+				targets[idx] = &s.Org
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan shared_guardian: %w", err)
+		}
+
+		result = append(result, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate shared_guardian rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single shared_guardian by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *sharedGuardianClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get shared_guardian: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableSharedGuardians, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	// Resolve tenant once at the entity-method boundary so the
+	// cache read-through hook can build a tenant-scoped key. The terminal
+	// (and the internal GetMany) sees the same value via q.Tenant. apply=false
+	// under tenancy.required:false + zero resolver skips both qctx.Tenant and
+	// the verify-match (cross-tenant read).
+	if !options.SkipTenancy {
+		resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nil, fmt.Errorf("get shared_guardian: resolve tenant: %w", err)
+		}
+		if apply {
+			qctx.Tenant = resolvedTenant
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[SharedGuardianFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SharedGuardianFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		sharedGuardians, err := c.GetMany(ctx, &GetSharedGuardiansInput{
+			Filter: &SharedGuardianFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(sharedGuardians) == 0 {
+			return nil, ErrNotFound
+		}
+		return sharedGuardians[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get shared_guardian: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SharedGuardian), nil
+}
+
+// GetMany returns shared_guardians matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *sharedGuardianClient) GetMany(ctx context.Context, input *GetSharedGuardiansInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) ([]*SharedGuardian, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetSharedGuardiansInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get many shared_guardians: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableSharedGuardians, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := sharedGuardianAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "org", "id")
+				}
+			}
+		}
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect, filterOpts...)
+		}
+
+		// Tenancy auto-filter — append tenant = resolved to WHERE.
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// filter (cross-tenant read).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var sharedGuardians []*SharedGuardian
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		sharedGuardians, err = scanSharedGuardians(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, sharedGuardians, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return sharedGuardians, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many shared_guardians: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedGuardian), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the org and id columns into a narrowed projection when one is:
+// loadRelationships maps every child back through s.Org and s.ID, which
+// an unselected column would leave at its zero value.
+func (fo *SharedGuardianFieldOptions) loadsRelationships() bool {
+	if fo.SharedKids != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache, SkipEvents, SkipTenancy and Tenant. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// A child that fell back to the ctx resolver instead of the parent's explicit
+// Tenant would read the two halves of one row set under two tenants, and on the
+// explicit-tenant bootstrap path, where ctx carries no tenant at all, fail with
+// tenancy.ErrMissing while the parent succeeded.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *sharedGuardianClient) loadRelationships(ctx context.Context, conn database.Querier, sharedGuardians []*SharedGuardian, options CallOptions[SharedGuardianFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.SharedKids != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			sharedGuardianKeyed := make([]*SharedGuardian, 0, len(sharedGuardians))
+			sharedGuardianKeys := make([][]any, 0, len(sharedGuardians))
+			for _, s := range sharedGuardians {
+				sharedGuardianKeyed = append(sharedGuardianKeyed, s)
+				sharedGuardianKeys = append(sharedGuardianKeys, []any{s.Org, s.ID})
+			}
+
+			sorts := fo.SharedKids.Sorts
+			if len(sorts) == 0 {
+				sorts = c.sharedKidsDefaultSort
+			}
+
+			// Load via related entity client, 4000 parent keys per
+			// statement: within half the dialect's bind-parameter limit, leaving
+			// the rest for the relationship's filters. Each parent's children come
+			// from one statement, so the sorts order every parent's slice.
+			var relatedSharedKids []*SharedKid
+			for start := 0; start < len(sharedGuardianKeys); start += 4000 {
+				chunk := sharedGuardianKeys[start:min(start+4000, len(sharedGuardianKeys))]
+
+				// The consumer filter is ANDed in, so a soft-delete comparator
+				// in it narrows the child's default rather than replacing it.
+				filter := &SharedKidFilter{}
+				if fo.SharedKids.Filter != nil {
+					filter.And = append(filter.And, fo.SharedKids.Filter)
+				}
+
+				loaded, err := c.sharedKidClient.GetMany(ctx, &GetSharedKidsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					conditions: []sql.Condition{
+						sql.BuildCompositePKBatchCondition(c.dialect, []string{"org", "guardian_id"}, chunk),
+					},
+					// The mapping below keys every child on its FK columns, so the
+					// fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"org", "guardian_id"},
+				}, func(co *CallOptions[SharedKidFieldOptions]) {
+					co.FieldOptions = fo.SharedKids.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+					co.SkipTenancy = options.SkipTenancy
+					co.Tenant = options.Tenant
+				})
+				if err != nil {
+					return fmt.Errorf("load shared_guardian shared_kids: %w", err)
+				}
+				relatedSharedKids = append(relatedSharedKids, loaded...)
+			}
+
+			// Map results back to parent entities on every key column. A child
+			// with a NULL member references no parent.
+			byKey := make(map[[2]string][]*SharedKid)
+			for _, r := range relatedSharedKids {
+				if !(r.Org != nil && r.GuardianID != nil) {
+					continue
+				}
+				key := [2]string{(*r.Org), fmt.Sprint((*r.GuardianID))}
+				byKey[key] = append(byKey[key], r)
+			}
+			for _, parent := range sharedGuardianKeyed {
+				parent.SharedKids = byKey[[2]string{parent.Org, fmt.Sprint(parent.ID)}]
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new shared_guardian and returns the created entity.
+func (c *sharedGuardianClient) Create(ctx context.Context, input *CreateSharedGuardianInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateSharedGuardianInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create shared_guardian: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableSharedGuardians, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"org"}
+		args := []any{input.Org}
+		// Tenancy auto-set + mismatch check. Caller-set tenant on
+		// the input is tolerated only when it matches the resolved value — any
+		// mismatch returns ErrMismatch before the DB round-trip. apply=false
+		// under tenancy.required:false + zero resolver falls through to the
+		// SkipTenancy-style branch: caller-supplied value wins, no auto-set,
+		// no verify-match (the DB NOT NULL constraint surfaces if the input is
+		// also empty).
+		// capturedTenant carries the tenant value written to the row into
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// the tenant-scoped key from the row itself, independent of how (or
+		// whether) the tenant was resolved. Stays nil only when
+		// no tenant value reaches the INSERT (a DB default fills the column).
+		var capturedTenant any
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
+			// resolver's answer, not this table's reading of it: a zero return
+			// is cached as a zero, and each table downstream re-applies its own
+			// tenancy.required branch to it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash resolved tenant on MutationContext so the cache hook
+				// builds tenant-scoped keys without re-invoking the resolver
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+				capturedTenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value is used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+				capturedTenant = v
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			// SkipTenancy:true — caller must explicitly set the tenant value.
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+			capturedTenant = v
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SharedGuardianFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create shared_guardian: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SharedGuardian), nil
+}
+
+// CreateMany inserts multiple shared_guardians in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *sharedGuardianClient) CreateMany(ctx context.Context, inputs []*CreateSharedGuardianInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) ([]*SharedGuardian, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many shared_guardians: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableSharedGuardians, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*SharedGuardian{}, nil
+		}
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// (and the per-input verify-match short-circuits via the cache)
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// Filled in lockstep with the PK slice above; feeds m.AffectedTenants
+		// so cache invalidation and event stamping rebuild tenant-scoped keys
+		// from each row's own tenant value.
+		var allTenants []any
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"workspace_id", "org"}
+			var valueRows [][]any
+			for _, input := range batch {
+				// Tenancy auto-set + mismatch check.
+				// applyTenancy=false under SkipTenancy OR under required:false
+				// + zero resolver — caller-supplied tenant is used, else the DB
+				// NOT NULL constraint surfaces.
+				// The allTenants append below relies on the tenant-∉-PK column
+				// always being an omittable CreateInput field (promoted by
+				// attachTenancyToTables) so exactly one carrier element is
+				// appended per input, in lockstep with the PK slice.
+				var workspaceID any
+				if applyTenancy {
+					if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+					workspaceID = resolvedTenant
+				} else if v, ok := input.WorkspaceID.Get(); ok {
+					workspaceID = v
+				} else {
+					return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+				}
+				allTenants = append(allTenants, workspaceID)
+
+				valueRows = append(valueRows, []any{
+					workspaceID,
+					input.Org,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+		m.AffectedTenants = allTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetSharedGuardiansInput{
+			Filter: &SharedGuardianFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SharedGuardianFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many shared_guardians: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedGuardian), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *sharedGuardianClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *sharedGuardianClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan shared_guardian id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a shared_guardian by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *sharedGuardianClient) Update(ctx context.Context, id int64, input *UpdateSharedGuardianInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update shared_guardian: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableSharedGuardians, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Tenancy mismatch check before any SQL build. applyTenancy
+		// is false under SkipTenancy OR under required:false + zero resolver —
+		// in the second case the WHERE below also drops the tenant predicate.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		// Tenant column excluded from SET under normal operation.
+		// Honored when the caller opted out via SkipTenancy OR when
+		// required:false + zero resolver opted out of tenancy for this call.
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.Org.Get(); ok {
+			setClauses["org"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[SharedGuardianFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if applyTenancy {
+			updateConds = append(updateConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+		}
+
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       updateConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		matched := 0
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan updated shared_guardian tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SharedGuardianFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update shared_guardian: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SharedGuardian), nil
+}
+
+// UpdateSharedGuardianItem pairs a primary key with an update input for batch updates.
+type UpdateSharedGuardianItem struct {
+	ID    int64                      `json:"id"`
+	Input *UpdateSharedGuardianInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple shared_guardians and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
+func (c *sharedGuardianClient) UpdateMany(ctx context.Context, items []UpdateSharedGuardianItem, opts ...func(*CallOptions[SharedGuardianFieldOptions])) ([]*SharedGuardian, error) {
+	// UpdateSharedGuardianItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many shared_guardians: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableSharedGuardians, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*SharedGuardian{}, nil
+		}
+
+		// Resolve the tenant once; per-item mismatch checks use the same value.
+		// applyTenancy=false under SkipTenancy OR under required:false + zero
+		// resolver — the per-item verify-match and per-row WHERE both drop.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the per-item verify-match short-circuits via the
+			// cache and the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				for _, item := range items {
+					if v, ok := item.Input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateSharedGuardianItem
+		// Per-item RETURNING captures each updated row's tenant; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from the rows themselves.
+		tenantByPK := make(map[int64]any, len(items))
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			var queuedItems []UpdateSharedGuardianItem
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if !applyTenancy {
+					if v, ok := item.Input.WorkspaceID.Get(); ok {
+						setClauses["workspace_id"] = v
+					}
+				}
+				if v, ok := item.Input.Org.Get(); ok {
+					setClauses["org"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.ID)
+					continue
+				}
+				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+				if applyTenancy {
+					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses:       setClauses,
+					Conditions:       itemConds,
+					ReturningColumns: []string{"workspace_id"},
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
+				allIDs = append(allIDs, item.ID)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise.
+			// Each statement RETURNING-projects the row's tenant; the scan
+			// below captures it per queued PK.
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for i := range pgxBatch.Len() {
+						rows, err := br.Query()
+						if err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						matched := 0
+						for rows.Next() {
+							var rowTenant uuid.UUID
+							if err := rows.Scan(&rowTenant); err != nil {
+								rows.Close()
+								br.Close()
+								return nil, fmt.Errorf("scan updated shared_guardian tenant: %w", err)
+							}
+							tenantByPK[queuedItems[i].ID] = rowTenant
+							matched++
+						}
+						if err := rows.Err(); err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						rows.Close()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close batch: %w", err)
+					}
+				} else {
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_shared_guardian", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							rows, err := conn.Query(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							matched := 0
+							for rows.Next() {
+								var rowTenant uuid.UUID
+								if err := rows.Scan(&rowTenant); err != nil {
+									rows.Close()
+									return fmt.Errorf("scan updated shared_guardian tenant: %w", err)
+								}
+								tenantByPK[queuedItems[i].ID] = rowTenant
+								matched++
+							}
+							if err := rows.Err(); err != nil {
+								rows.Close()
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							rows.Close()
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
+						}
+						return nil
+					}); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetSharedGuardiansInput{
+			Filter: &SharedGuardianFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SharedGuardianFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many shared_guardians: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedGuardian), nil
+}
+
+// UpdateWhere updates all shared_guardians matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *sharedGuardianClient) UpdateWhere(ctx context.Context, filter *SharedGuardianFilter, input *UpdateSharedGuardianInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) ([]*SharedGuardian, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update shared_guardians where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableSharedGuardians, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		conds := filter.ToConditions(c.dialect, filterOpts...)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Tenancy filter + mismatch check. applyTenancy=false
+		// under SkipTenancy OR under required:false + zero resolver — the
+		// filter is not AND'd and the SET-clause tenant override below fires
+		// (only meaningful when the tenant column is NOT in the PK; when it
+		// is, the column is excluded from UpdateInputFields entirely).
+		applyTenancy := false
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.Org.Get(); ok {
+			setClauses["org"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetSharedGuardiansInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[SharedGuardianFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan updated shared_guardian id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetSharedGuardiansInput{
+			Filter: &SharedGuardianFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SharedGuardianFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update shared_guardians where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedGuardian), nil
+}
+
+// HardDelete permanently removes a shared_guardian from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *sharedGuardianClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[SharedGuardianFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableSharedGuardians, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       hardConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		var matched int
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan deleted shared_guardian tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete shared_guardian: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple shared_guardians from the database.
+func (c *sharedGuardianClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[SharedGuardianFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableSharedGuardians, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var scopeConds []sql.Condition
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Every sub-batch records the tenant of each row it touches, so cache
+		// invalidation and event stamping rebuild tenant-scoped keys from the
+		// rows themselves.
+		tenantByPK := make(map[int64]any, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+			hardConds = append(hardConds, scopeConds...)
+
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id", "workspace_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchTenants := make(map[int64]any, end-start)
+			for rows.Next() {
+				var rowID int64
+				var rowTenant uuid.UUID
+				if err := rows.Scan(&rowID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted shared_guardian tenant: %w", err)
+				}
+				batchTenants[rowID] = rowTenant
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many shared_guardians: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all shared_guardians matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *sharedGuardianClient) HardDeleteWhere(ctx context.Context, filter *SharedGuardianFilter, opts ...func(*CallOptions[SharedGuardianFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableSharedGuardians, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		conds := filter.ToConditions(c.dialect, filterOpts...)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan deleted shared_guardian id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete shared_guardians where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *sharedGuardianClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
+}
+
+// SharedGuardianConflictTarget identifies a unique constraint for upsert conflict detection.
+type SharedGuardianConflictTarget int
+
+const (
+	SharedGuardianConflictOrgID SharedGuardianConflictTarget = iota // UNIQUE (org, id)
+	SharedGuardianConflictPK                                        // PRIMARY KEY (id)
+)
+
+// sharedGuardianConflictColumns maps each conflict target to its column set.
+var sharedGuardianConflictColumns = map[SharedGuardianConflictTarget][]string{
+	SharedGuardianConflictOrgID: {"org", "id"},
+	SharedGuardianConflictPK:    {"id"},
+}
+
+// Upsert inserts a shared_guardian or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *sharedGuardianClient) Upsert(ctx context.Context, input *CreateSharedGuardianInput, target SharedGuardianConflictTarget, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateSharedGuardianInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert shared_guardian: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableSharedGuardians, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"org"}
+		args := []any{input.Org}
+		// Tenancy auto-set + mismatch check. apply=false under
+		// tenancy.required:false + zero resolver falls through to the
+		// caller-supplied value branch.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// (single-resolve). The resolver's answer is cached, not
+			// this table's reading of it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := sharedGuardianConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SharedGuardianFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert shared_guardian: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SharedGuardian), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves
+// the generated primary key, also capturing the row's tenant column so cache
+// invalidation and event stamping can rebuild the tenant-scoped key from the
+// row itself. On the conflict-update path the existing row keeps
+// its tenant, so the captured value (not the input) is authoritative.
+func (c *sharedGuardianClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id", "workspace_id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	var id int64
+	var rowTenant uuid.UUID
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id, &rowTenant)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	if found {
+		return id, rowTenant, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *sharedGuardianClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, any, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, nil, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id", "workspace_id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+
+	var id int64
+	var rowTenant uuid.UUID
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, nil, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, nil, ErrNotFound
+	}
+	// BuildSelect emits its column list sorted, which need not match the order
+	// the columns were requested in, so bind the scan targets by name rather
+	// than by position — the same rule scanSharedGuardians follows.
+	cols, err := rows.Columns()
+	if err != nil {
+		return 0, nil, err
+	}
+	targets := make([]any, len(cols))
+	for i, col := range cols {
+		switch col {
+		case "id":
+			targets[i] = &id
+		case "workspace_id":
+			targets[i] = &rowTenant
+		}
+	}
+	if err := rows.Scan(targets...); err != nil {
+		return 0, nil, err
+	}
+	return id, rowTenant, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple shared_guardians in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// shared_guardians.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *sharedGuardianClient) UpsertMany(ctx context.Context, inputs []*CreateSharedGuardianInput, target SharedGuardianConflictTarget, opts ...func(*CallOptions[SharedGuardianFieldOptions])) ([]*SharedGuardian, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many shared_guardians: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableSharedGuardians, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*SharedGuardian{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"workspace_id", "org"}
+		conflictColumns := sharedGuardianConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateSharedGuardianInput, 0, len(inputs))
+		var rowIDs []int64
+		// Filled from the rows themselves after each sub-batch; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from each row's own tenant value. A
+		// conflict leaves the existing row's tenant in place, so the input's
+		// value is not authoritative the way it is for CreateMany.
+		var rowTenants []any
+		for _, input := range inputs {
+			// Tenancy auto-set + mismatch check.
+			// applyTenancy=false under SkipTenancy OR under required:false
+			// + zero resolver — caller-supplied tenant is used, else the DB
+			// NOT NULL constraint surfaces.
+			var workspaceID any
+			if applyTenancy {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				workspaceID = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				workspaceID = v
+			} else {
+				return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+			}
+
+			valueRows = append(valueRows, []any{
+				workspaceID,
+				input.Org,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateSharedGuardianInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, batchTenants, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+		m.AffectedTenants = rowTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetSharedGuardiansInput{
+			Filter: &SharedGuardianFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SharedGuardianFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many shared_guardians: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedGuardian), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key and tenant in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// shared_guardians.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *sharedGuardianClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, []any, error) {
+	if len(rows) == 0 {
+		return nil, nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level sharedGuardianConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanSharedGuardians
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id", "workspace_id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	found, err := scanSharedGuardians(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk     int64
+		tenant any
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = sharedGuardianColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID, tenant: entity.WorkspaceID}
+	}
+
+	pks := make([]int64, len(rows))
+	tenants := make([]any, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+		tenants[i] = resolved.tenant
+	}
+	return pks, tenants, nil
+}
+
+// sharedGuardianColumnValue returns one column's value off a scanned
+// SharedGuardian, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanSharedGuardians.
+func sharedGuardianColumnValue(s *SharedGuardian, column string) any {
+	switch column {
+	case "id":
+		return s.ID
+	case "workspace_id":
+		return s.WorkspaceID
+	case "org":
+		return s.Org
+	}
+	return nil
+}
+
+// CreateSharedGuardianWithRelatedInput holds the fields for creating a shared_guardians record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateSharedGuardianWithRelatedInput struct {
+	// SharedGuardian holds the parent's own columns — identical to the input Create accepts.
+	SharedGuardian CreateSharedGuardianInput `json:"shared_guardian"`
+
+	// SharedKids - one-to-many relationship with the shared_kids table.
+	SharedKids *SharedGuardianSharedKidsCreateNested `json:"shared_kids,omitempty"`
+}
+
+// UpdateSharedGuardianWithRelatedInput holds the fields for updating a shared_guardians record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateSharedGuardianWithRelatedInput struct {
+	// SharedGuardian holds the parent's own columns — identical to the input Update accepts.
+	SharedGuardian UpdateSharedGuardianInput `json:"shared_guardian"`
+
+	// SharedKids - one-to-many relationship with the shared_kids table.
+	SharedKids *SharedGuardianSharedKidsUpdateNested `json:"shared_kids,omitempty"`
+}
+
+// UpsertSharedGuardianWithRelatedInput holds the fields for upserting a shared_guardians record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateSharedGuardianInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertSharedGuardianWithRelatedInput struct {
+	// SharedGuardian holds the parent's own columns — identical to the input Upsert accepts.
+	SharedGuardian CreateSharedGuardianInput `json:"shared_guardian"`
+
+	// SharedKids - one-to-many relationship with the shared_kids table.
+	SharedKids *SharedGuardianSharedKidsUpdateNested `json:"shared_kids,omitempty"`
+}
+
+// SharedGuardianSharedKidsCreateNested is the create-side verb block for SharedGuardian.SharedKids.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type SharedGuardianSharedKidsCreateNested struct {
+	Create  []*SharedGuardianSharedKidsCreateInput `json:"create,omitempty"`
+	Connect []int64                                `json:"connect,omitempty"`
+}
+
+// SharedGuardianSharedKidsUpdateNested is the update-side verb block for SharedGuardian.SharedKids,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type SharedGuardianSharedKidsUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool                                   `json:"clear,omitempty"`
+	Create     []*SharedGuardianSharedKidsCreateInput `json:"create,omitempty"`
+	Connect    []int64                                `json:"connect,omitempty"`
+	Disconnect []int64                                `json:"disconnect,omitempty"`
+}
+
+// SharedGuardianSharedKidsCreateInput is CreateSharedKidInput with the traversed
+// foreign key removed — that column is always set from the parent's primary key,
+// so leaving it would force the caller to supply a value that is then
+// overwritten.
+type SharedGuardianSharedKidsCreateInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	ParentID    omittable.Value[*int64]    `json:"parent_id,omitzero"`
+}
+
+// sharedGuardianSharedKidsNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func sharedGuardianSharedKidsNestedFromCreate(n *SharedGuardianSharedKidsCreateNested) *SharedGuardianSharedKidsUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &SharedGuardianSharedKidsUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// sharedGuardianNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+// The columns the edges' keys reference are forced on too: the nested writes
+// copy them, so a narrowed selection must not leave them zero.
+func sharedGuardianNestedParentFieldOptions(fo *SharedGuardianFieldOptions) *SharedGuardianFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.SharedKids = nil
+	scalars.ID = true
+	scalars.Org = true
+	return &scalars
+}
+
+// sharedGuardianNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func sharedGuardianNestedSelectsRelationship(fo *SharedGuardianFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.SharedKids != nil
+}
+
+// nestedResolvedTenantCtx resolves the tenant once for a whole nested write,
+// before the transaction opens, so every inner call inherits it off ctx instead
+// of re-invoking the user resolver: the tenant resolves at most once per
+// mutation, nested children included. The inner writes route through other
+// entity clients, and the stash each of them makes is scoped to its own
+// hook-handler ctx — it never escapes back here, so without this hoist a
+// two-edge nested write resolved three to ten times.
+//
+// Only the raw resolver value is cached. No tenancy.required branch is taken
+// here, which is what lets a *shared* parent hoist for a tenanted child: each
+// inner call still applies its own table's required setting to the value.
+// Hoisting a decision instead would hand this table's reading of a zero
+// resolver to children configured fail-closed.
+//
+// The other two resolution modes need no hoist and get none: SkipTenancy
+// resolves nothing anywhere, and an explicit tenant already reaches every inner
+// call through nestedChildOptions and short-circuits ahead of the cache.
+func (c *sharedGuardianClient) nestedResolvedTenantCtx(ctx context.Context, options CallOptions[SharedGuardianFieldOptions]) (context.Context, error) {
+	if options.SkipTenancy || options.Tenant != nil {
+		return ctx, nil
+	}
+	resolvedTenant, err := c.tenantValue(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return tenancy.WithResolvedTenant(ctx, resolvedTenant), nil
+}
+
+// CreateWithRelated creates a sharedGuardian together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *sharedGuardianClient) CreateWithRelated(ctx context.Context, input *CreateSharedGuardianWithRelatedInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create shared_guardian with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	// The gate is "some client this method reaches resolves a tenant", not "an
+	// edge target is tenanted": the parent's own terminal re-read resolves
+	// too when the caller selected a relationship.
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("create shared_guardian with related: resolve tenant: %w", err)
+	}
+
+	var result *SharedGuardian
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err = database.WithTransaction(ctx, c.querier, "create_shared_guardian_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.SharedGuardian, func(o *CallOptions[SharedGuardianFieldOptions]) {
+			*o = options
+			o.FieldOptions = sharedGuardianNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applySharedGuardianSharedKidsNested(ctx, parent, sharedGuardianSharedKidsNestedFromCreate(input.SharedKids), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if sharedGuardianNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[SharedGuardianFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create shared_guardian with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a sharedGuardian together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *sharedGuardianClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdateSharedGuardianWithRelatedInput, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update shared_guardian with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("update shared_guardian with related: resolve tenant: %w", err)
+	}
+
+	var result *SharedGuardian
+	err = database.WithTransaction(ctx, c.querier, "update_shared_guardian_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.SharedGuardian, func(o *CallOptions[SharedGuardianFieldOptions]) {
+			*o = options
+			o.FieldOptions = sharedGuardianNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applySharedGuardianSharedKidsNested(ctx, parent, input.SharedKids, options); err != nil {
+			return err
+		}
+
+		if sharedGuardianNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[SharedGuardianFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update shared_guardian with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a sharedGuardian together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *sharedGuardianClient) UpsertWithRelated(ctx context.Context, input *UpsertSharedGuardianWithRelatedInput, target SharedGuardianConflictTarget, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*SharedGuardian, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert shared_guardian with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("upsert shared_guardian with related: resolve tenant: %w", err)
+	}
+
+	var result *SharedGuardian
+	err = database.WithTransaction(ctx, c.querier, "upsert_shared_guardian_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.SharedGuardian, target, func(o *CallOptions[SharedGuardianFieldOptions]) {
+			*o = options
+			o.FieldOptions = sharedGuardianNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applySharedGuardianSharedKidsNested(ctx, parent, input.SharedKids, options); err != nil {
+			return err
+		}
+
+		if sharedGuardianNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[SharedGuardianFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert shared_guardian with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applySharedGuardianSharedKidsNested applies the SharedGuardian.SharedKids block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *sharedGuardianClient) applySharedGuardianSharedKidsNested(ctx context.Context, parent *SharedGuardian, nested *SharedGuardianSharedKidsUpdateNested, options CallOptions[SharedGuardianFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("SharedKids", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	// The connect adoption's verify read filters on it too.
+	pid0 := parent.Org
+	pid1 := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if _, err := c.sharedKidClient.UpdateWhere(ctx,
+			&SharedKidFilter{
+				Org:        &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+				GuardianID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+			},
+			&UpdateSharedKidInput{GuardianID: omittable.Set[*int64](nil)},
+			func(o *CallOptions[SharedKidFieldOptions]) {
+				nestedChildOptions(o, options)
+				// Nothing selected — the inner call does not need its result
+				// back, so it skips the read that would hand the rows over.
+				o.FieldOptions = &SharedKidFieldOptions{}
+			}); err != nil {
+			return nestedError("SharedKids", "clear", nil, err)
+		}
+	}
+
+	if len(nested.Create) > 0 {
+		inputs := make([]*CreateSharedKidInput, 0, len(nested.Create))
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("SharedKids", "create", nil, ErrNilInput)
+			}
+			inputs = append(inputs, &CreateSharedKidInput{
+				Org:         omittable.Set(&parent.Org),
+				GuardianID:  omittable.Set(&parent.ID),
+				WorkspaceID: n.WorkspaceID,
+				ParentID:    n.ParentID,
+			})
+		}
+		if _, err := c.sharedKidClient.CreateMany(ctx, inputs, func(o *CallOptions[SharedKidFieldOptions]) {
+			nestedChildOptions(o, options)
+			// Nothing selected — the inner call does not need its result back,
+			// so it costs one statement rather than a statement plus a read.
+			o.FieldOptions = &SharedKidFieldOptions{}
+		}); err != nil {
+			return nestedError("SharedKids", "create", nil, err)
+		}
+	}
+
+	// connect — adopt unparented rows. The visibility read is not optional:
+	// the UPDATE's row count alone cannot separate "no such row" from "already
+	// parented", and the FK constraint proves a row exists, not that the caller
+	// may see it.
+	if len(connectIDs) > 0 {
+		// Each target's key, as a tuple of strings, which compares every key
+		// type. NULL is held apart: it stringifies like an empty string.
+		owner := make(map[int64][2]string, len(connectIDs))
+		nulls := make(map[int64][2]bool, len(connectIDs))
+		// Chunked at c.batchSize, for the reason the disconnect below is:
+		// a single `IN` over the caller's whole list hits a dialect-dependent
+		// bind ceiling whose error cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.sharedKidClient.GetMany(ctx, &GetSharedKidsInput{
+				Filter: &SharedKidFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[SharedKidFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &SharedKidFieldOptions{ID: true, Org: true, GuardianID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("SharedKids", "connect", nil, err)
+			}
+			for _, row := range visible {
+				var key [2]string
+				var null [2]bool
+				if row.Org != nil {
+					key[0] = (*row.Org)
+				} else {
+					null[0] = true
+				}
+				if row.GuardianID != nil {
+					key[1] = fmt.Sprint((*row.GuardianID))
+				} else {
+					null[1] = true
+				}
+				owner[row.ID], nulls[row.ID] = key, null
+			}
+		}
+
+		adopt := make([]int64, 0, len(connectIDs))
+		// A repeated id is ONE adoption: connect is a set operation, and the
+		// UPDATE matches the row once however many times the caller named it.
+		// Queueing it twice would trip the shortfall check below and report a
+		// conflict that did not happen.
+		queued := make(map[int64]bool, len(connectIDs))
+		want := [2]string{parent.Org, fmt.Sprint(parent.ID)}
+		for _, v := range connectIDs {
+			cur, ok := owner[v]
+			null := nulls[v]
+			switch {
+			case !ok:
+				// Absent, another tenant's, or soft-deleted — indistinguishable
+				// to this caller, and all NOT_FOUND. Never CONFLICT: that would
+				// confirm the row exists.
+				return nestedError("SharedKids", "connect", v, ErrNotFound)
+			case null[0] || cur[0] != want[0]:
+				// Bound to another key through a member this edge cannot write,
+				// so allow_reparent does not reach it either.
+				return nestedError("SharedKids", "connect", v, ErrAlreadyRelated)
+			case !null[1] && cur == want:
+				// Already ours — the requested end state holds, so this is a
+				// no-op rather than a conflict.
+				continue
+			}
+			if queued[v] {
+				continue
+			}
+			queued[v] = true
+			adopt = append(adopt, v)
+		}
+
+		if len(adopt) > 0 {
+			adoptedCount := 0
+			// The adoption is chunked on the same ceiling the read above
+			// is, and the shortfall check sums across chunks: a row lost in one
+			// chunk is a lost race whichever chunk it landed in.
+			for start := 0; start < len(adopt); start += c.batchSize {
+				adopting := adopt[start:min(start+c.batchSize, len(adopt))]
+				if _, err := c.sharedKidClient.UpdateWhere(ctx,
+					&SharedKidFilter{
+						ID: &comparator.Number[int64]{In: adopting},
+					},
+					&UpdateSharedKidInput{GuardianID: omittable.Set(&parent.ID)},
+					func(o *CallOptions[SharedKidFieldOptions]) {
+						nestedChildOptions(o, options)
+						// Nothing selected — the verify read below counts
+						// the adoption, not the rows UpdateWhere reports.
+						o.FieldOptions = &SharedKidFieldOptions{}
+					}); err != nil {
+					return nestedError("SharedKids", "connect", nil, err)
+				}
+				// The verify read counts this chunk's ids that now name this
+				// parent. Inside the transaction a plain read sees its own
+				// writes, so it counts what the UPDATE adopted and never a row
+				// another connection parented first — on every dialect, with
+				// no lock. UpdateWhere's report cannot do this on MySQL, where
+				// a pre-SELECT names the rows. Hooks are
+				// skipped as on the terminal re-read: this is part of the write.
+				adopted, err := c.sharedKidClient.GetMany(ctx, &GetSharedKidsInput{
+					Filter: &SharedKidFilter{
+						ID:         &comparator.Number[int64]{In: adopting},
+						Org:        &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+						GuardianID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+					},
+					Limit: new(0),
+				}, func(o *CallOptions[SharedKidFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &SharedKidFieldOptions{ID: true}
+					o.SkipHooks = true
+					o.LockMode = sql.LockNone
+				})
+				if err != nil {
+					return nestedError("SharedKids", "connect", nil, err)
+				}
+				adoptedCount += len(adopted)
+			}
+			if adoptedCount != len(adopt) {
+				// The UPDATE carries no `fk IS NULL` term under
+				// allow_reparent, so a row the visibility read returned
+				// that the verify read does not find under this parent
+				// stopped being visible in between — deleted, or
+				// soft-deleted. Reported the way the visibility read would
+				// have reported it.
+				return nestedError("SharedKids", "connect", nil, ErrNotFound)
+			}
+		}
+	}
+
+	// disconnect — unlink, scoped to THIS parent. The `fk = parent` term is
+	// what stops a caller detaching another parent's row by guessing its id,
+	// and it is why a disconnect needs no visibility read where a connect does.
+	// A miss is a no-op, not an error.
+	if len(disconnectIDs) > 0 {
+		// Chunked at c.batchSize. The ceiling is a dialect-dependent bind
+		// limit, lowest on SQLite at 32766, and the error names nothing that
+		// can attribute — so it is removed rather than documented.
+		for start := 0; start < len(disconnectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(disconnectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range disconnectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			if _, err := c.sharedKidClient.UpdateWhere(ctx,
+				&SharedKidFilter{
+					ID:         &comparator.Number[int64]{In: ids},
+					Org:        &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+					GuardianID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+				},
+				&UpdateSharedKidInput{GuardianID: omittable.Set[*int64](nil)},
+				func(o *CallOptions[SharedKidFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &SharedKidFieldOptions{}
+				}); err != nil {
+				return nestedError("SharedKids", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a shared_guardian with the given primary key exists.
+func (c *sharedGuardianClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableSharedGuardians, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips both the verify-match and the filter append.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists shared_guardian: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any shared_guardian matches the given filter.
+func (c *sharedGuardianClient) ExistsWhere(ctx context.Context, filter *SharedGuardianFilter, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableSharedGuardians, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect, filterOpts...)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant probe).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists shared_guardians where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of shared_guardians matching the given filter.
+// A nil filter counts all shared_guardians.
+func (c *sharedGuardianClient) Count(ctx context.Context, filter *SharedGuardianFilter, opts ...func(*CallOptions[SharedGuardianFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableSharedGuardians, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect, filterOpts...)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant count).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count shared_guardians: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of shared_guardians with total count for offset-based pagination.
+// A nil filter paginates all shared_guardians.
+func (c *sharedGuardianClient) Paginate(ctx context.Context, input PaginateInput[SharedGuardianFilter], opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*PaginateResult[SharedGuardian], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate shared_guardians: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableSharedGuardians, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SharedGuardianFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		sharedGuardians, err := c.GetMany(ctx, &GetSharedGuardiansInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[SharedGuardian]{
+			Items:      sharedGuardians,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate shared_guardians: %w", err)
+	}
+	return result.(*PaginateResult[SharedGuardian]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of shared_guardians.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *sharedGuardianClient) Connection(ctx context.Context, input ConnectionInput[SharedGuardianFilter], opts ...func(*CallOptions[SharedGuardianFieldOptions])) (*Connection[SharedGuardian], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection shared_guardians: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableSharedGuardians, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SharedGuardianFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeSharedGuardianCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeSharedGuardianCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		sharedGuardians, err := c.GetMany(ctx, &GetSharedGuardiansInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(sharedGuardians) > limit
+		if hasMore {
+			sharedGuardians = sharedGuardians[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(sharedGuardians)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[SharedGuardian], len(sharedGuardians))
+		for i, row := range sharedGuardians {
+			cursor, err := encodeSharedGuardianCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[SharedGuardian]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[SharedGuardian]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection shared_guardians: %w", err)
+	}
+	return result.(*Connection[SharedGuardian]), nil
+}
+
+// encodeSharedGuardianCursor encodes cursor key values as a base64 JSON string.
+func encodeSharedGuardianCursor(keys []string, s *SharedGuardian) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = s.ID
+		case "workspace_id":
+			out["workspace_id"] = s.WorkspaceID
+		case "org":
+			out["org"] = s.Org
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode shared_guardian cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeSharedGuardianCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeSharedGuardianCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row SharedGuardian
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamSharedGuardiansInput holds query parameters for streaming shared_guardians records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamSharedGuardiansInput struct {
+	Filter *SharedGuardianFilter `json:"filter"`
+	Sorts  []sql.Sort            `json:"sorts"`
+}
+
+// StreamSharedGuardianFieldOptions controls scalar column selection for shared_guardians streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamSharedGuardianFieldOptions struct {
+	ID          bool `json:"id"`
+	WorkspaceID bool `json:"workspace_id"`
+	Org         bool `json:"org"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamSharedGuardianFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.Org {
+		cols = append(cols, "org")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamSharedGuardianFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.Org {
+		return true
+	}
+	return false
+}
+
+// scanSharedGuardianRow scans a single row into a SharedGuardian entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanSharedGuardianRow(rows database.Rows, columns []string) (*SharedGuardian, error) {
+	s := &SharedGuardian{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &s.ID
+		case "workspace_id":
+			targets[idx] = &s.WorkspaceID
+		case "org":
+			targets[idx] = &s.Org
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan shared_guardian: %w", err)
+	}
+
+	return s, nil
+}
+
+// Stream returns an iterator over shared_guardians matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *sharedGuardianClient) Stream(ctx context.Context, input *StreamSharedGuardiansInput, opts ...func(*CallOptions[StreamSharedGuardianFieldOptions])) iter.Seq2[*SharedGuardian, error] {
+	return func(yield func(*SharedGuardian, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamSharedGuardiansInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream shared_guardians: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *SharedGuardian, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream shared_guardians: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableSharedGuardians, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := sharedGuardianAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			// A relationship filter compiles to a correlated EXISTS carrying the
+			// *target's* tenant predicate, so the tenant is
+			// resolved before the conditions are built rather than appended after them.
+			filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
+			if filterErr != nil {
+				emit(nil, filterErr)
+				return nil, nil
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect, filterOpts...)
+			}
+
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					emit(nil, fmt.Errorf("resolve tenant: %w", err))
+					return nil, nil
+				}
+				if apply {
+					conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				s, err := scanSharedGuardianRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(s, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate shared_guardian rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream shared_guardians: %w", err))
+		}
+	}
+}
+
+// SharedGuardianFilter provides type-safe filtering for the shared_guardians table.
+type SharedGuardianFilter struct {
+	ID          *comparator.Number[int64] `json:"id"`
+	Org         *comparator.String        `json:"org"`
+	WorkspaceID *comparator.ID            `json:"workspace_id"`
+	SharedKids  *SharedKidFilter          `json:"shared_kids"`
+	And         []*SharedGuardianFilter   `json:"and"`
+	Or          []*SharedGuardianFilter   `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *SharedGuardianFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Org != nil {
+		conds = append(conds, f.Org.Parse(dialect.QuoteIdentifier("org"), dialect)...)
+	}
+
+	if f.WorkspaceID != nil {
+		conds = append(conds, f.WorkspaceID.Parse(dialect.QuoteIdentifier("workspace_id"), dialect)...)
+	}
+
+	if f.SharedKids != nil {
+		conds = append(conds, sharedGuardianSharedKidsFilterExists(f.SharedKids, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// usesRelationshipFilter reports whether f sets at least one relationship
+// member, directly or through and / or.
+//
+// The FilterOption set ToConditions takes is read only by the EXISTS helpers
+// below, so a filter with no relationship member ignores it entirely and
+// compiles to byte-identical SQL either way. The client's filterOptions
+// consults this before resolving a tenant, which is what keeps a read that has
+// no tenanted component from failing closed: on a shared table the outer WHERE
+// is never tenant-scoped, so a resolver that reports a missing tenant as an
+// error would otherwise reject reads that legitimately run before any tenant
+// is selected.
+func (f *SharedGuardianFilter) usesRelationshipFilter() bool {
+	if f == nil {
+		return false
+	}
+	if f.SharedKids != nil {
+		return true
+	}
+	for _, sub := range f.And {
+		if sub.usesRelationshipFilter() {
+			return true
+		}
+	}
+	for _, sub := range f.Or {
+		if sub.usesRelationshipFilter() {
+			return true
+		}
+	}
+	return false
+}
+
+// sharedGuardianSharedKidsFilterExists compiles a SharedKidFilter set on the
+// SharedKids relationship into a correlated EXISTS over shared_kids.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func sharedGuardianSharedKidsFilterExists(f *SharedKidFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "public", Name: "shared_kids"}) + " " + tgt +
+		" WHERE " + tgt + "." + dialect.QuoteIdentifier("org") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("guardian_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	// The target's tenant rule applies inside the subquery. Without it a
+	// relationship filter would be a cross-tenant existence probe on a table the caller cannot otherwise read.
+	if scope.applyTenant {
+		subSQL += " AND " + tgt + "." + dialect.QuoteIdentifier("workspace_id") + " = $"
+		subArgs = append(subArgs, scope.tenant)
+	}
+
+	return sql.Exists([]string{"org", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// SharedGuardianFieldOptions controls column selection and relationship loading for shared_guardians queries.
+type SharedGuardianFieldOptions struct {
+	ID          bool                          `json:"id"`
+	WorkspaceID bool                          `json:"workspace_id"`
+	Org         bool                          `json:"org"`
+	SharedKids  *SharedKidRelationshipOptions `json:"shared_kids"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *SharedGuardianFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.Org {
+		cols = append(cols, "org")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *SharedGuardianFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":          "id",
+		"WorkspaceID": "workspace_id",
+		"Org":         "org",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *SharedGuardianFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.Org {
+		return true
+	}
+	if fo.SharedKids != nil {
+		return true
+	}
+	return false
+}
+
+// SharedKidRelationshipOptions controls loading options for SharedKid relationships.
+type SharedKidRelationshipOptions struct {
+	FieldOptions *SharedKidFieldOptions `json:"field_options"`
+	Filter       *SharedKidFilter       `json:"filter"`
+	Sorts        []sql.Sort             `json:"sorts"`
+}
+
+// CreateSharedGuardianInput holds the fields for creating a shared_guardians record.
+type CreateSharedGuardianInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	Org         string                     `json:"org"`
+}
+
+// UpdateSharedGuardianInput holds the fields for updating a shared_guardians record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateSharedGuardianInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	Org         omittable.Value[string]    `json:"org,omitzero"`
+}
+
+// GetSharedGuardiansInput holds query parameters for retrieving shared_guardians records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetSharedGuardiansInput struct {
+	Filter *SharedGuardianFilter `json:"filter"`
+	Limit  *int                  `json:"limit"`
+	Offset *int                  `json:"offset"`
+	Sorts  []sql.Sort            `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type SharedKid struct {
+	ID          int64     `db:"id" json:"id"`
+	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
+	Org         *string   `db:"org" json:"org"`
+	ParentID    *int64    `db:"parent_id" json:"parent_id"`
+	GuardianID  *int64    `db:"guardian_id" json:"guardian_id"`
+}
+
+// SharedKidClient provides type-safe operations for the shared_kids table.
+type SharedKidClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single sharedKid by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[SharedKidFieldOptions])) (*SharedKid, error)
+
+	// GetMany returns shared_kids matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetSharedKidsInput, opts ...func(*CallOptions[SharedKidFieldOptions])) ([]*SharedKid, error)
+
+	// Exists returns true if a sharedKid with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[SharedKidFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any sharedKid matches the given filter.
+	ExistsWhere(ctx context.Context, filter *SharedKidFilter, opts ...func(*CallOptions[SharedKidFieldOptions])) (bool, error)
+
+	// Count returns the number of shared_kids matching the given filter.
+	Count(ctx context.Context, filter *SharedKidFilter, opts ...func(*CallOptions[SharedKidFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new sharedKid and returns the created entity.
+	Create(ctx context.Context, input *CreateSharedKidInput, opts ...func(*CallOptions[SharedKidFieldOptions])) (*SharedKid, error)
+
+	// CreateMany inserts multiple shared_kids in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateSharedKidInput, opts ...func(*CallOptions[SharedKidFieldOptions])) ([]*SharedKid, error)
+
+	// Update partially updates a sharedKid by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateSharedKidInput, opts ...func(*CallOptions[SharedKidFieldOptions])) (*SharedKid, error)
+
+	// UpdateMany updates multiple shared_kids and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateSharedKidItem, opts ...func(*CallOptions[SharedKidFieldOptions])) ([]*SharedKid, error)
+
+	// UpdateWhere updates all shared_kids matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *SharedKidFilter, input *UpdateSharedKidInput, opts ...func(*CallOptions[SharedKidFieldOptions])) ([]*SharedKid, error)
+
+	// Upsert inserts a sharedKid or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateSharedKidInput, target SharedKidConflictTarget, opts ...func(*CallOptions[SharedKidFieldOptions])) (*SharedKid, error)
+
+	// UpsertMany inserts or updates multiple shared_kids in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateSharedKidInput, target SharedKidConflictTarget, opts ...func(*CallOptions[SharedKidFieldOptions])) ([]*SharedKid, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a sharedKid from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[SharedKidFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple shared_kids from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[SharedKidFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all shared_kids matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *SharedKidFilter, opts ...func(*CallOptions[SharedKidFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of shared_kids with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[SharedKidFilter], opts ...func(*CallOptions[SharedKidFieldOptions])) (*PaginateResult[SharedKid], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of shared_kids.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[SharedKidFilter], opts ...func(*CallOptions[SharedKidFieldOptions])) (*Connection[SharedKid], error)
+
+	// Stream returns an iterator over shared_kids matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamSharedKidsInput, opts ...func(*CallOptions[StreamSharedKidFieldOptions])) iter.Seq2[*SharedKid, error]
+}
+
+// sharedKidClient implements the SharedKidClient interface.
+type sharedKidClient struct {
+	querier        database.Querier
+	dialect        sql.Dialect
+	table          sql.Table
+	batchSize      int
+	queryLimit     int
+	pageSize       int
+	cursorKeys     []string
+	strictUpdates  bool
+	mutationHooks  []hook.MutationHook
+	queryHooks     []hook.QueryHook
+	panicHandler   hook.PanicHandler
+	tenantResolver tenancy.TenantResolver[uuid.UUID]
+}
+
+// newSharedKidClient creates a new sharedKidClient.
+func newSharedKidClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *sharedKidClient {
+	return &sharedKidClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "shared_kids"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *sharedKidClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *sharedKidClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// resolveTenant reads the operation's tenant from tenantValue and applies THIS
+// table's tenancy.required setting to it, returning the value, a bool
+// indicating whether tenancy should be applied to this call, and any resolver
+// error. The split matters: tenantValue's answer is shared across every client
+// the operation touches, while the apply bool below is this table's alone
+// (required is a per-table setting). The apply bool encodes the
+// tenancy.required semantic:
+//
+//   - Non-zero resolver return → apply=true; callers AND the filter into the
+//     WHERE (reads), verify-match against caller-supplied tenant (mutations),
+//     and auto-set the tenant column on INSERT.
+//   - Zero resolver return (resolver returned (zero, nil) or is nil) under
+//     tenancy.required:true → apply=false, err=tenancy.ErrMissing. The op
+//     fails closed before the DB round-trip.
+//   - Zero resolver return under tenancy.required:false → apply=false, err=nil.
+//     The op silently becomes cross-tenant: no filter append, no verify-match,
+//     no auto-set. This is the "missing tenant skips the filter" path
+//     — always-off rather than a silent zero-value write.
+//   - Resolver returns a non-nil error → apply=false, err propagated.
+//
+// Required-at-codegen determinism: the required:true vs required:false branch
+// is picked at template-expansion time per-table, from the table's resolved
+// tenancy config. Runtime callers observe a stable behavior per table.
+//
+// explicit carries CallOptions.Tenant (the explicit-tenant resolution
+// mode): when non-nil, tenancy behaves as normal resolution with
+// the resolver replaced by this constant — filter, auto-set, and verify-match
+// all apply. Precedence over SkipTenancy is normalized in
+// resolveCallOptions, so callers gate on SkipTenancy exactly as before. The
+// pointer distinguishes set from unset; a set zero value is honored verbatim.
+func (c *sharedKidClient) resolveTenant(ctx context.Context, explicit *uuid.UUID) (uuid.UUID, bool, error) {
+	if explicit != nil {
+		return *explicit, true, nil
+	}
+	var zero uuid.UUID
+	v, err := c.tenantValue(ctx)
+	if err != nil {
+		return zero, false, err
+	}
+	if v == zero {
+		return zero, false, tenancy.ErrMissing
+	}
+	return v, true, nil
+}
+
+// tenantValue returns the tenant the user resolver reports for this operation,
+// invoking it at most once per logical operation.
+//
+// It answers the table-independent half of the question and stops there: what
+// the resolver said. The tenancy.required reading of that answer — zero means
+// ErrMissing, or zero means skip the filter — belongs to resolveTenant above,
+// because `required` is a per-table setting while this value is
+// shared across every client the operation touches.
+//
+// Keeping the two apart is load-bearing rather than tidy. The ctx cache is
+// keyed on the tenant type alone, so it is one slot for the whole package;
+// caching the reading instead of the answer let whichever table resolved first
+// impose its `required` on the rest, and a required:false table handing
+// apply=false to a required:true one is a fail-open. A nil resolver
+// yields the zero value and the same per-table branch a zero return takes.
+func (c *sharedKidClient) tenantValue(ctx context.Context) (uuid.UUID, error) {
+	// Short-circuit: an entry point for this logical operation — a chaining
+	// mutation (Create, Update, Upsert, …) or a nested method's hoist — already
+	// resolved and stashed the value via tenancy.WithResolvedTenant. Lookup
+	// uses the same comparable T as the resolver, so collisions across entity
+	// clients with different tenant types are impossible.
+	if v, ok := tenancy.CachedTenant[uuid.UUID](ctx); ok {
+		return v, nil
+	}
+	if c.tenantResolver == nil {
+		var zero uuid.UUID
+		return zero, nil
+	}
+	return c.tenantResolver(ctx)
+}
+
+// sharedKidAllColumns is the column list for full-entity reads, sorted for determinism.
+var sharedKidAllColumns = []string{"guardian_id", "id", "org", "parent_id", "workspace_id"}
+
+// scanSharedKids scans rows into SharedKid entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanSharedKids(rows database.Rows, columns []string) ([]*SharedKid, error) {
+	var result []*SharedKid
+	for rows.Next() {
+		s := &SharedKid{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &s.ID
+			case "workspace_id":
+				targets[idx] = &s.WorkspaceID
+			case "org":
+				targets[idx] = &s.Org
+			case "parent_id":
+				targets[idx] = &s.ParentID
+			case "guardian_id":
+				targets[idx] = &s.GuardianID
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan shared_kid: %w", err)
+		}
+
+		result = append(result, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate shared_kid rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single shared_kid by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *sharedKidClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[SharedKidFieldOptions])) (*SharedKid, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get shared_kid: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableSharedKids, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	// Resolve tenant once at the entity-method boundary so the
+	// cache read-through hook can build a tenant-scoped key. The terminal
+	// (and the internal GetMany) sees the same value via q.Tenant. apply=false
+	// under tenancy.required:false + zero resolver skips both qctx.Tenant and
+	// the verify-match (cross-tenant read).
+	if !options.SkipTenancy {
+		resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nil, fmt.Errorf("get shared_kid: resolve tenant: %w", err)
+		}
+		if apply {
+			qctx.Tenant = resolvedTenant
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[SharedKidFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SharedKidFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		sharedKids, err := c.GetMany(ctx, &GetSharedKidsInput{
+			Filter: &SharedKidFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(sharedKids) == 0 {
+			return nil, ErrNotFound
+		}
+		return sharedKids[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get shared_kid: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SharedKid), nil
+}
+
+// GetMany returns shared_kids matching the given filter, field selection, and sort criteria.
+func (c *sharedKidClient) GetMany(ctx context.Context, input *GetSharedKidsInput, opts ...func(*CallOptions[SharedKidFieldOptions])) ([]*SharedKid, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetSharedKidsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get many shared_kids: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableSharedKids, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := sharedKidAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter — append tenant = resolved to WHERE.
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// filter (cross-tenant read).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var sharedKids []*SharedKid
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		sharedKids, err = scanSharedKids(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return sharedKids, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many shared_kids: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedKid), nil
+}
+
+// Create inserts a new shared_kid and returns the created entity.
+func (c *sharedKidClient) Create(ctx context.Context, input *CreateSharedKidInput, opts ...func(*CallOptions[SharedKidFieldOptions])) (*SharedKid, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateSharedKidInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create shared_kid: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableSharedKids, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{}
+		args := []any{}
+		// Tenancy auto-set + mismatch check. Caller-set tenant on
+		// the input is tolerated only when it matches the resolved value — any
+		// mismatch returns ErrMismatch before the DB round-trip. apply=false
+		// under tenancy.required:false + zero resolver falls through to the
+		// SkipTenancy-style branch: caller-supplied value wins, no auto-set,
+		// no verify-match (the DB NOT NULL constraint surfaces if the input is
+		// also empty).
+		// capturedTenant carries the tenant value written to the row into
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// the tenant-scoped key from the row itself, independent of how (or
+		// whether) the tenant was resolved. Stays nil only when
+		// no tenant value reaches the INSERT (a DB default fills the column).
+		var capturedTenant any
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
+			// resolver's answer, not this table's reading of it: a zero return
+			// is cached as a zero, and each table downstream re-applies its own
+			// tenancy.required branch to it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash resolved tenant on MutationContext so the cache hook
+				// builds tenant-scoped keys without re-invoking the resolver
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+				capturedTenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value is used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+				capturedTenant = v
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			// SkipTenancy:true — caller must explicitly set the tenant value.
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+			capturedTenant = v
+		}
+
+		if v, ok := input.Org.Get(); ok {
+			columns = append(columns, "org")
+			args = append(args, v)
+		}
+
+		if v, ok := input.ParentID.Get(); ok {
+			columns = append(columns, "parent_id")
+			args = append(args, v)
+		}
+
+		if v, ok := input.GuardianID.Get(); ok {
+			columns = append(columns, "guardian_id")
+			args = append(args, v)
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SharedKidFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create shared_kid: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SharedKid), nil
+}
+
+// CreateMany inserts multiple shared_kids in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *sharedKidClient) CreateMany(ctx context.Context, inputs []*CreateSharedKidInput, opts ...func(*CallOptions[SharedKidFieldOptions])) ([]*SharedKid, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many shared_kids: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableSharedKids, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*SharedKid{}, nil
+		}
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// (and the per-input verify-match short-circuits via the cache)
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// Filled in lockstep with the PK slice above; feeds m.AffectedTenants
+		// so cache invalidation and event stamping rebuild tenant-scoped keys
+		// from each row's own tenant value.
+		var allTenants []any
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"workspace_id", "org", "parent_id", "guardian_id"}
+			var valueRows [][]any
+			for _, input := range batch {
+				// Tenancy auto-set + mismatch check.
+				// applyTenancy=false under SkipTenancy OR under required:false
+				// + zero resolver — caller-supplied tenant is used, else the DB
+				// NOT NULL constraint surfaces.
+				// The allTenants append below relies on the tenant-∉-PK column
+				// always being an omittable CreateInput field (promoted by
+				// attachTenancyToTables) so exactly one carrier element is
+				// appended per input, in lockstep with the PK slice.
+				var workspaceID any
+				if applyTenancy {
+					if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+					workspaceID = resolvedTenant
+				} else if v, ok := input.WorkspaceID.Get(); ok {
+					workspaceID = v
+				} else {
+					return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+				}
+				allTenants = append(allTenants, workspaceID)
+				var org any = sql.Default
+				if v, ok := input.Org.Get(); ok {
+					org = v
+				}
+				var parentID any = sql.Default
+				if v, ok := input.ParentID.Get(); ok {
+					parentID = v
+				}
+				var guardianID any = sql.Default
+				if v, ok := input.GuardianID.Get(); ok {
+					guardianID = v
+				}
+
+				valueRows = append(valueRows, []any{
+					workspaceID,
+					org,
+					parentID,
+					guardianID,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+		m.AffectedTenants = allTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetSharedKidsInput{
+			Filter: &SharedKidFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SharedKidFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many shared_kids: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedKid), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *sharedKidClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *sharedKidClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan shared_kid id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a shared_kid by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *sharedKidClient) Update(ctx context.Context, id int64, input *UpdateSharedKidInput, opts ...func(*CallOptions[SharedKidFieldOptions])) (*SharedKid, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update shared_kid: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableSharedKids, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Tenancy mismatch check before any SQL build. applyTenancy
+		// is false under SkipTenancy OR under required:false + zero resolver —
+		// in the second case the WHERE below also drops the tenant predicate.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		// Tenant column excluded from SET under normal operation.
+		// Honored when the caller opted out via SkipTenancy OR when
+		// required:false + zero resolver opted out of tenancy for this call.
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.Org.Get(); ok {
+			setClauses["org"] = v
+		}
+		if v, ok := input.ParentID.Get(); ok {
+			setClauses["parent_id"] = v
+		}
+		if v, ok := input.GuardianID.Get(); ok {
+			setClauses["guardian_id"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[SharedKidFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if applyTenancy {
+			updateConds = append(updateConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+		}
+
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       updateConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		matched := 0
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan updated shared_kid tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SharedKidFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update shared_kid: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SharedKid), nil
+}
+
+// UpdateSharedKidItem pairs a primary key with an update input for batch updates.
+type UpdateSharedKidItem struct {
+	ID    int64                 `json:"id"`
+	Input *UpdateSharedKidInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple shared_kids and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
+func (c *sharedKidClient) UpdateMany(ctx context.Context, items []UpdateSharedKidItem, opts ...func(*CallOptions[SharedKidFieldOptions])) ([]*SharedKid, error) {
+	// UpdateSharedKidItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many shared_kids: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableSharedKids, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*SharedKid{}, nil
+		}
+
+		// Resolve the tenant once; per-item mismatch checks use the same value.
+		// applyTenancy=false under SkipTenancy OR under required:false + zero
+		// resolver — the per-item verify-match and per-row WHERE both drop.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the per-item verify-match short-circuits via the
+			// cache and the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				for _, item := range items {
+					if v, ok := item.Input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateSharedKidItem
+		// Per-item RETURNING captures each updated row's tenant; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from the rows themselves.
+		tenantByPK := make(map[int64]any, len(items))
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			var queuedItems []UpdateSharedKidItem
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if !applyTenancy {
+					if v, ok := item.Input.WorkspaceID.Get(); ok {
+						setClauses["workspace_id"] = v
+					}
+				}
+				if v, ok := item.Input.Org.Get(); ok {
+					setClauses["org"] = v
+				}
+				if v, ok := item.Input.ParentID.Get(); ok {
+					setClauses["parent_id"] = v
+				}
+				if v, ok := item.Input.GuardianID.Get(); ok {
+					setClauses["guardian_id"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.ID)
+					continue
+				}
+				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+				if applyTenancy {
+					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses:       setClauses,
+					Conditions:       itemConds,
+					ReturningColumns: []string{"workspace_id"},
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
+				allIDs = append(allIDs, item.ID)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise.
+			// Each statement RETURNING-projects the row's tenant; the scan
+			// below captures it per queued PK.
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for i := range pgxBatch.Len() {
+						rows, err := br.Query()
+						if err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						matched := 0
+						for rows.Next() {
+							var rowTenant uuid.UUID
+							if err := rows.Scan(&rowTenant); err != nil {
+								rows.Close()
+								br.Close()
+								return nil, fmt.Errorf("scan updated shared_kid tenant: %w", err)
+							}
+							tenantByPK[queuedItems[i].ID] = rowTenant
+							matched++
+						}
+						if err := rows.Err(); err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						rows.Close()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close batch: %w", err)
+					}
+				} else {
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_shared_kid", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							rows, err := conn.Query(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							matched := 0
+							for rows.Next() {
+								var rowTenant uuid.UUID
+								if err := rows.Scan(&rowTenant); err != nil {
+									rows.Close()
+									return fmt.Errorf("scan updated shared_kid tenant: %w", err)
+								}
+								tenantByPK[queuedItems[i].ID] = rowTenant
+								matched++
+							}
+							if err := rows.Err(); err != nil {
+								rows.Close()
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							rows.Close()
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
+						}
+						return nil
+					}); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetSharedKidsInput{
+			Filter: &SharedKidFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SharedKidFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many shared_kids: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedKid), nil
+}
+
+// UpdateWhere updates all shared_kids matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *sharedKidClient) UpdateWhere(ctx context.Context, filter *SharedKidFilter, input *UpdateSharedKidInput, opts ...func(*CallOptions[SharedKidFieldOptions])) ([]*SharedKid, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update shared_kids where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableSharedKids, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Tenancy filter + mismatch check. applyTenancy=false
+		// under SkipTenancy OR under required:false + zero resolver — the
+		// filter is not AND'd and the SET-clause tenant override below fires
+		// (only meaningful when the tenant column is NOT in the PK; when it
+		// is, the column is excluded from UpdateInputFields entirely).
+		applyTenancy := false
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.Org.Get(); ok {
+			setClauses["org"] = v
+		}
+		if v, ok := input.ParentID.Get(); ok {
+			setClauses["parent_id"] = v
+		}
+		if v, ok := input.GuardianID.Get(); ok {
+			setClauses["guardian_id"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetSharedKidsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[SharedKidFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan updated shared_kid id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetSharedKidsInput{
+			Filter: &SharedKidFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SharedKidFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update shared_kids where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedKid), nil
+}
+
+// HardDelete permanently removes a shared_kid from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *sharedKidClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[SharedKidFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableSharedKids, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       hardConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		var matched int
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan deleted shared_kid tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete shared_kid: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple shared_kids from the database.
+func (c *sharedKidClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[SharedKidFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableSharedKids, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var scopeConds []sql.Condition
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Every sub-batch records the tenant of each row it touches, so cache
+		// invalidation and event stamping rebuild tenant-scoped keys from the
+		// rows themselves.
+		tenantByPK := make(map[int64]any, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+			hardConds = append(hardConds, scopeConds...)
+
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id", "workspace_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchTenants := make(map[int64]any, end-start)
+			for rows.Next() {
+				var rowID int64
+				var rowTenant uuid.UUID
+				if err := rows.Scan(&rowID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted shared_kid tenant: %w", err)
+				}
+				batchTenants[rowID] = rowTenant
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many shared_kids: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all shared_kids matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *sharedKidClient) HardDeleteWhere(ctx context.Context, filter *SharedKidFilter, opts ...func(*CallOptions[SharedKidFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableSharedKids, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan deleted shared_kid id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete shared_kids where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *sharedKidClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
+}
+
+// SharedKidConflictTarget identifies a unique constraint for upsert conflict detection.
+type SharedKidConflictTarget int
+
+const (
+	SharedKidConflictPK SharedKidConflictTarget = iota // PRIMARY KEY (id)
+)
+
+// sharedKidConflictColumns maps each conflict target to its column set.
+var sharedKidConflictColumns = map[SharedKidConflictTarget][]string{
+	SharedKidConflictPK: {"id"},
+}
+
+// Upsert inserts a shared_kid or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *sharedKidClient) Upsert(ctx context.Context, input *CreateSharedKidInput, target SharedKidConflictTarget, opts ...func(*CallOptions[SharedKidFieldOptions])) (*SharedKid, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateSharedKidInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert shared_kid: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableSharedKids, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{}
+		args := []any{}
+		// Tenancy auto-set + mismatch check. apply=false under
+		// tenancy.required:false + zero resolver falls through to the
+		// caller-supplied value branch.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// (single-resolve). The resolver's answer is cached, not
+			// this table's reading of it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+		}
+
+		if v, ok := input.Org.Get(); ok {
+			columns = append(columns, "org")
+			args = append(args, v)
+		}
+
+		if v, ok := input.ParentID.Get(); ok {
+			columns = append(columns, "parent_id")
+			args = append(args, v)
+		}
+
+		if v, ok := input.GuardianID.Get(); ok {
+			columns = append(columns, "guardian_id")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := sharedKidConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SharedKidFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert shared_kid: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SharedKid), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves
+// the generated primary key, also capturing the row's tenant column so cache
+// invalidation and event stamping can rebuild the tenant-scoped key from the
+// row itself. On the conflict-update path the existing row keeps
+// its tenant, so the captured value (not the input) is authoritative.
+func (c *sharedKidClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id", "workspace_id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	var id int64
+	var rowTenant uuid.UUID
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id, &rowTenant)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	if found {
+		return id, rowTenant, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *sharedKidClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, any, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, nil, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id", "workspace_id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+
+	var id int64
+	var rowTenant uuid.UUID
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, nil, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, nil, ErrNotFound
+	}
+	// BuildSelect emits its column list sorted, which need not match the order
+	// the columns were requested in, so bind the scan targets by name rather
+	// than by position — the same rule scanSharedKids follows.
+	cols, err := rows.Columns()
+	if err != nil {
+		return 0, nil, err
+	}
+	targets := make([]any, len(cols))
+	for i, col := range cols {
+		switch col {
+		case "id":
+			targets[i] = &id
+		case "workspace_id":
+			targets[i] = &rowTenant
+		}
+	}
+	if err := rows.Scan(targets...); err != nil {
+		return 0, nil, err
+	}
+	return id, rowTenant, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple shared_kids in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// shared_kids.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *sharedKidClient) UpsertMany(ctx context.Context, inputs []*CreateSharedKidInput, target SharedKidConflictTarget, opts ...func(*CallOptions[SharedKidFieldOptions])) ([]*SharedKid, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many shared_kids: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableSharedKids, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*SharedKid{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"workspace_id", "org", "parent_id", "guardian_id"}
+		conflictColumns := sharedKidConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateSharedKidInput, 0, len(inputs))
+		var rowIDs []int64
+		// Filled from the rows themselves after each sub-batch; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from each row's own tenant value. A
+		// conflict leaves the existing row's tenant in place, so the input's
+		// value is not authoritative the way it is for CreateMany.
+		var rowTenants []any
+		for _, input := range inputs {
+			// Tenancy auto-set + mismatch check.
+			// applyTenancy=false under SkipTenancy OR under required:false
+			// + zero resolver — caller-supplied tenant is used, else the DB
+			// NOT NULL constraint surfaces.
+			var workspaceID any
+			if applyTenancy {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				workspaceID = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				workspaceID = v
+			} else {
+				return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+			}
+			var org any = sql.Default
+			if v, ok := input.Org.Get(); ok {
+				org = v
+			}
+			var parentID any = sql.Default
+			if v, ok := input.ParentID.Get(); ok {
+				parentID = v
+			}
+			var guardianID any = sql.Default
+			if v, ok := input.GuardianID.Get(); ok {
+				guardianID = v
+			}
+
+			valueRows = append(valueRows, []any{
+				workspaceID,
+				org,
+				parentID,
+				guardianID,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateSharedKidInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, batchTenants, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+		m.AffectedTenants = rowTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetSharedKidsInput{
+			Filter: &SharedKidFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SharedKidFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many shared_kids: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedKid), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key and tenant in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// shared_kids.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *sharedKidClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, []any, error) {
+	if len(rows) == 0 {
+		return nil, nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level sharedKidConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanSharedKids
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id", "workspace_id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	found, err := scanSharedKids(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk     int64
+		tenant any
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = sharedKidColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID, tenant: entity.WorkspaceID}
+	}
+
+	pks := make([]int64, len(rows))
+	tenants := make([]any, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+		tenants[i] = resolved.tenant
+	}
+	return pks, tenants, nil
+}
+
+// sharedKidColumnValue returns one column's value off a scanned
+// SharedKid, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanSharedKids.
+func sharedKidColumnValue(s *SharedKid, column string) any {
+	switch column {
+	case "id":
+		return s.ID
+	case "workspace_id":
+		return s.WorkspaceID
+	case "org":
+		return s.Org
+	case "parent_id":
+		return s.ParentID
+	case "guardian_id":
+		return s.GuardianID
+	}
+	return nil
+}
+
+// Exists returns true if a shared_kid with the given primary key exists.
+func (c *sharedKidClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[SharedKidFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableSharedKids, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips both the verify-match and the filter append.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists shared_kid: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any shared_kid matches the given filter.
+func (c *sharedKidClient) ExistsWhere(ctx context.Context, filter *SharedKidFilter, opts ...func(*CallOptions[SharedKidFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableSharedKids, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant probe).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists shared_kids where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of shared_kids matching the given filter.
+// A nil filter counts all shared_kids.
+func (c *sharedKidClient) Count(ctx context.Context, filter *SharedKidFilter, opts ...func(*CallOptions[SharedKidFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableSharedKids, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant count).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count shared_kids: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of shared_kids with total count for offset-based pagination.
+// A nil filter paginates all shared_kids.
+func (c *sharedKidClient) Paginate(ctx context.Context, input PaginateInput[SharedKidFilter], opts ...func(*CallOptions[SharedKidFieldOptions])) (*PaginateResult[SharedKid], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate shared_kids: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableSharedKids, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SharedKidFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		sharedKids, err := c.GetMany(ctx, &GetSharedKidsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[SharedKid]{
+			Items:      sharedKids,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate shared_kids: %w", err)
+	}
+	return result.(*PaginateResult[SharedKid]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of shared_kids.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *sharedKidClient) Connection(ctx context.Context, input ConnectionInput[SharedKidFilter], opts ...func(*CallOptions[SharedKidFieldOptions])) (*Connection[SharedKid], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection shared_kids: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableSharedKids, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SharedKidFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeSharedKidCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeSharedKidCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		sharedKids, err := c.GetMany(ctx, &GetSharedKidsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(sharedKids) > limit
+		if hasMore {
+			sharedKids = sharedKids[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(sharedKids)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[SharedKid], len(sharedKids))
+		for i, row := range sharedKids {
+			cursor, err := encodeSharedKidCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[SharedKid]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[SharedKid]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection shared_kids: %w", err)
+	}
+	return result.(*Connection[SharedKid]), nil
+}
+
+// encodeSharedKidCursor encodes cursor key values as a base64 JSON string.
+func encodeSharedKidCursor(keys []string, s *SharedKid) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = s.ID
+		case "workspace_id":
+			out["workspace_id"] = s.WorkspaceID
+		case "org":
+			out["org"] = s.Org
+		case "parent_id":
+			out["parent_id"] = s.ParentID
+		case "guardian_id":
+			out["guardian_id"] = s.GuardianID
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode shared_kid cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeSharedKidCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeSharedKidCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row SharedKid
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamSharedKidsInput holds query parameters for streaming shared_kids records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamSharedKidsInput struct {
+	Filter *SharedKidFilter `json:"filter"`
+	Sorts  []sql.Sort       `json:"sorts"`
+}
+
+// StreamSharedKidFieldOptions controls scalar column selection for shared_kids streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamSharedKidFieldOptions struct {
+	ID          bool `json:"id"`
+	WorkspaceID bool `json:"workspace_id"`
+	Org         bool `json:"org"`
+	ParentID    bool `json:"parent_id"`
+	GuardianID  bool `json:"guardian_id"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamSharedKidFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.Org {
+		cols = append(cols, "org")
+	}
+	if fo.ParentID {
+		cols = append(cols, "parent_id")
+	}
+	if fo.GuardianID {
+		cols = append(cols, "guardian_id")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamSharedKidFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.Org {
+		return true
+	}
+	if fo.ParentID {
+		return true
+	}
+	if fo.GuardianID {
+		return true
+	}
+	return false
+}
+
+// scanSharedKidRow scans a single row into a SharedKid entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanSharedKidRow(rows database.Rows, columns []string) (*SharedKid, error) {
+	s := &SharedKid{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &s.ID
+		case "workspace_id":
+			targets[idx] = &s.WorkspaceID
+		case "org":
+			targets[idx] = &s.Org
+		case "parent_id":
+			targets[idx] = &s.ParentID
+		case "guardian_id":
+			targets[idx] = &s.GuardianID
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan shared_kid: %w", err)
+	}
+
+	return s, nil
+}
+
+// Stream returns an iterator over shared_kids matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *sharedKidClient) Stream(ctx context.Context, input *StreamSharedKidsInput, opts ...func(*CallOptions[StreamSharedKidFieldOptions])) iter.Seq2[*SharedKid, error] {
+	return func(yield func(*SharedKid, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamSharedKidsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream shared_kids: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *SharedKid, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream shared_kids: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableSharedKids, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := sharedKidAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					emit(nil, fmt.Errorf("resolve tenant: %w", err))
+					return nil, nil
+				}
+				if apply {
+					conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				s, err := scanSharedKidRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(s, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate shared_kid rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream shared_kids: %w", err))
+		}
+	}
+}
+
+// SharedKidFilter provides type-safe filtering for the shared_kids table.
+type SharedKidFilter struct {
+	GuardianID  *comparator.NullableNumber[int64] `json:"guardian_id"`
+	ID          *comparator.Number[int64]         `json:"id"`
+	Org         *comparator.NullableString        `json:"org"`
+	ParentID    *comparator.NullableNumber[int64] `json:"parent_id"`
+	WorkspaceID *comparator.ID                    `json:"workspace_id"`
+	And         []*SharedKidFilter                `json:"and"`
+	Or          []*SharedKidFilter                `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *SharedKidFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.GuardianID != nil {
+		conds = append(conds, f.GuardianID.Parse(dialect.QuoteIdentifier("guardian_id"), dialect)...)
+	}
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Org != nil {
+		conds = append(conds, f.Org.Parse(dialect.QuoteIdentifier("org"), dialect)...)
+	}
+
+	if f.ParentID != nil {
+		conds = append(conds, f.ParentID.Parse(dialect.QuoteIdentifier("parent_id"), dialect)...)
+	}
+
+	if f.WorkspaceID != nil {
+		conds = append(conds, f.WorkspaceID.Parse(dialect.QuoteIdentifier("workspace_id"), dialect)...)
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// SharedKidFieldOptions controls column selection and relationship loading for shared_kids queries.
+type SharedKidFieldOptions struct {
+	ID          bool `json:"id"`
+	WorkspaceID bool `json:"workspace_id"`
+	Org         bool `json:"org"`
+	ParentID    bool `json:"parent_id"`
+	GuardianID  bool `json:"guardian_id"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *SharedKidFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.Org {
+		cols = append(cols, "org")
+	}
+	if fo.ParentID {
+		cols = append(cols, "parent_id")
+	}
+	if fo.GuardianID {
+		cols = append(cols, "guardian_id")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *SharedKidFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":          "id",
+		"WorkspaceID": "workspace_id",
+		"Org":         "org",
+		"ParentID":    "parent_id",
+		"GuardianID":  "guardian_id",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *SharedKidFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.Org {
+		return true
+	}
+	if fo.ParentID {
+		return true
+	}
+	if fo.GuardianID {
+		return true
+	}
+	return false
+}
+
+// CreateSharedKidInput holds the fields for creating a shared_kids record.
+type CreateSharedKidInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	Org         omittable.Value[*string]   `json:"org,omitzero"`
+	ParentID    omittable.Value[*int64]    `json:"parent_id,omitzero"`
+	GuardianID  omittable.Value[*int64]    `json:"guardian_id,omitzero"`
+}
+
+// UpdateSharedKidInput holds the fields for updating a shared_kids record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateSharedKidInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	Org         omittable.Value[*string]   `json:"org,omitzero"`
+	ParentID    omittable.Value[*int64]    `json:"parent_id,omitzero"`
+	GuardianID  omittable.Value[*int64]    `json:"guardian_id,omitzero"`
+}
+
+// GetSharedKidsInput holds query parameters for retrieving shared_kids records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetSharedKidsInput struct {
+	Filter *SharedKidFilter `json:"filter"`
+	Limit  *int             `json:"limit"`
+	Offset *int             `json:"offset"`
+	Sorts  []sql.Sort       `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type SharedParent struct {
+	ID          int64     `db:"id" json:"id"`
+	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
+	Org         string    `db:"org" json:"org"`
+
+	// SharedKids - one-to-many relationship with the shared_kids table.
+	SharedKids []*SharedKid `db:"-" json:"shared_kids"`
+}
+
+// SharedParentClient provides type-safe operations for the shared_parents table.
+type SharedParentClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single sharedParent by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error)
+
+	// GetMany returns shared_parents matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetSharedParentsInput, opts ...func(*CallOptions[SharedParentFieldOptions])) ([]*SharedParent, error)
+
+	// Exists returns true if a sharedParent with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[SharedParentFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any sharedParent matches the given filter.
+	ExistsWhere(ctx context.Context, filter *SharedParentFilter, opts ...func(*CallOptions[SharedParentFieldOptions])) (bool, error)
+
+	// Count returns the number of shared_parents matching the given filter.
+	Count(ctx context.Context, filter *SharedParentFilter, opts ...func(*CallOptions[SharedParentFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new sharedParent and returns the created entity.
+	Create(ctx context.Context, input *CreateSharedParentInput, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error)
+
+	// CreateMany inserts multiple shared_parents in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateSharedParentInput, opts ...func(*CallOptions[SharedParentFieldOptions])) ([]*SharedParent, error)
+
+	// Update partially updates a sharedParent by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateSharedParentInput, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error)
+
+	// UpdateMany updates multiple shared_parents and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateSharedParentItem, opts ...func(*CallOptions[SharedParentFieldOptions])) ([]*SharedParent, error)
+
+	// UpdateWhere updates all shared_parents matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *SharedParentFilter, input *UpdateSharedParentInput, opts ...func(*CallOptions[SharedParentFieldOptions])) ([]*SharedParent, error)
+
+	// Upsert inserts a sharedParent or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateSharedParentInput, target SharedParentConflictTarget, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error)
+
+	// UpsertMany inserts or updates multiple shared_parents in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateSharedParentInput, target SharedParentConflictTarget, opts ...func(*CallOptions[SharedParentFieldOptions])) ([]*SharedParent, error)
+
+	// CreateWithRelated creates a sharedParent together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateSharedParentWithRelatedInput, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error)
+
+	// UpdateWithRelated updates a sharedParent together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdateSharedParentWithRelatedInput, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error)
+
+	// UpsertWithRelated inserts or updates a sharedParent together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertSharedParentWithRelatedInput, target SharedParentConflictTarget, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a sharedParent from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[SharedParentFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple shared_parents from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[SharedParentFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all shared_parents matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *SharedParentFilter, opts ...func(*CallOptions[SharedParentFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of shared_parents with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[SharedParentFilter], opts ...func(*CallOptions[SharedParentFieldOptions])) (*PaginateResult[SharedParent], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of shared_parents.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[SharedParentFilter], opts ...func(*CallOptions[SharedParentFieldOptions])) (*Connection[SharedParent], error)
+
+	// Stream returns an iterator over shared_parents matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamSharedParentsInput, opts ...func(*CallOptions[StreamSharedParentFieldOptions])) iter.Seq2[*SharedParent, error]
+}
+
+// sharedParentClient implements the SharedParentClient interface.
+type sharedParentClient struct {
+	querier               database.Querier
+	dialect               sql.Dialect
+	table                 sql.Table
+	batchSize             int
+	queryLimit            int
+	pageSize              int
+	cursorKeys            []string
+	strictUpdates         bool
+	mutationHooks         []hook.MutationHook
+	queryHooks            []hook.QueryHook
+	panicHandler          hook.PanicHandler
+	callbackMode          database.CallbackMode
+	tenantResolver        tenancy.TenantResolver[uuid.UUID]
+	sharedKidsDefaultSort []sql.Sort
+	sharedKidClient       *sharedKidClient
+}
+
+// newSharedParentClient creates a new sharedParentClient.
+func newSharedParentClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *sharedParentClient {
+	return &sharedParentClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "shared_parents"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *sharedParentClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *sharedParentClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// resolveTenant reads the operation's tenant from tenantValue and applies THIS
+// table's tenancy.required setting to it, returning the value, a bool
+// indicating whether tenancy should be applied to this call, and any resolver
+// error. The split matters: tenantValue's answer is shared across every client
+// the operation touches, while the apply bool below is this table's alone
+// (required is a per-table setting). The apply bool encodes the
+// tenancy.required semantic:
+//
+//   - Non-zero resolver return → apply=true; callers AND the filter into the
+//     WHERE (reads), verify-match against caller-supplied tenant (mutations),
+//     and auto-set the tenant column on INSERT.
+//   - Zero resolver return (resolver returned (zero, nil) or is nil) under
+//     tenancy.required:true → apply=false, err=tenancy.ErrMissing. The op
+//     fails closed before the DB round-trip.
+//   - Zero resolver return under tenancy.required:false → apply=false, err=nil.
+//     The op silently becomes cross-tenant: no filter append, no verify-match,
+//     no auto-set. This is the "missing tenant skips the filter" path
+//     — always-off rather than a silent zero-value write.
+//   - Resolver returns a non-nil error → apply=false, err propagated.
+//
+// Required-at-codegen determinism: the required:true vs required:false branch
+// is picked at template-expansion time per-table, from the table's resolved
+// tenancy config. Runtime callers observe a stable behavior per table.
+//
+// explicit carries CallOptions.Tenant (the explicit-tenant resolution
+// mode): when non-nil, tenancy behaves as normal resolution with
+// the resolver replaced by this constant — filter, auto-set, and verify-match
+// all apply. Precedence over SkipTenancy is normalized in
+// resolveCallOptions, so callers gate on SkipTenancy exactly as before. The
+// pointer distinguishes set from unset; a set zero value is honored verbatim.
+func (c *sharedParentClient) resolveTenant(ctx context.Context, explicit *uuid.UUID) (uuid.UUID, bool, error) {
+	if explicit != nil {
+		return *explicit, true, nil
+	}
+	var zero uuid.UUID
+	v, err := c.tenantValue(ctx)
+	if err != nil {
+		return zero, false, err
+	}
+	if v == zero {
+		return zero, false, tenancy.ErrMissing
+	}
+	return v, true, nil
+}
+
+// tenantValue returns the tenant the user resolver reports for this operation,
+// invoking it at most once per logical operation.
+//
+// It answers the table-independent half of the question and stops there: what
+// the resolver said. The tenancy.required reading of that answer — zero means
+// ErrMissing, or zero means skip the filter — belongs to resolveTenant above,
+// because `required` is a per-table setting while this value is
+// shared across every client the operation touches.
+//
+// Keeping the two apart is load-bearing rather than tidy. The ctx cache is
+// keyed on the tenant type alone, so it is one slot for the whole package;
+// caching the reading instead of the answer let whichever table resolved first
+// impose its `required` on the rest, and a required:false table handing
+// apply=false to a required:true one is a fail-open. A nil resolver
+// yields the zero value and the same per-table branch a zero return takes.
+func (c *sharedParentClient) tenantValue(ctx context.Context) (uuid.UUID, error) {
+	// Short-circuit: an entry point for this logical operation — a chaining
+	// mutation (Create, Update, Upsert, …) or a nested method's hoist — already
+	// resolved and stashed the value via tenancy.WithResolvedTenant. Lookup
+	// uses the same comparable T as the resolver, so collisions across entity
+	// clients with different tenant types are impossible.
+	if v, ok := tenancy.CachedTenant[uuid.UUID](ctx); ok {
+		return v, nil
+	}
+	if c.tenantResolver == nil {
+		var zero uuid.UUID
+		return zero, nil
+	}
+	return c.tenantResolver(ctx)
+}
+
+// filterOptions resolves the FilterOption set this client's filters need to
+// compile their relationship members. A relationship filter is a
+// read of the related table, so the target's tenant predicate goes inside the
+// EXISTS subquery — otherwise the filter would be a cross-tenant existence
+// probe on rows the caller cannot otherwise see.
+//
+// The resolve is gated on filter, not performed unconditionally, because the
+// option set is read only by the EXISTS helpers: a filter that sets no
+// relationship member compiles identically with or without it. Resolving anyway
+// would import the tenant's failure modes into calls that have no tenanted
+// component at all — on a shared table the outer WHERE is
+// never tenant-scoped, so a resolver that reports a missing tenant as an error
+// would reject every read that legitimately runs before a tenant is selected.
+//
+// Beyond that gate, nil is the correct answer in exactly the cases where the
+// table's own WHERE gets no tenant filter either: SkipTenancy, and a zero
+// resolver result under tenancy.required:false. The subquery is then unscoped
+// by the same decision that leaves the outer statement unscoped.
+func (c *sharedParentClient) filterOptions(ctx context.Context, filter *SharedParentFilter, skipTenancy bool, explicit *uuid.UUID) ([]FilterOption, error) {
+	if skipTenancy || !filter.usesRelationshipFilter() {
+		return nil, nil
+	}
+	tenant, apply, err := c.resolveTenant(ctx, explicit)
+	if err != nil {
+		return nil, err
+	}
+	if !apply {
+		return nil, nil
+	}
+	return []FilterOption{WithFilterTenant(tenant)}, nil
+}
+
+// sharedParentAllColumns is the column list for full-entity reads, sorted for determinism.
+var sharedParentAllColumns = []string{"id", "org", "workspace_id"}
+
+// scanSharedParents scans rows into SharedParent entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanSharedParents(rows database.Rows, columns []string) ([]*SharedParent, error) {
+	var result []*SharedParent
+	for rows.Next() {
+		s := &SharedParent{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &s.ID
+			case "workspace_id":
+				targets[idx] = &s.WorkspaceID
+			case "org":
+				targets[idx] = &s.Org
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan shared_parent: %w", err)
+		}
+
+		result = append(result, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate shared_parent rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single shared_parent by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *sharedParentClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get shared_parent: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableSharedParents, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	// Resolve tenant once at the entity-method boundary so the
+	// cache read-through hook can build a tenant-scoped key. The terminal
+	// (and the internal GetMany) sees the same value via q.Tenant. apply=false
+	// under tenancy.required:false + zero resolver skips both qctx.Tenant and
+	// the verify-match (cross-tenant read).
+	if !options.SkipTenancy {
+		resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+		if err != nil {
+			return nil, fmt.Errorf("get shared_parent: resolve tenant: %w", err)
+		}
+		if apply {
+			qctx.Tenant = resolvedTenant
+		}
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[SharedParentFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SharedParentFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		sharedParents, err := c.GetMany(ctx, &GetSharedParentsInput{
+			Filter: &SharedParentFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(sharedParents) == 0 {
+			return nil, ErrNotFound
+		}
+		return sharedParents[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get shared_parent: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SharedParent), nil
+}
+
+// GetMany returns shared_parents matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *sharedParentClient) GetMany(ctx context.Context, input *GetSharedParentsInput, opts ...func(*CallOptions[SharedParentFieldOptions])) ([]*SharedParent, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetSharedParentsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get many shared_parents: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableSharedParents, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := sharedParentAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "org", "id")
+				}
+			}
+		}
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect, filterOpts...)
+		}
+
+		// Tenancy auto-filter — append tenant = resolved to WHERE.
+		// apply=false under tenancy.required:false + zero resolver skips the
+		// filter (cross-tenant read).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var sharedParents []*SharedParent
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		sharedParents, err = scanSharedParents(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, sharedParents, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return sharedParents, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many shared_parents: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedParent), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the org and id columns into a narrowed projection when one is:
+// loadRelationships maps every child back through s.Org and s.ID, which
+// an unselected column would leave at its zero value.
+func (fo *SharedParentFieldOptions) loadsRelationships() bool {
+	if fo.SharedKids != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache, SkipEvents, SkipTenancy and Tenant. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// A child that fell back to the ctx resolver instead of the parent's explicit
+// Tenant would read the two halves of one row set under two tenants, and on the
+// explicit-tenant bootstrap path, where ctx carries no tenant at all, fail with
+// tenancy.ErrMissing while the parent succeeded.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *sharedParentClient) loadRelationships(ctx context.Context, conn database.Querier, sharedParents []*SharedParent, options CallOptions[SharedParentFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.SharedKids != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			sharedParentKeyed := make([]*SharedParent, 0, len(sharedParents))
+			sharedParentKeys := make([][]any, 0, len(sharedParents))
+			for _, s := range sharedParents {
+				sharedParentKeyed = append(sharedParentKeyed, s)
+				sharedParentKeys = append(sharedParentKeys, []any{s.Org, s.ID})
+			}
+
+			sorts := fo.SharedKids.Sorts
+			if len(sorts) == 0 {
+				sorts = c.sharedKidsDefaultSort
+			}
+
+			// Load via related entity client, 4000 parent keys per
+			// statement: within half the dialect's bind-parameter limit, leaving
+			// the rest for the relationship's filters. Each parent's children come
+			// from one statement, so the sorts order every parent's slice.
+			var relatedSharedKids []*SharedKid
+			for start := 0; start < len(sharedParentKeys); start += 4000 {
+				chunk := sharedParentKeys[start:min(start+4000, len(sharedParentKeys))]
+
+				// The consumer filter is ANDed in, so a soft-delete comparator
+				// in it narrows the child's default rather than replacing it.
+				filter := &SharedKidFilter{}
+				if fo.SharedKids.Filter != nil {
+					filter.And = append(filter.And, fo.SharedKids.Filter)
+				}
+
+				loaded, err := c.sharedKidClient.GetMany(ctx, &GetSharedKidsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					conditions: []sql.Condition{
+						sql.BuildCompositePKBatchCondition(c.dialect, []string{"org", "parent_id"}, chunk),
+					},
+					// The mapping below keys every child on its FK columns, so the
+					// fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"org", "parent_id"},
+				}, func(co *CallOptions[SharedKidFieldOptions]) {
+					co.FieldOptions = fo.SharedKids.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+					co.SkipTenancy = options.SkipTenancy
+					co.Tenant = options.Tenant
+				})
+				if err != nil {
+					return fmt.Errorf("load shared_parent shared_kids: %w", err)
+				}
+				relatedSharedKids = append(relatedSharedKids, loaded...)
+			}
+
+			// Map results back to parent entities on every key column. A child
+			// with a NULL member references no parent.
+			byKey := make(map[[2]string][]*SharedKid)
+			for _, r := range relatedSharedKids {
+				if !(r.Org != nil && r.ParentID != nil) {
+					continue
+				}
+				key := [2]string{(*r.Org), fmt.Sprint((*r.ParentID))}
+				byKey[key] = append(byKey[key], r)
+			}
+			for _, parent := range sharedParentKeyed {
+				parent.SharedKids = byKey[[2]string{parent.Org, fmt.Sprint(parent.ID)}]
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new shared_parent and returns the created entity.
+func (c *sharedParentClient) Create(ctx context.Context, input *CreateSharedParentInput, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateSharedParentInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create shared_parent: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableSharedParents, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"org"}
+		args := []any{input.Org}
+		// Tenancy auto-set + mismatch check. Caller-set tenant on
+		// the input is tolerated only when it matches the resolved value — any
+		// mismatch returns ErrMismatch before the DB round-trip. apply=false
+		// under tenancy.required:false + zero resolver falls through to the
+		// SkipTenancy-style branch: caller-supplied value wins, no auto-set,
+		// no verify-match (the DB NOT NULL constraint surfaces if the input is
+		// also empty).
+		// capturedTenant carries the tenant value written to the row into
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// the tenant-scoped key from the row itself, independent of how (or
+		// whether) the tenant was resolved. Stays nil only when
+		// no tenant value reaches the INSERT (a DB default fills the column).
+		var capturedTenant any
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read (Get, or GetMany
+			// on a soft-delete table) reuses this value instead of
+			// re-invoking the user resolver — single-resolve. What is cached is the
+			// resolver's answer, not this table's reading of it: a zero return
+			// is cached as a zero, and each table downstream re-applies its own
+			// tenancy.required branch to it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash resolved tenant on MutationContext so the cache hook
+				// builds tenant-scoped keys without re-invoking the resolver
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+				capturedTenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value is used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+				capturedTenant = v
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			// SkipTenancy:true — caller must explicitly set the tenant value.
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+			capturedTenant = v
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SharedParentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create shared_parent: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SharedParent), nil
+}
+
+// CreateMany inserts multiple shared_parents in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *sharedParentClient) CreateMany(ctx context.Context, inputs []*CreateSharedParentInput, opts ...func(*CallOptions[SharedParentFieldOptions])) ([]*SharedParent, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many shared_parents: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableSharedParents, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*SharedParent{}, nil
+		}
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// (and the per-input verify-match short-circuits via the cache)
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// Filled in lockstep with the PK slice above; feeds m.AffectedTenants
+		// so cache invalidation and event stamping rebuild tenant-scoped keys
+		// from each row's own tenant value.
+		var allTenants []any
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"workspace_id", "org"}
+			var valueRows [][]any
+			for _, input := range batch {
+				// Tenancy auto-set + mismatch check.
+				// applyTenancy=false under SkipTenancy OR under required:false
+				// + zero resolver — caller-supplied tenant is used, else the DB
+				// NOT NULL constraint surfaces.
+				// The allTenants append below relies on the tenant-∉-PK column
+				// always being an omittable CreateInput field (promoted by
+				// attachTenancyToTables) so exactly one carrier element is
+				// appended per input, in lockstep with the PK slice.
+				var workspaceID any
+				if applyTenancy {
+					if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+					workspaceID = resolvedTenant
+				} else if v, ok := input.WorkspaceID.Get(); ok {
+					workspaceID = v
+				} else {
+					return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+				}
+				allTenants = append(allTenants, workspaceID)
+
+				valueRows = append(valueRows, []any{
+					workspaceID,
+					input.Org,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+		m.AffectedTenants = allTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetSharedParentsInput{
+			Filter: &SharedParentFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SharedParentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many shared_parents: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedParent), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *sharedParentClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *sharedParentClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan shared_parent id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a shared_parent by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *sharedParentClient) Update(ctx context.Context, id int64, input *UpdateSharedParentInput, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update shared_parent: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableSharedParents, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Tenancy mismatch check before any SQL build. applyTenancy
+		// is false under SkipTenancy OR under required:false + zero resolver —
+		// in the second case the WHERE below also drops the tenant predicate.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		// Tenant column excluded from SET under normal operation.
+		// Honored when the caller opted out via SkipTenancy OR when
+		// required:false + zero resolver opted out of tenancy for this call.
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.Org.Get(); ok {
+			setClauses["org"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[SharedParentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+		updateConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if applyTenancy {
+			updateConds = append(updateConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+		}
+
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       updateConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		matched := 0
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan updated shared_parent tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SharedParentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update shared_parent: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SharedParent), nil
+}
+
+// UpdateSharedParentItem pairs a primary key with an update input for batch updates.
+type UpdateSharedParentItem struct {
+	ID    int64                    `json:"id"`
+	Input *UpdateSharedParentInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple shared_parents and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
+func (c *sharedParentClient) UpdateMany(ctx context.Context, items []UpdateSharedParentItem, opts ...func(*CallOptions[SharedParentFieldOptions])) ([]*SharedParent, error) {
+	// UpdateSharedParentItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many shared_parents: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableSharedParents, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*SharedParent{}, nil
+		}
+
+		// Resolve the tenant once; per-item mismatch checks use the same value.
+		// applyTenancy=false under SkipTenancy OR under required:false + zero
+		// resolver — the per-item verify-match and per-row WHERE both drop.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the per-item verify-match short-circuits via the
+			// cache and the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				for _, item := range items {
+					if v, ok := item.Input.WorkspaceID.Get(); ok && v != resolvedTenant {
+						return nil, tenancy.ErrMismatch
+					}
+				}
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateSharedParentItem
+		// Per-item RETURNING captures each updated row's tenant; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from the rows themselves.
+		tenantByPK := make(map[int64]any, len(items))
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			var queuedItems []UpdateSharedParentItem
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if !applyTenancy {
+					if v, ok := item.Input.WorkspaceID.Get(); ok {
+						setClauses["workspace_id"] = v
+					}
+				}
+				if v, ok := item.Input.Org.Get(); ok {
+					setClauses["org"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.ID)
+					continue
+				}
+				itemConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)}
+				if applyTenancy {
+					itemConds = append(itemConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses:       setClauses,
+					Conditions:       itemConds,
+					ReturningColumns: []string{"workspace_id"},
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
+				allIDs = append(allIDs, item.ID)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise.
+			// Each statement RETURNING-projects the row's tenant; the scan
+			// below captures it per queued PK.
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for i := range pgxBatch.Len() {
+						rows, err := br.Query()
+						if err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						matched := 0
+						for rows.Next() {
+							var rowTenant uuid.UUID
+							if err := rows.Scan(&rowTenant); err != nil {
+								rows.Close()
+								br.Close()
+								return nil, fmt.Errorf("scan updated shared_parent tenant: %w", err)
+							}
+							tenantByPK[queuedItems[i].ID] = rowTenant
+							matched++
+						}
+						if err := rows.Err(); err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						rows.Close()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close batch: %w", err)
+					}
+				} else {
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_shared_parent", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							rows, err := conn.Query(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							matched := 0
+							for rows.Next() {
+								var rowTenant uuid.UUID
+								if err := rows.Scan(&rowTenant); err != nil {
+									rows.Close()
+									return fmt.Errorf("scan updated shared_parent tenant: %w", err)
+								}
+								tenantByPK[queuedItems[i].ID] = rowTenant
+								matched++
+							}
+							if err := rows.Err(); err != nil {
+								rows.Close()
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							rows.Close()
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
+						}
+						return nil
+					}); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		affectedTenants := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+			affectedTenants[i] = tenantByPK[item.ID]
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetSharedParentsInput{
+			Filter: &SharedParentFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SharedParentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many shared_parents: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedParent), nil
+}
+
+// UpdateWhere updates all shared_parents matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *sharedParentClient) UpdateWhere(ctx context.Context, filter *SharedParentFilter, input *UpdateSharedParentInput, opts ...func(*CallOptions[SharedParentFieldOptions])) ([]*SharedParent, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update shared_parents where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableSharedParents, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		conds := filter.ToConditions(c.dialect, filterOpts...)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Tenancy filter + mismatch check. applyTenancy=false
+		// under SkipTenancy OR under required:false + zero resolver — the
+		// filter is not AND'd and the SET-clause tenant override below fires
+		// (only meaningful when the tenant column is NOT in the PK; when it
+		// is, the column is excluded from UpdateInputFields entirely).
+		applyTenancy := false
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// — single-resolve.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if !applyTenancy {
+			if v, ok := input.WorkspaceID.Get(); ok {
+				setClauses["workspace_id"] = v
+			}
+		}
+		if v, ok := input.Org.Get(); ok {
+			setClauses["org"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetSharedParentsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[SharedParentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan updated shared_parent id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetSharedParentsInput{
+			Filter: &SharedParentFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SharedParentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update shared_parents where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedParent), nil
+}
+
+// HardDelete permanently removes a shared_parent from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *sharedParentClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[SharedParentFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableSharedParents, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				hardConds = append(hardConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+		// RETURNING the tenant column captures the row's own tenant so cache
+		// invalidation and event stamping can rebuild the tenant-scoped key,
+		// independent of how (or whether) the tenant was resolved.
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       hardConds,
+			ReturningColumns: []string{"workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		var capturedTenant any
+		var matched int
+		for rows.Next() {
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&rowTenant); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan deleted shared_parent tenant: %w", err)
+			}
+			capturedTenant = rowTenant
+			matched++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+			m.AffectedTenants = []any{capturedTenant}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete shared_parent: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple shared_parents from the database.
+func (c *sharedParentClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[SharedParentFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableSharedParents, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var scopeConds []sql.Condition
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				scopeConds = append(scopeConds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Every sub-batch records the tenant of each row it touches, so cache
+		// invalidation and event stamping rebuild tenant-scoped keys from the
+		// rows themselves.
+		tenantByPK := make(map[int64]any, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+			hardConds = append(hardConds, scopeConds...)
+
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id", "workspace_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchTenants := make(map[int64]any, end-start)
+			for rows.Next() {
+				var rowID int64
+				var rowTenant uuid.UUID
+				if err := rows.Scan(&rowID, &rowTenant); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted shared_parent tenant: %w", err)
+				}
+				batchTenants[rowID] = rowTenant
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenTenants(tenantByPK, ids[start:end], batchTenants)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		affectedTenants := make([]any, 0, len(ids))
+		for _, key := range ids {
+			tenant, ok := tenantByPK[key]
+			if !ok {
+				continue
+			}
+			affectedPKs = append(affectedPKs, key)
+			affectedTenants = append(affectedTenants, tenant)
+		}
+		m.AffectedPKs = affectedPKs
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many shared_parents: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all shared_parents matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *sharedParentClient) HardDeleteWhere(ctx context.Context, filter *SharedParentFilter, opts ...func(*CallOptions[SharedParentFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableSharedParents, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		conds := filter.ToConditions(c.dialect, filterOpts...)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id", "workspace_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		var affectedTenants []any
+		for rows.Next() {
+			var id int64
+			var rowTenant uuid.UUID
+			if err := rows.Scan(&id, &rowTenant); err != nil {
+				return nil, fmt.Errorf("scan deleted shared_parent id: %w", err)
+			}
+			ids = append(ids, id)
+			affectedTenants = append(affectedTenants, rowTenant)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		m.AffectedTenants = affectedTenants
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete shared_parents where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenTenants adds to tenantByPK the keys of listed, one sub-batch,
+// that its statement wrote, each with its row's tenant; rowTenants holds the
+// tenant of every row the statement matched, by that row's key. The database
+// matches keys under its own equality — a case-insensitive collation,
+// blank-padded CHAR, a timestamp's stored precision — so a row it matched can
+// carry a key that differs under Go == from every listed key. When it matched
+// more rows than listed keys were found among rowTenants, every key of listed
+// is recorded: a superset, so no written row goes without its cache
+// invalidation and event. A key found under == keeps its own row's tenant;
+// any other takes the tenant the remaining rows share, or none when they
+// carry more than one.
+func (c *sharedParentClient) recordWrittenTenants(tenantByPK map[int64]any, listed []int64, rowTenants map[int64]any) {
+	found := make(map[int64]struct{}, len(rowTenants))
+	for _, key := range listed {
+		if tenant, ok := rowTenants[key]; ok {
+			tenantByPK[key] = tenant
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) == len(rowTenants) {
+		return
+	}
+
+	// The tenant of the rows no listed key found under ==, when they share one.
+	// Tenants compare by their %v form, the form tenant-scoped cache keys use.
+	var shared any
+	for key, tenant := range rowTenants {
+		if _, ok := found[key]; ok {
+			continue
+		}
+		if shared == nil {
+			shared = tenant
+			continue
+		}
+		if fmt.Sprint(shared) != fmt.Sprint(tenant) {
+			shared = nil
+			break
+		}
+	}
+	for _, key := range listed {
+		if _, ok := tenantByPK[key]; !ok {
+			tenantByPK[key] = shared
+		}
+	}
+}
+
+// SharedParentConflictTarget identifies a unique constraint for upsert conflict detection.
+type SharedParentConflictTarget int
+
+const (
+	SharedParentConflictOrgID SharedParentConflictTarget = iota // UNIQUE (org, id)
+	SharedParentConflictPK                                      // PRIMARY KEY (id)
+)
+
+// sharedParentConflictColumns maps each conflict target to its column set.
+var sharedParentConflictColumns = map[SharedParentConflictTarget][]string{
+	SharedParentConflictOrgID: {"org", "id"},
+	SharedParentConflictPK:    {"id"},
+}
+
+// Upsert inserts a shared_parent or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *sharedParentClient) Upsert(ctx context.Context, input *CreateSharedParentInput, target SharedParentConflictTarget, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateSharedParentInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert shared_parent: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableSharedParents, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"org"}
+		args := []any{input.Org}
+		// Tenancy auto-set + mismatch check. apply=false under
+		// tenancy.required:false + zero resolver falls through to the
+		// caller-supplied value branch.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal read reuses this value
+			// (single-resolve). The resolver's answer is cached, not
+			// this table's reading of it.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			if apply {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				columns = append(columns, "workspace_id")
+				args = append(args, resolvedTenant)
+				// Stash for cache hook (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				// required:false + zero resolver — caller-supplied value used.
+				columns = append(columns, "workspace_id")
+				args = append(args, v)
+			}
+		} else if v, ok := input.WorkspaceID.Get(); ok {
+			columns = append(columns, "workspace_id")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := sharedParentConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+
+		id, capturedTenant, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+		m.AffectedTenants = []any{capturedTenant}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SharedParentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert shared_parent: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*SharedParent), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves
+// the generated primary key, also capturing the row's tenant column so cache
+// invalidation and event stamping can rebuild the tenant-scoped key from the
+// row itself. On the conflict-update path the existing row keeps
+// its tenant, so the captured value (not the input) is authoritative.
+func (c *sharedParentClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, any, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id", "workspace_id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	var id int64
+	var rowTenant uuid.UUID
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id, &rowTenant)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	if found {
+		return id, rowTenant, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *sharedParentClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, any, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, nil, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id", "workspace_id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+
+	var id int64
+	var rowTenant uuid.UUID
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, nil, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, nil, ErrNotFound
+	}
+	// BuildSelect emits its column list sorted, which need not match the order
+	// the columns were requested in, so bind the scan targets by name rather
+	// than by position — the same rule scanSharedParents follows.
+	cols, err := rows.Columns()
+	if err != nil {
+		return 0, nil, err
+	}
+	targets := make([]any, len(cols))
+	for i, col := range cols {
+		switch col {
+		case "id":
+			targets[i] = &id
+		case "workspace_id":
+			targets[i] = &rowTenant
+		}
+	}
+	if err := rows.Scan(targets...); err != nil {
+		return 0, nil, err
+	}
+	return id, rowTenant, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple shared_parents in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// shared_parents.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *sharedParentClient) UpsertMany(ctx context.Context, inputs []*CreateSharedParentInput, target SharedParentConflictTarget, opts ...func(*CallOptions[SharedParentFieldOptions])) ([]*SharedParent, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many shared_parents: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableSharedParents, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*SharedParent{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve the tenant once for the entire batch.
+		// applyTenancy encodes both SkipTenancy AND the required:false +
+		// zero-resolver path: when false, the per-input verify-match and
+		// auto-set blocks below fall through to caller-supplied values.
+		var resolvedTenant uuid.UUID
+		applyTenancy := false
+		if !options.SkipTenancy {
+			var err error
+			var apply bool
+			resolvedTenant, apply, err = c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return nil, fmt.Errorf("resolve tenant: %w", err)
+			}
+			// Stash on ctx so the chained terminal GetMany reuses this value
+			// instead of re-invoking the user resolver.
+			// An explicit tenant is not cached: it rides on CallOptions, which
+			// every internal call inherits, and resolveTenant honours it ahead of
+			// the cache. A set zero is honoured verbatim where a resolved
+			// zero takes the required branch, and this slot cannot tell them apart.
+			if options.Tenant == nil {
+				ctx = tenancy.WithResolvedTenant(ctx, resolvedTenant)
+			}
+			applyTenancy = apply
+			if apply {
+				// Stash resolved tenant on MutationContext for the cache hook
+				// (single-resolve per operation).
+				m.Tenant = resolvedTenant
+			}
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"workspace_id", "org"}
+		conflictColumns := sharedParentConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id", "workspace_id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateSharedParentInput, 0, len(inputs))
+		var rowIDs []int64
+		// Filled from the rows themselves after each sub-batch; feeds
+		// m.AffectedTenants so cache invalidation and event stamping rebuild
+		// tenant-scoped keys from each row's own tenant value. A
+		// conflict leaves the existing row's tenant in place, so the input's
+		// value is not authoritative the way it is for CreateMany.
+		var rowTenants []any
+		for _, input := range inputs {
+			// Tenancy auto-set + mismatch check.
+			// applyTenancy=false under SkipTenancy OR under required:false
+			// + zero resolver — caller-supplied tenant is used, else the DB
+			// NOT NULL constraint surfaces.
+			var workspaceID any
+			if applyTenancy {
+				if v, ok := input.WorkspaceID.Get(); ok && v != resolvedTenant {
+					return nil, tenancy.ErrMismatch
+				}
+				workspaceID = resolvedTenant
+			} else if v, ok := input.WorkspaceID.Get(); ok {
+				workspaceID = v
+			} else {
+				return nil, fmt.Errorf("tenant column workspace_id required when SkipTenancy is set or resolver is absent")
+			}
+
+			valueRows = append(valueRows, []any{
+				workspaceID,
+				input.Org,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateSharedParentInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, batchTenants, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+			rowTenants = append(rowTenants, batchTenants...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+		m.AffectedTenants = rowTenants
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetSharedParentsInput{
+			Filter: &SharedParentFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SharedParentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many shared_parents: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*SharedParent), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key and tenant in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// shared_parents.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *sharedParentClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, []any, error) {
+	if len(rows) == 0 {
+		return nil, nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level sharedParentConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanSharedParents
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id", "workspace_id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	found, err := scanSharedParents(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk     int64
+		tenant any
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = sharedParentColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID, tenant: entity.WorkspaceID}
+	}
+
+	pks := make([]int64, len(rows))
+	tenants := make([]any, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+		tenants[i] = resolved.tenant
+	}
+	return pks, tenants, nil
+}
+
+// sharedParentColumnValue returns one column's value off a scanned
+// SharedParent, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanSharedParents.
+func sharedParentColumnValue(s *SharedParent, column string) any {
+	switch column {
+	case "id":
+		return s.ID
+	case "workspace_id":
+		return s.WorkspaceID
+	case "org":
+		return s.Org
+	}
+	return nil
+}
+
+// CreateSharedParentWithRelatedInput holds the fields for creating a shared_parents record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateSharedParentWithRelatedInput struct {
+	// SharedParent holds the parent's own columns — identical to the input Create accepts.
+	SharedParent CreateSharedParentInput `json:"shared_parent"`
+
+	// SharedKids - one-to-many relationship with the shared_kids table.
+	SharedKids *SharedParentSharedKidsCreateNested `json:"shared_kids,omitempty"`
+}
+
+// UpdateSharedParentWithRelatedInput holds the fields for updating a shared_parents record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateSharedParentWithRelatedInput struct {
+	// SharedParent holds the parent's own columns — identical to the input Update accepts.
+	SharedParent UpdateSharedParentInput `json:"shared_parent"`
+
+	// SharedKids - one-to-many relationship with the shared_kids table.
+	SharedKids *SharedParentSharedKidsUpdateNested `json:"shared_kids,omitempty"`
+}
+
+// UpsertSharedParentWithRelatedInput holds the fields for upserting a shared_parents record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateSharedParentInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertSharedParentWithRelatedInput struct {
+	// SharedParent holds the parent's own columns — identical to the input Upsert accepts.
+	SharedParent CreateSharedParentInput `json:"shared_parent"`
+
+	// SharedKids - one-to-many relationship with the shared_kids table.
+	SharedKids *SharedParentSharedKidsUpdateNested `json:"shared_kids,omitempty"`
+}
+
+// SharedParentSharedKidsCreateNested is the create-side verb block for SharedParent.SharedKids.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type SharedParentSharedKidsCreateNested struct {
+	Create  []*SharedParentSharedKidsCreateInput `json:"create,omitempty"`
+	Connect []int64                              `json:"connect,omitempty"`
+}
+
+// SharedParentSharedKidsUpdateNested is the update-side verb block for SharedParent.SharedKids,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type SharedParentSharedKidsUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool                                 `json:"clear,omitempty"`
+	Create     []*SharedParentSharedKidsCreateInput `json:"create,omitempty"`
+	Connect    []int64                              `json:"connect,omitempty"`
+	Disconnect []int64                              `json:"disconnect,omitempty"`
+}
+
+// SharedParentSharedKidsCreateInput is CreateSharedKidInput with the traversed
+// foreign key removed — that column is always set from the parent's primary key,
+// so leaving it would force the caller to supply a value that is then
+// overwritten.
+type SharedParentSharedKidsCreateInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	GuardianID  omittable.Value[*int64]    `json:"guardian_id,omitzero"`
+}
+
+// sharedParentSharedKidsNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func sharedParentSharedKidsNestedFromCreate(n *SharedParentSharedKidsCreateNested) *SharedParentSharedKidsUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &SharedParentSharedKidsUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// sharedParentNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+// The columns the edges' keys reference are forced on too: the nested writes
+// copy them, so a narrowed selection must not leave them zero.
+func sharedParentNestedParentFieldOptions(fo *SharedParentFieldOptions) *SharedParentFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.SharedKids = nil
+	scalars.ID = true
+	scalars.Org = true
+	return &scalars
+}
+
+// sharedParentNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func sharedParentNestedSelectsRelationship(fo *SharedParentFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.SharedKids != nil
+}
+
+// nestedResolvedTenantCtx resolves the tenant once for a whole nested write,
+// before the transaction opens, so every inner call inherits it off ctx instead
+// of re-invoking the user resolver: the tenant resolves at most once per
+// mutation, nested children included. The inner writes route through other
+// entity clients, and the stash each of them makes is scoped to its own
+// hook-handler ctx — it never escapes back here, so without this hoist a
+// two-edge nested write resolved three to ten times.
+//
+// Only the raw resolver value is cached. No tenancy.required branch is taken
+// here, which is what lets a *shared* parent hoist for a tenanted child: each
+// inner call still applies its own table's required setting to the value.
+// Hoisting a decision instead would hand this table's reading of a zero
+// resolver to children configured fail-closed.
+//
+// The other two resolution modes need no hoist and get none: SkipTenancy
+// resolves nothing anywhere, and an explicit tenant already reaches every inner
+// call through nestedChildOptions and short-circuits ahead of the cache.
+func (c *sharedParentClient) nestedResolvedTenantCtx(ctx context.Context, options CallOptions[SharedParentFieldOptions]) (context.Context, error) {
+	if options.SkipTenancy || options.Tenant != nil {
+		return ctx, nil
+	}
+	resolvedTenant, err := c.tenantValue(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return tenancy.WithResolvedTenant(ctx, resolvedTenant), nil
+}
+
+// CreateWithRelated creates a sharedParent together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *sharedParentClient) CreateWithRelated(ctx context.Context, input *CreateSharedParentWithRelatedInput, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create shared_parent with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	// The gate is "some client this method reaches resolves a tenant", not "an
+	// edge target is tenanted": the parent's own terminal re-read resolves
+	// too when the caller selected a relationship.
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("create shared_parent with related: resolve tenant: %w", err)
+	}
+
+	var result *SharedParent
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err = database.WithTransaction(ctx, c.querier, "create_shared_parent_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.SharedParent, func(o *CallOptions[SharedParentFieldOptions]) {
+			*o = options
+			o.FieldOptions = sharedParentNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applySharedParentSharedKidsNested(ctx, parent, sharedParentSharedKidsNestedFromCreate(input.SharedKids), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if sharedParentNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[SharedParentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create shared_parent with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a sharedParent together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *sharedParentClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdateSharedParentWithRelatedInput, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update shared_parent with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("update shared_parent with related: resolve tenant: %w", err)
+	}
+
+	var result *SharedParent
+	err = database.WithTransaction(ctx, c.querier, "update_shared_parent_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.SharedParent, func(o *CallOptions[SharedParentFieldOptions]) {
+			*o = options
+			o.FieldOptions = sharedParentNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applySharedParentSharedKidsNested(ctx, parent, input.SharedKids, options); err != nil {
+			return err
+		}
+
+		if sharedParentNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[SharedParentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update shared_parent with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a sharedParent together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *sharedParentClient) UpsertWithRelated(ctx context.Context, input *UpsertSharedParentWithRelatedInput, target SharedParentConflictTarget, opts ...func(*CallOptions[SharedParentFieldOptions])) (*SharedParent, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert shared_parent with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	ctx, err := c.nestedResolvedTenantCtx(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("upsert shared_parent with related: resolve tenant: %w", err)
+	}
+
+	var result *SharedParent
+	err = database.WithTransaction(ctx, c.querier, "upsert_shared_parent_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.SharedParent, target, func(o *CallOptions[SharedParentFieldOptions]) {
+			*o = options
+			o.FieldOptions = sharedParentNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applySharedParentSharedKidsNested(ctx, parent, input.SharedKids, options); err != nil {
+			return err
+		}
+
+		if sharedParentNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[SharedParentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert shared_parent with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applySharedParentSharedKidsNested applies the SharedParent.SharedKids block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *sharedParentClient) applySharedParentSharedKidsNested(ctx context.Context, parent *SharedParent, nested *SharedParentSharedKidsUpdateNested, options CallOptions[SharedParentFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("SharedKids", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	// The connect adoption's verify read filters on it too.
+	pid0 := parent.Org
+	pid1 := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if _, err := c.sharedKidClient.UpdateWhere(ctx,
+			&SharedKidFilter{
+				Org:      &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+				ParentID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+			},
+			&UpdateSharedKidInput{ParentID: omittable.Set[*int64](nil)},
+			func(o *CallOptions[SharedKidFieldOptions]) {
+				nestedChildOptions(o, options)
+				// Nothing selected — the inner call does not need its result
+				// back, so it skips the read that would hand the rows over.
+				o.FieldOptions = &SharedKidFieldOptions{}
+			}); err != nil {
+			return nestedError("SharedKids", "clear", nil, err)
+		}
+	}
+
+	if len(nested.Create) > 0 {
+		inputs := make([]*CreateSharedKidInput, 0, len(nested.Create))
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("SharedKids", "create", nil, ErrNilInput)
+			}
+			inputs = append(inputs, &CreateSharedKidInput{
+				Org:         omittable.Set(&parent.Org),
+				ParentID:    omittable.Set(&parent.ID),
+				WorkspaceID: n.WorkspaceID,
+				GuardianID:  n.GuardianID,
+			})
+		}
+		if _, err := c.sharedKidClient.CreateMany(ctx, inputs, func(o *CallOptions[SharedKidFieldOptions]) {
+			nestedChildOptions(o, options)
+			// Nothing selected — the inner call does not need its result back,
+			// so it costs one statement rather than a statement plus a read.
+			o.FieldOptions = &SharedKidFieldOptions{}
+		}); err != nil {
+			return nestedError("SharedKids", "create", nil, err)
+		}
+	}
+
+	// connect — adopt unparented rows. The visibility read is not optional:
+	// the UPDATE's row count alone cannot separate "no such row" from "already
+	// parented", and the FK constraint proves a row exists, not that the caller
+	// may see it.
+	if len(connectIDs) > 0 {
+		// Each target's key, as a tuple of strings, which compares every key
+		// type. NULL is held apart: it stringifies like an empty string.
+		owner := make(map[int64][2]string, len(connectIDs))
+		nulls := make(map[int64][2]bool, len(connectIDs))
+		// Chunked at c.batchSize, for the reason the disconnect below is:
+		// a single `IN` over the caller's whole list hits a dialect-dependent
+		// bind ceiling whose error cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.sharedKidClient.GetMany(ctx, &GetSharedKidsInput{
+				Filter: &SharedKidFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[SharedKidFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &SharedKidFieldOptions{ID: true, Org: true, ParentID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("SharedKids", "connect", nil, err)
+			}
+			for _, row := range visible {
+				var key [2]string
+				var null [2]bool
+				if row.Org != nil {
+					key[0] = (*row.Org)
+				} else {
+					null[0] = true
+				}
+				if row.ParentID != nil {
+					key[1] = fmt.Sprint((*row.ParentID))
+				} else {
+					null[1] = true
+				}
+				owner[row.ID], nulls[row.ID] = key, null
+			}
+		}
+
+		adopt := make([]int64, 0, len(connectIDs))
+		// A repeated id is ONE adoption: connect is a set operation, and the
+		// UPDATE matches the row once however many times the caller named it.
+		// Queueing it twice would trip the shortfall check below and report a
+		// conflict that did not happen.
+		queued := make(map[int64]bool, len(connectIDs))
+		want := [2]string{parent.Org, fmt.Sprint(parent.ID)}
+		for _, v := range connectIDs {
+			cur, ok := owner[v]
+			null := nulls[v]
+			switch {
+			case !ok:
+				// Absent, another tenant's, or soft-deleted — indistinguishable
+				// to this caller, and all NOT_FOUND. Never CONFLICT: that would
+				// confirm the row exists.
+				return nestedError("SharedKids", "connect", v, ErrNotFound)
+			case null[0] || cur[0] != want[0]:
+				// Bound to another key through a member this edge cannot write,
+				// so allow_reparent does not reach it either.
+				return nestedError("SharedKids", "connect", v, ErrAlreadyRelated)
+			case !null[1] && cur == want:
+				// Already ours — the requested end state holds, so this is a
+				// no-op rather than a conflict.
+				continue
+			case !null[1]:
+				return nestedError("SharedKids", "connect", v, ErrAlreadyRelated)
+			}
+			if queued[v] {
+				continue
+			}
+			queued[v] = true
+			adopt = append(adopt, v)
+		}
+
+		if len(adopt) > 0 {
+			adoptedCount := 0
+			// The adoption is chunked on the same ceiling the read above
+			// is, and the shortfall check sums across chunks: a row lost in one
+			// chunk is a lost race whichever chunk it landed in.
+			for start := 0; start < len(adopt); start += c.batchSize {
+				adopting := adopt[start:min(start+c.batchSize, len(adopt))]
+				if _, err := c.sharedKidClient.UpdateWhere(ctx,
+					&SharedKidFilter{
+						ID: &comparator.Number[int64]{In: adopting},
+						// The `IS NULL` guard is what makes the adoption atomic
+						// against a concurrent connect that parented the row
+						// between the read above and this statement.
+						ParentID: &comparator.NullableNumber[int64]{Null: new(true)},
+					},
+					&UpdateSharedKidInput{ParentID: omittable.Set(&parent.ID)},
+					func(o *CallOptions[SharedKidFieldOptions]) {
+						nestedChildOptions(o, options)
+						// Nothing selected — the verify read below counts
+						// the adoption, not the rows UpdateWhere reports.
+						o.FieldOptions = &SharedKidFieldOptions{}
+					}); err != nil {
+					return nestedError("SharedKids", "connect", nil, err)
+				}
+				// The verify read counts this chunk's ids that now name this
+				// parent. Inside the transaction a plain read sees its own
+				// writes, so it counts what the UPDATE adopted and never a row
+				// another connection parented first — on every dialect, with
+				// no lock. UpdateWhere's report cannot do this on MySQL, where
+				// a pre-SELECT names the rows. Hooks are
+				// skipped as on the terminal re-read: this is part of the write.
+				adopted, err := c.sharedKidClient.GetMany(ctx, &GetSharedKidsInput{
+					Filter: &SharedKidFilter{
+						ID:       &comparator.Number[int64]{In: adopting},
+						Org:      &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+						ParentID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+					},
+					Limit: new(0),
+				}, func(o *CallOptions[SharedKidFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &SharedKidFieldOptions{ID: true}
+					o.SkipHooks = true
+					o.LockMode = sql.LockNone
+				})
+				if err != nil {
+					return nestedError("SharedKids", "connect", nil, err)
+				}
+				adoptedCount += len(adopted)
+			}
+			if adoptedCount != len(adopt) {
+				// Lost the race — parented between the read and the UPDATE.
+				// Same outcome, reported the same way.
+				return nestedError("SharedKids", "connect", nil, ErrAlreadyRelated)
+			}
+		}
+	}
+
+	// disconnect — unlink, scoped to THIS parent. The `fk = parent` term is
+	// what stops a caller detaching another parent's row by guessing its id,
+	// and it is why a disconnect needs no visibility read where a connect does.
+	// A miss is a no-op, not an error.
+	if len(disconnectIDs) > 0 {
+		// Chunked at c.batchSize. The ceiling is a dialect-dependent bind
+		// limit, lowest on SQLite at 32766, and the error names nothing that
+		// can attribute — so it is removed rather than documented.
+		for start := 0; start < len(disconnectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(disconnectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range disconnectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			if _, err := c.sharedKidClient.UpdateWhere(ctx,
+				&SharedKidFilter{
+					ID:       &comparator.Number[int64]{In: ids},
+					Org:      &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+					ParentID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+				},
+				&UpdateSharedKidInput{ParentID: omittable.Set[*int64](nil)},
+				func(o *CallOptions[SharedKidFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &SharedKidFieldOptions{}
+				}); err != nil {
+				return nestedError("SharedKids", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a shared_parent with the given primary key exists.
+func (c *sharedParentClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[SharedParentFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableSharedParents, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips both the verify-match and the filter append.
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists shared_parent: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any shared_parent matches the given filter.
+func (c *sharedParentClient) ExistsWhere(ctx context.Context, filter *SharedParentFilter, opts ...func(*CallOptions[SharedParentFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableSharedParents, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect, filterOpts...)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant probe).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists shared_parents where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of shared_parents matching the given filter.
+// A nil filter counts all shared_parents.
+func (c *sharedParentClient) Count(ctx context.Context, filter *SharedParentFilter, opts ...func(*CallOptions[SharedParentFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableSharedParents, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// A relationship filter compiles to a correlated EXISTS carrying the
+		// *target's* tenant predicate, so the tenant is
+		// resolved before the conditions are built rather than appended after them.
+		filterOpts, filterErr := c.filterOptions(ctx, filter, options.SkipTenancy, options.Tenant)
+		if filterErr != nil {
+			return nil, filterErr
+		}
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect, filterOpts...)
+		}
+
+		// Tenancy auto-filter. apply=false under tenancy.required:false
+		// + zero resolver skips the filter (cross-tenant count).
+		if !options.SkipTenancy {
+			resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+			if err != nil {
+				return int64(0), fmt.Errorf("resolve tenant: %w", err)
+			}
+			if apply {
+				conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+			}
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count shared_parents: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of shared_parents with total count for offset-based pagination.
+// A nil filter paginates all shared_parents.
+func (c *sharedParentClient) Paginate(ctx context.Context, input PaginateInput[SharedParentFilter], opts ...func(*CallOptions[SharedParentFieldOptions])) (*PaginateResult[SharedParent], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate shared_parents: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableSharedParents, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SharedParentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		sharedParents, err := c.GetMany(ctx, &GetSharedParentsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[SharedParent]{
+			Items:      sharedParents,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate shared_parents: %w", err)
+	}
+	return result.(*PaginateResult[SharedParent]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of shared_parents.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *sharedParentClient) Connection(ctx context.Context, input ConnectionInput[SharedParentFilter], opts ...func(*CallOptions[SharedParentFieldOptions])) (*Connection[SharedParent], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection shared_parents: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableSharedParents, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SharedParentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeSharedParentCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeSharedParentCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		sharedParents, err := c.GetMany(ctx, &GetSharedParentsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(sharedParents) > limit
+		if hasMore {
+			sharedParents = sharedParents[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(sharedParents)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[SharedParent], len(sharedParents))
+		for i, row := range sharedParents {
+			cursor, err := encodeSharedParentCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[SharedParent]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[SharedParent]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection shared_parents: %w", err)
+	}
+	return result.(*Connection[SharedParent]), nil
+}
+
+// encodeSharedParentCursor encodes cursor key values as a base64 JSON string.
+func encodeSharedParentCursor(keys []string, s *SharedParent) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = s.ID
+		case "workspace_id":
+			out["workspace_id"] = s.WorkspaceID
+		case "org":
+			out["org"] = s.Org
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode shared_parent cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeSharedParentCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeSharedParentCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row SharedParent
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamSharedParentsInput holds query parameters for streaming shared_parents records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamSharedParentsInput struct {
+	Filter *SharedParentFilter `json:"filter"`
+	Sorts  []sql.Sort          `json:"sorts"`
+}
+
+// StreamSharedParentFieldOptions controls scalar column selection for shared_parents streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamSharedParentFieldOptions struct {
+	ID          bool `json:"id"`
+	WorkspaceID bool `json:"workspace_id"`
+	Org         bool `json:"org"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamSharedParentFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.Org {
+		cols = append(cols, "org")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamSharedParentFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.Org {
+		return true
+	}
+	return false
+}
+
+// scanSharedParentRow scans a single row into a SharedParent entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanSharedParentRow(rows database.Rows, columns []string) (*SharedParent, error) {
+	s := &SharedParent{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &s.ID
+		case "workspace_id":
+			targets[idx] = &s.WorkspaceID
+		case "org":
+			targets[idx] = &s.Org
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan shared_parent: %w", err)
+	}
+
+	return s, nil
+}
+
+// Stream returns an iterator over shared_parents matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *sharedParentClient) Stream(ctx context.Context, input *StreamSharedParentsInput, opts ...func(*CallOptions[StreamSharedParentFieldOptions])) iter.Seq2[*SharedParent, error] {
+	return func(yield func(*SharedParent, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamSharedParentsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream shared_parents: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *SharedParent, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream shared_parents: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableSharedParents, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := sharedParentAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			// A relationship filter compiles to a correlated EXISTS carrying the
+			// *target's* tenant predicate, so the tenant is
+			// resolved before the conditions are built rather than appended after them.
+			filterOpts, filterErr := c.filterOptions(ctx, input.Filter, options.SkipTenancy, options.Tenant)
+			if filterErr != nil {
+				emit(nil, filterErr)
+				return nil, nil
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect, filterOpts...)
+			}
+
+			if !options.SkipTenancy {
+				resolvedTenant, apply, err := c.resolveTenant(ctx, options.Tenant)
+				if err != nil {
+					emit(nil, fmt.Errorf("resolve tenant: %w", err))
+					return nil, nil
+				}
+				if apply {
+					conds = append(conds, sql.Where(c.dialect.QuoteIdentifier("workspace_id")).Eq(resolvedTenant))
+				}
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				s, err := scanSharedParentRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(s, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate shared_parent rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream shared_parents: %w", err))
+		}
+	}
+}
+
+// SharedParentFilter provides type-safe filtering for the shared_parents table.
+type SharedParentFilter struct {
+	ID          *comparator.Number[int64] `json:"id"`
+	Org         *comparator.String        `json:"org"`
+	WorkspaceID *comparator.ID            `json:"workspace_id"`
+	SharedKids  *SharedKidFilter          `json:"shared_kids"`
+	And         []*SharedParentFilter     `json:"and"`
+	Or          []*SharedParentFilter     `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *SharedParentFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Org != nil {
+		conds = append(conds, f.Org.Parse(dialect.QuoteIdentifier("org"), dialect)...)
+	}
+
+	if f.WorkspaceID != nil {
+		conds = append(conds, f.WorkspaceID.Parse(dialect.QuoteIdentifier("workspace_id"), dialect)...)
+	}
+
+	if f.SharedKids != nil {
+		conds = append(conds, sharedParentSharedKidsFilterExists(f.SharedKids, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// usesRelationshipFilter reports whether f sets at least one relationship
+// member, directly or through and / or.
+//
+// The FilterOption set ToConditions takes is read only by the EXISTS helpers
+// below, so a filter with no relationship member ignores it entirely and
+// compiles to byte-identical SQL either way. The client's filterOptions
+// consults this before resolving a tenant, which is what keeps a read that has
+// no tenanted component from failing closed: on a shared table the outer WHERE
+// is never tenant-scoped, so a resolver that reports a missing tenant as an
+// error would otherwise reject reads that legitimately run before any tenant
+// is selected.
+func (f *SharedParentFilter) usesRelationshipFilter() bool {
+	if f == nil {
+		return false
+	}
+	if f.SharedKids != nil {
+		return true
+	}
+	for _, sub := range f.And {
+		if sub.usesRelationshipFilter() {
+			return true
+		}
+	}
+	for _, sub := range f.Or {
+		if sub.usesRelationshipFilter() {
+			return true
+		}
+	}
+	return false
+}
+
+// sharedParentSharedKidsFilterExists compiles a SharedKidFilter set on the
+// SharedKids relationship into a correlated EXISTS over shared_kids.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func sharedParentSharedKidsFilterExists(f *SharedKidFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "public", Name: "shared_kids"}) + " " + tgt +
+		" WHERE " + tgt + "." + dialect.QuoteIdentifier("org") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("parent_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	// The target's tenant rule applies inside the subquery. Without it a
+	// relationship filter would be a cross-tenant existence probe on a table the caller cannot otherwise read.
+	if scope.applyTenant {
+		subSQL += " AND " + tgt + "." + dialect.QuoteIdentifier("workspace_id") + " = $"
+		subArgs = append(subArgs, scope.tenant)
+	}
+
+	return sql.Exists([]string{"org", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// SharedParentFieldOptions controls column selection and relationship loading for shared_parents queries.
+type SharedParentFieldOptions struct {
+	ID          bool                          `json:"id"`
+	WorkspaceID bool                          `json:"workspace_id"`
+	Org         bool                          `json:"org"`
+	SharedKids  *SharedKidRelationshipOptions `json:"shared_kids"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *SharedParentFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.WorkspaceID {
+		cols = append(cols, "workspace_id")
+	}
+	if fo.Org {
+		cols = append(cols, "org")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *SharedParentFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":          "id",
+		"WorkspaceID": "workspace_id",
+		"Org":         "org",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *SharedParentFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.WorkspaceID {
+		return true
+	}
+	if fo.Org {
+		return true
+	}
+	if fo.SharedKids != nil {
+		return true
+	}
+	return false
+}
+
+// CreateSharedParentInput holds the fields for creating a shared_parents record.
+type CreateSharedParentInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	Org         string                     `json:"org"`
+}
+
+// UpdateSharedParentInput holds the fields for updating a shared_parents record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateSharedParentInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+	Org         omittable.Value[string]    `json:"org,omitzero"`
+}
+
+// GetSharedParentsInput holds query parameters for retrieving shared_parents records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetSharedParentsInput struct {
+	Filter *SharedParentFilter `json:"filter"`
+	Limit  *int                `json:"limit"`
+	Offset *int                `json:"offset"`
+	Sorts  []sql.Sort          `json:"sorts"`
 	// conditions holds additional SQL conditions injected by internal callers
 	// (e.g., Connection keyset conditions). Not part of the public API.
 	conditions []sql.Condition
@@ -71661,6 +84630,8 @@ type Zone struct {
 	WorkspaceID uuid.UUID `db:"workspace_id" json:"workspace_id"`
 	Region      string    `db:"region" json:"region"`
 
+	// Plots - one-to-many relationship with the plots table.
+	Plots []*Plot `db:"-" json:"plots"`
 	// Sites - one-to-many relationship with the sites table.
 	Sites []*Site `db:"-" json:"sites"`
 }
@@ -71784,7 +84755,9 @@ type zoneClient struct {
 	panicHandler     hook.PanicHandler
 	callbackMode     database.CallbackMode
 	tenantResolver   tenancy.TenantResolver[uuid.UUID]
+	plotsDefaultSort []sql.Sort
 	sitesDefaultSort []sql.Sort
+	plotClient       *plotClient
 	siteClient       *siteClient
 }
 
@@ -72179,6 +85152,9 @@ func (c *zoneClient) GetMany(ctx context.Context, input *GetZonesInput, opts ...
 // loadRelationships maps every child back through z.Region and z.ID, which
 // an unselected column would leave at its zero value.
 func (fo *ZoneFieldOptions) loadsRelationships() bool {
+	if fo.Plots != nil {
+		return true
+	}
 	if fo.Sites != nil {
 		return true
 	}
@@ -72216,6 +85192,78 @@ func (fo *ZoneFieldOptions) loadsRelationships() bool {
 func (c *zoneClient) loadRelationships(ctx context.Context, conn database.Querier, zones []*Zone, options CallOptions[ZoneFieldOptions]) error {
 	fo := options.FieldOptions
 	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Plots != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			zoneKeyed := make([]*Zone, 0, len(zones))
+			zoneKeys := make([][]any, 0, len(zones))
+			for _, z := range zones {
+				zoneKeyed = append(zoneKeyed, z)
+				zoneKeys = append(zoneKeys, []any{z.Region, z.ID})
+			}
+
+			sorts := fo.Plots.Sorts
+			if len(sorts) == 0 {
+				sorts = c.plotsDefaultSort
+			}
+
+			// Load via related entity client, 4000 parent keys per
+			// statement: within half the dialect's bind-parameter limit, leaving
+			// the rest for the relationship's filters. Each parent's children come
+			// from one statement, so the sorts order every parent's slice.
+			var relatedPlots []*Plot
+			for start := 0; start < len(zoneKeys); start += 4000 {
+				chunk := zoneKeys[start:min(start+4000, len(zoneKeys))]
+
+				// The consumer filter is ANDed in, so a soft-delete comparator
+				// in it narrows the child's default rather than replacing it.
+				filter := &PlotFilter{}
+				if fo.Plots.Filter != nil {
+					filter.And = append(filter.And, fo.Plots.Filter)
+				}
+
+				loaded, err := c.plotClient.GetMany(ctx, &GetPlotsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					conditions: []sql.Condition{
+						sql.BuildCompositePKBatchCondition(c.dialect, []string{"zone_region", "zone_id"}, chunk),
+					},
+					// The mapping below keys every child on its FK columns, so the
+					// fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"zone_region", "zone_id"},
+				}, func(co *CallOptions[PlotFieldOptions]) {
+					co.FieldOptions = fo.Plots.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+					co.SkipTenancy = options.SkipTenancy
+					co.Tenant = options.Tenant
+				})
+				if err != nil {
+					return fmt.Errorf("load zone plots: %w", err)
+				}
+				relatedPlots = append(relatedPlots, loaded...)
+			}
+
+			// Map results back to parent entities on every key column. A child
+			// with a NULL member references no parent.
+			byKey := make(map[[2]string][]*Plot)
+			for _, r := range relatedPlots {
+				if !(r.ZoneRegion != nil && r.ZoneID != nil) {
+					continue
+				}
+				key := [2]string{(*r.ZoneRegion), fmt.Sprint((*r.ZoneID))}
+				byKey[key] = append(byKey[key], r)
+			}
+			for _, parent := range zoneKeyed {
+				parent.Plots = byKey[[2]string{parent.Region, fmt.Sprint(parent.ID)}]
+			}
+			return nil
+		})
+	}
 
 	if fo.Sites != nil {
 		g.Go(func() error {
@@ -73925,6 +86973,9 @@ type CreateZoneWithRelatedInput struct {
 	// Zone holds the parent's own columns — identical to the input Create accepts.
 	Zone CreateZoneInput `json:"zone"`
 
+	// Plots - one-to-many relationship with the plots table.
+	Plots *ZonePlotsCreateNested `json:"plots,omitempty"`
+
 	// Sites - one-to-many relationship with the sites table.
 	Sites *ZoneSitesCreateNested `json:"sites,omitempty"`
 }
@@ -73938,6 +86989,9 @@ type CreateZoneWithRelatedInput struct {
 type UpdateZoneWithRelatedInput struct {
 	// Zone holds the parent's own columns — identical to the input Update accepts.
 	Zone UpdateZoneInput `json:"zone"`
+
+	// Plots - one-to-many relationship with the plots table.
+	Plots *ZonePlotsUpdateNested `json:"plots,omitempty"`
 
 	// Sites - one-to-many relationship with the sites table.
 	Sites *ZoneSitesUpdateNested `json:"sites,omitempty"`
@@ -73957,8 +87011,63 @@ type UpsertZoneWithRelatedInput struct {
 	// Zone holds the parent's own columns — identical to the input Upsert accepts.
 	Zone CreateZoneInput `json:"zone"`
 
+	// Plots - one-to-many relationship with the plots table.
+	Plots *ZonePlotsUpdateNested `json:"plots,omitempty"`
+
 	// Sites - one-to-many relationship with the sites table.
 	Sites *ZoneSitesUpdateNested `json:"sites,omitempty"`
+}
+
+// ZonePlotsCreateNested is the create-side verb block for Zone.Plots.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type ZonePlotsCreateNested struct {
+	Create  []*ZonePlotsCreateInput `json:"create,omitempty"`
+	Connect []int64                 `json:"connect,omitempty"`
+}
+
+// ZonePlotsUpdateNested is the update-side verb block for Zone.Plots,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type ZonePlotsUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool                    `json:"clear,omitempty"`
+	Create     []*ZonePlotsCreateInput `json:"create,omitempty"`
+	Connect    []int64                 `json:"connect,omitempty"`
+	Disconnect []int64                 `json:"disconnect,omitempty"`
+}
+
+// ZonePlotsCreateInput is CreatePlotInput with the traversed
+// foreign key removed — that column is always set from the parent's primary key,
+// so leaving it would force the caller to supply a value that is then
+// overwritten.
+type ZonePlotsCreateInput struct {
+	WorkspaceID omittable.Value[uuid.UUID] `json:"workspace_id,omitzero"`
+}
+
+// zonePlotsNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func zonePlotsNestedFromCreate(n *ZonePlotsCreateNested) *ZonePlotsUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &ZonePlotsUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
 }
 
 // ZoneSitesCreateNested is the create-side verb block for Zone.Sites.
@@ -74025,6 +87134,7 @@ func zoneNestedParentFieldOptions(fo *ZoneFieldOptions) *ZoneFieldOptions {
 		return nil
 	}
 	scalars := *fo
+	scalars.Plots = nil
 	scalars.Sites = nil
 	scalars.ID = true
 	scalars.Region = true
@@ -74039,7 +87149,7 @@ func zoneNestedSelectsRelationship(fo *ZoneFieldOptions) bool {
 	if fo == nil {
 		return false
 	}
-	return fo.Sites != nil
+	return fo.Plots != nil || fo.Sites != nil
 }
 
 // nestedResolvedTenantCtx resolves the tenant once for a whole nested write,
@@ -74117,6 +87227,10 @@ func (c *zoneClient) CreateWithRelated(ctx context.Context, input *CreateZoneWit
 		}
 		result = parent
 
+		if err := c.applyZonePlotsNested(ctx, parent, zonePlotsNestedFromCreate(input.Plots), options); err != nil {
+			return err
+		}
+
 		if err := c.applyZoneSitesNested(ctx, parent, zoneSitesNestedFromCreate(input.Sites), options); err != nil {
 			return err
 		}
@@ -74183,6 +87297,10 @@ func (c *zoneClient) UpdateWithRelated(ctx context.Context, id int64, input *Upd
 		}
 		result = parent
 
+		if err := c.applyZonePlotsNested(ctx, parent, input.Plots, options); err != nil {
+			return err
+		}
+
 		if err := c.applyZoneSitesNested(ctx, parent, input.Sites, options); err != nil {
 			return err
 		}
@@ -74240,6 +87358,10 @@ func (c *zoneClient) UpsertWithRelated(ctx context.Context, input *UpsertZoneWit
 		}
 		result = parent
 
+		if err := c.applyZonePlotsNested(ctx, parent, input.Plots, options); err != nil {
+			return err
+		}
+
 		if err := c.applyZoneSitesNested(ctx, parent, input.Sites, options); err != nil {
 			return err
 		}
@@ -74264,6 +87386,271 @@ func (c *zoneClient) UpsertWithRelated(ctx context.Context, input *UpsertZoneWit
 		return nil, nil
 	}
 	return result, nil
+}
+
+// applyZonePlotsNested applies the Zone.Plots block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *zoneClient) applyZonePlotsNested(ctx context.Context, parent *Zone, nested *ZonePlotsUpdateNested, options CallOptions[ZoneFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("Plots", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	// The connect adoption's verify read filters on it too.
+	pid0 := parent.Region
+	pid1 := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if _, err := c.plotClient.UpdateWhere(ctx,
+			&PlotFilter{
+				ZoneRegion: &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+				ZoneID:     &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+			},
+			&UpdatePlotInput{ZoneRegion: omittable.Set[*string](nil), ZoneID: omittable.Set[*int64](nil)},
+			func(o *CallOptions[PlotFieldOptions]) {
+				nestedChildOptions(o, options)
+				// Nothing selected — the inner call does not need its result
+				// back, so it skips the read that would hand the rows over.
+				o.FieldOptions = &PlotFieldOptions{}
+			}); err != nil {
+			return nestedError("Plots", "clear", nil, err)
+		}
+	}
+
+	if len(nested.Create) > 0 {
+		inputs := make([]*CreatePlotInput, 0, len(nested.Create))
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Plots", "create", nil, ErrNilInput)
+			}
+			inputs = append(inputs, &CreatePlotInput{
+				ZoneRegion:  omittable.Set(&parent.Region),
+				ZoneID:      omittable.Set(&parent.ID),
+				WorkspaceID: n.WorkspaceID,
+			})
+		}
+		if _, err := c.plotClient.CreateMany(ctx, inputs, func(o *CallOptions[PlotFieldOptions]) {
+			nestedChildOptions(o, options)
+			// Nothing selected — the inner call does not need its result back,
+			// so it costs one statement rather than a statement plus a read.
+			o.FieldOptions = &PlotFieldOptions{}
+		}); err != nil {
+			return nestedError("Plots", "create", nil, err)
+		}
+	}
+
+	// connect — adopt unparented rows. The visibility read is not optional:
+	// the UPDATE's row count alone cannot separate "no such row" from "already
+	// parented", and the FK constraint proves a row exists, not that the caller
+	// may see it.
+	if len(connectIDs) > 0 {
+		// Each target's key, as a tuple of strings, which compares every key
+		// type. NULL is held apart: it stringifies like an empty string.
+		owner := make(map[int64][2]string, len(connectIDs))
+		nulls := make(map[int64][2]bool, len(connectIDs))
+		// Chunked at c.batchSize, for the reason the disconnect below is:
+		// a single `IN` over the caller's whole list hits a dialect-dependent
+		// bind ceiling whose error cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.plotClient.GetMany(ctx, &GetPlotsInput{
+				Filter: &PlotFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PlotFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &PlotFieldOptions{ID: true, ZoneRegion: true, ZoneID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Plots", "connect", nil, err)
+			}
+			for _, row := range visible {
+				var key [2]string
+				var null [2]bool
+				if row.ZoneRegion != nil {
+					key[0] = (*row.ZoneRegion)
+				} else {
+					null[0] = true
+				}
+				if row.ZoneID != nil {
+					key[1] = fmt.Sprint((*row.ZoneID))
+				} else {
+					null[1] = true
+				}
+				owner[row.ID], nulls[row.ID] = key, null
+			}
+		}
+
+		adopt := make([]int64, 0, len(connectIDs))
+		// A repeated id is ONE adoption: connect is a set operation, and the
+		// UPDATE matches the row once however many times the caller named it.
+		// Queueing it twice would trip the shortfall check below and report a
+		// conflict that did not happen.
+		queued := make(map[int64]bool, len(connectIDs))
+		want := [2]string{parent.Region, fmt.Sprint(parent.ID)}
+		for _, v := range connectIDs {
+			cur, ok := owner[v]
+			null := nulls[v]
+			switch {
+			case !ok:
+				// Absent, another tenant's, or soft-deleted — indistinguishable
+				// to this caller, and all NOT_FOUND. Never CONFLICT: that would
+				// confirm the row exists.
+				return nestedError("Plots", "connect", v, ErrNotFound)
+			case !null[0] && !null[1] && cur == want:
+				// Already ours — the requested end state holds, so this is a
+				// no-op rather than a conflict.
+				continue
+			}
+			if queued[v] {
+				continue
+			}
+			queued[v] = true
+			adopt = append(adopt, v)
+		}
+
+		if len(adopt) > 0 {
+			adoptedCount := 0
+			// The adoption is chunked on the same ceiling the read above
+			// is, and the shortfall check sums across chunks: a row lost in one
+			// chunk is a lost race whichever chunk it landed in.
+			for start := 0; start < len(adopt); start += c.batchSize {
+				adopting := adopt[start:min(start+c.batchSize, len(adopt))]
+				if _, err := c.plotClient.UpdateWhere(ctx,
+					&PlotFilter{
+						ID: &comparator.Number[int64]{In: adopting},
+					},
+					&UpdatePlotInput{ZoneRegion: omittable.Set(&parent.Region), ZoneID: omittable.Set(&parent.ID)},
+					func(o *CallOptions[PlotFieldOptions]) {
+						nestedChildOptions(o, options)
+						// Nothing selected — the verify read below counts
+						// the adoption, not the rows UpdateWhere reports.
+						o.FieldOptions = &PlotFieldOptions{}
+					}); err != nil {
+					return nestedError("Plots", "connect", nil, err)
+				}
+				// The verify read counts this chunk's ids that now name this
+				// parent. Inside the transaction a plain read sees its own
+				// writes, so it counts what the UPDATE adopted and never a row
+				// another connection parented first — on every dialect, with
+				// no lock. UpdateWhere's report cannot do this on MySQL, where
+				// a pre-SELECT names the rows. Hooks are
+				// skipped as on the terminal re-read: this is part of the write.
+				adopted, err := c.plotClient.GetMany(ctx, &GetPlotsInput{
+					Filter: &PlotFilter{
+						ID:         &comparator.Number[int64]{In: adopting},
+						ZoneRegion: &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+						ZoneID:     &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+					},
+					Limit: new(0),
+				}, func(o *CallOptions[PlotFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &PlotFieldOptions{ID: true}
+					o.SkipHooks = true
+					o.LockMode = sql.LockNone
+				})
+				if err != nil {
+					return nestedError("Plots", "connect", nil, err)
+				}
+				adoptedCount += len(adopted)
+			}
+			if adoptedCount != len(adopt) {
+				// The UPDATE carries no `fk IS NULL` term under
+				// allow_reparent, so a row the visibility read returned
+				// that the verify read does not find under this parent
+				// stopped being visible in between — deleted, or
+				// soft-deleted. Reported the way the visibility read would
+				// have reported it.
+				return nestedError("Plots", "connect", nil, ErrNotFound)
+			}
+		}
+	}
+
+	// disconnect — unlink, scoped to THIS parent. The `fk = parent` term is
+	// what stops a caller detaching another parent's row by guessing its id,
+	// and it is why a disconnect needs no visibility read where a connect does.
+	// A miss is a no-op, not an error.
+	if len(disconnectIDs) > 0 {
+		// Chunked at c.batchSize. The ceiling is a dialect-dependent bind
+		// limit, lowest on SQLite at 32766, and the error names nothing that
+		// can attribute — so it is removed rather than documented.
+		for start := 0; start < len(disconnectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(disconnectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range disconnectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			if _, err := c.plotClient.UpdateWhere(ctx,
+				&PlotFilter{
+					ID:         &comparator.Number[int64]{In: ids},
+					ZoneRegion: &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+					ZoneID:     &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+				},
+				&UpdatePlotInput{ZoneRegion: omittable.Set[*string](nil), ZoneID: omittable.Set[*int64](nil)},
+				func(o *CallOptions[PlotFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &PlotFieldOptions{}
+				}); err != nil {
+				return nestedError("Plots", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
 }
 
 // applyZoneSitesNested applies the Zone.Sites block.
@@ -75092,6 +88479,7 @@ type ZoneFilter struct {
 	ID          *comparator.Number[int64] `json:"id"`
 	Region      *comparator.String        `json:"region"`
 	WorkspaceID *comparator.ID            `json:"workspace_id"`
+	Plots       *PlotFilter               `json:"plots"`
 	Sites       *SiteFilter               `json:"sites"`
 	And         []*ZoneFilter             `json:"and"`
 	Or          []*ZoneFilter             `json:"or"`
@@ -75122,6 +88510,10 @@ func (f *ZoneFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []s
 
 	if f.WorkspaceID != nil {
 		conds = append(conds, f.WorkspaceID.Parse(dialect.QuoteIdentifier("workspace_id"), dialect)...)
+	}
+
+	if f.Plots != nil {
+		conds = append(conds, zonePlotsFilterExists(f.Plots, dialect, opts))
 	}
 
 	if f.Sites != nil {
@@ -75174,6 +88566,9 @@ func (f *ZoneFilter) usesRelationshipFilter() bool {
 	if f == nil {
 		return false
 	}
+	if f.Plots != nil {
+		return true
+	}
 	if f.Sites != nil {
 		return true
 	}
@@ -75188,6 +88583,50 @@ func (f *ZoneFilter) usesRelationshipFilter() bool {
 		}
 	}
 	return false
+}
+
+// zonePlotsFilterExists compiles a PlotFilter set on the
+// Plots relationship into a correlated EXISTS over plots.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func zonePlotsFilterExists(f *PlotFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "public", Name: "plots"}) + " " + tgt +
+		" WHERE " + tgt + "." + dialect.QuoteIdentifier("zone_region") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("zone_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	// The target's tenant rule applies inside the subquery. Without it a
+	// relationship filter would be a cross-tenant existence probe on a table the caller cannot otherwise read.
+	if scope.applyTenant {
+		subSQL += " AND " + tgt + "." + dialect.QuoteIdentifier("workspace_id") + " = $"
+		subArgs = append(subArgs, scope.tenant)
+	}
+
+	return sql.Exists([]string{"region", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
 }
 
 // zoneSitesFilterExists compiles a SiteFilter set on the
@@ -75239,6 +88678,7 @@ type ZoneFieldOptions struct {
 	ID          bool                     `json:"id"`
 	WorkspaceID bool                     `json:"workspace_id"`
 	Region      bool                     `json:"region"`
+	Plots       *PlotRelationshipOptions `json:"plots"`
 	Sites       *SiteRelationshipOptions `json:"sites"`
 }
 
@@ -75279,10 +88719,20 @@ func (fo *ZoneFieldOptions) HasSelectedColumns() bool {
 	if fo.Region {
 		return true
 	}
+	if fo.Plots != nil {
+		return true
+	}
 	if fo.Sites != nil {
 		return true
 	}
 	return false
+}
+
+// PlotRelationshipOptions controls loading options for Plot relationships.
+type PlotRelationshipOptions struct {
+	FieldOptions *PlotFieldOptions `json:"field_options"`
+	Filter       *PlotFilter       `json:"filter"`
+	Sorts        []sql.Sort        `json:"sorts"`
 }
 
 // SiteRelationshipOptions controls loading options for Site relationships.

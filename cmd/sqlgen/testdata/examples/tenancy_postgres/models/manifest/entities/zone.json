@@ -108,6 +108,24 @@
   ],
   "relationships": [
     {
+      "name": "plots",
+      "kind": "o2m",
+      "target_entity": "Plot",
+      "fk": {
+        "table": "plots",
+        "schema": "public",
+        "columns": [
+          "zone_region",
+          "zone_id"
+        ],
+        "references": [
+          "region",
+          "id"
+        ],
+        "constraint": "plots_zone_region_zone_id_fkey"
+      }
+    },
+    {
       "name": "sites",
       "kind": "o2m",
       "target_entity": "Site",
@@ -433,7 +451,7 @@
           "tenancy.ErrMissing",
           "tenancy.ErrMismatch"
         ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Sites), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (Plots, Sites), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
       },
       {
         "name": "UpdateWithRelated",
@@ -457,7 +475,7 @@
           "tenancy.ErrMissing",
           "tenancy.ErrMismatch"
         ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Sites), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (Plots, Sites), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
       },
       {
         "name": "UpsertWithRelated",
@@ -481,7 +499,7 @@
           "tenancy.ErrMissing",
           "tenancy.ErrMismatch"
         ],
-        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Sites), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+        "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (Plots, Sites), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
       },
       {
         "name": "HardDelete",

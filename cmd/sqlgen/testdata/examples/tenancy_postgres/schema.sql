@@ -208,3 +208,39 @@ CREATE TABLE sites (
     zone_id BIGINT,
     FOREIGN KEY (zone_region, zone_id) REFERENCES zones (region, id)
 );
+
+-- An edge that sets allow_reparent over a key with two free members, so a row
+-- holding a partly NULL key is adopted rather than refused as sites' is.
+CREATE TABLE plots (
+    id BIGSERIAL PRIMARY KEY,
+    workspace_id UUID NOT NULL,
+    zone_region TEXT,
+    zone_id BIGINT,
+    FOREIGN KEY (zone_region, zone_id) REFERENCES zones (region, id)
+);
+
+-- A nullable member two keys share: org is pinned on both edges, and a row can
+-- hold NULL there. SharedGuardian.SharedKids sets allow_reparent.
+CREATE TABLE shared_parents (
+    id BIGSERIAL PRIMARY KEY,
+    workspace_id UUID NOT NULL,
+    org TEXT NOT NULL,
+    UNIQUE (org, id)
+);
+
+CREATE TABLE shared_guardians (
+    id BIGSERIAL PRIMARY KEY,
+    workspace_id UUID NOT NULL,
+    org TEXT NOT NULL,
+    UNIQUE (org, id)
+);
+
+CREATE TABLE shared_kids (
+    id BIGSERIAL PRIMARY KEY,
+    workspace_id UUID NOT NULL,
+    org TEXT,
+    parent_id BIGINT,
+    guardian_id BIGINT,
+    FOREIGN KEY (org, parent_id) REFERENCES shared_parents (org, id),
+    FOREIGN KEY (org, guardian_id) REFERENCES shared_guardians (org, id)
+);

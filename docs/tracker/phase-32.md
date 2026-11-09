@@ -1174,7 +1174,7 @@ edge was already refused; it asserts the verb set after the lift.
   alone sets the column. PRD §9.9.8 says "tenancy-set", and that case is reachable: a shared parent's
   column, which tenancy does not guard, against the resolver. The executor maps the target's
   `tenancy.ErrMismatch` to `ErrAlreadyRelated`. The test is
-  `TestCreateWithRelated_TenancySetTenantMismatchIsAlreadyRelated`.
+  `TestUpdateWithRelated_TenancySetTenantMismatchIsAlreadyRelated`.
 - **The mapping covers a single-column tenant FK too** (ruled below). No other example's golden
   moved.
 - **Composite has-one is unreachable in this phase.** A has-one side is declared, a declared key list
@@ -1220,7 +1220,7 @@ was not run; it is due at 32.8.
 **Rulings (2026-11-06, each took the recommended option).**
 - A single-column tenant FK off a shared parent is `ErrAlreadyRelated` (`CONFLICT`), not
   `tenancy.ErrMismatch` (`FORBIDDEN`), as PRD §9.9.8 and §9.9.10 say. Pinned by
-  `TestCreateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated`, which passed on arrival.
+  `TestUpdateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated`, which passed on arrival.
 - A partly NULL key on `connect` stays `ErrAlreadyRelated`, matching the adoption's `IS NULL` guard.
   PRD §9.9.3 now states it. Pinned by `TestUpdateWithRelated_PartlyNullKeyIsAlreadyRelated`, which
   passed on arrival.

@@ -231,6 +231,13 @@
       "file": "entities/milestone.json"
     },
     {
+      "name": "Plot",
+      "table": "plots",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/plot.json"
+    },
+    {
       "name": "Project",
       "table": "projects",
       "schema": "public",
@@ -243,6 +250,27 @@
       "schema": "public",
       "kind": "table",
       "file": "entities/reviewer.json"
+    },
+    {
+      "name": "SharedGuardian",
+      "table": "shared_guardians",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/shared_guardian.json"
+    },
+    {
+      "name": "SharedKid",
+      "table": "shared_kids",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/shared_kid.json"
+    },
+    {
+      "name": "SharedParent",
+      "table": "shared_parents",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/shared_parent.json"
     },
     {
       "name": "Site",

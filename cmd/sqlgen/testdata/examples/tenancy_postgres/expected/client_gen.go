@@ -93,8 +93,12 @@ type Client struct {
 	label              *labelClient
 	lineItem           *lineItemClient
 	milestone          *milestoneClient
+	plot               *plotClient
 	project            *projectClient
 	reviewer           *reviewerClient
+	sharedGuardian     *sharedGuardianClient
+	sharedKid          *sharedKidClient
+	sharedParent       *sharedParentClient
 	site               *siteClient
 	sprint             *sprintClient
 	stamp              *stampClient
@@ -147,8 +151,12 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		label:              newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		lineItem:           newLineItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		milestone:          newMilestoneClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		plot:               newPlotClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		project:            newProjectClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		reviewer:           newReviewerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		sharedGuardian:     newSharedGuardianClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		sharedKid:          newSharedKidClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		sharedParent:       newSharedParentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		site:               newSiteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		sprint:             newSprintClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		stamp:              newStampClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -198,8 +206,12 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.label.tenantResolver = options.tenantResolver
 	c.lineItem.tenantResolver = options.tenantResolver
 	c.milestone.tenantResolver = options.tenantResolver
+	c.plot.tenantResolver = options.tenantResolver
 	c.project.tenantResolver = options.tenantResolver
 	c.reviewer.tenantResolver = options.tenantResolver
+	c.sharedGuardian.tenantResolver = options.tenantResolver
+	c.sharedKid.tenantResolver = options.tenantResolver
+	c.sharedParent.tenantResolver = options.tenantResolver
 	c.site.tenantResolver = options.tenantResolver
 	c.sprint.tenantResolver = options.tenantResolver
 	c.stamp.tenantResolver = options.tenantResolver
@@ -226,6 +238,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.label.callbackMode = options.callbackMode
 	c.milestone.callbackMode = options.callbackMode
 	c.reviewer.callbackMode = options.callbackMode
+	c.sharedGuardian.callbackMode = options.callbackMode
+	c.sharedParent.callbackMode = options.callbackMode
 	c.sprint.callbackMode = options.callbackMode
 	c.stamp.callbackMode = options.callbackMode
 	c.task.callbackMode = options.callbackMode
@@ -246,6 +260,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.project.taskClient = c.task
 	c.reviewer.taskClient = c.task
 	c.reviewer.taskReviewerClient = c.taskReviewer
+	c.sharedGuardian.sharedKidClient = c.sharedKid
+	c.sharedParent.sharedKidClient = c.sharedKid
 	c.sprint.taskClient = c.task
 	c.stamp.templateClient = c.template
 	c.stamp.templateStampClient = c.templateStamp
@@ -262,6 +278,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.template.templateLabelClient = c.templateLabel
 	c.template.templateStampClient = c.templateStamp
 	c.workspace.workspaceNoteClient = c.workspaceNote
+	c.zone.plotClient = c.plot
 	c.zone.siteClient = c.site
 
 	return c
@@ -307,6 +324,11 @@ func (c *Client) Milestones() MilestoneClient {
 	return c.milestone
 }
 
+// Plots returns the PlotClient for Plot operations.
+func (c *Client) Plots() PlotClient {
+	return c.plot
+}
+
 // Projects returns the ProjectClient for Project operations.
 func (c *Client) Projects() ProjectClient {
 	return c.project
@@ -315,6 +337,21 @@ func (c *Client) Projects() ProjectClient {
 // Reviewers returns the ReviewerClient for Reviewer operations.
 func (c *Client) Reviewers() ReviewerClient {
 	return c.reviewer
+}
+
+// SharedGuardians returns the SharedGuardianClient for SharedGuardian operations.
+func (c *Client) SharedGuardians() SharedGuardianClient {
+	return c.sharedGuardian
+}
+
+// SharedKids returns the SharedKidClient for SharedKid operations.
+func (c *Client) SharedKids() SharedKidClient {
+	return c.sharedKid
+}
+
+// SharedParents returns the SharedParentClient for SharedParent operations.
+func (c *Client) SharedParents() SharedParentClient {
+	return c.sharedParent
 }
 
 // Sites returns the SiteClient for Site operations.

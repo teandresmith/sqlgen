@@ -77,3 +77,14 @@ tables:
       relationships:
         - name: Tasks
           allow_reparent: true
+  zones:
+    nested_mutations:
+      relationships:
+        - name: Sites
+        - name: Plots
+          allow_reparent: true
+  shared_guardians:
+    nested_mutations:
+      relationships:
+        - name: SharedKids
+          allow_reparent: true

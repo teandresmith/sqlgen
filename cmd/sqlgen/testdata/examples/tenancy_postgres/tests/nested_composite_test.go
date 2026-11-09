@@ -150,7 +150,7 @@ func TestCreateWithRelated_CreateSetsEveryKeyMemberFromTheParent(t *testing.T) {
 // The parent is a shared table, so tenancy does not guard the column the key
 // copies. The child's tenant comes from the parent and from the resolver, and
 // the two disagree.
-func TestCreateWithRelated_TenancySetTenantMismatchIsAlreadyRelated(t *testing.T) {
+func TestUpdateWithRelated_TenancySetTenantMismatchIsAlreadyRelated(t *testing.T) {
 	resetDB(t)
 	env := newTenantEnv(t)
 	ctx := context.Background()
@@ -533,6 +533,26 @@ func TestUpdateWithRelated_TenantJunctionLinksAndUnlinksThroughEveryColumn(t *te
 	}
 }
 
+// assertAdoptedWithSibling requires the connected task to sit in a cycle beside
+// the one a nested create made, both in the tenant's workspace. The call returns
+// nil when nothing is selected, so the cycle comes off the task.
+func assertAdoptedWithSibling(t *testing.T, connected int64) {
+	t.Helper()
+	cycle := readTask(t, connected).cycle
+	if cycle == nil {
+		t.Fatalf("task %d has no cycle", connected)
+	}
+	var n int
+	err := testPool.QueryRow(context.Background(),
+		"SELECT count(*) FROM tasks WHERE cycle_id = $1 AND workspace_id = $2", *cycle, tenantA).Scan(&n)
+	if err != nil {
+		t.Fatalf("count tasks: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("tasks in cycle %d = %d, want 2", *cycle, n)
+	}
+}
+
 // The parent write takes the caller's selection, and the executors read the
 // parent's key columns off what it returns. A narrowed selection must not change
 // what is written (PRD §9.6).
@@ -542,17 +562,82 @@ func TestWithRelated_NarrowedSelectionStillWritesTheEdge(t *testing.T) {
 		name  string
 		cycle *models.CycleFieldOptions
 		task  *models.TaskFieldOptions
+		badge *models.BadgeFieldOptions
 	}{
-		{name: "one other column", cycle: &models.CycleFieldOptions{Name: true}, task: &models.TaskFieldOptions{Title: true}},
-		{name: "nothing selected", cycle: &models.CycleFieldOptions{}, task: &models.TaskFieldOptions{}},
+		{
+			name:  "one other column",
+			cycle: &models.CycleFieldOptions{Name: true},
+			task:  &models.TaskFieldOptions{Title: true},
+			badge: &models.BadgeFieldOptions{WorkspaceID: true},
+		},
+		{name: "nothing selected", cycle: &models.CycleFieldOptions{}, task: &models.TaskFieldOptions{}, badge: &models.BadgeFieldOptions{}},
 	}
 	for _, sel := range selections {
-		t.Run(sel.name, func(t *testing.T) {
+		narrow := func(o *models.CallOptions[models.CycleFieldOptions]) { o.FieldOptions = sel.cycle }
+
+		t.Run(sel.name+"/create", func(t *testing.T) {
+			resetDB(t)
+			env := newTenantEnv(t)
+			loose := mkTask(t, env.clientA, "loose")
+			_, err := env.clientA.Cycles().CreateWithRelated(ctx, &models.CreateCycleWithRelatedInput{
+				Cycle: models.CreateCycleInput{Name: "c"},
+				Tasks: &models.CycleTasksCreateNested{
+					Create:  []*models.CycleTasksCreateInput{{Title: "made"}},
+					Connect: []int64{loose.ID},
+				},
+			}, narrow)
+			if err != nil {
+				t.Fatalf("CreateWithRelated: %v", err)
+			}
+			assertAdoptedWithSibling(t, loose.ID)
+		})
+
+		t.Run(sel.name+"/upsert inserts", func(t *testing.T) {
+			resetDB(t)
+			env := newTenantEnv(t)
+			loose := mkTask(t, env.clientA, "loose")
+			_, err := env.clientA.Cycles().UpsertWithRelated(ctx, &models.UpsertCycleWithRelatedInput{
+				Cycle: models.CreateCycleInput{Name: "c"},
+				Tasks: &models.CycleTasksUpdateNested{
+					Create:  []*models.CycleTasksCreateInput{{Title: "made"}},
+					Connect: []int64{loose.ID},
+				},
+			}, models.CycleConflictPK, narrow)
+			if err != nil {
+				t.Fatalf("UpsertWithRelated: %v", err)
+			}
+			assertAdoptedWithSibling(t, loose.ID)
+		})
+
+		// The conflict branch, on the one parent whose edge references a column
+		// other than the primary key and whose upsert can name that row.
+		t.Run(sel.name+"/upsert conflicts", func(t *testing.T) {
+			resetDB(t)
+			env := newTenantEnv(t)
+			task := mkTask(t, env.clientA, "t")
+			if _, err := env.clientA.Badges().Create(ctx, &models.CreateBadgeInput{Code: "held"}); err != nil {
+				t.Fatalf("create badge: %v", err)
+			}
+			if _, err := env.clientA.Badges().UpsertWithRelated(ctx, &models.UpsertBadgeWithRelatedInput{
+				Badge: models.CreateBadgeInput{Code: "held"},
+				Tasks: &models.BadgeTasksUpdateNested{Connect: []int64{task.ID}},
+			}, models.BadgeConflictCode, func(o *models.CallOptions[models.BadgeFieldOptions]) { o.FieldOptions = sel.badge }); err != nil {
+				t.Fatalf("UpsertWithRelated: %v", err)
+			}
+			var code string
+			if err := testPool.QueryRow(ctx, "SELECT badge_code FROM task_badges WHERE task_id = $1", task.ID).Scan(&code); err != nil {
+				t.Fatalf("read link: %v", err)
+			}
+			if code != "held" {
+				t.Errorf("linked code = %q, want %q", code, "held")
+			}
+		})
+
+		t.Run(sel.name+"/update", func(t *testing.T) {
 			resetDB(t)
 			env := newTenantEnv(t)
 			cycle := mkCycle(t, env.clientA, "c")
 			task := mkTask(t, env.clientA, "t")
-			narrow := func(o *models.CallOptions[models.CycleFieldOptions]) { o.FieldOptions = sel.cycle }
 			update := func(block *models.CycleTasksUpdateNested) error {
 				_, err := env.clientA.Cycles().UpdateWithRelated(ctx, cycle.ID, &models.UpdateCycleWithRelatedInput{Tasks: block}, narrow)
 				return err
@@ -992,7 +1077,7 @@ func TestUpsertWithRelated_UnlinkTenantMismatchRollsBackTheInsert(t *testing.T) 
 }
 
 // The same mismatch on a one-column key is the same error (PRD §9.9.8).
-func TestCreateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated(t *testing.T) {
+func TestUpdateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated(t *testing.T) {
 	resetDB(t)
 	env := newTenantEnv(t)
 	ctx := context.Background()
@@ -1036,5 +1121,138 @@ func TestUpdateWithRelated_PartlyNullKeyIsAlreadyRelated(t *testing.T) {
 	}
 	if id != nil {
 		t.Errorf("zone_id = %d, want NULL", *id)
+	}
+}
+
+// allow_reparent removes the term that keeps a partly NULL key out, so the row
+// is adopted whichever member it holds (PRD §9.9.3).
+func TestUpdateWithRelated_AllowReparentAdoptsAPartlyNullKey(t *testing.T) {
+	resetDB(t)
+	env := newTenantEnv(t)
+	ctx := context.Background()
+
+	mkZone := func(region string) *models.Zone {
+		t.Helper()
+		zone, err := env.clientA.Zones().Create(ctx, &models.CreateZoneInput{Region: region})
+		if err != nil {
+			t.Fatalf("create zone: %v", err)
+		}
+		return zone
+	}
+	zone, other := mkZone("eu"), mkZone("us")
+
+	tests := []struct {
+		name  string
+		input models.CreatePlotInput
+	}{
+		{name: "region held", input: models.CreatePlotInput{ZoneRegion: omittable.Set(new("us"))}},
+		{name: "id held", input: models.CreatePlotInput{ZoneID: omittable.Set(&other.ID)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plot, err := env.clientA.Plots().Create(ctx, &tt.input)
+			if err != nil {
+				t.Fatalf("create plot: %v", err)
+			}
+			if _, err := env.clientA.Zones().UpdateWithRelated(ctx, zone.ID, &models.UpdateZoneWithRelatedInput{
+				Plots: &models.ZonePlotsUpdateNested{Connect: []int64{plot.ID}},
+			}); err != nil {
+				t.Fatalf("connect: %v", err)
+			}
+			var region string
+			var id int64
+			if err := testPool.QueryRow(ctx, "SELECT zone_region, zone_id FROM plots WHERE id = $1", plot.ID).Scan(&region, &id); err != nil {
+				t.Fatalf("read plot: %v", err)
+			}
+			if region != "eu" || id != zone.ID {
+				t.Errorf("plot key = (%q, %d), want (%q, %d)", region, id, "eu", zone.ID)
+			}
+		})
+	}
+}
+
+// org is pinned on both edges and nullable, and the parents' org is the empty
+// string: a NULL member stringifies like it, so only the NULL tracking tells the
+// two apart. A row whose org is NULL is bound to no parent, and no edge may write
+// it. allow_reparent does not change that (PRD §9.9.6).
+func TestUpdateWithRelated_NullablePinnedMember(t *testing.T) {
+	resetDB(t)
+	env := newTenantEnv(t)
+	ctx := context.Background()
+
+	parent, err := env.clientA.SharedParents().Create(ctx, &models.CreateSharedParentInput{Org: ""})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	guardian, err := env.clientA.SharedGuardians().Create(ctx, &models.CreateSharedGuardianInput{Org: ""})
+	if err != nil {
+		t.Fatalf("create guardian: %v", err)
+	}
+
+	edges := []struct {
+		name    string
+		column  string
+		id      int64
+		connect func(kid int64) error
+		edge    string
+	}{
+		{
+			name: "default edge", column: "parent_id", id: parent.ID, edge: "SharedKids",
+			connect: func(kid int64) error {
+				_, err := env.clientA.SharedParents().UpdateWithRelated(ctx, parent.ID, &models.UpdateSharedParentWithRelatedInput{
+					SharedKids: &models.SharedParentSharedKidsUpdateNested{Connect: []int64{kid}},
+				})
+				return err
+			},
+		},
+		{
+			name: "allow_reparent edge", column: "guardian_id", id: guardian.ID, edge: "SharedKids",
+			connect: func(kid int64) error {
+				_, err := env.clientA.SharedGuardians().UpdateWithRelated(ctx, guardian.ID, &models.UpdateSharedGuardianWithRelatedInput{
+					SharedKids: &models.SharedGuardianSharedKidsUpdateNested{Connect: []int64{kid}},
+				})
+				return err
+			},
+		},
+	}
+	orgs := []struct {
+		name    string
+		org     omittable.Value[*string]
+		adopted bool
+	}{
+		{name: "NULL is refused"},
+		{name: "another value is refused", org: omittable.Set(new("other"))},
+		{name: "a match adopts", org: omittable.Set(new("")), adopted: true},
+	}
+	for _, edge := range edges {
+		for _, org := range orgs {
+			t.Run(edge.name+"/"+org.name, func(t *testing.T) {
+				kid, err := env.clientA.SharedKids().Create(ctx, &models.CreateSharedKidInput{Org: org.org})
+				if err != nil {
+					t.Fatalf("create kid: %v", err)
+				}
+
+				err = edge.connect(kid.ID)
+				if org.adopted {
+					if err != nil {
+						t.Fatalf("connect: %v", err)
+					}
+				} else {
+					assertNestedError(t, err, models.ErrAlreadyRelated, edge.edge, "connect", kid.ID)
+				}
+
+				var held *int64
+				if err := testPool.QueryRow(ctx, "SELECT "+edge.column+" FROM shared_kids WHERE id = $1", kid.ID).Scan(&held); err != nil {
+					t.Fatalf("read kid: %v", err)
+				}
+				var want *int64
+				if org.adopted {
+					want = &edge.id
+				}
+				if !int64Equal(held, want) {
+					t.Errorf("%s = %v, want %v", edge.column, held, want)
+				}
+			})
+		}
 	}
 }

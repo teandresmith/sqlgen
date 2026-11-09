@@ -179,6 +179,33 @@ func (s MilestoneSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "workspace_id", Direction: direction}
 }
 
+// PlotSorter provides type-safe sort helpers for the Plot entity.
+// Each method returns a sql.Sort for the corresponding column.
+type PlotSorter struct{}
+
+// NewPlotSorter returns a new PlotSorter.
+func NewPlotSorter() PlotSorter { return PlotSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s PlotSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s PlotSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// ZoneID returns a sort for the zone_id column in the given direction.
+func (s PlotSorter) ZoneID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "zone_id", Direction: direction}
+}
+
+// ZoneRegion returns a sort for the zone_region column in the given direction.
+func (s PlotSorter) ZoneRegion(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "zone_region", Direction: direction}
+}
+
 // ProjectSorter provides type-safe sort helpers for the Project entity.
 // Each method returns a sql.Sort for the corresponding column.
 type ProjectSorter struct{}
@@ -220,6 +247,82 @@ func (s ReviewerSorter) Name(direction sql.SortDirection) sql.Sort {
 
 // WorkspaceID returns a sort for the workspace_id column in the given direction.
 func (s ReviewerSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// SharedGuardianSorter provides type-safe sort helpers for the SharedGuardian entity.
+// Each method returns a sql.Sort for the corresponding column.
+type SharedGuardianSorter struct{}
+
+// NewSharedGuardianSorter returns a new SharedGuardianSorter.
+func NewSharedGuardianSorter() SharedGuardianSorter { return SharedGuardianSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s SharedGuardianSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Org returns a sort for the org column in the given direction.
+func (s SharedGuardianSorter) Org(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "org", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s SharedGuardianSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// SharedKidSorter provides type-safe sort helpers for the SharedKid entity.
+// Each method returns a sql.Sort for the corresponding column.
+type SharedKidSorter struct{}
+
+// NewSharedKidSorter returns a new SharedKidSorter.
+func NewSharedKidSorter() SharedKidSorter { return SharedKidSorter{} }
+
+// GuardianID returns a sort for the guardian_id column in the given direction.
+func (s SharedKidSorter) GuardianID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "guardian_id", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s SharedKidSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Org returns a sort for the org column in the given direction.
+func (s SharedKidSorter) Org(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "org", Direction: direction}
+}
+
+// ParentID returns a sort for the parent_id column in the given direction.
+func (s SharedKidSorter) ParentID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "parent_id", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s SharedKidSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// SharedParentSorter provides type-safe sort helpers for the SharedParent entity.
+// Each method returns a sql.Sort for the corresponding column.
+type SharedParentSorter struct{}
+
+// NewSharedParentSorter returns a new SharedParentSorter.
+func NewSharedParentSorter() SharedParentSorter { return SharedParentSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s SharedParentSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Org returns a sort for the org column in the given direction.
+func (s SharedParentSorter) Org(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "org", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s SharedParentSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "workspace_id", Direction: direction}
 }
 

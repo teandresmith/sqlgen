@@ -81,65 +81,6 @@ and filter tests to `mysql` and `sqlite`, though its Tests Required says "nested
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-367
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 32, cmd/sqlgen/gen
-- **Surfaced by:** `/verify 32.6` (2026-11-06)
-- **Vetted:** corrected at `e48ece8b` (2026-11-06)
-
-**Issue.** **Several 32.6 branches have no test that reaches them.**
-- The nullable pinned guard (`null[i] || cur[i] != want[i]`) appears in no checked-in `.go` file
-  under `cmd/sqlgen`, so it is neither compiled nor run. A reviewer probe rendered it and it behaved.
-- PRD §9.9.3's "`allow_reparent` adopts" a partly NULL key has no test.
-- `gen.nested.e1-target-shape`: no test asserts the "cannot construct from the parent's key" refusal.
-- `gen.nested.e5-junction`: no test asserts a local or reference key column absent from the junction's create input, and
-  no payload-column case runs on a three-column union.
-- `TestWithRelated_NarrowedSelectionStillWritesTheEdge` covers `UpdateWithRelated` only; the forcing
-  also serves `Create` and `Upsert`.
-- `TestCreateWithRelated_TenancySetTenantMismatchIsAlreadyRelated` and
-  `TestCreateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated` call `UpdateWithRelated`, so they
-  are misnamed.
-
-**Root cause.** `tenancy_postgres` has no table with a nullable pinned member, and the fixtures stop
-at the shapes the acceptance criteria name.
-
-**Suggested fix.**
-- tenancy_postgres gains `plots` (allow_reparent, two free members) and `shared_parents`,
-  `shared_guardians`, `shared_kids` (nullable `org` pinned on both edges), appended to `schema.sql`.
-  `sqlgen.yml` lists `zones` (Sites and Plots, since the list is an allowlist) and `shared_guardians`.
-- Example tests: `TestUpdateWithRelated_NullablePinnedMember`, `TestUpdateWithRelated_AllowReparentAdoptsAPartlyNullKey`,
-  and `TestWithRelated_NarrowedSelectionStillWritesTheEdge` split into create, upsert inserts, upsert
-  conflicts and update.
-- Unit tests: `TestNestedEligibility_JunctionKeyColumnOutsideTheCreateInput`,
-  `TestNestedEligibility_PayloadColumnOnThreeColumnUnion`, and three new TargetShape cases for E1.
-- Rename the two misnamed tests in the code, `nested.composite-create-tenant-mismatch`, the design doc and
-  `docs/tracker/phase-32.md` (lines 1177, 1222). Update `gen.nested.e1-target-shape`,
-  `gen.nested.e5-junction` and `nested.parent-write-strips-relationships`, which gains the narrowed-selection
-  test and the referenced parent columns (PRD §9.6).
-- Corrected from the original: the NULL pinned test needs a parent whose `org` is the empty string, since
-  with a non-empty org deleting `null[i] ||` survives; it also runs on an `allow_reparent` edge; `Create` and
-  `Upsert` assert through the rows, since an all-false selection returns nil (PRD §9.6).
-- Prototype results, run at `e48ece8b` on 2026-11-06: no production defect surfaced; every new test passed
-  against unmodified generated code. The gap reproduced: `grep -rnE 'null\[[0-9]+\] \|\|' cmd/sqlgen` found no
-  pinned guard. Gates: `go test -race ./gen/...`, tenancy_postgres suite and lint, `make update-golden`, `make
-  update-golden-e2e`, `TestE2EGoldenFiles`, `sqlgen diff --quiet`, `make refs-check`, `make req-check` green.
-  Fail-first: removing `null[%d] ||` fails `TestUpdateWithRelated_NullablePinnedMember/default_edge/NULL_is_refused`
-  (`error names <nil>, want 1`); making `allow_reparent` refuse a partly NULL key fails
-  `/region_held` and `/id_held`; deleting the `FieldOptions` line in Create and Upsert fails their subtests with
-  a false `ErrAlreadyRelated`; deleting the E1 `expr == ""` block fails the TargetShape cases; deleting each E5
-  refusal fails its subtest; stopping the payload rule at two columns fails all three three-column cases. The
-  optional and sequence refusals were already guarded. Golden churn: tenancy_postgres only, +8/~12 in each of
-  `expected/` and `models/`. Overlap: clean over FIX-365; a hand merge in `client.md` with FIX-368; 18 generated
-  conflicts with FIX-364, cleared by regenerating. Patch: `.claude/prototypes/FIX-367.patch` (49 files).
-
-**References.**
-- PRD §9.9.3, §9.9.4 (E1, E5), §9.9.6, §9.6.
-- Registry: `nested.composite-connect-pinned-mismatch`, `nested.composite-connect-held-elsewhere`.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-371
 
 - **Status:** Open
@@ -425,6 +366,65 @@ mismatch), `:1016` (composite no-op) and `:1018` (single-column no-op), with the
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-367
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06)
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **Several 32.6 branches have no test that reaches them.**
+- The nullable pinned guard (`null[i] || cur[i] != want[i]`) appears in no checked-in `.go` file
+  under `cmd/sqlgen`, so it is neither compiled nor run. A reviewer probe rendered it and it behaved.
+- PRD §9.9.3's "`allow_reparent` adopts" a partly NULL key has no test.
+- `gen.nested.e1-target-shape`: no test asserts the "cannot construct from the parent's key" refusal.
+- `gen.nested.e5-junction`: no test asserts a local or reference key column absent from the junction's create input, and
+  no payload-column case runs on a three-column union.
+- `TestWithRelated_NarrowedSelectionStillWritesTheEdge` covers `UpdateWithRelated` only; the forcing
+  also serves `Create` and `Upsert`.
+- `TestCreateWithRelated_TenancySetTenantMismatchIsAlreadyRelated` and
+  `TestCreateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated` call `UpdateWithRelated`, so they
+  are misnamed.
+
+**Root cause.** `tenancy_postgres` has no table with a nullable pinned member, and the fixtures stop
+at the shapes the acceptance criteria name.
+
+**Suggested fix.**
+- tenancy_postgres gains `plots` (allow_reparent, two free members) and `shared_parents`,
+  `shared_guardians`, `shared_kids` (nullable `org` pinned on both edges), appended to `schema.sql`.
+  `sqlgen.yml` lists `zones` (Sites and Plots, since the list is an allowlist) and `shared_guardians`.
+- Example tests: `TestUpdateWithRelated_NullablePinnedMember`, `TestUpdateWithRelated_AllowReparentAdoptsAPartlyNullKey`,
+  and `TestWithRelated_NarrowedSelectionStillWritesTheEdge` split into create, upsert inserts, upsert
+  conflicts and update.
+- Unit tests: `TestNestedEligibility_JunctionKeyColumnOutsideTheCreateInput`,
+  `TestNestedEligibility_PayloadColumnOnThreeColumnUnion`, and three new TargetShape cases for E1.
+- Rename the two misnamed tests in the code, `nested.composite-create-tenant-mismatch`, the design doc and
+  `docs/tracker/phase-32.md` (lines 1177, 1222). Update `gen.nested.e1-target-shape`,
+  `gen.nested.e5-junction` and `nested.parent-write-strips-relationships`, which gains the narrowed-selection
+  test and the referenced parent columns (PRD §9.6).
+- Corrected from the original: the NULL pinned test needs a parent whose `org` is the empty string, since
+  with a non-empty org deleting `null[i] ||` survives; it also runs on an `allow_reparent` edge; `Create` and
+  `Upsert` assert through the rows, since an all-false selection returns nil (PRD §9.6).
+- Prototype results, run at `e48ece8b` on 2026-11-06: no production defect surfaced; every new test passed
+  against unmodified generated code. The gap reproduced: `grep -rnE 'null\[[0-9]+\] \|\|' cmd/sqlgen` found no
+  pinned guard. Gates: `go test -race ./gen/...`, tenancy_postgres suite and lint, `make update-golden`, `make
+  update-golden-e2e`, `TestE2EGoldenFiles`, `sqlgen diff --quiet`, `make refs-check`, `make req-check` green.
+  Fail-first: removing `null[%d] ||` fails `TestUpdateWithRelated_NullablePinnedMember/default_edge/NULL_is_refused`
+  (`error names <nil>, want 1`); making `allow_reparent` refuse a partly NULL key fails
+  `/region_held` and `/id_held`; deleting the `FieldOptions` line in Create and Upsert fails their subtests with
+  a false `ErrAlreadyRelated`; deleting the E1 `expr == ""` block fails the TargetShape cases; deleting each E5
+  refusal fails its subtest; stopping the payload rule at two columns fails all three three-column cases. The
+  optional and sequence refusals were already guarded. Golden churn: tenancy_postgres only, +8/~12 in each of
+  `expected/` and `models/`. Overlap: clean over FIX-365; a hand merge in `client.md` with FIX-368; 18 generated
+  conflicts with FIX-364, cleared by regenerating. Patch: `.claude/prototypes/FIX-367.patch` (49 files).
+
+**References.**
+- PRD §9.9.3, §9.9.4 (E1, E5), §9.9.6, §9.6.
+- Registry: `nested.composite-connect-pinned-mismatch`, `nested.composite-connect-held-elsewhere`.
+
+**Resolution notes.** Test and fixture coverage only; no production defect surfaced. The vetted prototype applied with `git apply --3way` over FIX-363/364/365/368/369/370; `main_test.go`'s reset list, `client.md`, `cli/gen.md` and the design doc's registry rows were hand-merged, keeping the landed rows (`nested.unlink-tenant-mismatch`, `nested.m2m-create-shared-column-mismatch`, the wider pinned-mismatch row) and adding this fix's tests to them. tenancy_postgres gains `plots` and `shared_parents`/`shared_guardians`/`shared_kids`; new example tests `TestUpdateWithRelated_NullablePinnedMember`, `TestUpdateWithRelated_AllowReparentAdoptsAPartlyNullKey`, and `TestWithRelated_NarrowedSelectionStillWritesTheEdge` split into create, upsert inserts, upsert conflicts and update; unit tests `TestNestedEligibility_JunctionKeyColumnOutsideTheCreateInput`, `TestNestedEligibility_PayloadColumnOnThreeColumnUnion` and three E1 TargetShape cases. The two misnamed tests are now `TestUpdateWithRelated_TenancySetTenantMismatchIsAlreadyRelated` and `TestUpdateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated`, in code, the registries, the design doc and `docs/tracker/phase-32.md`. The pinned guard `null[0] || cur[0] != want[0]` is now in checked-in generated code. Generated files regenerated, not merged: tenancy_postgres +8/~12 in each of `expected/` and `models/`, matching the vet (net line counts identical; per-file numstat differs only by diff alignment against the newer base). Gates: `make check`, `make check-examples`.
 
 ### FIX-370
 
