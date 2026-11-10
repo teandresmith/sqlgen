@@ -1142,7 +1142,10 @@ SQLite.
 
 ### Completion Record
 
-Completed 2026-11-06 on `design/tenant-composite-fk-relationships`, uncommitted.
+Completed 2026-11-06 on `design/tenant-composite-fk-relationships` in `e48ece8b`. `/verify 32.6`
+(2026-11-06) logged FIX-363 to FIX-373; all eleven landed by `/fix-loop` (`1c009361` to `c88b5c7e`), the three
+blocking ones (FIX-364, FIX-368, FIX-369) included. Marked done 2026-11-10, after the final sweep
+(`make check-examples`, `make test-integration`) ran green at `c88b5c7e`.
 
 **Files.**
 - `gen/context.go`: `NestedKeyMemberContext`, `NestedScopeTerm`, `NestedOwnerMember`,
@@ -1237,7 +1240,8 @@ was not run; it is due at 32.8.
 - A shared parent's tenant mismatch is loud on `disconnect` and `clear` too (FIX-369).
 
 `tenancy_postgres` gains `template_labels`, `template_notes`, `stamps`, `template_stamps`,
-`workspaces`, `workspace_notes`, `zones` and `sites` for these. No fixture renders the nullable pinned guard (`null[i] || …`), so it is neither compiled nor run.
+`workspaces`, `workspace_notes`, `zones` and `sites` for these. FIX-367 (`4ecd98c7`) added the `plots` fixture, so the nullable pinned guard (`null[i] || …`) now renders and runs
+(`TestUpdateWithRelated_NullablePinnedMember`).
 
 ## 32.7 GraphQL — relationship fields and filters for composite edges
 
