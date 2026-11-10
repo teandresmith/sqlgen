@@ -832,6 +832,8 @@ func upsertWithRelated(t *testing.T, h *Harness) {
 		}
 		swrAssertPosts(t, h, map[string]*int64{"created": &a.ID})
 	})
+
+	upsertWithRelatedCompositeKey(t, h)
 }
 
 // swrAuthorRow is a stored author: its key and whether it is soft-deleted.

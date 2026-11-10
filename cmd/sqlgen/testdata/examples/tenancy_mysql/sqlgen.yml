@@ -41,6 +41,8 @@ tenancy:
   required: true
 
 generation:
+  nested_mutations:
+    enabled: true
   soft_delete_columns:
     - name: deleted_at
       type: timestamp

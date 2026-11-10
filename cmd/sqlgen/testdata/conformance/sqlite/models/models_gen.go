@@ -8627,6 +8627,3251 @@ func scanAuthorsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Auth
 	return result, nil
 }
 
+type Bay struct {
+	ID     int64  `db:"id" json:"id"`
+	Region string `db:"region" json:"region"`
+
+	// Lockers - one-to-many relationship with the lockers table.
+	Lockers []*Locker `db:"-" json:"lockers"`
+	// Slots - one-to-many relationship with the slots table.
+	Slots []*Slot `db:"-" json:"slots"`
+}
+
+// BayClient provides type-safe operations for the bays table.
+type BayClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single bay by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error)
+
+	// GetMany returns bays matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetBaysInput, opts ...func(*CallOptions[BayFieldOptions])) ([]*Bay, error)
+
+	// Exists returns true if a bay with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[BayFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any bay matches the given filter.
+	ExistsWhere(ctx context.Context, filter *BayFilter, opts ...func(*CallOptions[BayFieldOptions])) (bool, error)
+
+	// Count returns the number of bays matching the given filter.
+	Count(ctx context.Context, filter *BayFilter, opts ...func(*CallOptions[BayFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new bay and returns the created entity.
+	Create(ctx context.Context, input *CreateBayInput, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error)
+
+	// CreateMany inserts multiple bays in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateBayInput, opts ...func(*CallOptions[BayFieldOptions])) ([]*Bay, error)
+
+	// Update partially updates a bay by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateBayInput, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error)
+
+	// UpdateMany updates multiple bays and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateBayItem, opts ...func(*CallOptions[BayFieldOptions])) ([]*Bay, error)
+
+	// UpdateWhere updates all bays matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *BayFilter, input *UpdateBayInput, opts ...func(*CallOptions[BayFieldOptions])) ([]*Bay, error)
+
+	// Upsert inserts a bay or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateBayInput, target BayConflictTarget, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error)
+
+	// UpsertMany inserts or updates multiple bays in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateBayInput, target BayConflictTarget, opts ...func(*CallOptions[BayFieldOptions])) ([]*Bay, error)
+
+	// CreateWithRelated creates a bay together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateBayWithRelatedInput, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error)
+
+	// UpdateWithRelated updates a bay together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdateBayWithRelatedInput, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error)
+
+	// UpsertWithRelated inserts or updates a bay together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertBayWithRelatedInput, target BayConflictTarget, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a bay from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[BayFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple bays from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[BayFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all bays matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *BayFilter, opts ...func(*CallOptions[BayFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of bays with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[BayFilter], opts ...func(*CallOptions[BayFieldOptions])) (*PaginateResult[Bay], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of bays.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[BayFilter], opts ...func(*CallOptions[BayFieldOptions])) (*Connection[Bay], error)
+
+	// Stream returns an iterator over bays matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamBaysInput, opts ...func(*CallOptions[StreamBayFieldOptions])) iter.Seq2[*Bay, error]
+}
+
+// bayClient implements the BayClient interface.
+type bayClient struct {
+	querier            database.Querier
+	dialect            sql.Dialect
+	table              sql.Table
+	batchSize          int
+	queryLimit         int
+	pageSize           int
+	cursorKeys         []string
+	strictUpdates      bool
+	mutationHooks      []hook.MutationHook
+	queryHooks         []hook.QueryHook
+	panicHandler       hook.PanicHandler
+	callbackMode       database.CallbackMode
+	lockersDefaultSort []sql.Sort
+	slotsDefaultSort   []sql.Sort
+	lockerClient       *lockerClient
+	slotClient         *slotClient
+}
+
+// newBayClient creates a new bayClient.
+func newBayClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *bayClient {
+	return &bayClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "bays"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *bayClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *bayClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// bayAllColumns is the column list for full-entity reads, sorted for determinism.
+var bayAllColumns = []string{"id", "region"}
+
+// scanBays scans rows into Bay entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanBays(rows database.Rows, columns []string) ([]*Bay, error) {
+	var result []*Bay
+	for rows.Next() {
+		b := &Bay{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &b.ID
+			case "region":
+				targets[idx] = &b.Region
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan bay: %w", err)
+		}
+
+		result = append(result, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bay rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single bay by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *bayClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get bay: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableBays, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[BayFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[BayFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		bays, err := c.GetMany(ctx, &GetBaysInput{
+			Filter: &BayFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(bays) == 0 {
+			return nil, ErrNotFound
+		}
+		return bays[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get bay: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Bay), nil
+}
+
+// GetMany returns bays matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *bayClient) GetMany(ctx context.Context, input *GetBaysInput, opts ...func(*CallOptions[BayFieldOptions])) ([]*Bay, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetBaysInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many bays: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableBays, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := bayAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "region", "id")
+				}
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var bays []*Bay
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		bays, err = scanBays(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, bays, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return bays, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many bays: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Bay), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the region and id columns into a narrowed projection when one is:
+// loadRelationships maps every child back through b.Region and b.ID, which
+// an unselected column would leave at its zero value.
+func (fo *BayFieldOptions) loadsRelationships() bool {
+	if fo.Lockers != nil {
+		return true
+	}
+	if fo.Slots != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *bayClient) loadRelationships(ctx context.Context, conn database.Querier, bays []*Bay, options CallOptions[BayFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Lockers != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			bayKeyed := make([]*Bay, 0, len(bays))
+			bayKeys := make([][]any, 0, len(bays))
+			for _, b := range bays {
+				bayKeyed = append(bayKeyed, b)
+				bayKeys = append(bayKeys, []any{b.Region, b.ID})
+			}
+
+			sorts := fo.Lockers.Sorts
+			if len(sorts) == 0 {
+				sorts = c.lockersDefaultSort
+			}
+
+			// Load via related entity client, 8191 parent keys per
+			// statement: within half the dialect's bind-parameter limit, leaving
+			// the rest for the relationship's filters. Each parent's children come
+			// from one statement, so the sorts order every parent's slice.
+			var relatedLockers []*Locker
+			for start := 0; start < len(bayKeys); start += 8191 {
+				chunk := bayKeys[start:min(start+8191, len(bayKeys))]
+
+				// The consumer filter is ANDed in, so a soft-delete comparator
+				// in it narrows the child's default rather than replacing it.
+				filter := &LockerFilter{}
+				if fo.Lockers.Filter != nil {
+					filter.And = append(filter.And, fo.Lockers.Filter)
+				}
+
+				loaded, err := c.lockerClient.GetMany(ctx, &GetLockersInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					conditions: []sql.Condition{
+						sql.BuildCompositePKBatchCondition(c.dialect, []string{"bay_region", "bay_id"}, chunk),
+					},
+					// The mapping below keys every child on its FK columns, so the
+					// fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"bay_region", "bay_id"},
+				}, func(co *CallOptions[LockerFieldOptions]) {
+					co.FieldOptions = fo.Lockers.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load bay lockers: %w", err)
+				}
+				relatedLockers = append(relatedLockers, loaded...)
+			}
+
+			// Map results back to parent entities on every key column. A child
+			// with a NULL member references no parent.
+			byKey := make(map[[2]string][]*Locker)
+			for _, r := range relatedLockers {
+				if !(r.BayRegion != nil && r.BayID != nil) {
+					continue
+				}
+				key := [2]string{(*r.BayRegion), fmt.Sprint((*r.BayID))}
+				byKey[key] = append(byKey[key], r)
+			}
+			for _, parent := range bayKeyed {
+				parent.Lockers = byKey[[2]string{parent.Region, fmt.Sprint(parent.ID)}]
+			}
+			return nil
+		})
+	}
+
+	if fo.Slots != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			bayKeyed := make([]*Bay, 0, len(bays))
+			bayKeys := make([][]any, 0, len(bays))
+			for _, b := range bays {
+				bayKeyed = append(bayKeyed, b)
+				bayKeys = append(bayKeys, []any{b.Region, b.ID})
+			}
+
+			sorts := fo.Slots.Sorts
+			if len(sorts) == 0 {
+				sorts = c.slotsDefaultSort
+			}
+
+			// Load via related entity client, 8191 parent keys per
+			// statement: within half the dialect's bind-parameter limit, leaving
+			// the rest for the relationship's filters. Each parent's children come
+			// from one statement, so the sorts order every parent's slice.
+			var relatedSlots []*Slot
+			for start := 0; start < len(bayKeys); start += 8191 {
+				chunk := bayKeys[start:min(start+8191, len(bayKeys))]
+
+				// The consumer filter is ANDed in, so a soft-delete comparator
+				// in it narrows the child's default rather than replacing it.
+				filter := &SlotFilter{}
+				if fo.Slots.Filter != nil {
+					filter.And = append(filter.And, fo.Slots.Filter)
+				}
+
+				loaded, err := c.slotClient.GetMany(ctx, &GetSlotsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					conditions: []sql.Condition{
+						sql.BuildCompositePKBatchCondition(c.dialect, []string{"bay_region", "bay_id"}, chunk),
+					},
+					// The mapping below keys every child on its FK columns, so the
+					// fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"bay_region", "bay_id"},
+				}, func(co *CallOptions[SlotFieldOptions]) {
+					co.FieldOptions = fo.Slots.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load bay slots: %w", err)
+				}
+				relatedSlots = append(relatedSlots, loaded...)
+			}
+
+			// Map results back to parent entities on every key column. A child
+			// with a NULL member references no parent.
+			byKey := make(map[[2]string][]*Slot)
+			for _, r := range relatedSlots {
+				if !(r.BayRegion != nil && r.BayID != nil) {
+					continue
+				}
+				key := [2]string{(*r.BayRegion), fmt.Sprint((*r.BayID))}
+				byKey[key] = append(byKey[key], r)
+			}
+			for _, parent := range bayKeyed {
+				parent.Slots = byKey[[2]string{parent.Region, fmt.Sprint(parent.ID)}]
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new bay and returns the created entity.
+func (c *bayClient) Create(ctx context.Context, input *CreateBayInput, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateBayInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create bay: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableBays, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"region"}
+		args := []any{input.Region}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[BayFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create bay: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Bay), nil
+}
+
+// CreateMany inserts multiple bays in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *bayClient) CreateMany(ctx context.Context, inputs []*CreateBayInput, opts ...func(*CallOptions[BayFieldOptions])) ([]*Bay, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many bays: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableBays, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Bay{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"region"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.Region,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetBaysInput{
+			Filter: &BayFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[BayFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many bays: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Bay), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *bayClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *bayClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan bay id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a bay by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *bayClient) Update(ctx context.Context, id int64, input *UpdateBayInput, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update bay: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableBays, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Region.Get(); ok {
+			setClauses["region"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[BayFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[BayFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update bay: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Bay), nil
+}
+
+// UpdateBayItem pairs a primary key with an update input for batch updates.
+type UpdateBayItem struct {
+	ID    int64           `json:"id"`
+	Input *UpdateBayInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple bays and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *bayClient) UpdateMany(ctx context.Context, items []UpdateBayItem, opts ...func(*CallOptions[BayFieldOptions])) ([]*Bay, error) {
+	// UpdateBayItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many bays: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableBays, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Bay{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateBayItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_bay", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Region.Get(); ok {
+						setClauses["region"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetBaysInput{
+			Filter: &BayFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[BayFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many bays: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Bay), nil
+}
+
+// UpdateWhere updates all bays matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *bayClient) UpdateWhere(ctx context.Context, filter *BayFilter, input *UpdateBayInput, opts ...func(*CallOptions[BayFieldOptions])) ([]*Bay, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update bays where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableBays, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Region.Get(); ok {
+			setClauses["region"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetBaysInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[BayFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated bay id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetBaysInput{
+			Filter: &BayFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[BayFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update bays where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Bay), nil
+}
+
+// HardDelete permanently removes a bay from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *bayClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[BayFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableBays, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete bay: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple bays from the database.
+func (c *bayClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[BayFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableBays, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted bay key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many bays: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all bays matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *bayClient) HardDeleteWhere(ctx context.Context, filter *BayFilter, opts ...func(*CallOptions[BayFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableBays, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted bay id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete bays where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *bayClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// BayConflictTarget identifies a unique constraint for upsert conflict detection.
+type BayConflictTarget int
+
+const (
+	BayConflictPK       BayConflictTarget = iota // PRIMARY KEY (id)
+	BayConflictRegionID                          // UNIQUE (region, id)
+)
+
+// bayConflictColumns maps each conflict target to its column set.
+var bayConflictColumns = map[BayConflictTarget][]string{
+	BayConflictPK:       {"id"},
+	BayConflictRegionID: {"region", "id"},
+}
+
+// Upsert inserts a bay or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *bayClient) Upsert(ctx context.Context, input *CreateBayInput, target BayConflictTarget, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateBayInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert bay: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableBays, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"region"}
+		args := []any{input.Region}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := bayConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[BayFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert bay: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Bay), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *bayClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *bayClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple bays in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// bays.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *bayClient) UpsertMany(ctx context.Context, inputs []*CreateBayInput, target BayConflictTarget, opts ...func(*CallOptions[BayFieldOptions])) ([]*Bay, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many bays: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableBays, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Bay{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"region"}
+		conflictColumns := bayConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateBayInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.Region,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateBayInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetBaysInput{
+			Filter: &BayFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[BayFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many bays: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Bay), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// bays.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *bayClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level bayConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanBays
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanBays(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = bayColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// bayColumnValue returns one column's value off a scanned
+// Bay, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanBays.
+func bayColumnValue(b *Bay, column string) any {
+	switch column {
+	case "id":
+		return b.ID
+	case "region":
+		return b.Region
+	}
+	return nil
+}
+
+// CreateBayWithRelatedInput holds the fields for creating a bays record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateBayWithRelatedInput struct {
+	// Bay holds the parent's own columns — identical to the input Create accepts.
+	Bay CreateBayInput `json:"bay"`
+
+	// Lockers - one-to-many relationship with the lockers table.
+	Lockers *BayLockersCreateNested `json:"lockers,omitempty"`
+
+	// Slots - one-to-many relationship with the slots table.
+	Slots *BaySlotsCreateNested `json:"slots,omitempty"`
+}
+
+// UpdateBayWithRelatedInput holds the fields for updating a bays record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateBayWithRelatedInput struct {
+	// Bay holds the parent's own columns — identical to the input Update accepts.
+	Bay UpdateBayInput `json:"bay"`
+
+	// Lockers - one-to-many relationship with the lockers table.
+	Lockers *BayLockersUpdateNested `json:"lockers,omitempty"`
+
+	// Slots - one-to-many relationship with the slots table.
+	Slots *BaySlotsUpdateNested `json:"slots,omitempty"`
+}
+
+// UpsertBayWithRelatedInput holds the fields for upserting a bays record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateBayInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertBayWithRelatedInput struct {
+	// Bay holds the parent's own columns — identical to the input Upsert accepts.
+	Bay CreateBayInput `json:"bay"`
+
+	// Lockers - one-to-many relationship with the lockers table.
+	Lockers *BayLockersUpdateNested `json:"lockers,omitempty"`
+
+	// Slots - one-to-many relationship with the slots table.
+	Slots *BaySlotsUpdateNested `json:"slots,omitempty"`
+}
+
+// BayLockersCreateNested is the create-side verb block for Bay.Lockers.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type BayLockersCreateNested struct {
+	Create  []*BayLockersCreateInput `json:"create,omitempty"`
+	Connect []int64                  `json:"connect,omitempty"`
+}
+
+// BayLockersUpdateNested is the update-side verb block for Bay.Lockers,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type BayLockersUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool                     `json:"clear,omitempty"`
+	Create     []*BayLockersCreateInput `json:"create,omitempty"`
+	Connect    []int64                  `json:"connect,omitempty"`
+	Disconnect []int64                  `json:"disconnect,omitempty"`
+}
+
+// BayLockersCreateInput is CreateLockerInput with the traversed
+// foreign key removed — that column is always set from the parent's primary key,
+// so leaving it would force the caller to supply a value that is then
+// overwritten.
+type BayLockersCreateInput struct {
+	Label string `json:"label"`
+}
+
+// bayLockersNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func bayLockersNestedFromCreate(n *BayLockersCreateNested) *BayLockersUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &BayLockersUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// BaySlotsCreateNested is the create-side verb block for Bay.Slots.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type BaySlotsCreateNested struct {
+	Create  []*BaySlotsCreateInput `json:"create,omitempty"`
+	Connect []int64                `json:"connect,omitempty"`
+}
+
+// BaySlotsUpdateNested is the update-side verb block for Bay.Slots,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type BaySlotsUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool                   `json:"clear,omitempty"`
+	Create     []*BaySlotsCreateInput `json:"create,omitempty"`
+	Connect    []int64                `json:"connect,omitempty"`
+	Disconnect []int64                `json:"disconnect,omitempty"`
+}
+
+// BaySlotsCreateInput is CreateSlotInput with the traversed
+// foreign key removed — that column is always set from the parent's primary key,
+// so leaving it would force the caller to supply a value that is then
+// overwritten.
+type BaySlotsCreateInput struct {
+	Label string `json:"label"`
+}
+
+// baySlotsNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func baySlotsNestedFromCreate(n *BaySlotsCreateNested) *BaySlotsUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &BaySlotsUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// bayNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+// The columns the edges' keys reference are forced on too: the nested writes
+// copy them, so a narrowed selection must not leave them zero.
+func bayNestedParentFieldOptions(fo *BayFieldOptions) *BayFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.Lockers = nil
+	scalars.Slots = nil
+	scalars.ID = true
+	scalars.Region = true
+	return &scalars
+}
+
+// bayNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func bayNestedSelectsRelationship(fo *BayFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.Lockers != nil || fo.Slots != nil
+}
+
+// CreateWithRelated creates a bay together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *bayClient) CreateWithRelated(ctx context.Context, input *CreateBayWithRelatedInput, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create bay with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Bay
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err := database.WithTransaction(ctx, c.querier, "create_bay_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.Bay, func(o *CallOptions[BayFieldOptions]) {
+			*o = options
+			o.FieldOptions = bayNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyBayLockersNested(ctx, parent, bayLockersNestedFromCreate(input.Lockers), options); err != nil {
+			return err
+		}
+
+		if err := c.applyBaySlotsNested(ctx, parent, baySlotsNestedFromCreate(input.Slots), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if bayNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[BayFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create bay with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a bay together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *bayClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdateBayWithRelatedInput, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update bay with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Bay
+	err := database.WithTransaction(ctx, c.querier, "update_bay_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.Bay, func(o *CallOptions[BayFieldOptions]) {
+			*o = options
+			o.FieldOptions = bayNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyBayLockersNested(ctx, parent, input.Lockers, options); err != nil {
+			return err
+		}
+
+		if err := c.applyBaySlotsNested(ctx, parent, input.Slots, options); err != nil {
+			return err
+		}
+
+		if bayNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[BayFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update bay with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a bay together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *bayClient) UpsertWithRelated(ctx context.Context, input *UpsertBayWithRelatedInput, target BayConflictTarget, opts ...func(*CallOptions[BayFieldOptions])) (*Bay, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert bay with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Bay
+	err := database.WithTransaction(ctx, c.querier, "upsert_bay_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.Bay, target, func(o *CallOptions[BayFieldOptions]) {
+			*o = options
+			o.FieldOptions = bayNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyBayLockersNested(ctx, parent, input.Lockers, options); err != nil {
+			return err
+		}
+
+		if err := c.applyBaySlotsNested(ctx, parent, input.Slots, options); err != nil {
+			return err
+		}
+
+		if bayNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[BayFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert bay with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applyBayLockersNested applies the Bay.Lockers block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *bayClient) applyBayLockersNested(ctx context.Context, parent *Bay, nested *BayLockersUpdateNested, options CallOptions[BayFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("Lockers", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	// The connect adoption's verify read filters on it too.
+	pid0 := parent.Region
+	pid1 := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if _, err := c.lockerClient.UpdateWhere(ctx,
+			&LockerFilter{
+				BayRegion: &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+				BayID:     &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+			},
+			&UpdateLockerInput{BayRegion: omittable.Set[*string](nil), BayID: omittable.Set[*int64](nil)},
+			func(o *CallOptions[LockerFieldOptions]) {
+				nestedChildOptions(o, options)
+				// Nothing selected — the inner call does not need its result
+				// back, so it skips the read that would hand the rows over.
+				o.FieldOptions = &LockerFieldOptions{}
+			}); err != nil {
+			return nestedError("Lockers", "clear", nil, err)
+		}
+	}
+
+	if len(nested.Create) > 0 {
+		inputs := make([]*CreateLockerInput, 0, len(nested.Create))
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Lockers", "create", nil, ErrNilInput)
+			}
+			inputs = append(inputs, &CreateLockerInput{
+				BayRegion: omittable.Set(&parent.Region),
+				BayID:     omittable.Set(&parent.ID),
+				Label:     n.Label,
+			})
+		}
+		if _, err := c.lockerClient.CreateMany(ctx, inputs, func(o *CallOptions[LockerFieldOptions]) {
+			nestedChildOptions(o, options)
+			// Nothing selected — the inner call does not need its result back,
+			// so it costs one statement rather than a statement plus a read.
+			o.FieldOptions = &LockerFieldOptions{}
+		}); err != nil {
+			return nestedError("Lockers", "create", nil, err)
+		}
+	}
+
+	// connect — adopt unparented rows. The visibility read is not optional:
+	// the UPDATE's row count alone cannot separate "no such row" from "already
+	// parented", and the FK constraint proves a row exists, not that the caller
+	// may see it.
+	if len(connectIDs) > 0 {
+		// Each target's key, as a tuple of strings, which compares every key
+		// type. NULL is held apart: it stringifies like an empty string.
+		owner := make(map[int64][2]string, len(connectIDs))
+		nulls := make(map[int64][2]bool, len(connectIDs))
+		// Chunked at c.batchSize, for the reason the disconnect below is:
+		// a single `IN` over the caller's whole list hits a dialect-dependent
+		// bind ceiling whose error cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.lockerClient.GetMany(ctx, &GetLockersInput{
+				Filter: &LockerFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[LockerFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &LockerFieldOptions{ID: true, BayRegion: true, BayID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Lockers", "connect", nil, err)
+			}
+			for _, row := range visible {
+				var key [2]string
+				var null [2]bool
+				if row.BayRegion != nil {
+					key[0] = (*row.BayRegion)
+				} else {
+					null[0] = true
+				}
+				if row.BayID != nil {
+					key[1] = fmt.Sprint((*row.BayID))
+				} else {
+					null[1] = true
+				}
+				owner[row.ID], nulls[row.ID] = key, null
+			}
+		}
+
+		adopt := make([]int64, 0, len(connectIDs))
+		// A repeated id is ONE adoption: connect is a set operation, and the
+		// UPDATE matches the row once however many times the caller named it.
+		// Queueing it twice would trip the shortfall check below and report a
+		// conflict that did not happen.
+		queued := make(map[int64]bool, len(connectIDs))
+		want := [2]string{parent.Region, fmt.Sprint(parent.ID)}
+		for _, v := range connectIDs {
+			cur, ok := owner[v]
+			null := nulls[v]
+			switch {
+			case !ok:
+				// Absent, another tenant's, or soft-deleted — indistinguishable
+				// to this caller, and all NOT_FOUND. Never CONFLICT: that would
+				// confirm the row exists.
+				return nestedError("Lockers", "connect", v, ErrNotFound)
+			case !null[0] && !null[1] && cur == want:
+				// Already ours — the requested end state holds, so this is a
+				// no-op rather than a conflict.
+				continue
+			case !null[0] || !null[1]:
+				return nestedError("Lockers", "connect", v, ErrAlreadyRelated)
+			}
+			if queued[v] {
+				continue
+			}
+			queued[v] = true
+			adopt = append(adopt, v)
+		}
+
+		if len(adopt) > 0 {
+			adoptedCount := 0
+			// The adoption is chunked on the same ceiling the read above
+			// is, and the shortfall check sums across chunks: a row lost in one
+			// chunk is a lost race whichever chunk it landed in.
+			for start := 0; start < len(adopt); start += c.batchSize {
+				adopting := adopt[start:min(start+c.batchSize, len(adopt))]
+				if _, err := c.lockerClient.UpdateWhere(ctx,
+					&LockerFilter{
+						ID: &comparator.Number[int64]{In: adopting},
+						// The `IS NULL` guard is what makes the adoption atomic
+						// against a concurrent connect that parented the row
+						// between the read above and this statement.
+						BayRegion: &comparator.NullableString{Null: new(true)},
+						BayID:     &comparator.NullableNumber[int64]{Null: new(true)},
+					},
+					&UpdateLockerInput{BayRegion: omittable.Set(&parent.Region), BayID: omittable.Set(&parent.ID)},
+					func(o *CallOptions[LockerFieldOptions]) {
+						nestedChildOptions(o, options)
+						// Nothing selected — the verify read below counts
+						// the adoption, not the rows UpdateWhere reports.
+						o.FieldOptions = &LockerFieldOptions{}
+					}); err != nil {
+					return nestedError("Lockers", "connect", nil, err)
+				}
+				// The verify read counts this chunk's ids that now name this
+				// parent. Inside the transaction a plain read sees its own
+				// writes, so it counts what the UPDATE adopted and never a row
+				// another connection parented first — on every dialect, with
+				// no lock. UpdateWhere's report cannot do this on MySQL, where
+				// a pre-SELECT names the rows. Hooks are
+				// skipped as on the terminal re-read: this is part of the write.
+				adopted, err := c.lockerClient.GetMany(ctx, &GetLockersInput{
+					Filter: &LockerFilter{
+						ID:        &comparator.Number[int64]{In: adopting},
+						BayRegion: &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+						BayID:     &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+					},
+					Limit: new(0),
+				}, func(o *CallOptions[LockerFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &LockerFieldOptions{ID: true}
+					o.SkipHooks = true
+					o.LockMode = sql.LockNone
+				})
+				if err != nil {
+					return nestedError("Lockers", "connect", nil, err)
+				}
+				adoptedCount += len(adopted)
+			}
+			if adoptedCount != len(adopt) {
+				// Lost the race — parented between the read and the UPDATE.
+				// Same outcome, reported the same way.
+				return nestedError("Lockers", "connect", nil, ErrAlreadyRelated)
+			}
+		}
+	}
+
+	// disconnect — unlink, scoped to THIS parent. The `fk = parent` term is
+	// what stops a caller detaching another parent's row by guessing its id,
+	// and it is why a disconnect needs no visibility read where a connect does.
+	// A miss is a no-op, not an error.
+	if len(disconnectIDs) > 0 {
+		// Chunked at c.batchSize. The ceiling is a dialect-dependent bind
+		// limit, lowest on SQLite at 32766, and the error names nothing that
+		// can attribute — so it is removed rather than documented.
+		for start := 0; start < len(disconnectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(disconnectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range disconnectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			if _, err := c.lockerClient.UpdateWhere(ctx,
+				&LockerFilter{
+					ID:        &comparator.Number[int64]{In: ids},
+					BayRegion: &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+					BayID:     &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+				},
+				&UpdateLockerInput{BayRegion: omittable.Set[*string](nil), BayID: omittable.Set[*int64](nil)},
+				func(o *CallOptions[LockerFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &LockerFieldOptions{}
+				}); err != nil {
+				return nestedError("Lockers", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// applyBaySlotsNested applies the Bay.Slots block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *bayClient) applyBaySlotsNested(ctx context.Context, parent *Bay, nested *BaySlotsUpdateNested, options CallOptions[BayFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("Slots", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	// The connect adoption's verify read filters on it too.
+	pid0 := parent.Region
+	pid1 := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if _, err := c.slotClient.UpdateWhere(ctx,
+			&SlotFilter{
+				BayRegion: &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+				BayID:     &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+			},
+			&UpdateSlotInput{BayRegion: omittable.Set[*string](nil), BayID: omittable.Set[*int64](nil)},
+			func(o *CallOptions[SlotFieldOptions]) {
+				nestedChildOptions(o, options)
+				// Nothing selected — the inner call does not need its result
+				// back, so it skips the read that would hand the rows over.
+				o.FieldOptions = &SlotFieldOptions{}
+			}); err != nil {
+			return nestedError("Slots", "clear", nil, err)
+		}
+	}
+
+	if len(nested.Create) > 0 {
+		inputs := make([]*CreateSlotInput, 0, len(nested.Create))
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Slots", "create", nil, ErrNilInput)
+			}
+			inputs = append(inputs, &CreateSlotInput{
+				BayRegion: omittable.Set(&parent.Region),
+				BayID:     omittable.Set(&parent.ID),
+				Label:     n.Label,
+			})
+		}
+		if _, err := c.slotClient.CreateMany(ctx, inputs, func(o *CallOptions[SlotFieldOptions]) {
+			nestedChildOptions(o, options)
+			// Nothing selected — the inner call does not need its result back,
+			// so it costs one statement rather than a statement plus a read.
+			o.FieldOptions = &SlotFieldOptions{}
+		}); err != nil {
+			return nestedError("Slots", "create", nil, err)
+		}
+	}
+
+	// connect — adopt unparented rows. The visibility read is not optional:
+	// the UPDATE's row count alone cannot separate "no such row" from "already
+	// parented", and the FK constraint proves a row exists, not that the caller
+	// may see it.
+	if len(connectIDs) > 0 {
+		// Each target's key, as a tuple of strings, which compares every key
+		// type. NULL is held apart: it stringifies like an empty string.
+		owner := make(map[int64][2]string, len(connectIDs))
+		nulls := make(map[int64][2]bool, len(connectIDs))
+		// Chunked at c.batchSize, for the reason the disconnect below is:
+		// a single `IN` over the caller's whole list hits a dialect-dependent
+		// bind ceiling whose error cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.slotClient.GetMany(ctx, &GetSlotsInput{
+				Filter: &SlotFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[SlotFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &SlotFieldOptions{ID: true, BayRegion: true, BayID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Slots", "connect", nil, err)
+			}
+			for _, row := range visible {
+				var key [2]string
+				var null [2]bool
+				if row.BayRegion != nil {
+					key[0] = (*row.BayRegion)
+				} else {
+					null[0] = true
+				}
+				if row.BayID != nil {
+					key[1] = fmt.Sprint((*row.BayID))
+				} else {
+					null[1] = true
+				}
+				owner[row.ID], nulls[row.ID] = key, null
+			}
+		}
+
+		adopt := make([]int64, 0, len(connectIDs))
+		// A repeated id is ONE adoption: connect is a set operation, and the
+		// UPDATE matches the row once however many times the caller named it.
+		// Queueing it twice would trip the shortfall check below and report a
+		// conflict that did not happen.
+		queued := make(map[int64]bool, len(connectIDs))
+		want := [2]string{parent.Region, fmt.Sprint(parent.ID)}
+		for _, v := range connectIDs {
+			cur, ok := owner[v]
+			null := nulls[v]
+			switch {
+			case !ok:
+				// Absent, another tenant's, or soft-deleted — indistinguishable
+				// to this caller, and all NOT_FOUND. Never CONFLICT: that would
+				// confirm the row exists.
+				return nestedError("Slots", "connect", v, ErrNotFound)
+			case !null[0] && !null[1] && cur == want:
+				// Already ours — the requested end state holds, so this is a
+				// no-op rather than a conflict.
+				continue
+			}
+			if queued[v] {
+				continue
+			}
+			queued[v] = true
+			adopt = append(adopt, v)
+		}
+
+		if len(adopt) > 0 {
+			adoptedCount := 0
+			// The adoption is chunked on the same ceiling the read above
+			// is, and the shortfall check sums across chunks: a row lost in one
+			// chunk is a lost race whichever chunk it landed in.
+			for start := 0; start < len(adopt); start += c.batchSize {
+				adopting := adopt[start:min(start+c.batchSize, len(adopt))]
+				if _, err := c.slotClient.UpdateWhere(ctx,
+					&SlotFilter{
+						ID: &comparator.Number[int64]{In: adopting},
+					},
+					&UpdateSlotInput{BayRegion: omittable.Set(&parent.Region), BayID: omittable.Set(&parent.ID)},
+					func(o *CallOptions[SlotFieldOptions]) {
+						nestedChildOptions(o, options)
+						// Nothing selected — the verify read below counts
+						// the adoption, not the rows UpdateWhere reports.
+						o.FieldOptions = &SlotFieldOptions{}
+					}); err != nil {
+					return nestedError("Slots", "connect", nil, err)
+				}
+				// The verify read counts this chunk's ids that now name this
+				// parent. Inside the transaction a plain read sees its own
+				// writes, so it counts what the UPDATE adopted and never a row
+				// another connection parented first — on every dialect, with
+				// no lock. UpdateWhere's report cannot do this on MySQL, where
+				// a pre-SELECT names the rows. Hooks are
+				// skipped as on the terminal re-read: this is part of the write.
+				adopted, err := c.slotClient.GetMany(ctx, &GetSlotsInput{
+					Filter: &SlotFilter{
+						ID:        &comparator.Number[int64]{In: adopting},
+						BayRegion: &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+						BayID:     &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+					},
+					Limit: new(0),
+				}, func(o *CallOptions[SlotFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &SlotFieldOptions{ID: true}
+					o.SkipHooks = true
+					o.LockMode = sql.LockNone
+				})
+				if err != nil {
+					return nestedError("Slots", "connect", nil, err)
+				}
+				adoptedCount += len(adopted)
+			}
+			if adoptedCount != len(adopt) {
+				// The UPDATE carries no `fk IS NULL` term under
+				// allow_reparent, so a row the visibility read returned
+				// that the verify read does not find under this parent
+				// stopped being visible in between — deleted, or
+				// soft-deleted. Reported the way the visibility read would
+				// have reported it.
+				return nestedError("Slots", "connect", nil, ErrNotFound)
+			}
+		}
+	}
+
+	// disconnect — unlink, scoped to THIS parent. The `fk = parent` term is
+	// what stops a caller detaching another parent's row by guessing its id,
+	// and it is why a disconnect needs no visibility read where a connect does.
+	// A miss is a no-op, not an error.
+	if len(disconnectIDs) > 0 {
+		// Chunked at c.batchSize. The ceiling is a dialect-dependent bind
+		// limit, lowest on SQLite at 32766, and the error names nothing that
+		// can attribute — so it is removed rather than documented.
+		for start := 0; start < len(disconnectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(disconnectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range disconnectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			if _, err := c.slotClient.UpdateWhere(ctx,
+				&SlotFilter{
+					ID:        &comparator.Number[int64]{In: ids},
+					BayRegion: &comparator.NullableString{String: comparator.String{Eq: new(pid0)}},
+					BayID:     &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+				},
+				&UpdateSlotInput{BayRegion: omittable.Set[*string](nil), BayID: omittable.Set[*int64](nil)},
+				func(o *CallOptions[SlotFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &SlotFieldOptions{}
+				}); err != nil {
+				return nestedError("Slots", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a bay with the given primary key exists.
+func (c *bayClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[BayFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableBays, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists bay: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any bay matches the given filter.
+func (c *bayClient) ExistsWhere(ctx context.Context, filter *BayFilter, opts ...func(*CallOptions[BayFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableBays, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists bays where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of bays matching the given filter.
+// A nil filter counts all bays.
+func (c *bayClient) Count(ctx context.Context, filter *BayFilter, opts ...func(*CallOptions[BayFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableBays, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count bays: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of bays with total count for offset-based pagination.
+// A nil filter paginates all bays.
+func (c *bayClient) Paginate(ctx context.Context, input PaginateInput[BayFilter], opts ...func(*CallOptions[BayFieldOptions])) (*PaginateResult[Bay], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate bays: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableBays, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[BayFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		bays, err := c.GetMany(ctx, &GetBaysInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[Bay]{
+			Items:      bays,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate bays: %w", err)
+	}
+	return result.(*PaginateResult[Bay]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of bays.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *bayClient) Connection(ctx context.Context, input ConnectionInput[BayFilter], opts ...func(*CallOptions[BayFieldOptions])) (*Connection[Bay], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection bays: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableBays, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[BayFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeBayCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeBayCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		bays, err := c.GetMany(ctx, &GetBaysInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(bays) > limit
+		if hasMore {
+			bays = bays[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(bays)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Bay], len(bays))
+		for i, row := range bays {
+			cursor, err := encodeBayCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Bay]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Bay]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection bays: %w", err)
+	}
+	return result.(*Connection[Bay]), nil
+}
+
+// encodeBayCursor encodes cursor key values as a base64 JSON string.
+func encodeBayCursor(keys []string, b *Bay) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = b.ID
+		case "region":
+			out["region"] = b.Region
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode bay cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeBayCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeBayCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Bay
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamBaysInput holds query parameters for streaming bays records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamBaysInput struct {
+	Filter *BayFilter `json:"filter"`
+	Sorts  []sql.Sort `json:"sorts"`
+}
+
+// StreamBayFieldOptions controls scalar column selection for bays streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamBayFieldOptions struct {
+	ID     bool `json:"id"`
+	Region bool `json:"region"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamBayFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Region {
+		cols = append(cols, "region")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamBayFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Region {
+		return true
+	}
+	return false
+}
+
+// scanBayRow scans a single row into a Bay entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanBayRow(rows database.Rows, columns []string) (*Bay, error) {
+	b := &Bay{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &b.ID
+		case "region":
+			targets[idx] = &b.Region
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan bay: %w", err)
+	}
+
+	return b, nil
+}
+
+// Stream returns an iterator over bays matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *bayClient) Stream(ctx context.Context, input *StreamBaysInput, opts ...func(*CallOptions[StreamBayFieldOptions])) iter.Seq2[*Bay, error] {
+	return func(yield func(*Bay, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamBaysInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream bays: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *Bay, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream bays: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableBays, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := bayAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				b, err := scanBayRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(b, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate bay rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream bays: %w", err))
+		}
+	}
+}
+
+// BayFilter provides type-safe filtering for the bays table.
+type BayFilter struct {
+	ID      *comparator.Number[int64] `json:"id"`
+	Region  *comparator.String        `json:"region"`
+	Lockers *LockerFilter             `json:"lockers"`
+	Slots   *SlotFilter               `json:"slots"`
+	And     []*BayFilter              `json:"and"`
+	Or      []*BayFilter              `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *BayFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Region != nil {
+		conds = append(conds, f.Region.Parse(dialect.QuoteIdentifier("region"), dialect)...)
+	}
+
+	if f.Lockers != nil {
+		conds = append(conds, bayLockersFilterExists(f.Lockers, dialect, opts))
+	}
+
+	if f.Slots != nil {
+		conds = append(conds, baySlotsFilterExists(f.Slots, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// bayLockersFilterExists compiles a LockerFilter set on the
+// Lockers relationship into a correlated EXISTS over lockers.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func bayLockersFilterExists(f *LockerFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "lockers"}) + " " + tgt +
+		" WHERE " + tgt + "." + dialect.QuoteIdentifier("bay_region") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("bay_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists([]string{"region", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// baySlotsFilterExists compiles a SlotFilter set on the
+// Slots relationship into a correlated EXISTS over slots.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func baySlotsFilterExists(f *SlotFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "slots"}) + " " + tgt +
+		" WHERE " + tgt + "." + dialect.QuoteIdentifier("bay_region") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("bay_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists([]string{"region", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// BayFieldOptions controls column selection and relationship loading for bays queries.
+type BayFieldOptions struct {
+	ID      bool                       `json:"id"`
+	Region  bool                       `json:"region"`
+	Lockers *LockerRelationshipOptions `json:"lockers"`
+	Slots   *SlotRelationshipOptions   `json:"slots"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *BayFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Region {
+		cols = append(cols, "region")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *BayFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":     "id",
+		"Region": "region",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *BayFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Region {
+		return true
+	}
+	if fo.Lockers != nil {
+		return true
+	}
+	if fo.Slots != nil {
+		return true
+	}
+	return false
+}
+
+// LockerRelationshipOptions controls loading options for Locker relationships.
+type LockerRelationshipOptions struct {
+	FieldOptions *LockerFieldOptions `json:"field_options"`
+	Filter       *LockerFilter       `json:"filter"`
+	Sorts        []sql.Sort          `json:"sorts"`
+}
+
+// SlotRelationshipOptions controls loading options for Slot relationships.
+type SlotRelationshipOptions struct {
+	FieldOptions *SlotFieldOptions `json:"field_options"`
+	Filter       *SlotFilter       `json:"filter"`
+	Sorts        []sql.Sort        `json:"sorts"`
+}
+
+// CreateBayInput holds the fields for creating a bays record.
+type CreateBayInput struct {
+	Region string `json:"region"`
+}
+
+// UpdateBayInput holds the fields for updating a bays record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateBayInput struct {
+	Region omittable.Value[string] `json:"region,omitzero"`
+}
+
+// GetBaysInput holds query parameters for retrieving bays records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetBaysInput struct {
+	Filter *BayFilter `json:"filter"`
+	Limit  *int       `json:"limit"`
+	Offset *int       `json:"offset"`
+	Sorts  []sql.Sort `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 type Counter struct {
 	ID        int64              `db:"id" json:"id"`
 	Name      string             `db:"name" json:"name"`
@@ -18277,6 +21522,2827 @@ type UpdateCrateInput struct {
 // Field selection is controlled via CallOptions.FieldOptions, not this struct.
 type GetCratesInput struct {
 	Filter *CrateFilter `json:"filter"`
+	Limit  *int         `json:"limit"`
+	Offset *int         `json:"offset"`
+	Sorts  []sql.Sort   `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type Depot struct {
+	ID     int64  `db:"id" json:"id"`
+	Region string `db:"region" json:"region"`
+	Name   string `db:"name" json:"name"`
+
+	// Vans - one-to-many relationship with the vans table.
+	Vans []*Van `db:"-" json:"vans"`
+}
+
+// DepotClient provides type-safe operations for the depots table.
+type DepotClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single depot by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error)
+
+	// GetMany returns depots matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetDepotsInput, opts ...func(*CallOptions[DepotFieldOptions])) ([]*Depot, error)
+
+	// Exists returns true if a depot with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[DepotFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any depot matches the given filter.
+	ExistsWhere(ctx context.Context, filter *DepotFilter, opts ...func(*CallOptions[DepotFieldOptions])) (bool, error)
+
+	// Count returns the number of depots matching the given filter.
+	Count(ctx context.Context, filter *DepotFilter, opts ...func(*CallOptions[DepotFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new depot and returns the created entity.
+	Create(ctx context.Context, input *CreateDepotInput, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error)
+
+	// CreateMany inserts multiple depots in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateDepotInput, opts ...func(*CallOptions[DepotFieldOptions])) ([]*Depot, error)
+
+	// Update partially updates a depot by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateDepotInput, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error)
+
+	// UpdateMany updates multiple depots and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateDepotItem, opts ...func(*CallOptions[DepotFieldOptions])) ([]*Depot, error)
+
+	// UpdateWhere updates all depots matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *DepotFilter, input *UpdateDepotInput, opts ...func(*CallOptions[DepotFieldOptions])) ([]*Depot, error)
+
+	// Upsert inserts a depot or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateDepotInput, target DepotConflictTarget, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error)
+
+	// UpsertMany inserts or updates multiple depots in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateDepotInput, target DepotConflictTarget, opts ...func(*CallOptions[DepotFieldOptions])) ([]*Depot, error)
+
+	// CreateWithRelated creates a depot together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateDepotWithRelatedInput, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error)
+
+	// UpdateWithRelated updates a depot together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdateDepotWithRelatedInput, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error)
+
+	// UpsertWithRelated inserts or updates a depot together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertDepotWithRelatedInput, target DepotConflictTarget, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a depot from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[DepotFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple depots from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[DepotFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all depots matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *DepotFilter, opts ...func(*CallOptions[DepotFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of depots with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[DepotFilter], opts ...func(*CallOptions[DepotFieldOptions])) (*PaginateResult[Depot], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of depots.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[DepotFilter], opts ...func(*CallOptions[DepotFieldOptions])) (*Connection[Depot], error)
+
+	// Stream returns an iterator over depots matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamDepotsInput, opts ...func(*CallOptions[StreamDepotFieldOptions])) iter.Seq2[*Depot, error]
+}
+
+// depotClient implements the DepotClient interface.
+type depotClient struct {
+	querier         database.Querier
+	dialect         sql.Dialect
+	table           sql.Table
+	batchSize       int
+	queryLimit      int
+	pageSize        int
+	cursorKeys      []string
+	strictUpdates   bool
+	mutationHooks   []hook.MutationHook
+	queryHooks      []hook.QueryHook
+	panicHandler    hook.PanicHandler
+	callbackMode    database.CallbackMode
+	vansDefaultSort []sql.Sort
+	vanClient       *vanClient
+}
+
+// newDepotClient creates a new depotClient.
+func newDepotClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *depotClient {
+	return &depotClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "depots"},
+		batchSize:     2,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *depotClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *depotClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// depotAllColumns is the column list for full-entity reads, sorted for determinism.
+var depotAllColumns = []string{"id", "name", "region"}
+
+// scanDepots scans rows into Depot entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanDepots(rows database.Rows, columns []string) ([]*Depot, error) {
+	var result []*Depot
+	for rows.Next() {
+		d := &Depot{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &d.ID
+			case "region":
+				targets[idx] = &d.Region
+			case "name":
+				targets[idx] = &d.Name
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan depot: %w", err)
+		}
+
+		result = append(result, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate depot rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single depot by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *depotClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get depot: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableDepots, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[DepotFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[DepotFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		depots, err := c.GetMany(ctx, &GetDepotsInput{
+			Filter: &DepotFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(depots) == 0 {
+			return nil, ErrNotFound
+		}
+		return depots[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get depot: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Depot), nil
+}
+
+// GetMany returns depots matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *depotClient) GetMany(ctx context.Context, input *GetDepotsInput, opts ...func(*CallOptions[DepotFieldOptions])) ([]*Depot, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetDepotsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many depots: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableDepots, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := depotAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "region", "id")
+				}
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var depots []*Depot
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		depots, err = scanDepots(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, depots, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return depots, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many depots: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Depot), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the region and id columns into a narrowed projection when one is:
+// loadRelationships maps every child back through d.Region and d.ID, which
+// an unselected column would leave at its zero value.
+func (fo *DepotFieldOptions) loadsRelationships() bool {
+	if fo.Vans != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *depotClient) loadRelationships(ctx context.Context, conn database.Querier, depots []*Depot, options CallOptions[DepotFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Vans != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			depotKeyed := make([]*Depot, 0, len(depots))
+			depotKeys := make([][]any, 0, len(depots))
+			for _, d := range depots {
+				depotKeyed = append(depotKeyed, d)
+				depotKeys = append(depotKeys, []any{d.Region, d.ID})
+			}
+
+			sorts := fo.Vans.Sorts
+			if len(sorts) == 0 {
+				sorts = c.vansDefaultSort
+			}
+
+			// Load via related entity client, 8191 parent keys per
+			// statement: within half the dialect's bind-parameter limit, leaving
+			// the rest for the relationship's filters. Each parent's children come
+			// from one statement, so the sorts order every parent's slice.
+			var relatedVans []*Van
+			for start := 0; start < len(depotKeys); start += 8191 {
+				chunk := depotKeys[start:min(start+8191, len(depotKeys))]
+
+				// The consumer filter is ANDed in, so a soft-delete comparator
+				// in it narrows the child's default rather than replacing it.
+				filter := &VanFilter{}
+				if fo.Vans.Filter != nil {
+					filter.And = append(filter.And, fo.Vans.Filter)
+				}
+
+				loaded, err := c.vanClient.GetMany(ctx, &GetVansInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					conditions: []sql.Condition{
+						sql.BuildCompositePKBatchCondition(c.dialect, []string{"region", "depot_id"}, chunk),
+					},
+					// The mapping below keys every child on its FK columns, so the
+					// fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"region", "depot_id"},
+				}, func(co *CallOptions[VanFieldOptions]) {
+					co.FieldOptions = fo.Vans.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load depot vans: %w", err)
+				}
+				relatedVans = append(relatedVans, loaded...)
+			}
+
+			// Map results back to parent entities on every key column. A child
+			// with a NULL member references no parent.
+			byKey := make(map[[2]string][]*Van)
+			for _, r := range relatedVans {
+				if !(r.DepotID != nil) {
+					continue
+				}
+				key := [2]string{r.Region, fmt.Sprint((*r.DepotID))}
+				byKey[key] = append(byKey[key], r)
+			}
+			for _, parent := range depotKeyed {
+				parent.Vans = byKey[[2]string{parent.Region, fmt.Sprint(parent.ID)}]
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new depot and returns the created entity.
+func (c *depotClient) Create(ctx context.Context, input *CreateDepotInput, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateDepotInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create depot: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableDepots, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"region", "name"}
+		args := []any{input.Region, input.Name}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[DepotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create depot: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Depot), nil
+}
+
+// CreateMany inserts multiple depots in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *depotClient) CreateMany(ctx context.Context, inputs []*CreateDepotInput, opts ...func(*CallOptions[DepotFieldOptions])) ([]*Depot, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many depots: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableDepots, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Depot{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"region", "name"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.Region,
+					input.Name,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetDepotsInput{
+			Filter: &DepotFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[DepotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many depots: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Depot), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *depotClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *depotClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan depot id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a depot by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *depotClient) Update(ctx context.Context, id int64, input *UpdateDepotInput, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update depot: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableDepots, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Region.Get(); ok {
+			setClauses["region"] = v
+		}
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[DepotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[DepotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update depot: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Depot), nil
+}
+
+// UpdateDepotItem pairs a primary key with an update input for batch updates.
+type UpdateDepotItem struct {
+	ID    int64             `json:"id"`
+	Input *UpdateDepotInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple depots and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *depotClient) UpdateMany(ctx context.Context, items []UpdateDepotItem, opts ...func(*CallOptions[DepotFieldOptions])) ([]*Depot, error) {
+	// UpdateDepotItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many depots: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableDepots, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Depot{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateDepotItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_depot", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Region.Get(); ok {
+						setClauses["region"] = v
+					}
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetDepotsInput{
+			Filter: &DepotFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[DepotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many depots: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Depot), nil
+}
+
+// UpdateWhere updates all depots matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *depotClient) UpdateWhere(ctx context.Context, filter *DepotFilter, input *UpdateDepotInput, opts ...func(*CallOptions[DepotFieldOptions])) ([]*Depot, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update depots where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableDepots, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Region.Get(); ok {
+			setClauses["region"] = v
+		}
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetDepotsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[DepotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated depot id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetDepotsInput{
+			Filter: &DepotFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[DepotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update depots where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Depot), nil
+}
+
+// HardDelete permanently removes a depot from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *depotClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[DepotFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableDepots, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete depot: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple depots from the database.
+func (c *depotClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[DepotFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableDepots, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted depot key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many depots: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all depots matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *depotClient) HardDeleteWhere(ctx context.Context, filter *DepotFilter, opts ...func(*CallOptions[DepotFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableDepots, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted depot id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete depots where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *depotClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// DepotConflictTarget identifies a unique constraint for upsert conflict detection.
+type DepotConflictTarget int
+
+const (
+	DepotConflictName     DepotConflictTarget = iota // UNIQUE (name)
+	DepotConflictPK                                  // PRIMARY KEY (id)
+	DepotConflictRegionID                            // UNIQUE (region, id)
+)
+
+// depotConflictColumns maps each conflict target to its column set.
+var depotConflictColumns = map[DepotConflictTarget][]string{
+	DepotConflictName:     {"name"},
+	DepotConflictPK:       {"id"},
+	DepotConflictRegionID: {"region", "id"},
+}
+
+// Upsert inserts a depot or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *depotClient) Upsert(ctx context.Context, input *CreateDepotInput, target DepotConflictTarget, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateDepotInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert depot: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableDepots, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"region", "name"}
+		args := []any{input.Region, input.Name}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := depotConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[DepotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert depot: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Depot), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *depotClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *depotClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple depots in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// depots.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *depotClient) UpsertMany(ctx context.Context, inputs []*CreateDepotInput, target DepotConflictTarget, opts ...func(*CallOptions[DepotFieldOptions])) ([]*Depot, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many depots: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableDepots, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Depot{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"region", "name"}
+		conflictColumns := depotConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateDepotInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.Region,
+				input.Name,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateDepotInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetDepotsInput{
+			Filter: &DepotFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[DepotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many depots: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Depot), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// depots.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *depotClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level depotConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanDepots
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanDepots(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = depotColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// depotColumnValue returns one column's value off a scanned
+// Depot, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanDepots.
+func depotColumnValue(d *Depot, column string) any {
+	switch column {
+	case "id":
+		return d.ID
+	case "region":
+		return d.Region
+	case "name":
+		return d.Name
+	}
+	return nil
+}
+
+// CreateDepotWithRelatedInput holds the fields for creating a depots record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateDepotWithRelatedInput struct {
+	// Depot holds the parent's own columns — identical to the input Create accepts.
+	Depot CreateDepotInput `json:"depot"`
+
+	// Vans - one-to-many relationship with the vans table.
+	Vans *DepotVansCreateNested `json:"vans,omitempty"`
+}
+
+// UpdateDepotWithRelatedInput holds the fields for updating a depots record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateDepotWithRelatedInput struct {
+	// Depot holds the parent's own columns — identical to the input Update accepts.
+	Depot UpdateDepotInput `json:"depot"`
+
+	// Vans - one-to-many relationship with the vans table.
+	Vans *DepotVansUpdateNested `json:"vans,omitempty"`
+}
+
+// UpsertDepotWithRelatedInput holds the fields for upserting a depots record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateDepotInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertDepotWithRelatedInput struct {
+	// Depot holds the parent's own columns — identical to the input Upsert accepts.
+	Depot CreateDepotInput `json:"depot"`
+
+	// Vans - one-to-many relationship with the vans table.
+	Vans *DepotVansUpdateNested `json:"vans,omitempty"`
+}
+
+// DepotVansCreateNested is the create-side verb block for Depot.Vans.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type DepotVansCreateNested struct {
+	Create  []*DepotVansCreateInput `json:"create,omitempty"`
+	Connect []int64                 `json:"connect,omitempty"`
+}
+
+// DepotVansUpdateNested is the update-side verb block for Depot.Vans,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type DepotVansUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool                    `json:"clear,omitempty"`
+	Create     []*DepotVansCreateInput `json:"create,omitempty"`
+	Connect    []int64                 `json:"connect,omitempty"`
+	Disconnect []int64                 `json:"disconnect,omitempty"`
+}
+
+// DepotVansCreateInput is CreateVanInput with the traversed
+// foreign key removed — that column is always set from the parent's primary key,
+// so leaving it would force the caller to supply a value that is then
+// overwritten.
+type DepotVansCreateInput struct {
+	RouteID omittable.Value[*int64] `json:"route_id,omitzero"`
+	Plate   string                  `json:"plate"`
+}
+
+// depotVansNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func depotVansNestedFromCreate(n *DepotVansCreateNested) *DepotVansUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &DepotVansUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// depotNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+// The columns the edges' keys reference are forced on too: the nested writes
+// copy them, so a narrowed selection must not leave them zero.
+func depotNestedParentFieldOptions(fo *DepotFieldOptions) *DepotFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.Vans = nil
+	scalars.ID = true
+	scalars.Region = true
+	return &scalars
+}
+
+// depotNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func depotNestedSelectsRelationship(fo *DepotFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.Vans != nil
+}
+
+// CreateWithRelated creates a depot together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *depotClient) CreateWithRelated(ctx context.Context, input *CreateDepotWithRelatedInput, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create depot with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Depot
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err := database.WithTransaction(ctx, c.querier, "create_depot_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.Depot, func(o *CallOptions[DepotFieldOptions]) {
+			*o = options
+			o.FieldOptions = depotNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyDepotVansNested(ctx, parent, depotVansNestedFromCreate(input.Vans), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if depotNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[DepotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create depot with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a depot together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *depotClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdateDepotWithRelatedInput, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update depot with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Depot
+	err := database.WithTransaction(ctx, c.querier, "update_depot_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.Depot, func(o *CallOptions[DepotFieldOptions]) {
+			*o = options
+			o.FieldOptions = depotNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyDepotVansNested(ctx, parent, input.Vans, options); err != nil {
+			return err
+		}
+
+		if depotNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[DepotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update depot with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a depot together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *depotClient) UpsertWithRelated(ctx context.Context, input *UpsertDepotWithRelatedInput, target DepotConflictTarget, opts ...func(*CallOptions[DepotFieldOptions])) (*Depot, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert depot with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Depot
+	err := database.WithTransaction(ctx, c.querier, "upsert_depot_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.Depot, target, func(o *CallOptions[DepotFieldOptions]) {
+			*o = options
+			o.FieldOptions = depotNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyDepotVansNested(ctx, parent, input.Vans, options); err != nil {
+			return err
+		}
+
+		if depotNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[DepotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert depot with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applyDepotVansNested applies the Depot.Vans block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *depotClient) applyDepotVansNested(ctx context.Context, parent *Depot, nested *DepotVansUpdateNested, options CallOptions[DepotFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("Vans", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	// The connect adoption's verify read filters on it too.
+	pid0 := parent.Region
+	pid1 := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if _, err := c.vanClient.UpdateWhere(ctx,
+			&VanFilter{
+				Region:  &comparator.String{Eq: new(pid0)},
+				DepotID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+			},
+			&UpdateVanInput{DepotID: omittable.Set[*int64](nil)},
+			func(o *CallOptions[VanFieldOptions]) {
+				nestedChildOptions(o, options)
+				// Nothing selected — the inner call does not need its result
+				// back, so it skips the read that would hand the rows over.
+				o.FieldOptions = &VanFieldOptions{}
+			}); err != nil {
+			return nestedError("Vans", "clear", nil, err)
+		}
+	}
+
+	if len(nested.Create) > 0 {
+		inputs := make([]*CreateVanInput, 0, len(nested.Create))
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Vans", "create", nil, ErrNilInput)
+			}
+			inputs = append(inputs, &CreateVanInput{
+				Region:  parent.Region,
+				DepotID: omittable.Set(&parent.ID),
+				RouteID: n.RouteID,
+				Plate:   n.Plate,
+			})
+		}
+		if _, err := c.vanClient.CreateMany(ctx, inputs, func(o *CallOptions[VanFieldOptions]) {
+			nestedChildOptions(o, options)
+			// Nothing selected — the inner call does not need its result back,
+			// so it costs one statement rather than a statement plus a read.
+			o.FieldOptions = &VanFieldOptions{}
+		}); err != nil {
+			return nestedError("Vans", "create", nil, err)
+		}
+	}
+
+	// connect — adopt unparented rows. The visibility read is not optional:
+	// the UPDATE's row count alone cannot separate "no such row" from "already
+	// parented", and the FK constraint proves a row exists, not that the caller
+	// may see it.
+	if len(connectIDs) > 0 {
+		// Each target's key, as a tuple of strings, which compares every key
+		// type. NULL is held apart: it stringifies like an empty string.
+		owner := make(map[int64][2]string, len(connectIDs))
+		nulls := make(map[int64][2]bool, len(connectIDs))
+		// Chunked at c.batchSize, for the reason the disconnect below is:
+		// a single `IN` over the caller's whole list hits a dialect-dependent
+		// bind ceiling whose error cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.vanClient.GetMany(ctx, &GetVansInput{
+				Filter: &VanFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[VanFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &VanFieldOptions{ID: true, Region: true, DepotID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Vans", "connect", nil, err)
+			}
+			for _, row := range visible {
+				var key [2]string
+				var null [2]bool
+				key[0] = row.Region
+				if row.DepotID != nil {
+					key[1] = fmt.Sprint((*row.DepotID))
+				} else {
+					null[1] = true
+				}
+				owner[row.ID], nulls[row.ID] = key, null
+			}
+		}
+
+		adopt := make([]int64, 0, len(connectIDs))
+		// A repeated id is ONE adoption: connect is a set operation, and the
+		// UPDATE matches the row once however many times the caller named it.
+		// Queueing it twice would trip the shortfall check below and report a
+		// conflict that did not happen.
+		queued := make(map[int64]bool, len(connectIDs))
+		want := [2]string{parent.Region, fmt.Sprint(parent.ID)}
+		for _, v := range connectIDs {
+			cur, ok := owner[v]
+			null := nulls[v]
+			switch {
+			case !ok:
+				// Absent, another tenant's, or soft-deleted — indistinguishable
+				// to this caller, and all NOT_FOUND. Never CONFLICT: that would
+				// confirm the row exists.
+				return nestedError("Vans", "connect", v, ErrNotFound)
+			case cur[0] != want[0]:
+				// Bound to another key through a member this edge cannot write,
+				// so allow_reparent does not reach it either.
+				return nestedError("Vans", "connect", v, ErrAlreadyRelated)
+			case !null[1] && cur == want:
+				// Already ours — the requested end state holds, so this is a
+				// no-op rather than a conflict.
+				continue
+			case !null[1]:
+				return nestedError("Vans", "connect", v, ErrAlreadyRelated)
+			}
+			if queued[v] {
+				continue
+			}
+			queued[v] = true
+			adopt = append(adopt, v)
+		}
+
+		if len(adopt) > 0 {
+			adoptedCount := 0
+			// The adoption is chunked on the same ceiling the read above
+			// is, and the shortfall check sums across chunks: a row lost in one
+			// chunk is a lost race whichever chunk it landed in.
+			for start := 0; start < len(adopt); start += c.batchSize {
+				adopting := adopt[start:min(start+c.batchSize, len(adopt))]
+				if _, err := c.vanClient.UpdateWhere(ctx,
+					&VanFilter{
+						ID: &comparator.Number[int64]{In: adopting},
+						// The `IS NULL` guard is what makes the adoption atomic
+						// against a concurrent connect that parented the row
+						// between the read above and this statement.
+						DepotID: &comparator.NullableNumber[int64]{Null: new(true)},
+					},
+					&UpdateVanInput{DepotID: omittable.Set(&parent.ID)},
+					func(o *CallOptions[VanFieldOptions]) {
+						nestedChildOptions(o, options)
+						// Nothing selected — the verify read below counts
+						// the adoption, not the rows UpdateWhere reports.
+						o.FieldOptions = &VanFieldOptions{}
+					}); err != nil {
+					return nestedError("Vans", "connect", nil, err)
+				}
+				// The verify read counts this chunk's ids that now name this
+				// parent. Inside the transaction a plain read sees its own
+				// writes, so it counts what the UPDATE adopted and never a row
+				// another connection parented first — on every dialect, with
+				// no lock. UpdateWhere's report cannot do this on MySQL, where
+				// a pre-SELECT names the rows. Hooks are
+				// skipped as on the terminal re-read: this is part of the write.
+				adopted, err := c.vanClient.GetMany(ctx, &GetVansInput{
+					Filter: &VanFilter{
+						ID:      &comparator.Number[int64]{In: adopting},
+						Region:  &comparator.String{Eq: new(pid0)},
+						DepotID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+					},
+					Limit: new(0),
+				}, func(o *CallOptions[VanFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &VanFieldOptions{ID: true}
+					o.SkipHooks = true
+					o.LockMode = sql.LockNone
+				})
+				if err != nil {
+					return nestedError("Vans", "connect", nil, err)
+				}
+				adoptedCount += len(adopted)
+			}
+			if adoptedCount != len(adopt) {
+				// Lost the race — parented between the read and the UPDATE.
+				// Same outcome, reported the same way.
+				return nestedError("Vans", "connect", nil, ErrAlreadyRelated)
+			}
+		}
+	}
+
+	// disconnect — unlink, scoped to THIS parent. The `fk = parent` term is
+	// what stops a caller detaching another parent's row by guessing its id,
+	// and it is why a disconnect needs no visibility read where a connect does.
+	// A miss is a no-op, not an error.
+	if len(disconnectIDs) > 0 {
+		// Chunked at c.batchSize. The ceiling is a dialect-dependent bind
+		// limit, lowest on SQLite at 32766, and the error names nothing that
+		// can attribute — so it is removed rather than documented.
+		for start := 0; start < len(disconnectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(disconnectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range disconnectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			if _, err := c.vanClient.UpdateWhere(ctx,
+				&VanFilter{
+					ID:      &comparator.Number[int64]{In: ids},
+					Region:  &comparator.String{Eq: new(pid0)},
+					DepotID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+				},
+				&UpdateVanInput{DepotID: omittable.Set[*int64](nil)},
+				func(o *CallOptions[VanFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &VanFieldOptions{}
+				}); err != nil {
+				return nestedError("Vans", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a depot with the given primary key exists.
+func (c *depotClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[DepotFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableDepots, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists depot: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any depot matches the given filter.
+func (c *depotClient) ExistsWhere(ctx context.Context, filter *DepotFilter, opts ...func(*CallOptions[DepotFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableDepots, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists depots where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of depots matching the given filter.
+// A nil filter counts all depots.
+func (c *depotClient) Count(ctx context.Context, filter *DepotFilter, opts ...func(*CallOptions[DepotFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableDepots, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count depots: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of depots with total count for offset-based pagination.
+// A nil filter paginates all depots.
+func (c *depotClient) Paginate(ctx context.Context, input PaginateInput[DepotFilter], opts ...func(*CallOptions[DepotFieldOptions])) (*PaginateResult[Depot], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate depots: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableDepots, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[DepotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		depots, err := c.GetMany(ctx, &GetDepotsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[Depot]{
+			Items:      depots,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate depots: %w", err)
+	}
+	return result.(*PaginateResult[Depot]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of depots.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *depotClient) Connection(ctx context.Context, input ConnectionInput[DepotFilter], opts ...func(*CallOptions[DepotFieldOptions])) (*Connection[Depot], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection depots: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableDepots, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[DepotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeDepotCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeDepotCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		depots, err := c.GetMany(ctx, &GetDepotsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(depots) > limit
+		if hasMore {
+			depots = depots[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(depots)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Depot], len(depots))
+		for i, row := range depots {
+			cursor, err := encodeDepotCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Depot]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Depot]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection depots: %w", err)
+	}
+	return result.(*Connection[Depot]), nil
+}
+
+// encodeDepotCursor encodes cursor key values as a base64 JSON string.
+func encodeDepotCursor(keys []string, d *Depot) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = d.ID
+		case "region":
+			out["region"] = d.Region
+		case "name":
+			out["name"] = d.Name
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode depot cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeDepotCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeDepotCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Depot
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamDepotsInput holds query parameters for streaming depots records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamDepotsInput struct {
+	Filter *DepotFilter `json:"filter"`
+	Sorts  []sql.Sort   `json:"sorts"`
+}
+
+// StreamDepotFieldOptions controls scalar column selection for depots streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamDepotFieldOptions struct {
+	ID     bool `json:"id"`
+	Region bool `json:"region"`
+	Name   bool `json:"name"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamDepotFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Region {
+		cols = append(cols, "region")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamDepotFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Region {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	return false
+}
+
+// scanDepotRow scans a single row into a Depot entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanDepotRow(rows database.Rows, columns []string) (*Depot, error) {
+	d := &Depot{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &d.ID
+		case "region":
+			targets[idx] = &d.Region
+		case "name":
+			targets[idx] = &d.Name
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan depot: %w", err)
+	}
+
+	return d, nil
+}
+
+// Stream returns an iterator over depots matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *depotClient) Stream(ctx context.Context, input *StreamDepotsInput, opts ...func(*CallOptions[StreamDepotFieldOptions])) iter.Seq2[*Depot, error] {
+	return func(yield func(*Depot, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamDepotsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream depots: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *Depot, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream depots: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableDepots, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := depotAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				d, err := scanDepotRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(d, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate depot rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream depots: %w", err))
+		}
+	}
+}
+
+// DepotFilter provides type-safe filtering for the depots table.
+type DepotFilter struct {
+	ID     *comparator.Number[int64] `json:"id"`
+	Name   *comparator.String        `json:"name"`
+	Region *comparator.String        `json:"region"`
+	Vans   *VanFilter                `json:"vans"`
+	And    []*DepotFilter            `json:"and"`
+	Or     []*DepotFilter            `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *DepotFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Name != nil {
+		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	if f.Region != nil {
+		conds = append(conds, f.Region.Parse(dialect.QuoteIdentifier("region"), dialect)...)
+	}
+
+	if f.Vans != nil {
+		conds = append(conds, depotVansFilterExists(f.Vans, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// depotVansFilterExists compiles a VanFilter set on the
+// Vans relationship into a correlated EXISTS over vans.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func depotVansFilterExists(f *VanFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "vans"}) + " " + tgt +
+		" WHERE " + tgt + "." + dialect.QuoteIdentifier("region") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("depot_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists([]string{"region", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// DepotFieldOptions controls column selection and relationship loading for depots queries.
+type DepotFieldOptions struct {
+	ID     bool                    `json:"id"`
+	Region bool                    `json:"region"`
+	Name   bool                    `json:"name"`
+	Vans   *VanRelationshipOptions `json:"vans"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *DepotFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Region {
+		cols = append(cols, "region")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *DepotFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":     "id",
+		"Region": "region",
+		"Name":   "name",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *DepotFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Region {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	if fo.Vans != nil {
+		return true
+	}
+	return false
+}
+
+// VanRelationshipOptions controls loading options for Van relationships.
+type VanRelationshipOptions struct {
+	FieldOptions *VanFieldOptions `json:"field_options"`
+	Filter       *VanFilter       `json:"filter"`
+	Sorts        []sql.Sort       `json:"sorts"`
+}
+
+// CreateDepotInput holds the fields for creating a depots record.
+type CreateDepotInput struct {
+	Region string `json:"region"`
+	Name   string `json:"name"`
+}
+
+// UpdateDepotInput holds the fields for updating a depots record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateDepotInput struct {
+	Region omittable.Value[string] `json:"region,omitzero"`
+	Name   omittable.Value[string] `json:"name,omitzero"`
+}
+
+// GetDepotsInput holds query parameters for retrieving depots records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetDepotsInput struct {
+	Filter *DepotFilter `json:"filter"`
 	Limit  *int         `json:"limit"`
 	Offset *int         `json:"offset"`
 	Sorts  []sql.Sort   `json:"sorts"`
@@ -30351,6 +36417,2120 @@ type GetLabelsInput struct {
 	requiredColumns []string
 }
 
+type Locker struct {
+	ID        int64   `db:"id" json:"id"`
+	BayRegion *string `db:"bay_region" json:"bay_region"`
+	BayID     *int64  `db:"bay_id" json:"bay_id"`
+	Label     string  `db:"label" json:"label"`
+}
+
+// LockerClient provides type-safe operations for the lockers table.
+type LockerClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single locker by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[LockerFieldOptions])) (*Locker, error)
+
+	// GetMany returns lockers matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetLockersInput, opts ...func(*CallOptions[LockerFieldOptions])) ([]*Locker, error)
+
+	// Exists returns true if a locker with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[LockerFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any locker matches the given filter.
+	ExistsWhere(ctx context.Context, filter *LockerFilter, opts ...func(*CallOptions[LockerFieldOptions])) (bool, error)
+
+	// Count returns the number of lockers matching the given filter.
+	Count(ctx context.Context, filter *LockerFilter, opts ...func(*CallOptions[LockerFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new locker and returns the created entity.
+	Create(ctx context.Context, input *CreateLockerInput, opts ...func(*CallOptions[LockerFieldOptions])) (*Locker, error)
+
+	// CreateMany inserts multiple lockers in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateLockerInput, opts ...func(*CallOptions[LockerFieldOptions])) ([]*Locker, error)
+
+	// Update partially updates a locker by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateLockerInput, opts ...func(*CallOptions[LockerFieldOptions])) (*Locker, error)
+
+	// UpdateMany updates multiple lockers and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateLockerItem, opts ...func(*CallOptions[LockerFieldOptions])) ([]*Locker, error)
+
+	// UpdateWhere updates all lockers matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *LockerFilter, input *UpdateLockerInput, opts ...func(*CallOptions[LockerFieldOptions])) ([]*Locker, error)
+
+	// Upsert inserts a locker or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateLockerInput, target LockerConflictTarget, opts ...func(*CallOptions[LockerFieldOptions])) (*Locker, error)
+
+	// UpsertMany inserts or updates multiple lockers in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateLockerInput, target LockerConflictTarget, opts ...func(*CallOptions[LockerFieldOptions])) ([]*Locker, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a locker from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[LockerFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple lockers from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[LockerFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all lockers matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *LockerFilter, opts ...func(*CallOptions[LockerFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of lockers with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[LockerFilter], opts ...func(*CallOptions[LockerFieldOptions])) (*PaginateResult[Locker], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of lockers.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[LockerFilter], opts ...func(*CallOptions[LockerFieldOptions])) (*Connection[Locker], error)
+
+	// Stream returns an iterator over lockers matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamLockersInput, opts ...func(*CallOptions[StreamLockerFieldOptions])) iter.Seq2[*Locker, error]
+}
+
+// lockerClient implements the LockerClient interface.
+type lockerClient struct {
+	querier       database.Querier
+	dialect       sql.Dialect
+	table         sql.Table
+	batchSize     int
+	queryLimit    int
+	pageSize      int
+	cursorKeys    []string
+	strictUpdates bool
+	mutationHooks []hook.MutationHook
+	queryHooks    []hook.QueryHook
+	panicHandler  hook.PanicHandler
+}
+
+// newLockerClient creates a new lockerClient.
+func newLockerClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *lockerClient {
+	return &lockerClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "lockers"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *lockerClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *lockerClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// lockerAllColumns is the column list for full-entity reads, sorted for determinism.
+var lockerAllColumns = []string{"bay_id", "bay_region", "id", "label"}
+
+// scanLockers scans rows into Locker entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanLockers(rows database.Rows, columns []string) ([]*Locker, error) {
+	var result []*Locker
+	for rows.Next() {
+		l := &Locker{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &l.ID
+			case "bay_region":
+				targets[idx] = &l.BayRegion
+			case "bay_id":
+				targets[idx] = &l.BayID
+			case "label":
+				targets[idx] = &l.Label
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan locker: %w", err)
+		}
+
+		result = append(result, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate locker rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single locker by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *lockerClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[LockerFieldOptions])) (*Locker, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get locker: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableLockers, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[LockerFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[LockerFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		lockers, err := c.GetMany(ctx, &GetLockersInput{
+			Filter: &LockerFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(lockers) == 0 {
+			return nil, ErrNotFound
+		}
+		return lockers[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get locker: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Locker), nil
+}
+
+// GetMany returns lockers matching the given filter, field selection, and sort criteria.
+func (c *lockerClient) GetMany(ctx context.Context, input *GetLockersInput, opts ...func(*CallOptions[LockerFieldOptions])) ([]*Locker, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetLockersInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many lockers: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableLockers, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := lockerAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var lockers []*Locker
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		lockers, err = scanLockers(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return lockers, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many lockers: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Locker), nil
+}
+
+// Create inserts a new locker and returns the created entity.
+func (c *lockerClient) Create(ctx context.Context, input *CreateLockerInput, opts ...func(*CallOptions[LockerFieldOptions])) (*Locker, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateLockerInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create locker: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableLockers, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"label"}
+		args := []any{input.Label}
+
+		if v, ok := input.BayRegion.Get(); ok {
+			columns = append(columns, "bay_region")
+			args = append(args, v)
+		}
+
+		if v, ok := input.BayID.Get(); ok {
+			columns = append(columns, "bay_id")
+			args = append(args, v)
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[LockerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create locker: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Locker), nil
+}
+
+// CreateMany inserts multiple lockers in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *lockerClient) CreateMany(ctx context.Context, inputs []*CreateLockerInput, opts ...func(*CallOptions[LockerFieldOptions])) ([]*Locker, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many lockers: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableLockers, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Locker{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"bay_region", "bay_id", "label"}
+			var valueRows [][]any
+			for _, input := range batch {
+				var bayRegion any = sql.NewDefaultExpr("NULL")
+				if v, ok := input.BayRegion.Get(); ok {
+					bayRegion = v
+				}
+				var bayID any = sql.NewDefaultExpr("NULL")
+				if v, ok := input.BayID.Get(); ok {
+					bayID = v
+				}
+
+				valueRows = append(valueRows, []any{
+					bayRegion,
+					bayID,
+					input.Label,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetLockersInput{
+			Filter: &LockerFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[LockerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many lockers: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Locker), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *lockerClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *lockerClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan locker id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a locker by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *lockerClient) Update(ctx context.Context, id int64, input *UpdateLockerInput, opts ...func(*CallOptions[LockerFieldOptions])) (*Locker, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update locker: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableLockers, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.BayRegion.Get(); ok {
+			setClauses["bay_region"] = v
+		}
+		if v, ok := input.BayID.Get(); ok {
+			setClauses["bay_id"] = v
+		}
+		if v, ok := input.Label.Get(); ok {
+			setClauses["label"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[LockerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[LockerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update locker: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Locker), nil
+}
+
+// UpdateLockerItem pairs a primary key with an update input for batch updates.
+type UpdateLockerItem struct {
+	ID    int64              `json:"id"`
+	Input *UpdateLockerInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple lockers and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *lockerClient) UpdateMany(ctx context.Context, items []UpdateLockerItem, opts ...func(*CallOptions[LockerFieldOptions])) ([]*Locker, error) {
+	// UpdateLockerItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many lockers: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableLockers, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Locker{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateLockerItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_locker", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.BayRegion.Get(); ok {
+						setClauses["bay_region"] = v
+					}
+					if v, ok := item.Input.BayID.Get(); ok {
+						setClauses["bay_id"] = v
+					}
+					if v, ok := item.Input.Label.Get(); ok {
+						setClauses["label"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetLockersInput{
+			Filter: &LockerFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[LockerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many lockers: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Locker), nil
+}
+
+// UpdateWhere updates all lockers matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *lockerClient) UpdateWhere(ctx context.Context, filter *LockerFilter, input *UpdateLockerInput, opts ...func(*CallOptions[LockerFieldOptions])) ([]*Locker, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update lockers where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableLockers, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.BayRegion.Get(); ok {
+			setClauses["bay_region"] = v
+		}
+		if v, ok := input.BayID.Get(); ok {
+			setClauses["bay_id"] = v
+		}
+		if v, ok := input.Label.Get(); ok {
+			setClauses["label"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetLockersInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[LockerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated locker id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetLockersInput{
+			Filter: &LockerFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[LockerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update lockers where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Locker), nil
+}
+
+// HardDelete permanently removes a locker from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *lockerClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[LockerFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableLockers, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete locker: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple lockers from the database.
+func (c *lockerClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[LockerFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableLockers, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted locker key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many lockers: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all lockers matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *lockerClient) HardDeleteWhere(ctx context.Context, filter *LockerFilter, opts ...func(*CallOptions[LockerFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableLockers, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted locker id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete lockers where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *lockerClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// LockerConflictTarget identifies a unique constraint for upsert conflict detection.
+type LockerConflictTarget int
+
+const (
+	LockerConflictPK LockerConflictTarget = iota // PRIMARY KEY (id)
+)
+
+// lockerConflictColumns maps each conflict target to its column set.
+var lockerConflictColumns = map[LockerConflictTarget][]string{
+	LockerConflictPK: {"id"},
+}
+
+// Upsert inserts a locker or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *lockerClient) Upsert(ctx context.Context, input *CreateLockerInput, target LockerConflictTarget, opts ...func(*CallOptions[LockerFieldOptions])) (*Locker, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateLockerInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert locker: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableLockers, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"label"}
+		args := []any{input.Label}
+
+		if v, ok := input.BayRegion.Get(); ok {
+			columns = append(columns, "bay_region")
+			args = append(args, v)
+		}
+
+		if v, ok := input.BayID.Get(); ok {
+			columns = append(columns, "bay_id")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := lockerConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[LockerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert locker: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Locker), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *lockerClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *lockerClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple lockers in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// lockers.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *lockerClient) UpsertMany(ctx context.Context, inputs []*CreateLockerInput, target LockerConflictTarget, opts ...func(*CallOptions[LockerFieldOptions])) ([]*Locker, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many lockers: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableLockers, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Locker{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"bay_region", "bay_id", "label"}
+		conflictColumns := lockerConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateLockerInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+			var bayRegion any = sql.NewDefaultExpr("NULL")
+			if v, ok := input.BayRegion.Get(); ok {
+				bayRegion = v
+			}
+			var bayID any = sql.NewDefaultExpr("NULL")
+			if v, ok := input.BayID.Get(); ok {
+				bayID = v
+			}
+
+			valueRows = append(valueRows, []any{
+				bayRegion,
+				bayID,
+				input.Label,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateLockerInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetLockersInput{
+			Filter: &LockerFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[LockerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many lockers: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Locker), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// lockers.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *lockerClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level lockerConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanLockers
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanLockers(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = lockerColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// lockerColumnValue returns one column's value off a scanned
+// Locker, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanLockers.
+func lockerColumnValue(l *Locker, column string) any {
+	switch column {
+	case "id":
+		return l.ID
+	case "bay_region":
+		return l.BayRegion
+	case "bay_id":
+		return l.BayID
+	case "label":
+		return l.Label
+	}
+	return nil
+}
+
+// Exists returns true if a locker with the given primary key exists.
+func (c *lockerClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[LockerFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableLockers, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists locker: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any locker matches the given filter.
+func (c *lockerClient) ExistsWhere(ctx context.Context, filter *LockerFilter, opts ...func(*CallOptions[LockerFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableLockers, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists lockers where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of lockers matching the given filter.
+// A nil filter counts all lockers.
+func (c *lockerClient) Count(ctx context.Context, filter *LockerFilter, opts ...func(*CallOptions[LockerFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableLockers, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count lockers: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of lockers with total count for offset-based pagination.
+// A nil filter paginates all lockers.
+func (c *lockerClient) Paginate(ctx context.Context, input PaginateInput[LockerFilter], opts ...func(*CallOptions[LockerFieldOptions])) (*PaginateResult[Locker], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate lockers: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableLockers, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[LockerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		lockers, err := c.GetMany(ctx, &GetLockersInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[Locker]{
+			Items:      lockers,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate lockers: %w", err)
+	}
+	return result.(*PaginateResult[Locker]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of lockers.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *lockerClient) Connection(ctx context.Context, input ConnectionInput[LockerFilter], opts ...func(*CallOptions[LockerFieldOptions])) (*Connection[Locker], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection lockers: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableLockers, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[LockerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeLockerCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeLockerCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		lockers, err := c.GetMany(ctx, &GetLockersInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(lockers) > limit
+		if hasMore {
+			lockers = lockers[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(lockers)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Locker], len(lockers))
+		for i, row := range lockers {
+			cursor, err := encodeLockerCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Locker]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Locker]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection lockers: %w", err)
+	}
+	return result.(*Connection[Locker]), nil
+}
+
+// encodeLockerCursor encodes cursor key values as a base64 JSON string.
+func encodeLockerCursor(keys []string, l *Locker) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = l.ID
+		case "bay_region":
+			out["bay_region"] = l.BayRegion
+		case "bay_id":
+			out["bay_id"] = l.BayID
+		case "label":
+			out["label"] = l.Label
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode locker cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeLockerCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeLockerCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Locker
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamLockersInput holds query parameters for streaming lockers records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamLockersInput struct {
+	Filter *LockerFilter `json:"filter"`
+	Sorts  []sql.Sort    `json:"sorts"`
+}
+
+// StreamLockerFieldOptions controls scalar column selection for lockers streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamLockerFieldOptions struct {
+	ID        bool `json:"id"`
+	BayRegion bool `json:"bay_region"`
+	BayID     bool `json:"bay_id"`
+	Label     bool `json:"label"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamLockerFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.BayRegion {
+		cols = append(cols, "bay_region")
+	}
+	if fo.BayID {
+		cols = append(cols, "bay_id")
+	}
+	if fo.Label {
+		cols = append(cols, "label")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamLockerFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.BayRegion {
+		return true
+	}
+	if fo.BayID {
+		return true
+	}
+	if fo.Label {
+		return true
+	}
+	return false
+}
+
+// scanLockerRow scans a single row into a Locker entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanLockerRow(rows database.Rows, columns []string) (*Locker, error) {
+	l := &Locker{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &l.ID
+		case "bay_region":
+			targets[idx] = &l.BayRegion
+		case "bay_id":
+			targets[idx] = &l.BayID
+		case "label":
+			targets[idx] = &l.Label
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan locker: %w", err)
+	}
+
+	return l, nil
+}
+
+// Stream returns an iterator over lockers matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *lockerClient) Stream(ctx context.Context, input *StreamLockersInput, opts ...func(*CallOptions[StreamLockerFieldOptions])) iter.Seq2[*Locker, error] {
+	return func(yield func(*Locker, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamLockersInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream lockers: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *Locker, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream lockers: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableLockers, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := lockerAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				l, err := scanLockerRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(l, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate locker rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream lockers: %w", err))
+		}
+	}
+}
+
+// LockerFilter provides type-safe filtering for the lockers table.
+type LockerFilter struct {
+	BayID     *comparator.NullableNumber[int64] `json:"bay_id"`
+	BayRegion *comparator.NullableString        `json:"bay_region"`
+	ID        *comparator.Number[int64]         `json:"id"`
+	Label     *comparator.String                `json:"label"`
+	And       []*LockerFilter                   `json:"and"`
+	Or        []*LockerFilter                   `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *LockerFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.BayID != nil {
+		conds = append(conds, f.BayID.Parse(dialect.QuoteIdentifier("bay_id"), dialect)...)
+	}
+
+	if f.BayRegion != nil {
+		conds = append(conds, f.BayRegion.Parse(dialect.QuoteIdentifier("bay_region"), dialect)...)
+	}
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Label != nil {
+		conds = append(conds, f.Label.Parse(dialect.QuoteIdentifier("label"), dialect)...)
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// LockerFieldOptions controls column selection and relationship loading for lockers queries.
+type LockerFieldOptions struct {
+	ID        bool `json:"id"`
+	BayRegion bool `json:"bay_region"`
+	BayID     bool `json:"bay_id"`
+	Label     bool `json:"label"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *LockerFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.BayRegion {
+		cols = append(cols, "bay_region")
+	}
+	if fo.BayID {
+		cols = append(cols, "bay_id")
+	}
+	if fo.Label {
+		cols = append(cols, "label")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *LockerFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":        "id",
+		"BayRegion": "bay_region",
+		"BayID":     "bay_id",
+		"Label":     "label",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *LockerFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.BayRegion {
+		return true
+	}
+	if fo.BayID {
+		return true
+	}
+	if fo.Label {
+		return true
+	}
+	return false
+}
+
+// CreateLockerInput holds the fields for creating a lockers record.
+type CreateLockerInput struct {
+	BayRegion omittable.Value[*string] `json:"bay_region,omitzero"`
+	BayID     omittable.Value[*int64]  `json:"bay_id,omitzero"`
+	Label     string                   `json:"label"`
+}
+
+// UpdateLockerInput holds the fields for updating a lockers record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateLockerInput struct {
+	BayRegion omittable.Value[*string] `json:"bay_region,omitzero"`
+	BayID     omittable.Value[*int64]  `json:"bay_id,omitzero"`
+	Label     omittable.Value[string]  `json:"label,omitzero"`
+}
+
+// GetLockersInput holds query parameters for retrieving lockers records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetLockersInput struct {
+	Filter *LockerFilter `json:"filter"`
+	Limit  *int          `json:"limit"`
+	Offset *int          `json:"offset"`
+	Sorts  []sql.Sort    `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 // OrderItemPK - composite primary key for the order_items table.
 type OrderItemPK struct {
 	OrderID   int64 `db:"order_id" json:"order_id"`
@@ -35138,6 +43318,2764 @@ type UpdateParcelInput struct {
 // Field selection is controlled via CallOptions.FieldOptions, not this struct.
 type GetParcelsInput struct {
 	Filter *ParcelFilter `json:"filter"`
+	Limit  *int          `json:"limit"`
+	Offset *int          `json:"offset"`
+	Sorts  []sql.Sort    `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type Permit struct {
+	ID   int64  `db:"id" json:"id"`
+	Code string `db:"code" json:"code"`
+
+	// Vans - many-to-many relationship with the vans table.
+	Vans []*Van `db:"-" json:"vans"`
+}
+
+// PermitClient provides type-safe operations for the permits table.
+type PermitClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single permit by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error)
+
+	// GetMany returns permits matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetPermitsInput, opts ...func(*CallOptions[PermitFieldOptions])) ([]*Permit, error)
+
+	// Exists returns true if a permit with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[PermitFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any permit matches the given filter.
+	ExistsWhere(ctx context.Context, filter *PermitFilter, opts ...func(*CallOptions[PermitFieldOptions])) (bool, error)
+
+	// Count returns the number of permits matching the given filter.
+	Count(ctx context.Context, filter *PermitFilter, opts ...func(*CallOptions[PermitFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new permit and returns the created entity.
+	Create(ctx context.Context, input *CreatePermitInput, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error)
+
+	// CreateMany inserts multiple permits in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreatePermitInput, opts ...func(*CallOptions[PermitFieldOptions])) ([]*Permit, error)
+
+	// Update partially updates a permit by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdatePermitInput, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error)
+
+	// UpdateMany updates multiple permits and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdatePermitItem, opts ...func(*CallOptions[PermitFieldOptions])) ([]*Permit, error)
+
+	// UpdateWhere updates all permits matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *PermitFilter, input *UpdatePermitInput, opts ...func(*CallOptions[PermitFieldOptions])) ([]*Permit, error)
+
+	// Upsert inserts a permit or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreatePermitInput, target PermitConflictTarget, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error)
+
+	// UpsertMany inserts or updates multiple permits in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreatePermitInput, target PermitConflictTarget, opts ...func(*CallOptions[PermitFieldOptions])) ([]*Permit, error)
+
+	// CreateWithRelated creates a permit together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreatePermitWithRelatedInput, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error)
+
+	// UpdateWithRelated updates a permit together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdatePermitWithRelatedInput, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error)
+
+	// UpsertWithRelated inserts or updates a permit together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertPermitWithRelatedInput, target PermitConflictTarget, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a permit from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[PermitFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple permits from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[PermitFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all permits matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *PermitFilter, opts ...func(*CallOptions[PermitFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of permits with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[PermitFilter], opts ...func(*CallOptions[PermitFieldOptions])) (*PaginateResult[Permit], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of permits.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[PermitFilter], opts ...func(*CallOptions[PermitFieldOptions])) (*Connection[Permit], error)
+
+	// Stream returns an iterator over permits matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamPermitsInput, opts ...func(*CallOptions[StreamPermitFieldOptions])) iter.Seq2[*Permit, error]
+}
+
+// permitClient implements the PermitClient interface.
+type permitClient struct {
+	querier         database.Querier
+	dialect         sql.Dialect
+	table           sql.Table
+	batchSize       int
+	queryLimit      int
+	pageSize        int
+	cursorKeys      []string
+	strictUpdates   bool
+	mutationHooks   []hook.MutationHook
+	queryHooks      []hook.QueryHook
+	panicHandler    hook.PanicHandler
+	callbackMode    database.CallbackMode
+	vansDefaultSort []sql.Sort
+	vanClient       *vanClient
+	vanPermitClient *vanPermitClient
+}
+
+// newPermitClient creates a new permitClient.
+func newPermitClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *permitClient {
+	return &permitClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "permits"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *permitClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *permitClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// permitAllColumns is the column list for full-entity reads, sorted for determinism.
+var permitAllColumns = []string{"code", "id"}
+
+// scanPermits scans rows into Permit entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanPermits(rows database.Rows, columns []string) ([]*Permit, error) {
+	var result []*Permit
+	for rows.Next() {
+		p := &Permit{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &p.ID
+			case "code":
+				targets[idx] = &p.Code
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan permit: %w", err)
+		}
+
+		result = append(result, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate permit rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single permit by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *permitClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get permit: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TablePermits, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[PermitFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[PermitFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		permits, err := c.GetMany(ctx, &GetPermitsInput{
+			Filter: &PermitFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(permits) == 0 {
+			return nil, ErrNotFound
+		}
+		return permits[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get permit: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Permit), nil
+}
+
+// GetMany returns permits matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *permitClient) GetMany(ctx context.Context, input *GetPermitsInput, opts ...func(*CallOptions[PermitFieldOptions])) ([]*Permit, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetPermitsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many permits: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TablePermits, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := permitAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "code")
+				}
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var permits []*Permit
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		permits, err = scanPermits(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, permits, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return permits, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many permits: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Permit), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the code column into a narrowed projection when one is:
+// loadRelationships maps every child back through p.Code, which
+// an unselected column would leave at its zero value.
+func (fo *PermitFieldOptions) loadsRelationships() bool {
+	if fo.Vans != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *permitClient) loadRelationships(ctx context.Context, conn database.Querier, permits []*Permit, options CallOptions[PermitFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Vans != nil {
+		g.Go(func() error {
+			// Collect parent IDs as strings
+			permitIDs := make([]string, len(permits))
+			for idx, p := range permits {
+				permitIDs[idx] = p.Code
+			}
+
+			sorts := fo.Vans.Sorts
+			if len(sorts) == 0 {
+				sorts = c.vansDefaultSort
+			}
+
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(permitIDs); start += 16383 {
+				chunk := permitIDs[start:min(start+16383, len(permitIDs))]
+
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "van_permits"}, sql.SelectOptions{
+						Columns:    []string{"permit_code", "van_id"},
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("permit_code")).In(toAnySlice(chunk)...)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load permit vans junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load permit vans junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "permit_code":
+							localIdx = i
+						case "van_id":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey string
+						var refKey int64
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan permit vans junction: %w", err)
+						}
+						parentID, targetID := localKey, fmt.Sprint(refKey)
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate permit vans junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("permit_code")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("id")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("van_id") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "van_permits"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &VanFilter{}
+				if fo.Vans.Filter != nil {
+					filter.And = append(filter.And, fo.Vans.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (permits) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedVans, err := c.vanClient.GetMany(ctx, &GetVansInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"id"},
+				}, func(co *CallOptions[VanFieldOptions]) {
+					co.FieldOptions = fo.Vans.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load permit vans: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				parentsByTarget := make(map[string][]int, len(relatedVans))
+				for i := start; i < start+len(chunk); i++ {
+					for _, tID := range parentToTargetIDs[permits[i].Code] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedVans {
+					for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {
+						permits[i].Vans = append(permits[i].Vans, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new permit and returns the created entity.
+func (c *permitClient) Create(ctx context.Context, input *CreatePermitInput, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreatePermitInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create permit: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TablePermits, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"code"}
+		args := []any{input.Code}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[PermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create permit: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Permit), nil
+}
+
+// CreateMany inserts multiple permits in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *permitClient) CreateMany(ctx context.Context, inputs []*CreatePermitInput, opts ...func(*CallOptions[PermitFieldOptions])) ([]*Permit, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many permits: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TablePermits, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Permit{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"code"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.Code,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetPermitsInput{
+			Filter: &PermitFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[PermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many permits: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Permit), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *permitClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *permitClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan permit id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a permit by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *permitClient) Update(ctx context.Context, id int64, input *UpdatePermitInput, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update permit: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TablePermits, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Code.Get(); ok {
+			setClauses["code"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[PermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[PermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update permit: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Permit), nil
+}
+
+// UpdatePermitItem pairs a primary key with an update input for batch updates.
+type UpdatePermitItem struct {
+	ID    int64              `json:"id"`
+	Input *UpdatePermitInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple permits and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *permitClient) UpdateMany(ctx context.Context, items []UpdatePermitItem, opts ...func(*CallOptions[PermitFieldOptions])) ([]*Permit, error) {
+	// UpdatePermitItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many permits: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TablePermits, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Permit{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdatePermitItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_permit", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Code.Get(); ok {
+						setClauses["code"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetPermitsInput{
+			Filter: &PermitFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[PermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many permits: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Permit), nil
+}
+
+// UpdateWhere updates all permits matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *permitClient) UpdateWhere(ctx context.Context, filter *PermitFilter, input *UpdatePermitInput, opts ...func(*CallOptions[PermitFieldOptions])) ([]*Permit, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update permits where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TablePermits, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Code.Get(); ok {
+			setClauses["code"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetPermitsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[PermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated permit id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetPermitsInput{
+			Filter: &PermitFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[PermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update permits where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Permit), nil
+}
+
+// HardDelete permanently removes a permit from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *permitClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[PermitFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TablePermits, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete permit: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple permits from the database.
+func (c *permitClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[PermitFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TablePermits, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted permit key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many permits: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all permits matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *permitClient) HardDeleteWhere(ctx context.Context, filter *PermitFilter, opts ...func(*CallOptions[PermitFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TablePermits, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted permit id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete permits where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *permitClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// PermitConflictTarget identifies a unique constraint for upsert conflict detection.
+type PermitConflictTarget int
+
+const (
+	PermitConflictCode PermitConflictTarget = iota // UNIQUE (code)
+	PermitConflictPK                               // PRIMARY KEY (id)
+)
+
+// permitConflictColumns maps each conflict target to its column set.
+var permitConflictColumns = map[PermitConflictTarget][]string{
+	PermitConflictCode: {"code"},
+	PermitConflictPK:   {"id"},
+}
+
+// Upsert inserts a permit or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *permitClient) Upsert(ctx context.Context, input *CreatePermitInput, target PermitConflictTarget, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreatePermitInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert permit: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TablePermits, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"code"}
+		args := []any{input.Code}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := permitConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[PermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert permit: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Permit), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *permitClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *permitClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple permits in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// permits.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *permitClient) UpsertMany(ctx context.Context, inputs []*CreatePermitInput, target PermitConflictTarget, opts ...func(*CallOptions[PermitFieldOptions])) ([]*Permit, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many permits: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TablePermits, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Permit{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"code"}
+		conflictColumns := permitConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreatePermitInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.Code,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreatePermitInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetPermitsInput{
+			Filter: &PermitFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[PermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many permits: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Permit), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// permits.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *permitClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level permitConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanPermits
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanPermits(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = permitColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// permitColumnValue returns one column's value off a scanned
+// Permit, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanPermits.
+func permitColumnValue(p *Permit, column string) any {
+	switch column {
+	case "id":
+		return p.ID
+	case "code":
+		return p.Code
+	}
+	return nil
+}
+
+// CreatePermitWithRelatedInput holds the fields for creating a permits record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreatePermitWithRelatedInput struct {
+	// Permit holds the parent's own columns — identical to the input Create accepts.
+	Permit CreatePermitInput `json:"permit"`
+
+	// Vans - many-to-many relationship with the vans table.
+	Vans *PermitVansCreateNested `json:"vans,omitempty"`
+}
+
+// UpdatePermitWithRelatedInput holds the fields for updating a permits record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdatePermitWithRelatedInput struct {
+	// Permit holds the parent's own columns — identical to the input Update accepts.
+	Permit UpdatePermitInput `json:"permit"`
+
+	// Vans - many-to-many relationship with the vans table.
+	Vans *PermitVansUpdateNested `json:"vans,omitempty"`
+}
+
+// UpsertPermitWithRelatedInput holds the fields for upserting a permits record
+// together with rows on its nested relationships.
+//
+// The flat half is CreatePermitInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertPermitWithRelatedInput struct {
+	// Permit holds the parent's own columns — identical to the input Upsert accepts.
+	Permit CreatePermitInput `json:"permit"`
+
+	// Vans - many-to-many relationship with the vans table.
+	Vans *PermitVansUpdateNested `json:"vans,omitempty"`
+}
+
+// PermitVansCreateNested is the create-side verb block for Permit.Vans.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type PermitVansCreateNested struct {
+	Create  []*CreateVanInput `json:"create,omitempty"`
+	Connect []int64           `json:"connect,omitempty"`
+}
+
+// PermitVansUpdateNested is the update-side verb block for Permit.Vans,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type PermitVansUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool              `json:"clear,omitempty"`
+	Create     []*CreateVanInput `json:"create,omitempty"`
+	Connect    []int64           `json:"connect,omitempty"`
+	Disconnect []int64           `json:"disconnect,omitempty"`
+}
+
+// permitVansNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func permitVansNestedFromCreate(n *PermitVansCreateNested) *PermitVansUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &PermitVansUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// permitNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+// The columns the edges' keys reference are forced on too: the nested writes
+// copy them, so a narrowed selection must not leave them zero.
+func permitNestedParentFieldOptions(fo *PermitFieldOptions) *PermitFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.Vans = nil
+	scalars.ID = true
+	scalars.Code = true
+	return &scalars
+}
+
+// permitNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func permitNestedSelectsRelationship(fo *PermitFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.Vans != nil
+}
+
+// CreateWithRelated creates a permit together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *permitClient) CreateWithRelated(ctx context.Context, input *CreatePermitWithRelatedInput, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create permit with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Permit
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err := database.WithTransaction(ctx, c.querier, "create_permit_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.Permit, func(o *CallOptions[PermitFieldOptions]) {
+			*o = options
+			o.FieldOptions = permitNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyPermitVansNested(ctx, parent, permitVansNestedFromCreate(input.Vans), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if permitNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[PermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create permit with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a permit together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *permitClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdatePermitWithRelatedInput, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update permit with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Permit
+	err := database.WithTransaction(ctx, c.querier, "update_permit_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.Permit, func(o *CallOptions[PermitFieldOptions]) {
+			*o = options
+			o.FieldOptions = permitNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyPermitVansNested(ctx, parent, input.Vans, options); err != nil {
+			return err
+		}
+
+		if permitNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[PermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update permit with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a permit together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *permitClient) UpsertWithRelated(ctx context.Context, input *UpsertPermitWithRelatedInput, target PermitConflictTarget, opts ...func(*CallOptions[PermitFieldOptions])) (*Permit, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert permit with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Permit
+	err := database.WithTransaction(ctx, c.querier, "upsert_permit_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.Permit, target, func(o *CallOptions[PermitFieldOptions]) {
+			*o = options
+			o.FieldOptions = permitNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyPermitVansNested(ctx, parent, input.Vans, options); err != nil {
+			return err
+		}
+
+		if permitNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[PermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert permit with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applyPermitVansNested applies the Permit.Vans block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// link, disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *permitClient) applyPermitVansNested(ctx context.Context, parent *Permit, nested *PermitVansUpdateNested, options CallOptions[PermitFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("Vans", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	pid := parent.Code
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if err := c.vanPermitClient.HardDeleteWhere(ctx, &VanPermitFilter{
+			PermitCode: &comparator.ID{Eq: new(pid)},
+		}, func(o *CallOptions[VanPermitFieldOptions]) {
+			nestedChildOptions(o, options)
+		}); err != nil {
+			return nestedError("Vans", "clear", nil, err)
+		}
+	}
+
+	targetIDs := make([]int64, 0, len(nested.Create)+len(connectIDs))
+
+	if len(nested.Create) > 0 {
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Vans", "create", nil, ErrNilInput)
+			}
+		}
+		// No traversed FK to elide on an M2M target — the parent's key goes
+		// into the junction row below — so this is the target's own create
+		// input verbatim. The PK-only selection is what the link step needs.
+		created, err := c.vanClient.CreateMany(ctx, nested.Create, func(o *CallOptions[VanFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &VanFieldOptions{ID: true}
+		})
+		if err != nil {
+			return nestedError("Vans", "create", nil, err)
+		}
+		for _, row := range created {
+			targetIDs = append(targetIDs, row.ID)
+		}
+	}
+
+	// The junction FK proves existence, not visibility. Reading through the
+	// target's OWN client applies its tenant filter, soft-delete default and
+	// access rules, so a target in another tenant is NOT_FOUND here rather
+	// than a junction row nobody can ever read.
+	if len(connectIDs) > 0 {
+		found := make(map[int64]bool, len(connectIDs))
+		// Chunked at c.batchSize. A single statement over the caller's
+		// whole list hits a bind-parameter ceiling that is dialect-dependent
+		// and lowest on SQLite (32766), and every dialect's error for it names
+		// no table, column, edge or verb, so it cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.vanClient.GetMany(ctx, &GetVansInput{
+				Filter: &VanFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[VanFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &VanFieldOptions{ID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Vans", "connect", nil, err)
+			}
+			for _, row := range visible {
+				found[row.ID] = true
+			}
+		}
+		for _, tid := range connectIDs {
+			if !found[tid] {
+				return nestedError("Vans", "connect", tid, ErrNotFound)
+			}
+		}
+		targetIDs = append(targetIDs, connectIDs...)
+	}
+
+	// link — UpsertMany, not CreateMany: re-adding an existing link is a set
+	// operation whose answer is "linked", and CreateMany raises a primary-key
+	// violation on it. The junction is a pure link table, so this compiles to
+	// ON CONFLICT DO NOTHING on every dialect.
+	if len(targetIDs) > 0 {
+		links := make([]*CreateVanPermitInput, 0, len(targetIDs))
+		seen := make(map[int64]bool, len(targetIDs))
+		for _, tid := range targetIDs {
+			if seen[tid] {
+				continue
+			}
+			seen[tid] = true
+			links = append(links, &CreateVanPermitInput{
+				PermitCode: parent.Code,
+				VanID:      tid,
+			})
+		}
+		if _, err := c.vanPermitClient.UpsertMany(ctx, links, VanPermitConflictPK, func(o *CallOptions[VanPermitFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &VanPermitFieldOptions{}
+		}); err != nil {
+			return nestedError("Vans", "link", nil, err)
+		}
+	}
+
+	// disconnect — no visibility read. The junction key embeds the
+	// parent, so a caller can only ever delete its own links, and a miss is a
+	// no-op. A hard delete is correct because the junction carries no
+	// soft-delete column; one that did would emit no unlink verb at all,
+	// since the read loader's junction query has no soft-delete predicate and
+	// would keep showing the link.
+	if len(disconnectIDs) > 0 {
+		pks := make([]VanPermitPK, 0, len(disconnectIDs))
+		unlinking := make(map[int64]bool, len(disconnectIDs))
+		for _, tid := range disconnectIDs {
+			if unlinking[tid] {
+				continue
+			}
+			unlinking[tid] = true
+			pks = append(pks, VanPermitPK{
+				PermitCode: parent.Code,
+				VanID:      tid,
+			})
+		}
+		// Chunked at c.batchSize; a composite key binds two parameters
+		// per row, so the ceiling arrives at half the id count.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			if err := c.vanPermitClient.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[VanPermitFieldOptions]) {
+				nestedChildOptions(o, options)
+			}); err != nil {
+				return nestedError("Vans", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a permit with the given primary key exists.
+func (c *permitClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[PermitFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TablePermits, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists permit: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any permit matches the given filter.
+func (c *permitClient) ExistsWhere(ctx context.Context, filter *PermitFilter, opts ...func(*CallOptions[PermitFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TablePermits, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists permits where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of permits matching the given filter.
+// A nil filter counts all permits.
+func (c *permitClient) Count(ctx context.Context, filter *PermitFilter, opts ...func(*CallOptions[PermitFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TablePermits, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count permits: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of permits with total count for offset-based pagination.
+// A nil filter paginates all permits.
+func (c *permitClient) Paginate(ctx context.Context, input PaginateInput[PermitFilter], opts ...func(*CallOptions[PermitFieldOptions])) (*PaginateResult[Permit], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate permits: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TablePermits, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[PermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		permits, err := c.GetMany(ctx, &GetPermitsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[Permit]{
+			Items:      permits,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate permits: %w", err)
+	}
+	return result.(*PaginateResult[Permit]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of permits.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *permitClient) Connection(ctx context.Context, input ConnectionInput[PermitFilter], opts ...func(*CallOptions[PermitFieldOptions])) (*Connection[Permit], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection permits: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TablePermits, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[PermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodePermitCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodePermitCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		permits, err := c.GetMany(ctx, &GetPermitsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(permits) > limit
+		if hasMore {
+			permits = permits[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(permits)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Permit], len(permits))
+		for i, row := range permits {
+			cursor, err := encodePermitCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Permit]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Permit]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection permits: %w", err)
+	}
+	return result.(*Connection[Permit]), nil
+}
+
+// encodePermitCursor encodes cursor key values as a base64 JSON string.
+func encodePermitCursor(keys []string, p *Permit) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = p.ID
+		case "code":
+			out["code"] = p.Code
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode permit cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodePermitCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodePermitCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Permit
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamPermitsInput holds query parameters for streaming permits records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamPermitsInput struct {
+	Filter *PermitFilter `json:"filter"`
+	Sorts  []sql.Sort    `json:"sorts"`
+}
+
+// StreamPermitFieldOptions controls scalar column selection for permits streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamPermitFieldOptions struct {
+	ID   bool `json:"id"`
+	Code bool `json:"code"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamPermitFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Code {
+		cols = append(cols, "code")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamPermitFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Code {
+		return true
+	}
+	return false
+}
+
+// scanPermitRow scans a single row into a Permit entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanPermitRow(rows database.Rows, columns []string) (*Permit, error) {
+	p := &Permit{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &p.ID
+		case "code":
+			targets[idx] = &p.Code
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan permit: %w", err)
+	}
+
+	return p, nil
+}
+
+// Stream returns an iterator over permits matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *permitClient) Stream(ctx context.Context, input *StreamPermitsInput, opts ...func(*CallOptions[StreamPermitFieldOptions])) iter.Seq2[*Permit, error] {
+	return func(yield func(*Permit, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamPermitsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream permits: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *Permit, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream permits: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TablePermits, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := permitAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				p, err := scanPermitRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(p, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate permit rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream permits: %w", err))
+		}
+	}
+}
+
+// PermitFilter provides type-safe filtering for the permits table.
+type PermitFilter struct {
+	Code *comparator.String        `json:"code"`
+	ID   *comparator.Number[int64] `json:"id"`
+	Vans *VanFilter                `json:"vans"`
+	And  []*PermitFilter           `json:"and"`
+	Or   []*PermitFilter           `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *PermitFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.Code != nil {
+		conds = append(conds, f.Code.Parse(dialect.QuoteIdentifier("code"), dialect)...)
+	}
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Vans != nil {
+		conds = append(conds, permitVansFilterExists(f.Vans, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// permitVansFilterExists compiles a VanFilter set on the
+// Vans relationship into a correlated EXISTS over vans, joined through the van_permits junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func permitVansFilterExists(f *VanFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "van_permits"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "", Name: "vans"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("id") + " = " + jn + "." + dialect.QuoteIdentifier("van_id") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("permit_code") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("code", sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// PermitFieldOptions controls column selection and relationship loading for permits queries.
+type PermitFieldOptions struct {
+	ID   bool                    `json:"id"`
+	Code bool                    `json:"code"`
+	Vans *VanRelationshipOptions `json:"vans"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *PermitFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Code {
+		cols = append(cols, "code")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *PermitFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":   "id",
+		"Code": "code",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *PermitFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Code {
+		return true
+	}
+	if fo.Vans != nil {
+		return true
+	}
+	return false
+}
+
+// CreatePermitInput holds the fields for creating a permits record.
+type CreatePermitInput struct {
+	Code string `json:"code"`
+}
+
+// UpdatePermitInput holds the fields for updating a permits record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdatePermitInput struct {
+	Code omittable.Value[string] `json:"code,omitzero"`
+}
+
+// GetPermitsInput holds query parameters for retrieving permits records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetPermitsInput struct {
+	Filter *PermitFilter `json:"filter"`
 	Limit  *int          `json:"limit"`
 	Offset *int          `json:"offset"`
 	Sorts  []sql.Sort    `json:"sorts"`
@@ -42690,6 +53628,2816 @@ type GetRevisionsInput struct {
 	requiredColumns []string
 }
 
+type Route struct {
+	ID     int64  `db:"id" json:"id"`
+	Region string `db:"region" json:"region"`
+	Name   string `db:"name" json:"name"`
+
+	// Vans - one-to-many relationship with the vans table.
+	Vans []*Van `db:"-" json:"vans"`
+}
+
+// RouteClient provides type-safe operations for the routes table.
+type RouteClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single route by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error)
+
+	// GetMany returns routes matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetRoutesInput, opts ...func(*CallOptions[RouteFieldOptions])) ([]*Route, error)
+
+	// Exists returns true if a route with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[RouteFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any route matches the given filter.
+	ExistsWhere(ctx context.Context, filter *RouteFilter, opts ...func(*CallOptions[RouteFieldOptions])) (bool, error)
+
+	// Count returns the number of routes matching the given filter.
+	Count(ctx context.Context, filter *RouteFilter, opts ...func(*CallOptions[RouteFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new route and returns the created entity.
+	Create(ctx context.Context, input *CreateRouteInput, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error)
+
+	// CreateMany inserts multiple routes in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateRouteInput, opts ...func(*CallOptions[RouteFieldOptions])) ([]*Route, error)
+
+	// Update partially updates a route by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateRouteInput, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error)
+
+	// UpdateMany updates multiple routes and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateRouteItem, opts ...func(*CallOptions[RouteFieldOptions])) ([]*Route, error)
+
+	// UpdateWhere updates all routes matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *RouteFilter, input *UpdateRouteInput, opts ...func(*CallOptions[RouteFieldOptions])) ([]*Route, error)
+
+	// Upsert inserts a route or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateRouteInput, target RouteConflictTarget, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error)
+
+	// UpsertMany inserts or updates multiple routes in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateRouteInput, target RouteConflictTarget, opts ...func(*CallOptions[RouteFieldOptions])) ([]*Route, error)
+
+	// CreateWithRelated creates a route together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateRouteWithRelatedInput, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error)
+
+	// UpdateWithRelated updates a route together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdateRouteWithRelatedInput, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error)
+
+	// UpsertWithRelated inserts or updates a route together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertRouteWithRelatedInput, target RouteConflictTarget, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a route from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[RouteFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple routes from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[RouteFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all routes matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *RouteFilter, opts ...func(*CallOptions[RouteFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of routes with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[RouteFilter], opts ...func(*CallOptions[RouteFieldOptions])) (*PaginateResult[Route], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of routes.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[RouteFilter], opts ...func(*CallOptions[RouteFieldOptions])) (*Connection[Route], error)
+
+	// Stream returns an iterator over routes matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamRoutesInput, opts ...func(*CallOptions[StreamRouteFieldOptions])) iter.Seq2[*Route, error]
+}
+
+// routeClient implements the RouteClient interface.
+type routeClient struct {
+	querier         database.Querier
+	dialect         sql.Dialect
+	table           sql.Table
+	batchSize       int
+	queryLimit      int
+	pageSize        int
+	cursorKeys      []string
+	strictUpdates   bool
+	mutationHooks   []hook.MutationHook
+	queryHooks      []hook.QueryHook
+	panicHandler    hook.PanicHandler
+	callbackMode    database.CallbackMode
+	vansDefaultSort []sql.Sort
+	vanClient       *vanClient
+}
+
+// newRouteClient creates a new routeClient.
+func newRouteClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *routeClient {
+	return &routeClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "routes"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *routeClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *routeClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// routeAllColumns is the column list for full-entity reads, sorted for determinism.
+var routeAllColumns = []string{"id", "name", "region"}
+
+// scanRoutes scans rows into Route entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanRoutes(rows database.Rows, columns []string) ([]*Route, error) {
+	var result []*Route
+	for rows.Next() {
+		r := &Route{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &r.ID
+			case "region":
+				targets[idx] = &r.Region
+			case "name":
+				targets[idx] = &r.Name
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan route: %w", err)
+		}
+
+		result = append(result, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate route rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single route by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *routeClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get route: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableRoutes, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[RouteFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[RouteFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		routes, err := c.GetMany(ctx, &GetRoutesInput{
+			Filter: &RouteFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(routes) == 0 {
+			return nil, ErrNotFound
+		}
+		return routes[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get route: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Route), nil
+}
+
+// GetMany returns routes matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *routeClient) GetMany(ctx context.Context, input *GetRoutesInput, opts ...func(*CallOptions[RouteFieldOptions])) ([]*Route, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetRoutesInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many routes: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableRoutes, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := routeAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "region", "id")
+				}
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var routes []*Route
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		routes, err = scanRoutes(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, routes, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return routes, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many routes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Route), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the region and id columns into a narrowed projection when one is:
+// loadRelationships maps every child back through r.Region and r.ID, which
+// an unselected column would leave at its zero value.
+func (fo *RouteFieldOptions) loadsRelationships() bool {
+	if fo.Vans != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *routeClient) loadRelationships(ctx context.Context, conn database.Querier, routes []*Route, options CallOptions[RouteFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Vans != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			routeKeyed := make([]*Route, 0, len(routes))
+			routeKeys := make([][]any, 0, len(routes))
+			for _, r := range routes {
+				routeKeyed = append(routeKeyed, r)
+				routeKeys = append(routeKeys, []any{r.Region, r.ID})
+			}
+
+			sorts := fo.Vans.Sorts
+			if len(sorts) == 0 {
+				sorts = c.vansDefaultSort
+			}
+
+			// Load via related entity client, 8191 parent keys per
+			// statement: within half the dialect's bind-parameter limit, leaving
+			// the rest for the relationship's filters. Each parent's children come
+			// from one statement, so the sorts order every parent's slice.
+			var relatedVans []*Van
+			for start := 0; start < len(routeKeys); start += 8191 {
+				chunk := routeKeys[start:min(start+8191, len(routeKeys))]
+
+				// The consumer filter is ANDed in, so a soft-delete comparator
+				// in it narrows the child's default rather than replacing it.
+				filter := &VanFilter{}
+				if fo.Vans.Filter != nil {
+					filter.And = append(filter.And, fo.Vans.Filter)
+				}
+
+				loaded, err := c.vanClient.GetMany(ctx, &GetVansInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					conditions: []sql.Condition{
+						sql.BuildCompositePKBatchCondition(c.dialect, []string{"region", "route_id"}, chunk),
+					},
+					// The mapping below keys every child on its FK columns, so the
+					// fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"region", "route_id"},
+				}, func(co *CallOptions[VanFieldOptions]) {
+					co.FieldOptions = fo.Vans.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load route vans: %w", err)
+				}
+				relatedVans = append(relatedVans, loaded...)
+			}
+
+			// Map results back to parent entities on every key column. A child
+			// with a NULL member references no parent.
+			byKey := make(map[[2]string][]*Van)
+			for _, r := range relatedVans {
+				if !(r.RouteID != nil) {
+					continue
+				}
+				key := [2]string{r.Region, fmt.Sprint((*r.RouteID))}
+				byKey[key] = append(byKey[key], r)
+			}
+			for _, parent := range routeKeyed {
+				parent.Vans = byKey[[2]string{parent.Region, fmt.Sprint(parent.ID)}]
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new route and returns the created entity.
+func (c *routeClient) Create(ctx context.Context, input *CreateRouteInput, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateRouteInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create route: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableRoutes, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"region", "name"}
+		args := []any{input.Region, input.Name}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[RouteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create route: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Route), nil
+}
+
+// CreateMany inserts multiple routes in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *routeClient) CreateMany(ctx context.Context, inputs []*CreateRouteInput, opts ...func(*CallOptions[RouteFieldOptions])) ([]*Route, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many routes: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableRoutes, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Route{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"region", "name"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.Region,
+					input.Name,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetRoutesInput{
+			Filter: &RouteFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[RouteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many routes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Route), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *routeClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *routeClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan route id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a route by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *routeClient) Update(ctx context.Context, id int64, input *UpdateRouteInput, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update route: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableRoutes, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Region.Get(); ok {
+			setClauses["region"] = v
+		}
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[RouteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[RouteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update route: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Route), nil
+}
+
+// UpdateRouteItem pairs a primary key with an update input for batch updates.
+type UpdateRouteItem struct {
+	ID    int64             `json:"id"`
+	Input *UpdateRouteInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple routes and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *routeClient) UpdateMany(ctx context.Context, items []UpdateRouteItem, opts ...func(*CallOptions[RouteFieldOptions])) ([]*Route, error) {
+	// UpdateRouteItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many routes: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableRoutes, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Route{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateRouteItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_route", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Region.Get(); ok {
+						setClauses["region"] = v
+					}
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetRoutesInput{
+			Filter: &RouteFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[RouteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many routes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Route), nil
+}
+
+// UpdateWhere updates all routes matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *routeClient) UpdateWhere(ctx context.Context, filter *RouteFilter, input *UpdateRouteInput, opts ...func(*CallOptions[RouteFieldOptions])) ([]*Route, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update routes where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableRoutes, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Region.Get(); ok {
+			setClauses["region"] = v
+		}
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetRoutesInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[RouteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated route id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetRoutesInput{
+			Filter: &RouteFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[RouteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update routes where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Route), nil
+}
+
+// HardDelete permanently removes a route from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *routeClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[RouteFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableRoutes, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete route: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple routes from the database.
+func (c *routeClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[RouteFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableRoutes, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted route key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many routes: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all routes matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *routeClient) HardDeleteWhere(ctx context.Context, filter *RouteFilter, opts ...func(*CallOptions[RouteFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableRoutes, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted route id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete routes where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *routeClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// RouteConflictTarget identifies a unique constraint for upsert conflict detection.
+type RouteConflictTarget int
+
+const (
+	RouteConflictPK       RouteConflictTarget = iota // PRIMARY KEY (id)
+	RouteConflictRegionID                            // UNIQUE (region, id)
+)
+
+// routeConflictColumns maps each conflict target to its column set.
+var routeConflictColumns = map[RouteConflictTarget][]string{
+	RouteConflictPK:       {"id"},
+	RouteConflictRegionID: {"region", "id"},
+}
+
+// Upsert inserts a route or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *routeClient) Upsert(ctx context.Context, input *CreateRouteInput, target RouteConflictTarget, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateRouteInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert route: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableRoutes, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"region", "name"}
+		args := []any{input.Region, input.Name}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := routeConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[RouteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert route: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Route), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *routeClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *routeClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple routes in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// routes.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *routeClient) UpsertMany(ctx context.Context, inputs []*CreateRouteInput, target RouteConflictTarget, opts ...func(*CallOptions[RouteFieldOptions])) ([]*Route, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many routes: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableRoutes, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Route{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"region", "name"}
+		conflictColumns := routeConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateRouteInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.Region,
+				input.Name,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateRouteInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetRoutesInput{
+			Filter: &RouteFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[RouteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many routes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Route), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// routes.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *routeClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level routeConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanRoutes
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanRoutes(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = routeColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// routeColumnValue returns one column's value off a scanned
+// Route, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanRoutes.
+func routeColumnValue(r *Route, column string) any {
+	switch column {
+	case "id":
+		return r.ID
+	case "region":
+		return r.Region
+	case "name":
+		return r.Name
+	}
+	return nil
+}
+
+// CreateRouteWithRelatedInput holds the fields for creating a routes record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateRouteWithRelatedInput struct {
+	// Route holds the parent's own columns — identical to the input Create accepts.
+	Route CreateRouteInput `json:"route"`
+
+	// Vans - one-to-many relationship with the vans table.
+	Vans *RouteVansCreateNested `json:"vans,omitempty"`
+}
+
+// UpdateRouteWithRelatedInput holds the fields for updating a routes record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateRouteWithRelatedInput struct {
+	// Route holds the parent's own columns — identical to the input Update accepts.
+	Route UpdateRouteInput `json:"route"`
+
+	// Vans - one-to-many relationship with the vans table.
+	Vans *RouteVansUpdateNested `json:"vans,omitempty"`
+}
+
+// UpsertRouteWithRelatedInput holds the fields for upserting a routes record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateRouteInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertRouteWithRelatedInput struct {
+	// Route holds the parent's own columns — identical to the input Upsert accepts.
+	Route CreateRouteInput `json:"route"`
+
+	// Vans - one-to-many relationship with the vans table.
+	Vans *RouteVansUpdateNested `json:"vans,omitempty"`
+}
+
+// RouteVansCreateNested is the create-side verb block for Route.Vans.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type RouteVansCreateNested struct {
+	Create  []*RouteVansCreateInput `json:"create,omitempty"`
+	Connect []int64                 `json:"connect,omitempty"`
+}
+
+// RouteVansUpdateNested is the update-side verb block for Route.Vans,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type RouteVansUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool                    `json:"clear,omitempty"`
+	Create     []*RouteVansCreateInput `json:"create,omitempty"`
+	Connect    []int64                 `json:"connect,omitempty"`
+	Disconnect []int64                 `json:"disconnect,omitempty"`
+}
+
+// RouteVansCreateInput is CreateVanInput with the traversed
+// foreign key removed — that column is always set from the parent's primary key,
+// so leaving it would force the caller to supply a value that is then
+// overwritten.
+type RouteVansCreateInput struct {
+	DepotID omittable.Value[*int64] `json:"depot_id,omitzero"`
+	Plate   string                  `json:"plate"`
+}
+
+// routeVansNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func routeVansNestedFromCreate(n *RouteVansCreateNested) *RouteVansUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &RouteVansUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// routeNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+// The columns the edges' keys reference are forced on too: the nested writes
+// copy them, so a narrowed selection must not leave them zero.
+func routeNestedParentFieldOptions(fo *RouteFieldOptions) *RouteFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.Vans = nil
+	scalars.ID = true
+	scalars.Region = true
+	return &scalars
+}
+
+// routeNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func routeNestedSelectsRelationship(fo *RouteFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.Vans != nil
+}
+
+// CreateWithRelated creates a route together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *routeClient) CreateWithRelated(ctx context.Context, input *CreateRouteWithRelatedInput, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create route with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Route
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err := database.WithTransaction(ctx, c.querier, "create_route_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.Route, func(o *CallOptions[RouteFieldOptions]) {
+			*o = options
+			o.FieldOptions = routeNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyRouteVansNested(ctx, parent, routeVansNestedFromCreate(input.Vans), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if routeNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[RouteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create route with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a route together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *routeClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdateRouteWithRelatedInput, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update route with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Route
+	err := database.WithTransaction(ctx, c.querier, "update_route_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.Route, func(o *CallOptions[RouteFieldOptions]) {
+			*o = options
+			o.FieldOptions = routeNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyRouteVansNested(ctx, parent, input.Vans, options); err != nil {
+			return err
+		}
+
+		if routeNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[RouteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update route with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a route together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *routeClient) UpsertWithRelated(ctx context.Context, input *UpsertRouteWithRelatedInput, target RouteConflictTarget, opts ...func(*CallOptions[RouteFieldOptions])) (*Route, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert route with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Route
+	err := database.WithTransaction(ctx, c.querier, "upsert_route_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.Route, target, func(o *CallOptions[RouteFieldOptions]) {
+			*o = options
+			o.FieldOptions = routeNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyRouteVansNested(ctx, parent, input.Vans, options); err != nil {
+			return err
+		}
+
+		if routeNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[RouteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert route with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applyRouteVansNested applies the Route.Vans block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *routeClient) applyRouteVansNested(ctx context.Context, parent *Route, nested *RouteVansUpdateNested, options CallOptions[RouteFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("Vans", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	// The connect adoption's verify read filters on it too.
+	pid0 := parent.Region
+	pid1 := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if _, err := c.vanClient.UpdateWhere(ctx,
+			&VanFilter{
+				Region:  &comparator.String{Eq: new(pid0)},
+				RouteID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+			},
+			&UpdateVanInput{RouteID: omittable.Set[*int64](nil)},
+			func(o *CallOptions[VanFieldOptions]) {
+				nestedChildOptions(o, options)
+				// Nothing selected — the inner call does not need its result
+				// back, so it skips the read that would hand the rows over.
+				o.FieldOptions = &VanFieldOptions{}
+			}); err != nil {
+			return nestedError("Vans", "clear", nil, err)
+		}
+	}
+
+	if len(nested.Create) > 0 {
+		inputs := make([]*CreateVanInput, 0, len(nested.Create))
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Vans", "create", nil, ErrNilInput)
+			}
+			inputs = append(inputs, &CreateVanInput{
+				Region:  parent.Region,
+				RouteID: omittable.Set(&parent.ID),
+				DepotID: n.DepotID,
+				Plate:   n.Plate,
+			})
+		}
+		if _, err := c.vanClient.CreateMany(ctx, inputs, func(o *CallOptions[VanFieldOptions]) {
+			nestedChildOptions(o, options)
+			// Nothing selected — the inner call does not need its result back,
+			// so it costs one statement rather than a statement plus a read.
+			o.FieldOptions = &VanFieldOptions{}
+		}); err != nil {
+			return nestedError("Vans", "create", nil, err)
+		}
+	}
+
+	// connect — adopt unparented rows. The visibility read is not optional:
+	// the UPDATE's row count alone cannot separate "no such row" from "already
+	// parented", and the FK constraint proves a row exists, not that the caller
+	// may see it.
+	if len(connectIDs) > 0 {
+		// Each target's key, as a tuple of strings, which compares every key
+		// type. NULL is held apart: it stringifies like an empty string.
+		owner := make(map[int64][2]string, len(connectIDs))
+		nulls := make(map[int64][2]bool, len(connectIDs))
+		// Chunked at c.batchSize, for the reason the disconnect below is:
+		// a single `IN` over the caller's whole list hits a dialect-dependent
+		// bind ceiling whose error cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.vanClient.GetMany(ctx, &GetVansInput{
+				Filter: &VanFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[VanFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &VanFieldOptions{ID: true, Region: true, RouteID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Vans", "connect", nil, err)
+			}
+			for _, row := range visible {
+				var key [2]string
+				var null [2]bool
+				key[0] = row.Region
+				if row.RouteID != nil {
+					key[1] = fmt.Sprint((*row.RouteID))
+				} else {
+					null[1] = true
+				}
+				owner[row.ID], nulls[row.ID] = key, null
+			}
+		}
+
+		adopt := make([]int64, 0, len(connectIDs))
+		// A repeated id is ONE adoption: connect is a set operation, and the
+		// UPDATE matches the row once however many times the caller named it.
+		// Queueing it twice would trip the shortfall check below and report a
+		// conflict that did not happen.
+		queued := make(map[int64]bool, len(connectIDs))
+		want := [2]string{parent.Region, fmt.Sprint(parent.ID)}
+		for _, v := range connectIDs {
+			cur, ok := owner[v]
+			null := nulls[v]
+			switch {
+			case !ok:
+				// Absent, another tenant's, or soft-deleted — indistinguishable
+				// to this caller, and all NOT_FOUND. Never CONFLICT: that would
+				// confirm the row exists.
+				return nestedError("Vans", "connect", v, ErrNotFound)
+			case cur[0] != want[0]:
+				// Bound to another key through a member this edge cannot write,
+				// so allow_reparent does not reach it either.
+				return nestedError("Vans", "connect", v, ErrAlreadyRelated)
+			case !null[1] && cur == want:
+				// Already ours — the requested end state holds, so this is a
+				// no-op rather than a conflict.
+				continue
+			}
+			if queued[v] {
+				continue
+			}
+			queued[v] = true
+			adopt = append(adopt, v)
+		}
+
+		if len(adopt) > 0 {
+			adoptedCount := 0
+			// The adoption is chunked on the same ceiling the read above
+			// is, and the shortfall check sums across chunks: a row lost in one
+			// chunk is a lost race whichever chunk it landed in.
+			for start := 0; start < len(adopt); start += c.batchSize {
+				adopting := adopt[start:min(start+c.batchSize, len(adopt))]
+				if _, err := c.vanClient.UpdateWhere(ctx,
+					&VanFilter{
+						ID: &comparator.Number[int64]{In: adopting},
+					},
+					&UpdateVanInput{RouteID: omittable.Set(&parent.ID)},
+					func(o *CallOptions[VanFieldOptions]) {
+						nestedChildOptions(o, options)
+						// Nothing selected — the verify read below counts
+						// the adoption, not the rows UpdateWhere reports.
+						o.FieldOptions = &VanFieldOptions{}
+					}); err != nil {
+					return nestedError("Vans", "connect", nil, err)
+				}
+				// The verify read counts this chunk's ids that now name this
+				// parent. Inside the transaction a plain read sees its own
+				// writes, so it counts what the UPDATE adopted and never a row
+				// another connection parented first — on every dialect, with
+				// no lock. UpdateWhere's report cannot do this on MySQL, where
+				// a pre-SELECT names the rows. Hooks are
+				// skipped as on the terminal re-read: this is part of the write.
+				adopted, err := c.vanClient.GetMany(ctx, &GetVansInput{
+					Filter: &VanFilter{
+						ID:      &comparator.Number[int64]{In: adopting},
+						Region:  &comparator.String{Eq: new(pid0)},
+						RouteID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+					},
+					Limit: new(0),
+				}, func(o *CallOptions[VanFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &VanFieldOptions{ID: true}
+					o.SkipHooks = true
+					o.LockMode = sql.LockNone
+				})
+				if err != nil {
+					return nestedError("Vans", "connect", nil, err)
+				}
+				adoptedCount += len(adopted)
+			}
+			if adoptedCount != len(adopt) {
+				// The UPDATE carries no `fk IS NULL` term under
+				// allow_reparent, so a row the visibility read returned
+				// that the verify read does not find under this parent
+				// stopped being visible in between — deleted, or
+				// soft-deleted. Reported the way the visibility read would
+				// have reported it.
+				return nestedError("Vans", "connect", nil, ErrNotFound)
+			}
+		}
+	}
+
+	// disconnect — unlink, scoped to THIS parent. The `fk = parent` term is
+	// what stops a caller detaching another parent's row by guessing its id,
+	// and it is why a disconnect needs no visibility read where a connect does.
+	// A miss is a no-op, not an error.
+	if len(disconnectIDs) > 0 {
+		// Chunked at c.batchSize. The ceiling is a dialect-dependent bind
+		// limit, lowest on SQLite at 32766, and the error names nothing that
+		// can attribute — so it is removed rather than documented.
+		for start := 0; start < len(disconnectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(disconnectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range disconnectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			if _, err := c.vanClient.UpdateWhere(ctx,
+				&VanFilter{
+					ID:      &comparator.Number[int64]{In: ids},
+					Region:  &comparator.String{Eq: new(pid0)},
+					RouteID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid1)}},
+				},
+				&UpdateVanInput{RouteID: omittable.Set[*int64](nil)},
+				func(o *CallOptions[VanFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &VanFieldOptions{}
+				}); err != nil {
+				return nestedError("Vans", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a route with the given primary key exists.
+func (c *routeClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[RouteFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableRoutes, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists route: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any route matches the given filter.
+func (c *routeClient) ExistsWhere(ctx context.Context, filter *RouteFilter, opts ...func(*CallOptions[RouteFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableRoutes, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists routes where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of routes matching the given filter.
+// A nil filter counts all routes.
+func (c *routeClient) Count(ctx context.Context, filter *RouteFilter, opts ...func(*CallOptions[RouteFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableRoutes, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count routes: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of routes with total count for offset-based pagination.
+// A nil filter paginates all routes.
+func (c *routeClient) Paginate(ctx context.Context, input PaginateInput[RouteFilter], opts ...func(*CallOptions[RouteFieldOptions])) (*PaginateResult[Route], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate routes: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableRoutes, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[RouteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		routes, err := c.GetMany(ctx, &GetRoutesInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[Route]{
+			Items:      routes,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate routes: %w", err)
+	}
+	return result.(*PaginateResult[Route]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of routes.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *routeClient) Connection(ctx context.Context, input ConnectionInput[RouteFilter], opts ...func(*CallOptions[RouteFieldOptions])) (*Connection[Route], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection routes: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableRoutes, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[RouteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeRouteCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeRouteCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		routes, err := c.GetMany(ctx, &GetRoutesInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(routes) > limit
+		if hasMore {
+			routes = routes[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(routes)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Route], len(routes))
+		for i, row := range routes {
+			cursor, err := encodeRouteCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Route]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Route]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection routes: %w", err)
+	}
+	return result.(*Connection[Route]), nil
+}
+
+// encodeRouteCursor encodes cursor key values as a base64 JSON string.
+func encodeRouteCursor(keys []string, r *Route) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = r.ID
+		case "region":
+			out["region"] = r.Region
+		case "name":
+			out["name"] = r.Name
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode route cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeRouteCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeRouteCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Route
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamRoutesInput holds query parameters for streaming routes records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamRoutesInput struct {
+	Filter *RouteFilter `json:"filter"`
+	Sorts  []sql.Sort   `json:"sorts"`
+}
+
+// StreamRouteFieldOptions controls scalar column selection for routes streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamRouteFieldOptions struct {
+	ID     bool `json:"id"`
+	Region bool `json:"region"`
+	Name   bool `json:"name"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamRouteFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Region {
+		cols = append(cols, "region")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamRouteFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Region {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	return false
+}
+
+// scanRouteRow scans a single row into a Route entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanRouteRow(rows database.Rows, columns []string) (*Route, error) {
+	r := &Route{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &r.ID
+		case "region":
+			targets[idx] = &r.Region
+		case "name":
+			targets[idx] = &r.Name
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan route: %w", err)
+	}
+
+	return r, nil
+}
+
+// Stream returns an iterator over routes matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *routeClient) Stream(ctx context.Context, input *StreamRoutesInput, opts ...func(*CallOptions[StreamRouteFieldOptions])) iter.Seq2[*Route, error] {
+	return func(yield func(*Route, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamRoutesInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream routes: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *Route, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream routes: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableRoutes, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := routeAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				r, err := scanRouteRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(r, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate route rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream routes: %w", err))
+		}
+	}
+}
+
+// RouteFilter provides type-safe filtering for the routes table.
+type RouteFilter struct {
+	ID     *comparator.Number[int64] `json:"id"`
+	Name   *comparator.String        `json:"name"`
+	Region *comparator.String        `json:"region"`
+	Vans   *VanFilter                `json:"vans"`
+	And    []*RouteFilter            `json:"and"`
+	Or     []*RouteFilter            `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *RouteFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Name != nil {
+		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	if f.Region != nil {
+		conds = append(conds, f.Region.Parse(dialect.QuoteIdentifier("region"), dialect)...)
+	}
+
+	if f.Vans != nil {
+		conds = append(conds, routeVansFilterExists(f.Vans, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// routeVansFilterExists compiles a VanFilter set on the
+// Vans relationship into a correlated EXISTS over vans.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func routeVansFilterExists(f *VanFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "vans"}) + " " + tgt +
+		" WHERE " + tgt + "." + dialect.QuoteIdentifier("region") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("route_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists([]string{"region", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// RouteFieldOptions controls column selection and relationship loading for routes queries.
+type RouteFieldOptions struct {
+	ID     bool                    `json:"id"`
+	Region bool                    `json:"region"`
+	Name   bool                    `json:"name"`
+	Vans   *VanRelationshipOptions `json:"vans"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *RouteFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Region {
+		cols = append(cols, "region")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *RouteFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":     "id",
+		"Region": "region",
+		"Name":   "name",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *RouteFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Region {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	if fo.Vans != nil {
+		return true
+	}
+	return false
+}
+
+// CreateRouteInput holds the fields for creating a routes record.
+type CreateRouteInput struct {
+	Region string `json:"region"`
+	Name   string `json:"name"`
+}
+
+// UpdateRouteInput holds the fields for updating a routes record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateRouteInput struct {
+	Region omittable.Value[string] `json:"region,omitzero"`
+	Name   omittable.Value[string] `json:"name,omitzero"`
+}
+
+// GetRoutesInput holds query parameters for retrieving routes records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetRoutesInput struct {
+	Filter *RouteFilter `json:"filter"`
+	Limit  *int         `json:"limit"`
+	Offset *int         `json:"offset"`
+	Sorts  []sql.Sort   `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 type Seal struct {
 	ID   int64  `db:"id" json:"id"`
 	Name string `db:"name" json:"name"`
@@ -47865,6 +61613,2120 @@ type GetShelvesInput struct {
 	requiredColumns []string
 }
 
+type Slot struct {
+	ID        int64   `db:"id" json:"id"`
+	BayRegion *string `db:"bay_region" json:"bay_region"`
+	BayID     *int64  `db:"bay_id" json:"bay_id"`
+	Label     string  `db:"label" json:"label"`
+}
+
+// SlotClient provides type-safe operations for the slots table.
+type SlotClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single slot by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[SlotFieldOptions])) (*Slot, error)
+
+	// GetMany returns slots matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetSlotsInput, opts ...func(*CallOptions[SlotFieldOptions])) ([]*Slot, error)
+
+	// Exists returns true if a slot with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[SlotFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any slot matches the given filter.
+	ExistsWhere(ctx context.Context, filter *SlotFilter, opts ...func(*CallOptions[SlotFieldOptions])) (bool, error)
+
+	// Count returns the number of slots matching the given filter.
+	Count(ctx context.Context, filter *SlotFilter, opts ...func(*CallOptions[SlotFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new slot and returns the created entity.
+	Create(ctx context.Context, input *CreateSlotInput, opts ...func(*CallOptions[SlotFieldOptions])) (*Slot, error)
+
+	// CreateMany inserts multiple slots in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateSlotInput, opts ...func(*CallOptions[SlotFieldOptions])) ([]*Slot, error)
+
+	// Update partially updates a slot by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateSlotInput, opts ...func(*CallOptions[SlotFieldOptions])) (*Slot, error)
+
+	// UpdateMany updates multiple slots and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateSlotItem, opts ...func(*CallOptions[SlotFieldOptions])) ([]*Slot, error)
+
+	// UpdateWhere updates all slots matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *SlotFilter, input *UpdateSlotInput, opts ...func(*CallOptions[SlotFieldOptions])) ([]*Slot, error)
+
+	// Upsert inserts a slot or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateSlotInput, target SlotConflictTarget, opts ...func(*CallOptions[SlotFieldOptions])) (*Slot, error)
+
+	// UpsertMany inserts or updates multiple slots in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateSlotInput, target SlotConflictTarget, opts ...func(*CallOptions[SlotFieldOptions])) ([]*Slot, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a slot from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[SlotFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple slots from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[SlotFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all slots matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *SlotFilter, opts ...func(*CallOptions[SlotFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of slots with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[SlotFilter], opts ...func(*CallOptions[SlotFieldOptions])) (*PaginateResult[Slot], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of slots.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[SlotFilter], opts ...func(*CallOptions[SlotFieldOptions])) (*Connection[Slot], error)
+
+	// Stream returns an iterator over slots matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamSlotsInput, opts ...func(*CallOptions[StreamSlotFieldOptions])) iter.Seq2[*Slot, error]
+}
+
+// slotClient implements the SlotClient interface.
+type slotClient struct {
+	querier       database.Querier
+	dialect       sql.Dialect
+	table         sql.Table
+	batchSize     int
+	queryLimit    int
+	pageSize      int
+	cursorKeys    []string
+	strictUpdates bool
+	mutationHooks []hook.MutationHook
+	queryHooks    []hook.QueryHook
+	panicHandler  hook.PanicHandler
+}
+
+// newSlotClient creates a new slotClient.
+func newSlotClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *slotClient {
+	return &slotClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "slots"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *slotClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *slotClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// slotAllColumns is the column list for full-entity reads, sorted for determinism.
+var slotAllColumns = []string{"bay_id", "bay_region", "id", "label"}
+
+// scanSlots scans rows into Slot entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanSlots(rows database.Rows, columns []string) ([]*Slot, error) {
+	var result []*Slot
+	for rows.Next() {
+		s := &Slot{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &s.ID
+			case "bay_region":
+				targets[idx] = &s.BayRegion
+			case "bay_id":
+				targets[idx] = &s.BayID
+			case "label":
+				targets[idx] = &s.Label
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan slot: %w", err)
+		}
+
+		result = append(result, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate slot rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single slot by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *slotClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[SlotFieldOptions])) (*Slot, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get slot: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableSlots, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[SlotFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SlotFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		slots, err := c.GetMany(ctx, &GetSlotsInput{
+			Filter: &SlotFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(slots) == 0 {
+			return nil, ErrNotFound
+		}
+		return slots[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get slot: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Slot), nil
+}
+
+// GetMany returns slots matching the given filter, field selection, and sort criteria.
+func (c *slotClient) GetMany(ctx context.Context, input *GetSlotsInput, opts ...func(*CallOptions[SlotFieldOptions])) ([]*Slot, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetSlotsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many slots: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableSlots, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := slotAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var slots []*Slot
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		slots, err = scanSlots(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return slots, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many slots: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Slot), nil
+}
+
+// Create inserts a new slot and returns the created entity.
+func (c *slotClient) Create(ctx context.Context, input *CreateSlotInput, opts ...func(*CallOptions[SlotFieldOptions])) (*Slot, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateSlotInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create slot: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableSlots, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"label"}
+		args := []any{input.Label}
+
+		if v, ok := input.BayRegion.Get(); ok {
+			columns = append(columns, "bay_region")
+			args = append(args, v)
+		}
+
+		if v, ok := input.BayID.Get(); ok {
+			columns = append(columns, "bay_id")
+			args = append(args, v)
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create slot: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Slot), nil
+}
+
+// CreateMany inserts multiple slots in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *slotClient) CreateMany(ctx context.Context, inputs []*CreateSlotInput, opts ...func(*CallOptions[SlotFieldOptions])) ([]*Slot, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many slots: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableSlots, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Slot{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"bay_region", "bay_id", "label"}
+			var valueRows [][]any
+			for _, input := range batch {
+				var bayRegion any = sql.NewDefaultExpr("NULL")
+				if v, ok := input.BayRegion.Get(); ok {
+					bayRegion = v
+				}
+				var bayID any = sql.NewDefaultExpr("NULL")
+				if v, ok := input.BayID.Get(); ok {
+					bayID = v
+				}
+
+				valueRows = append(valueRows, []any{
+					bayRegion,
+					bayID,
+					input.Label,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetSlotsInput{
+			Filter: &SlotFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many slots: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Slot), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *slotClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *slotClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan slot id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a slot by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *slotClient) Update(ctx context.Context, id int64, input *UpdateSlotInput, opts ...func(*CallOptions[SlotFieldOptions])) (*Slot, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update slot: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableSlots, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.BayRegion.Get(); ok {
+			setClauses["bay_region"] = v
+		}
+		if v, ok := input.BayID.Get(); ok {
+			setClauses["bay_id"] = v
+		}
+		if v, ok := input.Label.Get(); ok {
+			setClauses["label"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[SlotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update slot: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Slot), nil
+}
+
+// UpdateSlotItem pairs a primary key with an update input for batch updates.
+type UpdateSlotItem struct {
+	ID    int64            `json:"id"`
+	Input *UpdateSlotInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple slots and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *slotClient) UpdateMany(ctx context.Context, items []UpdateSlotItem, opts ...func(*CallOptions[SlotFieldOptions])) ([]*Slot, error) {
+	// UpdateSlotItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many slots: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableSlots, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Slot{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateSlotItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_slot", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.BayRegion.Get(); ok {
+						setClauses["bay_region"] = v
+					}
+					if v, ok := item.Input.BayID.Get(); ok {
+						setClauses["bay_id"] = v
+					}
+					if v, ok := item.Input.Label.Get(); ok {
+						setClauses["label"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetSlotsInput{
+			Filter: &SlotFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many slots: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Slot), nil
+}
+
+// UpdateWhere updates all slots matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *slotClient) UpdateWhere(ctx context.Context, filter *SlotFilter, input *UpdateSlotInput, opts ...func(*CallOptions[SlotFieldOptions])) ([]*Slot, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update slots where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableSlots, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.BayRegion.Get(); ok {
+			setClauses["bay_region"] = v
+		}
+		if v, ok := input.BayID.Get(); ok {
+			setClauses["bay_id"] = v
+		}
+		if v, ok := input.Label.Get(); ok {
+			setClauses["label"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetSlotsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[SlotFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated slot id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetSlotsInput{
+			Filter: &SlotFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update slots where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Slot), nil
+}
+
+// HardDelete permanently removes a slot from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *slotClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[SlotFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableSlots, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete slot: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple slots from the database.
+func (c *slotClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[SlotFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableSlots, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted slot key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many slots: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all slots matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *slotClient) HardDeleteWhere(ctx context.Context, filter *SlotFilter, opts ...func(*CallOptions[SlotFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableSlots, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted slot id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete slots where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *slotClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// SlotConflictTarget identifies a unique constraint for upsert conflict detection.
+type SlotConflictTarget int
+
+const (
+	SlotConflictPK SlotConflictTarget = iota // PRIMARY KEY (id)
+)
+
+// slotConflictColumns maps each conflict target to its column set.
+var slotConflictColumns = map[SlotConflictTarget][]string{
+	SlotConflictPK: {"id"},
+}
+
+// Upsert inserts a slot or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *slotClient) Upsert(ctx context.Context, input *CreateSlotInput, target SlotConflictTarget, opts ...func(*CallOptions[SlotFieldOptions])) (*Slot, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateSlotInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert slot: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableSlots, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"label"}
+		args := []any{input.Label}
+
+		if v, ok := input.BayRegion.Get(); ok {
+			columns = append(columns, "bay_region")
+			args = append(args, v)
+		}
+
+		if v, ok := input.BayID.Get(); ok {
+			columns = append(columns, "bay_id")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := slotConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[SlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert slot: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Slot), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *slotClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *slotClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple slots in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// slots.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *slotClient) UpsertMany(ctx context.Context, inputs []*CreateSlotInput, target SlotConflictTarget, opts ...func(*CallOptions[SlotFieldOptions])) ([]*Slot, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many slots: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableSlots, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Slot{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"bay_region", "bay_id", "label"}
+		conflictColumns := slotConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateSlotInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+			var bayRegion any = sql.NewDefaultExpr("NULL")
+			if v, ok := input.BayRegion.Get(); ok {
+				bayRegion = v
+			}
+			var bayID any = sql.NewDefaultExpr("NULL")
+			if v, ok := input.BayID.Get(); ok {
+				bayID = v
+			}
+
+			valueRows = append(valueRows, []any{
+				bayRegion,
+				bayID,
+				input.Label,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateSlotInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetSlotsInput{
+			Filter: &SlotFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[SlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many slots: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Slot), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// slots.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *slotClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level slotConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanSlots
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanSlots(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = slotColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// slotColumnValue returns one column's value off a scanned
+// Slot, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanSlots.
+func slotColumnValue(s *Slot, column string) any {
+	switch column {
+	case "id":
+		return s.ID
+	case "bay_region":
+		return s.BayRegion
+	case "bay_id":
+		return s.BayID
+	case "label":
+		return s.Label
+	}
+	return nil
+}
+
+// Exists returns true if a slot with the given primary key exists.
+func (c *slotClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[SlotFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableSlots, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists slot: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any slot matches the given filter.
+func (c *slotClient) ExistsWhere(ctx context.Context, filter *SlotFilter, opts ...func(*CallOptions[SlotFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableSlots, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists slots where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of slots matching the given filter.
+// A nil filter counts all slots.
+func (c *slotClient) Count(ctx context.Context, filter *SlotFilter, opts ...func(*CallOptions[SlotFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableSlots, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count slots: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of slots with total count for offset-based pagination.
+// A nil filter paginates all slots.
+func (c *slotClient) Paginate(ctx context.Context, input PaginateInput[SlotFilter], opts ...func(*CallOptions[SlotFieldOptions])) (*PaginateResult[Slot], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate slots: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableSlots, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		slots, err := c.GetMany(ctx, &GetSlotsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[Slot]{
+			Items:      slots,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate slots: %w", err)
+	}
+	return result.(*PaginateResult[Slot]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of slots.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *slotClient) Connection(ctx context.Context, input ConnectionInput[SlotFilter], opts ...func(*CallOptions[SlotFieldOptions])) (*Connection[Slot], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection slots: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableSlots, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[SlotFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeSlotCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeSlotCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		slots, err := c.GetMany(ctx, &GetSlotsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(slots) > limit
+		if hasMore {
+			slots = slots[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(slots)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Slot], len(slots))
+		for i, row := range slots {
+			cursor, err := encodeSlotCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Slot]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Slot]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection slots: %w", err)
+	}
+	return result.(*Connection[Slot]), nil
+}
+
+// encodeSlotCursor encodes cursor key values as a base64 JSON string.
+func encodeSlotCursor(keys []string, s *Slot) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = s.ID
+		case "bay_region":
+			out["bay_region"] = s.BayRegion
+		case "bay_id":
+			out["bay_id"] = s.BayID
+		case "label":
+			out["label"] = s.Label
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode slot cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeSlotCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeSlotCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Slot
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamSlotsInput holds query parameters for streaming slots records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamSlotsInput struct {
+	Filter *SlotFilter `json:"filter"`
+	Sorts  []sql.Sort  `json:"sorts"`
+}
+
+// StreamSlotFieldOptions controls scalar column selection for slots streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamSlotFieldOptions struct {
+	ID        bool `json:"id"`
+	BayRegion bool `json:"bay_region"`
+	BayID     bool `json:"bay_id"`
+	Label     bool `json:"label"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamSlotFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.BayRegion {
+		cols = append(cols, "bay_region")
+	}
+	if fo.BayID {
+		cols = append(cols, "bay_id")
+	}
+	if fo.Label {
+		cols = append(cols, "label")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamSlotFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.BayRegion {
+		return true
+	}
+	if fo.BayID {
+		return true
+	}
+	if fo.Label {
+		return true
+	}
+	return false
+}
+
+// scanSlotRow scans a single row into a Slot entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanSlotRow(rows database.Rows, columns []string) (*Slot, error) {
+	s := &Slot{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &s.ID
+		case "bay_region":
+			targets[idx] = &s.BayRegion
+		case "bay_id":
+			targets[idx] = &s.BayID
+		case "label":
+			targets[idx] = &s.Label
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan slot: %w", err)
+	}
+
+	return s, nil
+}
+
+// Stream returns an iterator over slots matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *slotClient) Stream(ctx context.Context, input *StreamSlotsInput, opts ...func(*CallOptions[StreamSlotFieldOptions])) iter.Seq2[*Slot, error] {
+	return func(yield func(*Slot, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamSlotsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream slots: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *Slot, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream slots: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableSlots, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := slotAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				s, err := scanSlotRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(s, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate slot rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream slots: %w", err))
+		}
+	}
+}
+
+// SlotFilter provides type-safe filtering for the slots table.
+type SlotFilter struct {
+	BayID     *comparator.NullableNumber[int64] `json:"bay_id"`
+	BayRegion *comparator.NullableString        `json:"bay_region"`
+	ID        *comparator.Number[int64]         `json:"id"`
+	Label     *comparator.String                `json:"label"`
+	And       []*SlotFilter                     `json:"and"`
+	Or        []*SlotFilter                     `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *SlotFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.BayID != nil {
+		conds = append(conds, f.BayID.Parse(dialect.QuoteIdentifier("bay_id"), dialect)...)
+	}
+
+	if f.BayRegion != nil {
+		conds = append(conds, f.BayRegion.Parse(dialect.QuoteIdentifier("bay_region"), dialect)...)
+	}
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Label != nil {
+		conds = append(conds, f.Label.Parse(dialect.QuoteIdentifier("label"), dialect)...)
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// SlotFieldOptions controls column selection and relationship loading for slots queries.
+type SlotFieldOptions struct {
+	ID        bool `json:"id"`
+	BayRegion bool `json:"bay_region"`
+	BayID     bool `json:"bay_id"`
+	Label     bool `json:"label"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *SlotFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.BayRegion {
+		cols = append(cols, "bay_region")
+	}
+	if fo.BayID {
+		cols = append(cols, "bay_id")
+	}
+	if fo.Label {
+		cols = append(cols, "label")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *SlotFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":        "id",
+		"BayRegion": "bay_region",
+		"BayID":     "bay_id",
+		"Label":     "label",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *SlotFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.BayRegion {
+		return true
+	}
+	if fo.BayID {
+		return true
+	}
+	if fo.Label {
+		return true
+	}
+	return false
+}
+
+// CreateSlotInput holds the fields for creating a slots record.
+type CreateSlotInput struct {
+	BayRegion omittable.Value[*string] `json:"bay_region,omitzero"`
+	BayID     omittable.Value[*int64]  `json:"bay_id,omitzero"`
+	Label     string                   `json:"label"`
+}
+
+// UpdateSlotInput holds the fields for updating a slots record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateSlotInput struct {
+	BayRegion omittable.Value[*string] `json:"bay_region,omitzero"`
+	BayID     omittable.Value[*int64]  `json:"bay_id,omitzero"`
+	Label     omittable.Value[string]  `json:"label,omitzero"`
+}
+
+// GetSlotsInput holds query parameters for retrieving slots records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetSlotsInput struct {
+	Filter *SlotFilter `json:"filter"`
+	Limit  *int        `json:"limit"`
+	Offset *int        `json:"offset"`
+	Sorts  []sql.Sort  `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 type Station struct {
 	ID        int64  `db:"id" json:"id"`
 	ProductID int64  `db:"product_id" json:"product_id"`
@@ -52961,6 +68823,9739 @@ type UpdateTagInput struct {
 // Field selection is controlled via CallOptions.FieldOptions, not this struct.
 type GetTagsInput struct {
 	Filter *TagFilter `json:"filter"`
+	Limit  *int       `json:"limit"`
+	Offset *int       `json:"offset"`
+	Sorts  []sql.Sort `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type Tool struct {
+	ID     int64  `db:"id" json:"id"`
+	Region string `db:"region" json:"region"`
+	Name   string `db:"name" json:"name"`
+
+	// Vans - many-to-many relationship with the vans table.
+	Vans []*Van `db:"-" json:"vans"`
+}
+
+// ToolClient provides type-safe operations for the tools table.
+type ToolClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single tool by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error)
+
+	// GetMany returns tools matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetToolsInput, opts ...func(*CallOptions[ToolFieldOptions])) ([]*Tool, error)
+
+	// Exists returns true if a tool with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[ToolFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any tool matches the given filter.
+	ExistsWhere(ctx context.Context, filter *ToolFilter, opts ...func(*CallOptions[ToolFieldOptions])) (bool, error)
+
+	// Count returns the number of tools matching the given filter.
+	Count(ctx context.Context, filter *ToolFilter, opts ...func(*CallOptions[ToolFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new tool and returns the created entity.
+	Create(ctx context.Context, input *CreateToolInput, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error)
+
+	// CreateMany inserts multiple tools in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateToolInput, opts ...func(*CallOptions[ToolFieldOptions])) ([]*Tool, error)
+
+	// Update partially updates a tool by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateToolInput, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error)
+
+	// UpdateMany updates multiple tools and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateToolItem, opts ...func(*CallOptions[ToolFieldOptions])) ([]*Tool, error)
+
+	// UpdateWhere updates all tools matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *ToolFilter, input *UpdateToolInput, opts ...func(*CallOptions[ToolFieldOptions])) ([]*Tool, error)
+
+	// Upsert inserts a tool or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateToolInput, target ToolConflictTarget, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error)
+
+	// UpsertMany inserts or updates multiple tools in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateToolInput, target ToolConflictTarget, opts ...func(*CallOptions[ToolFieldOptions])) ([]*Tool, error)
+
+	// CreateWithRelated creates a tool together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateToolWithRelatedInput, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error)
+
+	// UpdateWithRelated updates a tool together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdateToolWithRelatedInput, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error)
+
+	// UpsertWithRelated inserts or updates a tool together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertToolWithRelatedInput, target ToolConflictTarget, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a tool from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[ToolFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple tools from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[ToolFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all tools matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *ToolFilter, opts ...func(*CallOptions[ToolFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of tools with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[ToolFilter], opts ...func(*CallOptions[ToolFieldOptions])) (*PaginateResult[Tool], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of tools.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[ToolFilter], opts ...func(*CallOptions[ToolFieldOptions])) (*Connection[Tool], error)
+
+	// Stream returns an iterator over tools matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamToolsInput, opts ...func(*CallOptions[StreamToolFieldOptions])) iter.Seq2[*Tool, error]
+}
+
+// toolClient implements the ToolClient interface.
+type toolClient struct {
+	querier         database.Querier
+	dialect         sql.Dialect
+	table           sql.Table
+	batchSize       int
+	queryLimit      int
+	pageSize        int
+	cursorKeys      []string
+	strictUpdates   bool
+	mutationHooks   []hook.MutationHook
+	queryHooks      []hook.QueryHook
+	panicHandler    hook.PanicHandler
+	callbackMode    database.CallbackMode
+	vansDefaultSort []sql.Sort
+	vanClient       *vanClient
+	vanToolClient   *vanToolClient
+}
+
+// newToolClient creates a new toolClient.
+func newToolClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *toolClient {
+	return &toolClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "tools"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *toolClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *toolClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// toolAllColumns is the column list for full-entity reads, sorted for determinism.
+var toolAllColumns = []string{"id", "name", "region"}
+
+// scanTools scans rows into Tool entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanTools(rows database.Rows, columns []string) ([]*Tool, error) {
+	var result []*Tool
+	for rows.Next() {
+		t := &Tool{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &t.ID
+			case "region":
+				targets[idx] = &t.Region
+			case "name":
+				targets[idx] = &t.Name
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan tool: %w", err)
+		}
+
+		result = append(result, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tool rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single tool by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *toolClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get tool: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableTools, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[ToolFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[ToolFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		tools, err := c.GetMany(ctx, &GetToolsInput{
+			Filter: &ToolFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(tools) == 0 {
+			return nil, ErrNotFound
+		}
+		return tools[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get tool: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Tool), nil
+}
+
+// GetMany returns tools matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *toolClient) GetMany(ctx context.Context, input *GetToolsInput, opts ...func(*CallOptions[ToolFieldOptions])) ([]*Tool, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetToolsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many tools: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableTools, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := toolAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "region", "id")
+				}
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var tools []*Tool
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		tools, err = scanTools(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, tools, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return tools, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many tools: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Tool), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the region and id columns into a narrowed projection when one is:
+// loadRelationships maps every child back through t.Region and t.ID, which
+// an unselected column would leave at its zero value.
+func (fo *ToolFieldOptions) loadsRelationships() bool {
+	if fo.Vans != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *toolClient) loadRelationships(ctx context.Context, conn database.Querier, tools []*Tool, options CallOptions[ToolFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Vans != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			toolKeyed := make([]*Tool, 0, len(tools))
+			toolKeys := make([][]any, 0, len(tools))
+			for _, t := range tools {
+				toolKeyed = append(toolKeyed, t)
+				toolKeys = append(toolKeys, []any{t.Region, t.ID})
+			}
+
+			sorts := fo.Vans.Sorts
+			if len(sorts) == 0 {
+				sorts = c.vansDefaultSort
+			}
+
+			// The three steps run once per chunk of 8191 parent keys:
+			// within half the dialect's bind-parameter limit, leaving the rest for
+			// the relationship's filters.
+			for start := 0; start < len(toolKeys); start += 8191 {
+				chunk := toolKeys[start:min(start+8191, len(toolKeys))]
+
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[[2]string][][2]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "van_tools"}, sql.SelectOptions{
+						Columns:    []string{"region", "tool_id", "van_id"},
+						Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, []string{"region", "tool_id"}, chunk)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load tool vans junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load tool vans junction columns: %w", err)
+					}
+
+					for junctionRows.Next() {
+						var key0 string
+						var key1 int64
+						var key2 int64
+						ptrs := make([]any, len(junctionCols))
+						for i, col := range junctionCols {
+							switch col {
+							case "region":
+								ptrs[i] = &key0
+							case "tool_id":
+								ptrs[i] = &key1
+							case "van_id":
+								ptrs[i] = &key2
+							}
+						}
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan tool vans junction: %w", err)
+						}
+						parentID, targetID := [2]string{key0, fmt.Sprint(key1)}, [2]string{key0, fmt.Sprint(key2)}
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate tool vans junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.BuildCompositePKBatchCondition(c.dialect, []string{"region", "tool_id"}, chunk),
+				})
+				conditions := []sql.Condition{
+					sql.TupleInSubquery(c.dialect, []string{"region", "id"}, sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("region") + ", j." + c.dialect.QuoteIdentifier("van_id") + "" +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "van_tools"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &VanFilter{}
+				if fo.Vans.Filter != nil {
+					filter.And = append(filter.And, fo.Vans.Filter)
+				}
+
+				relatedVans, err := c.vanClient.GetMany(ctx, &GetVansInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its referenced columns, so
+					// the fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"region", "id"},
+				}, func(co *CallOptions[VanFieldOptions]) {
+					co.FieldOptions = fo.Vans.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load tool vans: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts order each parent's slice.
+				parentsByTarget := make(map[[2]string][]int, len(relatedVans))
+				for i := start; i < start+len(chunk); i++ {
+					parent := toolKeyed[i]
+					for _, tID := range parentToTargetIDs[[2]string{parent.Region, fmt.Sprint(parent.ID)}] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedVans {
+					for _, i := range parentsByTarget[[2]string{t.Region, fmt.Sprint(t.ID)}] {
+						toolKeyed[i].Vans = append(toolKeyed[i].Vans, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new tool and returns the created entity.
+func (c *toolClient) Create(ctx context.Context, input *CreateToolInput, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateToolInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create tool: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableTools, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"region", "name"}
+		args := []any{input.Region, input.Name}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[ToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create tool: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Tool), nil
+}
+
+// CreateMany inserts multiple tools in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *toolClient) CreateMany(ctx context.Context, inputs []*CreateToolInput, opts ...func(*CallOptions[ToolFieldOptions])) ([]*Tool, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many tools: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableTools, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Tool{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"region", "name"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.Region,
+					input.Name,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetToolsInput{
+			Filter: &ToolFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[ToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many tools: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Tool), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *toolClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *toolClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan tool id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a tool by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *toolClient) Update(ctx context.Context, id int64, input *UpdateToolInput, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update tool: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableTools, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Region.Get(); ok {
+			setClauses["region"] = v
+		}
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[ToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[ToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update tool: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Tool), nil
+}
+
+// UpdateToolItem pairs a primary key with an update input for batch updates.
+type UpdateToolItem struct {
+	ID    int64            `json:"id"`
+	Input *UpdateToolInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple tools and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *toolClient) UpdateMany(ctx context.Context, items []UpdateToolItem, opts ...func(*CallOptions[ToolFieldOptions])) ([]*Tool, error) {
+	// UpdateToolItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many tools: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableTools, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Tool{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateToolItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_tool", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Region.Get(); ok {
+						setClauses["region"] = v
+					}
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetToolsInput{
+			Filter: &ToolFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[ToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many tools: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Tool), nil
+}
+
+// UpdateWhere updates all tools matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *toolClient) UpdateWhere(ctx context.Context, filter *ToolFilter, input *UpdateToolInput, opts ...func(*CallOptions[ToolFieldOptions])) ([]*Tool, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update tools where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableTools, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Region.Get(); ok {
+			setClauses["region"] = v
+		}
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetToolsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[ToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated tool id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetToolsInput{
+			Filter: &ToolFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[ToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update tools where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Tool), nil
+}
+
+// HardDelete permanently removes a tool from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *toolClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[ToolFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableTools, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete tool: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple tools from the database.
+func (c *toolClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[ToolFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableTools, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted tool key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many tools: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all tools matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *toolClient) HardDeleteWhere(ctx context.Context, filter *ToolFilter, opts ...func(*CallOptions[ToolFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableTools, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted tool id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete tools where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *toolClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// ToolConflictTarget identifies a unique constraint for upsert conflict detection.
+type ToolConflictTarget int
+
+const (
+	ToolConflictPK       ToolConflictTarget = iota // PRIMARY KEY (id)
+	ToolConflictRegionID                           // UNIQUE (region, id)
+)
+
+// toolConflictColumns maps each conflict target to its column set.
+var toolConflictColumns = map[ToolConflictTarget][]string{
+	ToolConflictPK:       {"id"},
+	ToolConflictRegionID: {"region", "id"},
+}
+
+// Upsert inserts a tool or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *toolClient) Upsert(ctx context.Context, input *CreateToolInput, target ToolConflictTarget, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateToolInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert tool: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableTools, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"region", "name"}
+		args := []any{input.Region, input.Name}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := toolConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[ToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert tool: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Tool), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *toolClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *toolClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple tools in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// tools.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *toolClient) UpsertMany(ctx context.Context, inputs []*CreateToolInput, target ToolConflictTarget, opts ...func(*CallOptions[ToolFieldOptions])) ([]*Tool, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many tools: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableTools, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Tool{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"region", "name"}
+		conflictColumns := toolConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateToolInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.Region,
+				input.Name,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateToolInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetToolsInput{
+			Filter: &ToolFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[ToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many tools: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Tool), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// tools.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *toolClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level toolConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanTools
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanTools(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = toolColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// toolColumnValue returns one column's value off a scanned
+// Tool, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanTools.
+func toolColumnValue(t *Tool, column string) any {
+	switch column {
+	case "id":
+		return t.ID
+	case "region":
+		return t.Region
+	case "name":
+		return t.Name
+	}
+	return nil
+}
+
+// CreateToolWithRelatedInput holds the fields for creating a tools record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateToolWithRelatedInput struct {
+	// Tool holds the parent's own columns — identical to the input Create accepts.
+	Tool CreateToolInput `json:"tool"`
+
+	// Vans - many-to-many relationship with the vans table.
+	Vans *ToolVansCreateNested `json:"vans,omitempty"`
+}
+
+// UpdateToolWithRelatedInput holds the fields for updating a tools record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateToolWithRelatedInput struct {
+	// Tool holds the parent's own columns — identical to the input Update accepts.
+	Tool UpdateToolInput `json:"tool"`
+
+	// Vans - many-to-many relationship with the vans table.
+	Vans *ToolVansUpdateNested `json:"vans,omitempty"`
+}
+
+// UpsertToolWithRelatedInput holds the fields for upserting a tools record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateToolInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertToolWithRelatedInput struct {
+	// Tool holds the parent's own columns — identical to the input Upsert accepts.
+	Tool CreateToolInput `json:"tool"`
+
+	// Vans - many-to-many relationship with the vans table.
+	Vans *ToolVansUpdateNested `json:"vans,omitempty"`
+}
+
+// ToolVansCreateNested is the create-side verb block for Tool.Vans.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type ToolVansCreateNested struct {
+	Create  []*CreateVanInput `json:"create,omitempty"`
+	Connect []int64           `json:"connect,omitempty"`
+}
+
+// ToolVansUpdateNested is the update-side verb block for Tool.Vans,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type ToolVansUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool              `json:"clear,omitempty"`
+	Create     []*CreateVanInput `json:"create,omitempty"`
+	Connect    []int64           `json:"connect,omitempty"`
+	Disconnect []int64           `json:"disconnect,omitempty"`
+}
+
+// toolVansNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func toolVansNestedFromCreate(n *ToolVansCreateNested) *ToolVansUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &ToolVansUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// toolNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+// The columns the edges' keys reference are forced on too: the nested writes
+// copy them, so a narrowed selection must not leave them zero.
+func toolNestedParentFieldOptions(fo *ToolFieldOptions) *ToolFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.Vans = nil
+	scalars.ID = true
+	scalars.Region = true
+	return &scalars
+}
+
+// toolNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func toolNestedSelectsRelationship(fo *ToolFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.Vans != nil
+}
+
+// CreateWithRelated creates a tool together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *toolClient) CreateWithRelated(ctx context.Context, input *CreateToolWithRelatedInput, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create tool with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Tool
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err := database.WithTransaction(ctx, c.querier, "create_tool_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.Tool, func(o *CallOptions[ToolFieldOptions]) {
+			*o = options
+			o.FieldOptions = toolNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyToolVansNested(ctx, parent, toolVansNestedFromCreate(input.Vans), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if toolNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[ToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create tool with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a tool together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *toolClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdateToolWithRelatedInput, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update tool with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Tool
+	err := database.WithTransaction(ctx, c.querier, "update_tool_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.Tool, func(o *CallOptions[ToolFieldOptions]) {
+			*o = options
+			o.FieldOptions = toolNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyToolVansNested(ctx, parent, input.Vans, options); err != nil {
+			return err
+		}
+
+		if toolNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[ToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update tool with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a tool together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *toolClient) UpsertWithRelated(ctx context.Context, input *UpsertToolWithRelatedInput, target ToolConflictTarget, opts ...func(*CallOptions[ToolFieldOptions])) (*Tool, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert tool with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Tool
+	err := database.WithTransaction(ctx, c.querier, "upsert_tool_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.Tool, target, func(o *CallOptions[ToolFieldOptions]) {
+			*o = options
+			o.FieldOptions = toolNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyToolVansNested(ctx, parent, input.Vans, options); err != nil {
+			return err
+		}
+
+		if toolNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[ToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert tool with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applyToolVansNested applies the Tool.Vans block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// link, disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *toolClient) applyToolVansNested(ctx context.Context, parent *Tool, nested *ToolVansUpdateNested, options CallOptions[ToolFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("Vans", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	pid0 := parent.Region
+	pid1 := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if err := c.vanToolClient.HardDeleteWhere(ctx, &VanToolFilter{
+			Region: &comparator.ID{Eq: new(pid0)},
+			ToolID: &comparator.Number[int64]{Eq: new(pid1)},
+		}, func(o *CallOptions[VanToolFieldOptions]) {
+			nestedChildOptions(o, options)
+		}); err != nil {
+			return nestedError("Vans", "clear", nil, err)
+		}
+	}
+
+	targetIDs := make([]int64, 0, len(nested.Create)+len(connectIDs))
+
+	if len(nested.Create) > 0 {
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Vans", "create", nil, ErrNilInput)
+			}
+		}
+		// No traversed FK to elide on an M2M target — the parent's key goes
+		// into the junction row below — so this is the target's own create
+		// input verbatim. The selection is what the link step and the shared
+		// column comparison below need.
+		created, err := c.vanClient.CreateMany(ctx, nested.Create, func(o *CallOptions[VanFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &VanFieldOptions{ID: true, Region: true}
+		})
+		if err != nil {
+			return nestedError("Vans", "create", nil, err)
+		}
+		for _, row := range created {
+			if !(row.Region == parent.Region) {
+				// The link row takes this column from the parent, so the new row
+				// could not be linked. Returning rolls it back with the rest.
+				return nestedError("Vans", "create", nil, ErrAlreadyRelated)
+			}
+			targetIDs = append(targetIDs, row.ID)
+		}
+	}
+
+	// The junction FK proves existence, not visibility. Reading through the
+	// target's OWN client applies its tenant filter, soft-delete default and
+	// access rules, so a target in another tenant is NOT_FOUND here rather
+	// than a junction row nobody can ever read.
+	if len(connectIDs) > 0 {
+		found := make(map[int64]bool, len(connectIDs))
+		agrees := make(map[int64]bool, len(connectIDs))
+		// Chunked at c.batchSize. A single statement over the caller's
+		// whole list hits a bind-parameter ceiling that is dialect-dependent
+		// and lowest on SQLite (32766), and every dialect's error for it names
+		// no table, column, edge or verb, so it cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.vanClient.GetMany(ctx, &GetVansInput{
+				Filter: &VanFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[VanFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &VanFieldOptions{ID: true, Region: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Vans", "connect", nil, err)
+			}
+			for _, row := range visible {
+				found[row.ID] = true
+				agrees[row.ID] = row.Region == parent.Region
+			}
+		}
+		for _, tid := range connectIDs {
+			if !found[tid] {
+				return nestedError("Vans", "connect", tid, ErrNotFound)
+			}
+			if !agrees[tid] {
+				// Both junction keys hold this column and the link row takes it
+				// from the parent, so this target is bound to another key.
+				return nestedError("Vans", "connect", tid, ErrAlreadyRelated)
+			}
+		}
+		targetIDs = append(targetIDs, connectIDs...)
+	}
+
+	// link — UpsertMany, not CreateMany: re-adding an existing link is a set
+	// operation whose answer is "linked", and CreateMany raises a primary-key
+	// violation on it. The junction is a pure link table, so this compiles to
+	// ON CONFLICT DO NOTHING on every dialect.
+	if len(targetIDs) > 0 {
+		links := make([]*CreateVanToolInput, 0, len(targetIDs))
+		seen := make(map[int64]bool, len(targetIDs))
+		for _, tid := range targetIDs {
+			if seen[tid] {
+				continue
+			}
+			seen[tid] = true
+			links = append(links, &CreateVanToolInput{
+				Region: parent.Region,
+				ToolID: parent.ID,
+				VanID:  tid,
+			})
+		}
+		if _, err := c.vanToolClient.UpsertMany(ctx, links, VanToolConflictPK, func(o *CallOptions[VanToolFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &VanToolFieldOptions{}
+		}); err != nil {
+			return nestedError("Vans", "link", nil, err)
+		}
+	}
+
+	// disconnect — no visibility read. The junction key embeds the
+	// parent, so a caller can only ever delete its own links, and a miss is a
+	// no-op. A hard delete is correct because the junction carries no
+	// soft-delete column; one that did would emit no unlink verb at all,
+	// since the read loader's junction query has no soft-delete predicate and
+	// would keep showing the link.
+	if len(disconnectIDs) > 0 {
+		pks := make([]VanToolPK, 0, len(disconnectIDs))
+		unlinking := make(map[int64]bool, len(disconnectIDs))
+		for _, tid := range disconnectIDs {
+			if unlinking[tid] {
+				continue
+			}
+			unlinking[tid] = true
+			pks = append(pks, VanToolPK{
+				Region: parent.Region,
+				ToolID: parent.ID,
+				VanID:  tid,
+			})
+		}
+		// Chunked at c.batchSize; a composite key binds two parameters
+		// per row, so the ceiling arrives at half the id count.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			if err := c.vanToolClient.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[VanToolFieldOptions]) {
+				nestedChildOptions(o, options)
+			}); err != nil {
+				return nestedError("Vans", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a tool with the given primary key exists.
+func (c *toolClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[ToolFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableTools, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists tool: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any tool matches the given filter.
+func (c *toolClient) ExistsWhere(ctx context.Context, filter *ToolFilter, opts ...func(*CallOptions[ToolFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableTools, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists tools where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of tools matching the given filter.
+// A nil filter counts all tools.
+func (c *toolClient) Count(ctx context.Context, filter *ToolFilter, opts ...func(*CallOptions[ToolFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableTools, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count tools: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of tools with total count for offset-based pagination.
+// A nil filter paginates all tools.
+func (c *toolClient) Paginate(ctx context.Context, input PaginateInput[ToolFilter], opts ...func(*CallOptions[ToolFieldOptions])) (*PaginateResult[Tool], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate tools: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableTools, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[ToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		tools, err := c.GetMany(ctx, &GetToolsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[Tool]{
+			Items:      tools,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate tools: %w", err)
+	}
+	return result.(*PaginateResult[Tool]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of tools.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *toolClient) Connection(ctx context.Context, input ConnectionInput[ToolFilter], opts ...func(*CallOptions[ToolFieldOptions])) (*Connection[Tool], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection tools: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableTools, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[ToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeToolCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeToolCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		tools, err := c.GetMany(ctx, &GetToolsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(tools) > limit
+		if hasMore {
+			tools = tools[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(tools)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Tool], len(tools))
+		for i, row := range tools {
+			cursor, err := encodeToolCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Tool]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Tool]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection tools: %w", err)
+	}
+	return result.(*Connection[Tool]), nil
+}
+
+// encodeToolCursor encodes cursor key values as a base64 JSON string.
+func encodeToolCursor(keys []string, t *Tool) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = t.ID
+		case "region":
+			out["region"] = t.Region
+		case "name":
+			out["name"] = t.Name
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode tool cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeToolCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeToolCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Tool
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamToolsInput holds query parameters for streaming tools records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamToolsInput struct {
+	Filter *ToolFilter `json:"filter"`
+	Sorts  []sql.Sort  `json:"sorts"`
+}
+
+// StreamToolFieldOptions controls scalar column selection for tools streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamToolFieldOptions struct {
+	ID     bool `json:"id"`
+	Region bool `json:"region"`
+	Name   bool `json:"name"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamToolFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Region {
+		cols = append(cols, "region")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamToolFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Region {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	return false
+}
+
+// scanToolRow scans a single row into a Tool entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanToolRow(rows database.Rows, columns []string) (*Tool, error) {
+	t := &Tool{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &t.ID
+		case "region":
+			targets[idx] = &t.Region
+		case "name":
+			targets[idx] = &t.Name
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan tool: %w", err)
+	}
+
+	return t, nil
+}
+
+// Stream returns an iterator over tools matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *toolClient) Stream(ctx context.Context, input *StreamToolsInput, opts ...func(*CallOptions[StreamToolFieldOptions])) iter.Seq2[*Tool, error] {
+	return func(yield func(*Tool, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamToolsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream tools: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *Tool, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream tools: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableTools, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := toolAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				t, err := scanToolRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(t, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate tool rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream tools: %w", err))
+		}
+	}
+}
+
+// ToolFilter provides type-safe filtering for the tools table.
+type ToolFilter struct {
+	ID     *comparator.Number[int64] `json:"id"`
+	Name   *comparator.String        `json:"name"`
+	Region *comparator.String        `json:"region"`
+	Vans   *VanFilter                `json:"vans"`
+	And    []*ToolFilter             `json:"and"`
+	Or     []*ToolFilter             `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *ToolFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Name != nil {
+		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	if f.Region != nil {
+		conds = append(conds, f.Region.Parse(dialect.QuoteIdentifier("region"), dialect)...)
+	}
+
+	if f.Vans != nil {
+		conds = append(conds, toolVansFilterExists(f.Vans, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// toolVansFilterExists compiles a VanFilter set on the
+// Vans relationship into a correlated EXISTS over vans, joined through the van_tools junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func toolVansFilterExists(f *VanFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "van_tools"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "", Name: "vans"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("region") + " = " + jn + "." + dialect.QuoteIdentifier("region") +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("id") + " = " + jn + "." + dialect.QuoteIdentifier("van_id") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("region") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + jn + "." + dialect.QuoteIdentifier("tool_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists([]string{"region", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// ToolFieldOptions controls column selection and relationship loading for tools queries.
+type ToolFieldOptions struct {
+	ID     bool                    `json:"id"`
+	Region bool                    `json:"region"`
+	Name   bool                    `json:"name"`
+	Vans   *VanRelationshipOptions `json:"vans"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *ToolFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Region {
+		cols = append(cols, "region")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *ToolFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":     "id",
+		"Region": "region",
+		"Name":   "name",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *ToolFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Region {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	if fo.Vans != nil {
+		return true
+	}
+	return false
+}
+
+// CreateToolInput holds the fields for creating a tools record.
+type CreateToolInput struct {
+	Region string `json:"region"`
+	Name   string `json:"name"`
+}
+
+// UpdateToolInput holds the fields for updating a tools record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateToolInput struct {
+	Region omittable.Value[string] `json:"region,omitzero"`
+	Name   omittable.Value[string] `json:"name,omitzero"`
+}
+
+// GetToolsInput holds query parameters for retrieving tools records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetToolsInput struct {
+	Filter *ToolFilter `json:"filter"`
+	Limit  *int        `json:"limit"`
+	Offset *int        `json:"offset"`
+	Sorts  []sql.Sort  `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+// VanPermitPK - composite primary key for the van_permits table.
+type VanPermitPK struct {
+	VanID      int64  `db:"van_id" json:"van_id"`
+	PermitCode string `db:"permit_code" json:"permit_code"`
+}
+type VanPermit struct {
+	VanID      int64  `db:"van_id" json:"van_id"`
+	PermitCode string `db:"permit_code" json:"permit_code"`
+}
+
+// VanPermitClient provides type-safe operations for the van_permits table.
+type VanPermitClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single vanPermit by primary key.
+	Get(ctx context.Context, pk VanPermitPK, opts ...func(*CallOptions[VanPermitFieldOptions])) (*VanPermit, error)
+
+	// GetMany returns van_permits matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetVanPermitsInput, opts ...func(*CallOptions[VanPermitFieldOptions])) ([]*VanPermit, error)
+
+	// Exists returns true if a vanPermit with the given primary key exists.
+	Exists(ctx context.Context, pk VanPermitPK, opts ...func(*CallOptions[VanPermitFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any vanPermit matches the given filter.
+	ExistsWhere(ctx context.Context, filter *VanPermitFilter, opts ...func(*CallOptions[VanPermitFieldOptions])) (bool, error)
+
+	// Count returns the number of van_permits matching the given filter.
+	Count(ctx context.Context, filter *VanPermitFilter, opts ...func(*CallOptions[VanPermitFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new vanPermit and returns the created entity.
+	Create(ctx context.Context, input *CreateVanPermitInput, opts ...func(*CallOptions[VanPermitFieldOptions])) (*VanPermit, error)
+
+	// CreateMany inserts multiple van_permits in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateVanPermitInput, opts ...func(*CallOptions[VanPermitFieldOptions])) ([]*VanPermit, error)
+
+	// Update partially updates a vanPermit by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, pk VanPermitPK, input *UpdateVanPermitInput, opts ...func(*CallOptions[VanPermitFieldOptions])) (*VanPermit, error)
+
+	// UpdateMany updates multiple van_permits and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateVanPermitItem, opts ...func(*CallOptions[VanPermitFieldOptions])) ([]*VanPermit, error)
+
+	// UpdateWhere updates all van_permits matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *VanPermitFilter, input *UpdateVanPermitInput, opts ...func(*CallOptions[VanPermitFieldOptions])) ([]*VanPermit, error)
+
+	// Upsert inserts a vanPermit or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateVanPermitInput, target VanPermitConflictTarget, opts ...func(*CallOptions[VanPermitFieldOptions])) (*VanPermit, error)
+
+	// UpsertMany inserts or updates multiple van_permits in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateVanPermitInput, target VanPermitConflictTarget, opts ...func(*CallOptions[VanPermitFieldOptions])) ([]*VanPermit, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a vanPermit from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, pk VanPermitPK, opts ...func(*CallOptions[VanPermitFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple van_permits from the database.
+	HardDeleteMany(ctx context.Context, pks []VanPermitPK, opts ...func(*CallOptions[VanPermitFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all van_permits matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *VanPermitFilter, opts ...func(*CallOptions[VanPermitFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of van_permits with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[VanPermitFilter], opts ...func(*CallOptions[VanPermitFieldOptions])) (*PaginateResult[VanPermit], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of van_permits.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[VanPermitFilter], opts ...func(*CallOptions[VanPermitFieldOptions])) (*Connection[VanPermit], error)
+
+	// Stream returns an iterator over van_permits matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamVanPermitsInput, opts ...func(*CallOptions[StreamVanPermitFieldOptions])) iter.Seq2[*VanPermit, error]
+}
+
+// vanPermitClient implements the VanPermitClient interface.
+type vanPermitClient struct {
+	querier       database.Querier
+	dialect       sql.Dialect
+	table         sql.Table
+	batchSize     int
+	queryLimit    int
+	pageSize      int
+	cursorKeys    []string
+	strictUpdates bool
+	mutationHooks []hook.MutationHook
+	queryHooks    []hook.QueryHook
+	panicHandler  hook.PanicHandler
+}
+
+// newVanPermitClient creates a new vanPermitClient.
+func newVanPermitClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *vanPermitClient {
+	return &vanPermitClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "van_permits"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"van_id", "permit_code"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *vanPermitClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *vanPermitClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// vanPermitAllColumns is the column list for full-entity reads, sorted for determinism.
+var vanPermitAllColumns = []string{"permit_code", "van_id"}
+
+// scanVanPermits scans rows into VanPermit entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanVanPermits(rows database.Rows, columns []string) ([]*VanPermit, error) {
+	var result []*VanPermit
+	for rows.Next() {
+		v := &VanPermit{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "van_id":
+				targets[idx] = &v.VanID
+			case "permit_code":
+				targets[idx] = &v.PermitCode
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan van_permit: %w", err)
+		}
+
+		result = append(result, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate van_permit rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single van_permit by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *vanPermitClient) Get(ctx context.Context, pk VanPermitPK, opts ...func(*CallOptions[VanPermitFieldOptions])) (*VanPermit, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get van_permit: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableVanPermits, Schema: "",
+		PK: pk, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[VanPermitFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[VanPermitFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		vanPermits, err := c.GetMany(ctx, &GetVanPermitsInput{
+			Filter: &VanPermitFilter{
+				VanID:      &comparator.Number[int64]{Eq: new(pk.VanID)},
+				PermitCode: &comparator.ID{Eq: new(pk.PermitCode)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(vanPermits) == 0 {
+			return nil, ErrNotFound
+		}
+		return vanPermits[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get van_permit: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*VanPermit), nil
+}
+
+// GetMany returns van_permits matching the given filter, field selection, and sort criteria.
+func (c *vanPermitClient) GetMany(ctx context.Context, input *GetVanPermitsInput, opts ...func(*CallOptions[VanPermitFieldOptions])) ([]*VanPermit, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetVanPermitsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many van_permits: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableVanPermits, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := vanPermitAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var vanPermits []*VanPermit
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		vanPermits, err = scanVanPermits(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return vanPermits, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many van_permits: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*VanPermit), nil
+}
+
+// Create inserts a new van_permit and returns the created entity.
+func (c *vanPermitClient) Create(ctx context.Context, input *CreateVanPermitInput, opts ...func(*CallOptions[VanPermitFieldOptions])) (*VanPermit, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateVanPermitInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create van_permit: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableVanPermits, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"van_id", "permit_code"}
+		args := []any{input.VanID, input.PermitCode}
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns: columns,
+			Values:  args,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, err
+		}
+
+		m.AffectedPKs = []any{VanPermitPK{VanID: input.VanID, PermitCode: input.PermitCode}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, VanPermitPK{VanID: input.VanID, PermitCode: input.PermitCode}, func(o *CallOptions[VanPermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create van_permit: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*VanPermit), nil
+}
+
+// CreateMany inserts multiple van_permits in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *vanPermitClient) CreateMany(ctx context.Context, inputs []*CreateVanPermitInput, opts ...func(*CallOptions[VanPermitFieldOptions])) ([]*VanPermit, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many van_permits: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableVanPermits, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*VanPermit{}, nil
+		}
+		var allPKs []VanPermitPK
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"van_id", "permit_code"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.VanID,
+					input.PermitCode,
+				})
+			}
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:   columns,
+				ValueRows: valueRows,
+			})
+			_, err := conn.Exec(ctx, query, queryArgs...)
+			if err != nil {
+				return nil, err
+			}
+			for _, input := range batch {
+				allPKs = append(allPKs, VanPermitPK{VanID: input.VanID, PermitCode: input.PermitCode})
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		return c.GetMany(ctx, &GetVanPermitsInput{
+			Filter: &VanPermitFilter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[VanPermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many van_permits: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*VanPermit), nil
+}
+
+// Update partially updates a van_permit by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *vanPermitClient) Update(ctx context.Context, pk VanPermitPK, input *UpdateVanPermitInput, opts ...func(*CallOptions[VanPermitFieldOptions])) (*VanPermit, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update van_permit: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableVanPermits, Schema: "",
+		PK: pk, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, pk, func(o *CallOptions[VanPermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: sql.BuildCompositePKConditions(c.dialect,
+				[]string{"van_id", "permit_code"},
+				[]any{pk.VanID, pk.PermitCode}),
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{pk}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, pk, func(o *CallOptions[VanPermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update van_permit: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*VanPermit), nil
+}
+
+// UpdateVanPermitItem pairs a primary key with an update input for batch updates.
+type UpdateVanPermitItem struct {
+	PK    VanPermitPK           `json:"pk"`
+	Input *UpdateVanPermitInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple van_permits and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *vanPermitClient) UpdateMany(ctx context.Context, items []UpdateVanPermitItem, opts ...func(*CallOptions[VanPermitFieldOptions])) ([]*VanPermit, error) {
+	// UpdateVanPermitItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many van_permits: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableVanPermits, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*VanPermit{}, nil
+		}
+		var allPKs []VanPermitPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateVanPermitItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_van_permit", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allPKs = append(allPKs, item.PK)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: sql.BuildCompositePKConditions(c.dialect,
+							[]string{"van_id", "permit_code"},
+							[]any{item.PK.VanID, item.PK.PermitCode}),
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.PK, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.PK, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allPKs = append(allPKs, item.PK)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetVanPermitsInput{
+			Filter: &VanPermitFilter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[VanPermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many van_permits: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*VanPermit), nil
+}
+
+// UpdateWhere updates all van_permits matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *vanPermitClient) UpdateWhere(ctx context.Context, filter *VanPermitFilter, input *UpdateVanPermitInput, opts ...func(*CallOptions[VanPermitFieldOptions])) ([]*VanPermit, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update van_permits where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableVanPermits, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetVanPermitsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[VanPermitFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING — get affected composite PKs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"van_id", "permit_code"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var pks []VanPermitPK
+		for rows.Next() {
+			var pk VanPermitPK
+			if err := rows.Scan(&pk.VanID, &pk.PermitCode); err != nil {
+				return nil, fmt.Errorf("scan updated van_permit pk: %w", err)
+			}
+			pks = append(pks, pk)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(pks) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(pks)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetVanPermitsInput{
+			Filter: &VanPermitFilter{PKs: pks},
+			Limit:  new(0),
+		}, func(o *CallOptions[VanPermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update van_permits where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*VanPermit), nil
+}
+
+// HardDelete permanently removes a van_permit from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *vanPermitClient) HardDelete(ctx context.Context, pk VanPermitPK, opts ...func(*CallOptions[VanPermitFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableVanPermits, Schema: "",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: sql.BuildCompositePKConditions(c.dialect,
+				[]string{"van_id", "permit_code"},
+				[]any{pk.VanID, pk.PermitCode}),
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete van_permit: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple van_permits from the database.
+func (c *vanPermitClient) HardDeleteMany(ctx context.Context, pks []VanPermitPK, opts ...func(*CallOptions[VanPermitFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableVanPermits, Schema: "",
+		Input: pks, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[VanPermitPK]struct{}, len(pks))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.VanID, pk.PermitCode}
+			}
+			hardConds := []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{"van_id", "permit_code"}, pkValues),
+			}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"van_id", "permit_code"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[VanPermitPK]struct{}, end-start)
+			for rows.Next() {
+				var rowPK VanPermitPK
+				if err := rows.Scan(&rowPK.VanID, &rowPK.PermitCode); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted van_permit key: %w", err)
+				}
+				batchKeys[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many van_permits: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all van_permits matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *vanPermitClient) HardDeleteWhere(ctx context.Context, filter *VanPermitFilter, opts ...func(*CallOptions[VanPermitFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableVanPermits, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING — get affected composite PKs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"van_id", "permit_code"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var pks []VanPermitPK
+		for rows.Next() {
+			var pk VanPermitPK
+			if err := rows.Scan(&pk.VanID, &pk.PermitCode); err != nil {
+				return nil, fmt.Errorf("scan deleted van_permit pk: %w", err)
+			}
+			pks = append(pks, pk)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(pks)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete van_permits where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *vanPermitClient) recordWrittenKeys(written map[VanPermitPK]struct{}, listed []VanPermitPK, rowKeys map[VanPermitPK]struct{}) {
+	found := make(map[VanPermitPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// VanPermitConflictTarget identifies a unique constraint for upsert conflict detection.
+type VanPermitConflictTarget int
+
+const (
+	VanPermitConflictPK VanPermitConflictTarget = iota // PRIMARY KEY (van_id, permit_code)
+)
+
+// vanPermitConflictColumns maps each conflict target to its column set.
+var vanPermitConflictColumns = map[VanPermitConflictTarget][]string{
+	VanPermitConflictPK: {"van_id", "permit_code"},
+}
+
+// Upsert inserts a van_permit or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *vanPermitClient) Upsert(ctx context.Context, input *CreateVanPermitInput, target VanPermitConflictTarget, opts ...func(*CallOptions[VanPermitFieldOptions])) (*VanPermit, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateVanPermitInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert van_permit: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableVanPermits, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"van_id", "permit_code"}
+		args := []any{input.VanID, input.PermitCode}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := vanPermitConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "van_id", "permit_code"))
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns:             columns,
+			Values:              args,
+			UpsertConflictKeys:  conflictColumns,
+			UpsertUpdateColumns: updateColumns,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, err
+		}
+
+		m.AffectedPKs = []any{VanPermitPK{VanID: input.VanID, PermitCode: input.PermitCode}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, VanPermitPK{VanID: input.VanID, PermitCode: input.PermitCode}, func(o *CallOptions[VanPermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert van_permit: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*VanPermit), nil
+}
+
+// UpsertMany inserts or updates multiple van_permits in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+func (c *vanPermitClient) UpsertMany(ctx context.Context, inputs []*CreateVanPermitInput, target VanPermitConflictTarget, opts ...func(*CallOptions[VanPermitFieldOptions])) ([]*VanPermit, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many van_permits: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableVanPermits, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*VanPermit{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"van_id", "permit_code"}
+		conflictColumns := vanPermitConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "van_id", "permit_code"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateVanPermitInput, 0, len(inputs))
+		rowPKs := make([]VanPermitPK, 0, len(inputs))
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.VanID,
+				input.PermitCode,
+			})
+			rowInputs = append(rowInputs, input)
+			rowPKs = append(rowPKs, VanPermitPK{VanID: input.VanID, PermitCode: input.PermitCode})
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateVanPermitInput, 0, len(rowInputs))
+			dedupedPKs := make([]VanPermitPK, 0, len(rowPKs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedPKs[j] = rowPKs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedPKs = append(dedupedPKs, rowPKs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowPKs = dedupedPKs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(rowPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		written, err := c.GetMany(ctx, &GetVanPermitsInput{
+			Filter: &VanPermitFilter{PKs: rowPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[VanPermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowPKs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many van_permits: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*VanPermit), nil
+}
+
+// Exists returns true if a van_permit with the given primary key exists.
+func (c *vanPermitClient) Exists(ctx context.Context, pk VanPermitPK, opts ...func(*CallOptions[VanPermitFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableVanPermits, Schema: "",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"van_id", "permit_code"},
+			[]any{pk.VanID, pk.PermitCode})
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists van_permit: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any van_permit matches the given filter.
+func (c *vanPermitClient) ExistsWhere(ctx context.Context, filter *VanPermitFilter, opts ...func(*CallOptions[VanPermitFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableVanPermits, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists van_permits where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of van_permits matching the given filter.
+// A nil filter counts all van_permits.
+func (c *vanPermitClient) Count(ctx context.Context, filter *VanPermitFilter, opts ...func(*CallOptions[VanPermitFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableVanPermits, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count van_permits: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of van_permits with total count for offset-based pagination.
+// A nil filter paginates all van_permits.
+func (c *vanPermitClient) Paginate(ctx context.Context, input PaginateInput[VanPermitFilter], opts ...func(*CallOptions[VanPermitFieldOptions])) (*PaginateResult[VanPermit], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate van_permits: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableVanPermits, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[VanPermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		vanPermits, err := c.GetMany(ctx, &GetVanPermitsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[VanPermit]{
+			Items:      vanPermits,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate van_permits: %w", err)
+	}
+	return result.(*PaginateResult[VanPermit]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of van_permits.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *vanPermitClient) Connection(ctx context.Context, input ConnectionInput[VanPermitFilter], opts ...func(*CallOptions[VanPermitFieldOptions])) (*Connection[VanPermit], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection van_permits: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableVanPermits, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[VanPermitFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeVanPermitCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeVanPermitCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		vanPermits, err := c.GetMany(ctx, &GetVanPermitsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(vanPermits) > limit
+		if hasMore {
+			vanPermits = vanPermits[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(vanPermits)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[VanPermit], len(vanPermits))
+		for i, row := range vanPermits {
+			cursor, err := encodeVanPermitCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[VanPermit]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[VanPermit]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection van_permits: %w", err)
+	}
+	return result.(*Connection[VanPermit]), nil
+}
+
+// encodeVanPermitCursor encodes cursor key values as a base64 JSON string.
+func encodeVanPermitCursor(keys []string, v *VanPermit) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "van_id":
+			out["van_id"] = v.VanID
+		case "permit_code":
+			out["permit_code"] = v.PermitCode
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode van_permit cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeVanPermitCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeVanPermitCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row VanPermit
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "van_id":
+			err = json.Unmarshal(raw[key], &row.VanID)
+			out[key] = row.VanID
+		case "permit_code":
+			err = json.Unmarshal(raw[key], &row.PermitCode)
+			out[key] = row.PermitCode
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamVanPermitsInput holds query parameters for streaming van_permits records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamVanPermitsInput struct {
+	Filter *VanPermitFilter `json:"filter"`
+	Sorts  []sql.Sort       `json:"sorts"`
+}
+
+// StreamVanPermitFieldOptions controls scalar column selection for van_permits streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamVanPermitFieldOptions struct {
+	VanID      bool `json:"van_id"`
+	PermitCode bool `json:"permit_code"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamVanPermitFieldOptions) Columns() []string {
+	var cols []string
+	if fo.VanID {
+		cols = append(cols, "van_id")
+	}
+	if fo.PermitCode {
+		cols = append(cols, "permit_code")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamVanPermitFieldOptions) HasSelectedColumns() bool {
+	if fo.VanID {
+		return true
+	}
+	if fo.PermitCode {
+		return true
+	}
+	return false
+}
+
+// scanVanPermitRow scans a single row into a VanPermit entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanVanPermitRow(rows database.Rows, columns []string) (*VanPermit, error) {
+	v := &VanPermit{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "van_id":
+			targets[idx] = &v.VanID
+		case "permit_code":
+			targets[idx] = &v.PermitCode
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan van_permit: %w", err)
+	}
+
+	return v, nil
+}
+
+// Stream returns an iterator over van_permits matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *vanPermitClient) Stream(ctx context.Context, input *StreamVanPermitsInput, opts ...func(*CallOptions[StreamVanPermitFieldOptions])) iter.Seq2[*VanPermit, error] {
+	return func(yield func(*VanPermit, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamVanPermitsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream van_permits: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *VanPermit, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream van_permits: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableVanPermits, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := vanPermitAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				v, err := scanVanPermitRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(v, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate van_permit rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream van_permits: %w", err))
+		}
+	}
+}
+
+// VanPermitFilter provides type-safe filtering for the van_permits table.
+type VanPermitFilter struct {
+	PermitCode *comparator.ID            `json:"permit_code"`
+	VanID      *comparator.Number[int64] `json:"van_id"`
+	PKs        []VanPermitPK             `json:"pks"`
+	And        []*VanPermitFilter        `json:"and"`
+	Or         []*VanPermitFilter        `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *VanPermitFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.PermitCode != nil {
+		conds = append(conds, f.PermitCode.Parse(dialect.QuoteIdentifier("permit_code"), dialect)...)
+	}
+
+	if f.VanID != nil {
+		conds = append(conds, f.VanID.Parse(dialect.QuoteIdentifier("van_id"), dialect)...)
+	}
+
+	if len(f.PKs) > 0 {
+		var pkConds []sql.Condition
+		for _, pk := range f.PKs {
+			pkConds = append(pkConds, sql.And(
+				sql.Condition{Clause: dialect.QuoteIdentifier("van_id") + " = $", Value: pk.VanID},
+				sql.Condition{Clause: dialect.QuoteIdentifier("permit_code") + " = $", Value: pk.PermitCode},
+			))
+		}
+		conds = append(conds, sql.Or(pkConds...))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// VanPermitFieldOptions controls column selection and relationship loading for van_permits queries.
+type VanPermitFieldOptions struct {
+	VanID      bool `json:"van_id"`
+	PermitCode bool `json:"permit_code"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *VanPermitFieldOptions) Columns() []string {
+	var cols []string
+	if fo.VanID {
+		cols = append(cols, "van_id")
+	}
+	if fo.PermitCode {
+		cols = append(cols, "permit_code")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *VanPermitFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"VanID":      "van_id",
+		"PermitCode": "permit_code",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *VanPermitFieldOptions) HasSelectedColumns() bool {
+	if fo.VanID {
+		return true
+	}
+	if fo.PermitCode {
+		return true
+	}
+	return false
+}
+
+// CreateVanPermitInput holds the fields for creating a van_permits record.
+type CreateVanPermitInput struct {
+	VanID      int64  `json:"van_id"`
+	PermitCode string `json:"permit_code"`
+}
+
+// UpdateVanPermitInput holds the fields for updating a van_permits record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateVanPermitInput struct {
+}
+
+// GetVanPermitsInput holds query parameters for retrieving van_permits records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetVanPermitsInput struct {
+	Filter *VanPermitFilter `json:"filter"`
+	Limit  *int             `json:"limit"`
+	Offset *int             `json:"offset"`
+	Sorts  []sql.Sort       `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+// VanToolPK - composite primary key for the van_tools table.
+type VanToolPK struct {
+	Region string `db:"region" json:"region"`
+	VanID  int64  `db:"van_id" json:"van_id"`
+	ToolID int64  `db:"tool_id" json:"tool_id"`
+}
+type VanTool struct {
+	Region string `db:"region" json:"region"`
+	VanID  int64  `db:"van_id" json:"van_id"`
+	ToolID int64  `db:"tool_id" json:"tool_id"`
+}
+
+// VanToolClient provides type-safe operations for the van_tools table.
+type VanToolClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single vanTool by primary key.
+	Get(ctx context.Context, pk VanToolPK, opts ...func(*CallOptions[VanToolFieldOptions])) (*VanTool, error)
+
+	// GetMany returns van_tools matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetVanToolsInput, opts ...func(*CallOptions[VanToolFieldOptions])) ([]*VanTool, error)
+
+	// Exists returns true if a vanTool with the given primary key exists.
+	Exists(ctx context.Context, pk VanToolPK, opts ...func(*CallOptions[VanToolFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any vanTool matches the given filter.
+	ExistsWhere(ctx context.Context, filter *VanToolFilter, opts ...func(*CallOptions[VanToolFieldOptions])) (bool, error)
+
+	// Count returns the number of van_tools matching the given filter.
+	Count(ctx context.Context, filter *VanToolFilter, opts ...func(*CallOptions[VanToolFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new vanTool and returns the created entity.
+	Create(ctx context.Context, input *CreateVanToolInput, opts ...func(*CallOptions[VanToolFieldOptions])) (*VanTool, error)
+
+	// CreateMany inserts multiple van_tools in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateVanToolInput, opts ...func(*CallOptions[VanToolFieldOptions])) ([]*VanTool, error)
+
+	// Update partially updates a vanTool by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, pk VanToolPK, input *UpdateVanToolInput, opts ...func(*CallOptions[VanToolFieldOptions])) (*VanTool, error)
+
+	// UpdateMany updates multiple van_tools and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateVanToolItem, opts ...func(*CallOptions[VanToolFieldOptions])) ([]*VanTool, error)
+
+	// UpdateWhere updates all van_tools matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *VanToolFilter, input *UpdateVanToolInput, opts ...func(*CallOptions[VanToolFieldOptions])) ([]*VanTool, error)
+
+	// Upsert inserts a vanTool or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateVanToolInput, target VanToolConflictTarget, opts ...func(*CallOptions[VanToolFieldOptions])) (*VanTool, error)
+
+	// UpsertMany inserts or updates multiple van_tools in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateVanToolInput, target VanToolConflictTarget, opts ...func(*CallOptions[VanToolFieldOptions])) ([]*VanTool, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a vanTool from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, pk VanToolPK, opts ...func(*CallOptions[VanToolFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple van_tools from the database.
+	HardDeleteMany(ctx context.Context, pks []VanToolPK, opts ...func(*CallOptions[VanToolFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all van_tools matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *VanToolFilter, opts ...func(*CallOptions[VanToolFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of van_tools with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[VanToolFilter], opts ...func(*CallOptions[VanToolFieldOptions])) (*PaginateResult[VanTool], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of van_tools.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[VanToolFilter], opts ...func(*CallOptions[VanToolFieldOptions])) (*Connection[VanTool], error)
+
+	// Stream returns an iterator over van_tools matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamVanToolsInput, opts ...func(*CallOptions[StreamVanToolFieldOptions])) iter.Seq2[*VanTool, error]
+}
+
+// vanToolClient implements the VanToolClient interface.
+type vanToolClient struct {
+	querier       database.Querier
+	dialect       sql.Dialect
+	table         sql.Table
+	batchSize     int
+	queryLimit    int
+	pageSize      int
+	cursorKeys    []string
+	strictUpdates bool
+	mutationHooks []hook.MutationHook
+	queryHooks    []hook.QueryHook
+	panicHandler  hook.PanicHandler
+}
+
+// newVanToolClient creates a new vanToolClient.
+func newVanToolClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *vanToolClient {
+	return &vanToolClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "van_tools"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"region", "van_id", "tool_id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *vanToolClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *vanToolClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// vanToolAllColumns is the column list for full-entity reads, sorted for determinism.
+var vanToolAllColumns = []string{"region", "tool_id", "van_id"}
+
+// scanVanTools scans rows into VanTool entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanVanTools(rows database.Rows, columns []string) ([]*VanTool, error) {
+	var result []*VanTool
+	for rows.Next() {
+		v := &VanTool{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "region":
+				targets[idx] = &v.Region
+			case "van_id":
+				targets[idx] = &v.VanID
+			case "tool_id":
+				targets[idx] = &v.ToolID
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan van_tool: %w", err)
+		}
+
+		result = append(result, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate van_tool rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single van_tool by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *vanToolClient) Get(ctx context.Context, pk VanToolPK, opts ...func(*CallOptions[VanToolFieldOptions])) (*VanTool, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get van_tool: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableVanTools, Schema: "",
+		PK: pk, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[VanToolFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[VanToolFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		vanTools, err := c.GetMany(ctx, &GetVanToolsInput{
+			Filter: &VanToolFilter{
+				Region: &comparator.ID{Eq: new(pk.Region)},
+				VanID:  &comparator.Number[int64]{Eq: new(pk.VanID)},
+				ToolID: &comparator.Number[int64]{Eq: new(pk.ToolID)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(vanTools) == 0 {
+			return nil, ErrNotFound
+		}
+		return vanTools[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get van_tool: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*VanTool), nil
+}
+
+// GetMany returns van_tools matching the given filter, field selection, and sort criteria.
+func (c *vanToolClient) GetMany(ctx context.Context, input *GetVanToolsInput, opts ...func(*CallOptions[VanToolFieldOptions])) ([]*VanTool, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetVanToolsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many van_tools: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableVanTools, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := vanToolAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var vanTools []*VanTool
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		vanTools, err = scanVanTools(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return vanTools, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many van_tools: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*VanTool), nil
+}
+
+// Create inserts a new van_tool and returns the created entity.
+func (c *vanToolClient) Create(ctx context.Context, input *CreateVanToolInput, opts ...func(*CallOptions[VanToolFieldOptions])) (*VanTool, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateVanToolInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create van_tool: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableVanTools, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"region", "van_id", "tool_id"}
+		args := []any{input.Region, input.VanID, input.ToolID}
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns: columns,
+			Values:  args,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, err
+		}
+
+		m.AffectedPKs = []any{VanToolPK{Region: input.Region, VanID: input.VanID, ToolID: input.ToolID}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, VanToolPK{Region: input.Region, VanID: input.VanID, ToolID: input.ToolID}, func(o *CallOptions[VanToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create van_tool: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*VanTool), nil
+}
+
+// CreateMany inserts multiple van_tools in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *vanToolClient) CreateMany(ctx context.Context, inputs []*CreateVanToolInput, opts ...func(*CallOptions[VanToolFieldOptions])) ([]*VanTool, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many van_tools: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableVanTools, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*VanTool{}, nil
+		}
+		var allPKs []VanToolPK
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"region", "van_id", "tool_id"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.Region,
+					input.VanID,
+					input.ToolID,
+				})
+			}
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:   columns,
+				ValueRows: valueRows,
+			})
+			_, err := conn.Exec(ctx, query, queryArgs...)
+			if err != nil {
+				return nil, err
+			}
+			for _, input := range batch {
+				allPKs = append(allPKs, VanToolPK{Region: input.Region, VanID: input.VanID, ToolID: input.ToolID})
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		return c.GetMany(ctx, &GetVanToolsInput{
+			Filter: &VanToolFilter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[VanToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many van_tools: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*VanTool), nil
+}
+
+// Update partially updates a van_tool by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *vanToolClient) Update(ctx context.Context, pk VanToolPK, input *UpdateVanToolInput, opts ...func(*CallOptions[VanToolFieldOptions])) (*VanTool, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update van_tool: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableVanTools, Schema: "",
+		PK: pk, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, pk, func(o *CallOptions[VanToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: sql.BuildCompositePKConditions(c.dialect,
+				[]string{"region", "van_id", "tool_id"},
+				[]any{pk.Region, pk.VanID, pk.ToolID}),
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{pk}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, pk, func(o *CallOptions[VanToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update van_tool: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*VanTool), nil
+}
+
+// UpdateVanToolItem pairs a primary key with an update input for batch updates.
+type UpdateVanToolItem struct {
+	PK    VanToolPK           `json:"pk"`
+	Input *UpdateVanToolInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple van_tools and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *vanToolClient) UpdateMany(ctx context.Context, items []UpdateVanToolItem, opts ...func(*CallOptions[VanToolFieldOptions])) ([]*VanTool, error) {
+	// UpdateVanToolItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many van_tools: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableVanTools, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*VanTool{}, nil
+		}
+		var allPKs []VanToolPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateVanToolItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_van_tool", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allPKs = append(allPKs, item.PK)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: sql.BuildCompositePKConditions(c.dialect,
+							[]string{"region", "van_id", "tool_id"},
+							[]any{item.PK.Region, item.PK.VanID, item.PK.ToolID}),
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.PK, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.PK, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allPKs = append(allPKs, item.PK)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetVanToolsInput{
+			Filter: &VanToolFilter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[VanToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many van_tools: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*VanTool), nil
+}
+
+// UpdateWhere updates all van_tools matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *vanToolClient) UpdateWhere(ctx context.Context, filter *VanToolFilter, input *UpdateVanToolInput, opts ...func(*CallOptions[VanToolFieldOptions])) ([]*VanTool, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update van_tools where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableVanTools, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetVanToolsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[VanToolFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING — get affected composite PKs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"region", "van_id", "tool_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var pks []VanToolPK
+		for rows.Next() {
+			var pk VanToolPK
+			if err := rows.Scan(&pk.Region, &pk.VanID, &pk.ToolID); err != nil {
+				return nil, fmt.Errorf("scan updated van_tool pk: %w", err)
+			}
+			pks = append(pks, pk)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(pks) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(pks)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetVanToolsInput{
+			Filter: &VanToolFilter{PKs: pks},
+			Limit:  new(0),
+		}, func(o *CallOptions[VanToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update van_tools where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*VanTool), nil
+}
+
+// HardDelete permanently removes a van_tool from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *vanToolClient) HardDelete(ctx context.Context, pk VanToolPK, opts ...func(*CallOptions[VanToolFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableVanTools, Schema: "",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: sql.BuildCompositePKConditions(c.dialect,
+				[]string{"region", "van_id", "tool_id"},
+				[]any{pk.Region, pk.VanID, pk.ToolID}),
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete van_tool: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple van_tools from the database.
+func (c *vanToolClient) HardDeleteMany(ctx context.Context, pks []VanToolPK, opts ...func(*CallOptions[VanToolFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableVanTools, Schema: "",
+		Input: pks, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[VanToolPK]struct{}, len(pks))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.Region, pk.VanID, pk.ToolID}
+			}
+			hardConds := []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{"region", "van_id", "tool_id"}, pkValues),
+			}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"region", "van_id", "tool_id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[VanToolPK]struct{}, end-start)
+			for rows.Next() {
+				var rowPK VanToolPK
+				if err := rows.Scan(&rowPK.Region, &rowPK.VanID, &rowPK.ToolID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted van_tool key: %w", err)
+				}
+				batchKeys[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many van_tools: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all van_tools matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *vanToolClient) HardDeleteWhere(ctx context.Context, filter *VanToolFilter, opts ...func(*CallOptions[VanToolFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableVanTools, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING — get affected composite PKs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"region", "van_id", "tool_id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var pks []VanToolPK
+		for rows.Next() {
+			var pk VanToolPK
+			if err := rows.Scan(&pk.Region, &pk.VanID, &pk.ToolID); err != nil {
+				return nil, fmt.Errorf("scan deleted van_tool pk: %w", err)
+			}
+			pks = append(pks, pk)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(pks)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete van_tools where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *vanToolClient) recordWrittenKeys(written map[VanToolPK]struct{}, listed []VanToolPK, rowKeys map[VanToolPK]struct{}) {
+	found := make(map[VanToolPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// VanToolConflictTarget identifies a unique constraint for upsert conflict detection.
+type VanToolConflictTarget int
+
+const (
+	VanToolConflictPK VanToolConflictTarget = iota // PRIMARY KEY (region, van_id, tool_id)
+)
+
+// vanToolConflictColumns maps each conflict target to its column set.
+var vanToolConflictColumns = map[VanToolConflictTarget][]string{
+	VanToolConflictPK: {"region", "van_id", "tool_id"},
+}
+
+// Upsert inserts a van_tool or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *vanToolClient) Upsert(ctx context.Context, input *CreateVanToolInput, target VanToolConflictTarget, opts ...func(*CallOptions[VanToolFieldOptions])) (*VanTool, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateVanToolInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert van_tool: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableVanTools, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"region", "van_id", "tool_id"}
+		args := []any{input.Region, input.VanID, input.ToolID}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := vanToolConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "region", "van_id", "tool_id"))
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns:             columns,
+			Values:              args,
+			UpsertConflictKeys:  conflictColumns,
+			UpsertUpdateColumns: updateColumns,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, err
+		}
+
+		m.AffectedPKs = []any{VanToolPK{Region: input.Region, VanID: input.VanID, ToolID: input.ToolID}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, VanToolPK{Region: input.Region, VanID: input.VanID, ToolID: input.ToolID}, func(o *CallOptions[VanToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert van_tool: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*VanTool), nil
+}
+
+// UpsertMany inserts or updates multiple van_tools in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+func (c *vanToolClient) UpsertMany(ctx context.Context, inputs []*CreateVanToolInput, target VanToolConflictTarget, opts ...func(*CallOptions[VanToolFieldOptions])) ([]*VanTool, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many van_tools: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableVanTools, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*VanTool{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"region", "van_id", "tool_id"}
+		conflictColumns := vanToolConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "region", "van_id", "tool_id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateVanToolInput, 0, len(inputs))
+		rowPKs := make([]VanToolPK, 0, len(inputs))
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.Region,
+				input.VanID,
+				input.ToolID,
+			})
+			rowInputs = append(rowInputs, input)
+			rowPKs = append(rowPKs, VanToolPK{Region: input.Region, VanID: input.VanID, ToolID: input.ToolID})
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateVanToolInput, 0, len(rowInputs))
+			dedupedPKs := make([]VanToolPK, 0, len(rowPKs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedPKs[j] = rowPKs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedPKs = append(dedupedPKs, rowPKs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowPKs = dedupedPKs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(rowPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		written, err := c.GetMany(ctx, &GetVanToolsInput{
+			Filter: &VanToolFilter{PKs: rowPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[VanToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowPKs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many van_tools: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*VanTool), nil
+}
+
+// Exists returns true if a van_tool with the given primary key exists.
+func (c *vanToolClient) Exists(ctx context.Context, pk VanToolPK, opts ...func(*CallOptions[VanToolFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableVanTools, Schema: "",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"region", "van_id", "tool_id"},
+			[]any{pk.Region, pk.VanID, pk.ToolID})
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists van_tool: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any van_tool matches the given filter.
+func (c *vanToolClient) ExistsWhere(ctx context.Context, filter *VanToolFilter, opts ...func(*CallOptions[VanToolFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableVanTools, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists van_tools where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of van_tools matching the given filter.
+// A nil filter counts all van_tools.
+func (c *vanToolClient) Count(ctx context.Context, filter *VanToolFilter, opts ...func(*CallOptions[VanToolFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableVanTools, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count van_tools: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of van_tools with total count for offset-based pagination.
+// A nil filter paginates all van_tools.
+func (c *vanToolClient) Paginate(ctx context.Context, input PaginateInput[VanToolFilter], opts ...func(*CallOptions[VanToolFieldOptions])) (*PaginateResult[VanTool], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate van_tools: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableVanTools, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[VanToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		vanTools, err := c.GetMany(ctx, &GetVanToolsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[VanTool]{
+			Items:      vanTools,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate van_tools: %w", err)
+	}
+	return result.(*PaginateResult[VanTool]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of van_tools.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *vanToolClient) Connection(ctx context.Context, input ConnectionInput[VanToolFilter], opts ...func(*CallOptions[VanToolFieldOptions])) (*Connection[VanTool], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection van_tools: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableVanTools, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[VanToolFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeVanToolCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeVanToolCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		vanTools, err := c.GetMany(ctx, &GetVanToolsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(vanTools) > limit
+		if hasMore {
+			vanTools = vanTools[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(vanTools)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[VanTool], len(vanTools))
+		for i, row := range vanTools {
+			cursor, err := encodeVanToolCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[VanTool]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[VanTool]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection van_tools: %w", err)
+	}
+	return result.(*Connection[VanTool]), nil
+}
+
+// encodeVanToolCursor encodes cursor key values as a base64 JSON string.
+func encodeVanToolCursor(keys []string, v *VanTool) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "region":
+			out["region"] = v.Region
+		case "van_id":
+			out["van_id"] = v.VanID
+		case "tool_id":
+			out["tool_id"] = v.ToolID
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode van_tool cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeVanToolCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeVanToolCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row VanTool
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "region":
+			err = json.Unmarshal(raw[key], &row.Region)
+			out[key] = row.Region
+		case "van_id":
+			err = json.Unmarshal(raw[key], &row.VanID)
+			out[key] = row.VanID
+		case "tool_id":
+			err = json.Unmarshal(raw[key], &row.ToolID)
+			out[key] = row.ToolID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamVanToolsInput holds query parameters for streaming van_tools records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamVanToolsInput struct {
+	Filter *VanToolFilter `json:"filter"`
+	Sorts  []sql.Sort     `json:"sorts"`
+}
+
+// StreamVanToolFieldOptions controls scalar column selection for van_tools streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamVanToolFieldOptions struct {
+	Region bool `json:"region"`
+	VanID  bool `json:"van_id"`
+	ToolID bool `json:"tool_id"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamVanToolFieldOptions) Columns() []string {
+	var cols []string
+	if fo.Region {
+		cols = append(cols, "region")
+	}
+	if fo.VanID {
+		cols = append(cols, "van_id")
+	}
+	if fo.ToolID {
+		cols = append(cols, "tool_id")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamVanToolFieldOptions) HasSelectedColumns() bool {
+	if fo.Region {
+		return true
+	}
+	if fo.VanID {
+		return true
+	}
+	if fo.ToolID {
+		return true
+	}
+	return false
+}
+
+// scanVanToolRow scans a single row into a VanTool entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanVanToolRow(rows database.Rows, columns []string) (*VanTool, error) {
+	v := &VanTool{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "region":
+			targets[idx] = &v.Region
+		case "van_id":
+			targets[idx] = &v.VanID
+		case "tool_id":
+			targets[idx] = &v.ToolID
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan van_tool: %w", err)
+	}
+
+	return v, nil
+}
+
+// Stream returns an iterator over van_tools matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *vanToolClient) Stream(ctx context.Context, input *StreamVanToolsInput, opts ...func(*CallOptions[StreamVanToolFieldOptions])) iter.Seq2[*VanTool, error] {
+	return func(yield func(*VanTool, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamVanToolsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream van_tools: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *VanTool, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream van_tools: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableVanTools, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := vanToolAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				v, err := scanVanToolRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(v, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate van_tool rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream van_tools: %w", err))
+		}
+	}
+}
+
+// VanToolFilter provides type-safe filtering for the van_tools table.
+type VanToolFilter struct {
+	Region *comparator.ID            `json:"region"`
+	ToolID *comparator.Number[int64] `json:"tool_id"`
+	VanID  *comparator.Number[int64] `json:"van_id"`
+	PKs    []VanToolPK               `json:"pks"`
+	And    []*VanToolFilter          `json:"and"`
+	Or     []*VanToolFilter          `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *VanToolFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.Region != nil {
+		conds = append(conds, f.Region.Parse(dialect.QuoteIdentifier("region"), dialect)...)
+	}
+
+	if f.ToolID != nil {
+		conds = append(conds, f.ToolID.Parse(dialect.QuoteIdentifier("tool_id"), dialect)...)
+	}
+
+	if f.VanID != nil {
+		conds = append(conds, f.VanID.Parse(dialect.QuoteIdentifier("van_id"), dialect)...)
+	}
+
+	if len(f.PKs) > 0 {
+		var pkConds []sql.Condition
+		for _, pk := range f.PKs {
+			pkConds = append(pkConds, sql.And(
+				sql.Condition{Clause: dialect.QuoteIdentifier("region") + " = $", Value: pk.Region},
+				sql.Condition{Clause: dialect.QuoteIdentifier("van_id") + " = $", Value: pk.VanID},
+				sql.Condition{Clause: dialect.QuoteIdentifier("tool_id") + " = $", Value: pk.ToolID},
+			))
+		}
+		conds = append(conds, sql.Or(pkConds...))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// VanToolFieldOptions controls column selection and relationship loading for van_tools queries.
+type VanToolFieldOptions struct {
+	Region bool `json:"region"`
+	VanID  bool `json:"van_id"`
+	ToolID bool `json:"tool_id"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *VanToolFieldOptions) Columns() []string {
+	var cols []string
+	if fo.Region {
+		cols = append(cols, "region")
+	}
+	if fo.VanID {
+		cols = append(cols, "van_id")
+	}
+	if fo.ToolID {
+		cols = append(cols, "tool_id")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *VanToolFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"Region": "region",
+		"VanID":  "van_id",
+		"ToolID": "tool_id",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *VanToolFieldOptions) HasSelectedColumns() bool {
+	if fo.Region {
+		return true
+	}
+	if fo.VanID {
+		return true
+	}
+	if fo.ToolID {
+		return true
+	}
+	return false
+}
+
+// CreateVanToolInput holds the fields for creating a van_tools record.
+type CreateVanToolInput struct {
+	Region string `json:"region"`
+	VanID  int64  `json:"van_id"`
+	ToolID int64  `json:"tool_id"`
+}
+
+// UpdateVanToolInput holds the fields for updating a van_tools record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateVanToolInput struct {
+}
+
+// GetVanToolsInput holds query parameters for retrieving van_tools records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetVanToolsInput struct {
+	Filter *VanToolFilter `json:"filter"`
+	Limit  *int           `json:"limit"`
+	Offset *int           `json:"offset"`
+	Sorts  []sql.Sort     `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type Van struct {
+	ID      int64  `db:"id" json:"id"`
+	Region  string `db:"region" json:"region"`
+	DepotID *int64 `db:"depot_id" json:"depot_id"`
+	RouteID *int64 `db:"route_id" json:"route_id"`
+	Plate   string `db:"plate" json:"plate"`
+
+	// Permits - many-to-many relationship with the permits table.
+	Permits []*Permit `db:"-" json:"permits"`
+	// Tools - many-to-many relationship with the tools table.
+	Tools []*Tool `db:"-" json:"tools"`
+}
+
+// VanClient provides type-safe operations for the vans table.
+type VanClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single van by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error)
+
+	// GetMany returns vans matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetVansInput, opts ...func(*CallOptions[VanFieldOptions])) ([]*Van, error)
+
+	// Exists returns true if a van with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[VanFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any van matches the given filter.
+	ExistsWhere(ctx context.Context, filter *VanFilter, opts ...func(*CallOptions[VanFieldOptions])) (bool, error)
+
+	// Count returns the number of vans matching the given filter.
+	Count(ctx context.Context, filter *VanFilter, opts ...func(*CallOptions[VanFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new van and returns the created entity.
+	Create(ctx context.Context, input *CreateVanInput, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error)
+
+	// CreateMany inserts multiple vans in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateVanInput, opts ...func(*CallOptions[VanFieldOptions])) ([]*Van, error)
+
+	// Update partially updates a van by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateVanInput, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error)
+
+	// UpdateMany updates multiple vans and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateVanItem, opts ...func(*CallOptions[VanFieldOptions])) ([]*Van, error)
+
+	// UpdateWhere updates all vans matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *VanFilter, input *UpdateVanInput, opts ...func(*CallOptions[VanFieldOptions])) ([]*Van, error)
+
+	// Upsert inserts a van or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateVanInput, target VanConflictTarget, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error)
+
+	// UpsertMany inserts or updates multiple vans in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateVanInput, target VanConflictTarget, opts ...func(*CallOptions[VanFieldOptions])) ([]*Van, error)
+
+	// CreateWithRelated creates a van together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateVanWithRelatedInput, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error)
+
+	// UpdateWithRelated updates a van together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdateVanWithRelatedInput, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error)
+
+	// UpsertWithRelated inserts or updates a van together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertVanWithRelatedInput, target VanConflictTarget, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a van from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[VanFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple vans from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[VanFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all vans matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *VanFilter, opts ...func(*CallOptions[VanFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of vans with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[VanFilter], opts ...func(*CallOptions[VanFieldOptions])) (*PaginateResult[Van], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of vans.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[VanFilter], opts ...func(*CallOptions[VanFieldOptions])) (*Connection[Van], error)
+
+	// Stream returns an iterator over vans matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamVansInput, opts ...func(*CallOptions[StreamVanFieldOptions])) iter.Seq2[*Van, error]
+}
+
+// vanClient implements the VanClient interface.
+type vanClient struct {
+	querier            database.Querier
+	dialect            sql.Dialect
+	table              sql.Table
+	batchSize          int
+	queryLimit         int
+	pageSize           int
+	cursorKeys         []string
+	strictUpdates      bool
+	mutationHooks      []hook.MutationHook
+	queryHooks         []hook.QueryHook
+	panicHandler       hook.PanicHandler
+	callbackMode       database.CallbackMode
+	permitsDefaultSort []sql.Sort
+	toolsDefaultSort   []sql.Sort
+	permitClient       *permitClient
+	toolClient         *toolClient
+	vanPermitClient    *vanPermitClient
+	vanToolClient      *vanToolClient
+}
+
+// newVanClient creates a new vanClient.
+func newVanClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *vanClient {
+	return &vanClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "vans"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *vanClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *vanClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// vanAllColumns is the column list for full-entity reads, sorted for determinism.
+var vanAllColumns = []string{"depot_id", "id", "plate", "region", "route_id"}
+
+// scanVans scans rows into Van entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanVans(rows database.Rows, columns []string) ([]*Van, error) {
+	var result []*Van
+	for rows.Next() {
+		v := &Van{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &v.ID
+			case "region":
+				targets[idx] = &v.Region
+			case "depot_id":
+				targets[idx] = &v.DepotID
+			case "route_id":
+				targets[idx] = &v.RouteID
+			case "plate":
+				targets[idx] = &v.Plate
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan van: %w", err)
+		}
+
+		result = append(result, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate van rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single van by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *vanClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get van: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableVans, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[VanFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[VanFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		vans, err := c.GetMany(ctx, &GetVansInput{
+			Filter: &VanFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(vans) == 0 {
+			return nil, ErrNotFound
+		}
+		return vans[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get van: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Van), nil
+}
+
+// GetMany returns vans matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *vanClient) GetMany(ctx context.Context, input *GetVansInput, opts ...func(*CallOptions[VanFieldOptions])) ([]*Van, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetVansInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many vans: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableVans, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := vanAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "id", "region")
+				}
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var vans []*Van
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		vans, err = scanVans(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, vans, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return vans, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many vans: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Van), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the id and region columns into a narrowed projection when one is:
+// loadRelationships maps every child back through v.ID and v.Region, which
+// an unselected column would leave at its zero value.
+func (fo *VanFieldOptions) loadsRelationships() bool {
+	if fo.Permits != nil {
+		return true
+	}
+	if fo.Tools != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *vanClient) loadRelationships(ctx context.Context, conn database.Querier, vans []*Van, options CallOptions[VanFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Permits != nil {
+		g.Go(func() error {
+			// Collect parent IDs
+			vanIDs := make([]int64, len(vans))
+			for idx, v := range vans {
+				vanIDs[idx] = v.ID
+			}
+
+			sorts := fo.Permits.Sorts
+			if len(sorts) == 0 {
+				sorts = c.permitsDefaultSort
+			}
+
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(vanIDs); start += 16383 {
+				chunk := vanIDs[start:min(start+16383, len(vanIDs))]
+
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "van_permits"}, sql.SelectOptions{
+						Columns:    []string{"van_id", "permit_code"},
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("van_id")).In(toAnySlice(chunk)...)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load van permits junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load van permits junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "van_id":
+							localIdx = i
+						case "permit_code":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey int64
+						var refKey string
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan van permits junction: %w", err)
+						}
+						parentID, targetID := fmt.Sprint(localKey), refKey
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate van permits junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("van_id")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("code")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("permit_code") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "van_permits"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &PermitFilter{}
+				if fo.Permits.Filter != nil {
+					filter.And = append(filter.And, fo.Permits.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (vans) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedPermits, err := c.permitClient.GetMany(ctx, &GetPermitsInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"code"},
+				}, func(co *CallOptions[PermitFieldOptions]) {
+					co.FieldOptions = fo.Permits.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load van permits: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				parentsByTarget := make(map[string][]int, len(relatedPermits))
+				for i := start; i < start+len(chunk); i++ {
+					for _, tID := range parentToTargetIDs[fmt.Sprint(vans[i].ID)] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedPermits {
+					for _, i := range parentsByTarget[t.Code] {
+						vans[i].Permits = append(vans[i].Permits, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	if fo.Tools != nil {
+		g.Go(func() error {
+			// Collect each parent's key. A parent whose key holds a NULL is
+			// referenced by nothing, so it stays out of the load.
+			vanKeyed := make([]*Van, 0, len(vans))
+			vanKeys := make([][]any, 0, len(vans))
+			for _, v := range vans {
+				vanKeyed = append(vanKeyed, v)
+				vanKeys = append(vanKeys, []any{v.Region, v.ID})
+			}
+
+			sorts := fo.Tools.Sorts
+			if len(sorts) == 0 {
+				sorts = c.toolsDefaultSort
+			}
+
+			// The three steps run once per chunk of 8191 parent keys:
+			// within half the dialect's bind-parameter limit, leaving the rest for
+			// the relationship's filters.
+			for start := 0; start < len(vanKeys); start += 8191 {
+				chunk := vanKeys[start:min(start+8191, len(vanKeys))]
+
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[[2]string][][2]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "van_tools"}, sql.SelectOptions{
+						Columns:    []string{"region", "van_id", "tool_id"},
+						Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, []string{"region", "van_id"}, chunk)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load van tools junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load van tools junction columns: %w", err)
+					}
+
+					for junctionRows.Next() {
+						var key0 string
+						var key1 int64
+						var key2 int64
+						ptrs := make([]any, len(junctionCols))
+						for i, col := range junctionCols {
+							switch col {
+							case "region":
+								ptrs[i] = &key0
+							case "van_id":
+								ptrs[i] = &key1
+							case "tool_id":
+								ptrs[i] = &key2
+							}
+						}
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan van tools junction: %w", err)
+						}
+						parentID, targetID := [2]string{key0, fmt.Sprint(key1)}, [2]string{key0, fmt.Sprint(key2)}
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate van tools junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.BuildCompositePKBatchCondition(c.dialect, []string{"region", "van_id"}, chunk),
+				})
+				conditions := []sql.Condition{
+					sql.TupleInSubquery(c.dialect, []string{"region", "id"}, sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("region") + ", j." + c.dialect.QuoteIdentifier("tool_id") + "" +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "van_tools"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &ToolFilter{}
+				if fo.Tools.Filter != nil {
+					filter.And = append(filter.And, fo.Tools.Filter)
+				}
+
+				relatedTools, err := c.toolClient.GetMany(ctx, &GetToolsInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its referenced columns, so
+					// the fetch declares them rather than mutating the caller's
+					// FieldOptions.
+					requiredColumns: []string{"region", "id"},
+				}, func(co *CallOptions[ToolFieldOptions]) {
+					co.FieldOptions = fo.Tools.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+				})
+				if err != nil {
+					return fmt.Errorf("load van tools: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts order each parent's slice.
+				parentsByTarget := make(map[[2]string][]int, len(relatedTools))
+				for i := start; i < start+len(chunk); i++ {
+					parent := vanKeyed[i]
+					for _, tID := range parentToTargetIDs[[2]string{parent.Region, fmt.Sprint(parent.ID)}] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedTools {
+					for _, i := range parentsByTarget[[2]string{t.Region, fmt.Sprint(t.ID)}] {
+						vanKeyed[i].Tools = append(vanKeyed[i].Tools, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new van and returns the created entity.
+func (c *vanClient) Create(ctx context.Context, input *CreateVanInput, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateVanInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create van: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableVans, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"region", "plate"}
+		args := []any{input.Region, input.Plate}
+
+		if v, ok := input.DepotID.Get(); ok {
+			columns = append(columns, "depot_id")
+			args = append(args, v)
+		}
+
+		if v, ok := input.RouteID.Get(); ok {
+			columns = append(columns, "route_id")
+			args = append(args, v)
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[VanFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create van: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Van), nil
+}
+
+// CreateMany inserts multiple vans in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *vanClient) CreateMany(ctx context.Context, inputs []*CreateVanInput, opts ...func(*CallOptions[VanFieldOptions])) ([]*Van, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many vans: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableVans, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Van{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"region", "depot_id", "route_id", "plate"}
+			var valueRows [][]any
+			for _, input := range batch {
+				var depotID any = sql.NewDefaultExpr("NULL")
+				if v, ok := input.DepotID.Get(); ok {
+					depotID = v
+				}
+				var routeID any = sql.NewDefaultExpr("NULL")
+				if v, ok := input.RouteID.Get(); ok {
+					routeID = v
+				}
+
+				valueRows = append(valueRows, []any{
+					input.Region,
+					depotID,
+					routeID,
+					input.Plate,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetVansInput{
+			Filter: &VanFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[VanFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many vans: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Van), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *vanClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *vanClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan van id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a van by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *vanClient) Update(ctx context.Context, id int64, input *UpdateVanInput, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update van: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableVans, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Region.Get(); ok {
+			setClauses["region"] = v
+		}
+		if v, ok := input.DepotID.Get(); ok {
+			setClauses["depot_id"] = v
+		}
+		if v, ok := input.RouteID.Get(); ok {
+			setClauses["route_id"] = v
+		}
+		if v, ok := input.Plate.Get(); ok {
+			setClauses["plate"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[VanFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[VanFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update van: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Van), nil
+}
+
+// UpdateVanItem pairs a primary key with an update input for batch updates.
+type UpdateVanItem struct {
+	ID    int64           `json:"id"`
+	Input *UpdateVanInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple vans and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *vanClient) UpdateMany(ctx context.Context, items []UpdateVanItem, opts ...func(*CallOptions[VanFieldOptions])) ([]*Van, error) {
+	// UpdateVanItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many vans: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableVans, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Van{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateVanItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_van", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Region.Get(); ok {
+						setClauses["region"] = v
+					}
+					if v, ok := item.Input.DepotID.Get(); ok {
+						setClauses["depot_id"] = v
+					}
+					if v, ok := item.Input.RouteID.Get(); ok {
+						setClauses["route_id"] = v
+					}
+					if v, ok := item.Input.Plate.Get(); ok {
+						setClauses["plate"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetVansInput{
+			Filter: &VanFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[VanFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many vans: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Van), nil
+}
+
+// UpdateWhere updates all vans matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *vanClient) UpdateWhere(ctx context.Context, filter *VanFilter, input *UpdateVanInput, opts ...func(*CallOptions[VanFieldOptions])) ([]*Van, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update vans where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableVans, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Region.Get(); ok {
+			setClauses["region"] = v
+		}
+		if v, ok := input.DepotID.Get(); ok {
+			setClauses["depot_id"] = v
+		}
+		if v, ok := input.RouteID.Get(); ok {
+			setClauses["route_id"] = v
+		}
+		if v, ok := input.Plate.Get(); ok {
+			setClauses["plate"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetVansInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[VanFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated van id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetVansInput{
+			Filter: &VanFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[VanFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update vans where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Van), nil
+}
+
+// HardDelete permanently removes a van from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *vanClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[VanFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableVans, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete van: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple vans from the database.
+func (c *vanClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[VanFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableVans, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted van key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many vans: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all vans matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *vanClient) HardDeleteWhere(ctx context.Context, filter *VanFilter, opts ...func(*CallOptions[VanFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableVans, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted van id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete vans where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *vanClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// VanConflictTarget identifies a unique constraint for upsert conflict detection.
+type VanConflictTarget int
+
+const (
+	VanConflictPK       VanConflictTarget = iota // PRIMARY KEY (id)
+	VanConflictRegionID                          // UNIQUE (region, id)
+)
+
+// vanConflictColumns maps each conflict target to its column set.
+var vanConflictColumns = map[VanConflictTarget][]string{
+	VanConflictPK:       {"id"},
+	VanConflictRegionID: {"region", "id"},
+}
+
+// Upsert inserts a van or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *vanClient) Upsert(ctx context.Context, input *CreateVanInput, target VanConflictTarget, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateVanInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert van: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableVans, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"region", "plate"}
+		args := []any{input.Region, input.Plate}
+
+		if v, ok := input.DepotID.Get(); ok {
+			columns = append(columns, "depot_id")
+			args = append(args, v)
+		}
+
+		if v, ok := input.RouteID.Get(); ok {
+			columns = append(columns, "route_id")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := vanConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[VanFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert van: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Van), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *vanClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *vanClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple vans in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// vans.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *vanClient) UpsertMany(ctx context.Context, inputs []*CreateVanInput, target VanConflictTarget, opts ...func(*CallOptions[VanFieldOptions])) ([]*Van, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many vans: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableVans, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Van{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"region", "depot_id", "route_id", "plate"}
+		conflictColumns := vanConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateVanInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+			var depotID any = sql.NewDefaultExpr("NULL")
+			if v, ok := input.DepotID.Get(); ok {
+				depotID = v
+			}
+			var routeID any = sql.NewDefaultExpr("NULL")
+			if v, ok := input.RouteID.Get(); ok {
+				routeID = v
+			}
+
+			valueRows = append(valueRows, []any{
+				input.Region,
+				depotID,
+				routeID,
+				input.Plate,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateVanInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetVansInput{
+			Filter: &VanFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[VanFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many vans: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Van), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// vans.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *vanClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level vanConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanVans
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanVans(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = vanColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// vanColumnValue returns one column's value off a scanned
+// Van, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanVans.
+func vanColumnValue(v *Van, column string) any {
+	switch column {
+	case "id":
+		return v.ID
+	case "region":
+		return v.Region
+	case "depot_id":
+		return v.DepotID
+	case "route_id":
+		return v.RouteID
+	case "plate":
+		return v.Plate
+	}
+	return nil
+}
+
+// CreateVanWithRelatedInput holds the fields for creating a vans record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateVanWithRelatedInput struct {
+	// Van holds the parent's own columns — identical to the input Create accepts.
+	Van CreateVanInput `json:"van"`
+
+	// Permits - many-to-many relationship with the permits table.
+	Permits *VanPermitsCreateNested `json:"permits,omitempty"`
+
+	// Tools - many-to-many relationship with the tools table.
+	Tools *VanToolsCreateNested `json:"tools,omitempty"`
+}
+
+// UpdateVanWithRelatedInput holds the fields for updating a vans record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateVanWithRelatedInput struct {
+	// Van holds the parent's own columns — identical to the input Update accepts.
+	Van UpdateVanInput `json:"van"`
+
+	// Permits - many-to-many relationship with the permits table.
+	Permits *VanPermitsUpdateNested `json:"permits,omitempty"`
+
+	// Tools - many-to-many relationship with the tools table.
+	Tools *VanToolsUpdateNested `json:"tools,omitempty"`
+}
+
+// UpsertVanWithRelatedInput holds the fields for upserting a vans record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateVanInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertVanWithRelatedInput struct {
+	// Van holds the parent's own columns — identical to the input Upsert accepts.
+	Van CreateVanInput `json:"van"`
+
+	// Permits - many-to-many relationship with the permits table.
+	Permits *VanPermitsUpdateNested `json:"permits,omitempty"`
+
+	// Tools - many-to-many relationship with the tools table.
+	Tools *VanToolsUpdateNested `json:"tools,omitempty"`
+}
+
+// VanPermitsCreateNested is the create-side verb block for Van.Permits.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type VanPermitsCreateNested struct {
+	Create  []*CreatePermitInput `json:"create,omitempty"`
+	Connect []int64              `json:"connect,omitempty"`
+}
+
+// VanPermitsUpdateNested is the update-side verb block for Van.Permits,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type VanPermitsUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear   bool                 `json:"clear,omitempty"`
+	Create  []*CreatePermitInput `json:"create,omitempty"`
+	Connect []int64              `json:"connect,omitempty"`
+}
+
+// vanPermitsNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func vanPermitsNestedFromCreate(n *VanPermitsCreateNested) *VanPermitsUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &VanPermitsUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// VanToolsCreateNested is the create-side verb block for Van.Tools.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type VanToolsCreateNested struct {
+	Create  []*CreateToolInput `json:"create,omitempty"`
+	Connect []int64            `json:"connect,omitempty"`
+}
+
+// VanToolsUpdateNested is the update-side verb block for Van.Tools,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type VanToolsUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool               `json:"clear,omitempty"`
+	Create     []*CreateToolInput `json:"create,omitempty"`
+	Connect    []int64            `json:"connect,omitempty"`
+	Disconnect []int64            `json:"disconnect,omitempty"`
+}
+
+// vanToolsNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func vanToolsNestedFromCreate(n *VanToolsCreateNested) *VanToolsUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &VanToolsUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// vanNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+// The columns the edges' keys reference are forced on too: the nested writes
+// copy them, so a narrowed selection must not leave them zero.
+func vanNestedParentFieldOptions(fo *VanFieldOptions) *VanFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.Permits = nil
+	scalars.Tools = nil
+	scalars.ID = true
+	scalars.Region = true
+	return &scalars
+}
+
+// vanNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func vanNestedSelectsRelationship(fo *VanFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.Permits != nil || fo.Tools != nil
+}
+
+// CreateWithRelated creates a van together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *vanClient) CreateWithRelated(ctx context.Context, input *CreateVanWithRelatedInput, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create van with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Van
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err := database.WithTransaction(ctx, c.querier, "create_van_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.Van, func(o *CallOptions[VanFieldOptions]) {
+			*o = options
+			o.FieldOptions = vanNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyVanPermitsNested(ctx, parent, vanPermitsNestedFromCreate(input.Permits), options); err != nil {
+			return err
+		}
+
+		if err := c.applyVanToolsNested(ctx, parent, vanToolsNestedFromCreate(input.Tools), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if vanNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[VanFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create van with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a van together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *vanClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdateVanWithRelatedInput, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update van with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Van
+	err := database.WithTransaction(ctx, c.querier, "update_van_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.Van, func(o *CallOptions[VanFieldOptions]) {
+			*o = options
+			o.FieldOptions = vanNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyVanPermitsNested(ctx, parent, input.Permits, options); err != nil {
+			return err
+		}
+
+		if err := c.applyVanToolsNested(ctx, parent, input.Tools, options); err != nil {
+			return err
+		}
+
+		if vanNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[VanFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update van with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a van together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *vanClient) UpsertWithRelated(ctx context.Context, input *UpsertVanWithRelatedInput, target VanConflictTarget, opts ...func(*CallOptions[VanFieldOptions])) (*Van, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert van with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Van
+	err := database.WithTransaction(ctx, c.querier, "upsert_van_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.Van, target, func(o *CallOptions[VanFieldOptions]) {
+			*o = options
+			o.FieldOptions = vanNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyVanPermitsNested(ctx, parent, input.Permits, options); err != nil {
+			return err
+		}
+
+		if err := c.applyVanToolsNested(ctx, parent, input.Tools, options); err != nil {
+			return err
+		}
+
+		if vanNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[VanFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert van with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applyVanPermitsNested applies the Van.Permits block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// link, disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *vanClient) applyVanPermitsNested(ctx context.Context, parent *Van, nested *VanPermitsUpdateNested, options CallOptions[VanFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	pid := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if err := c.vanPermitClient.HardDeleteWhere(ctx, &VanPermitFilter{
+			VanID: &comparator.Number[int64]{Eq: new(pid)},
+		}, func(o *CallOptions[VanPermitFieldOptions]) {
+			nestedChildOptions(o, options)
+		}); err != nil {
+			return nestedError("Permits", "clear", nil, err)
+		}
+	}
+
+	targetIDs := make([]int64, 0, len(nested.Create)+len(connectIDs))
+	// The link rows take these targets' referenced columns.
+	targetRows := make(map[int64]*Permit, cap(targetIDs))
+
+	if len(nested.Create) > 0 {
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Permits", "create", nil, ErrNilInput)
+			}
+		}
+		// No traversed FK to elide on an M2M target — the parent's key goes
+		// into the junction row below — so this is the target's own create
+		// input verbatim. The PK-only selection is what the link step needs.
+		created, err := c.permitClient.CreateMany(ctx, nested.Create, func(o *CallOptions[PermitFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &PermitFieldOptions{ID: true, Code: true}
+		})
+		if err != nil {
+			return nestedError("Permits", "create", nil, err)
+		}
+		for _, row := range created {
+			targetIDs = append(targetIDs, row.ID)
+			targetRows[row.ID] = row
+		}
+	}
+
+	// The junction FK proves existence, not visibility. Reading through the
+	// target's OWN client applies its tenant filter, soft-delete default and
+	// access rules, so a target in another tenant is NOT_FOUND here rather
+	// than a junction row nobody can ever read.
+	if len(connectIDs) > 0 {
+		found := make(map[int64]bool, len(connectIDs))
+		// Chunked at c.batchSize. A single statement over the caller's
+		// whole list hits a bind-parameter ceiling that is dialect-dependent
+		// and lowest on SQLite (32766), and every dialect's error for it names
+		// no table, column, edge or verb, so it cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.permitClient.GetMany(ctx, &GetPermitsInput{
+				Filter: &PermitFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[PermitFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &PermitFieldOptions{ID: true, Code: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Permits", "connect", nil, err)
+			}
+			for _, row := range visible {
+				found[row.ID] = true
+				targetRows[row.ID] = row
+			}
+		}
+		for _, tid := range connectIDs {
+			if !found[tid] {
+				return nestedError("Permits", "connect", tid, ErrNotFound)
+			}
+		}
+		targetIDs = append(targetIDs, connectIDs...)
+	}
+
+	// link — UpsertMany, not CreateMany: re-adding an existing link is a set
+	// operation whose answer is "linked", and CreateMany raises a primary-key
+	// violation on it. The junction is a pure link table, so this compiles to
+	// ON CONFLICT DO NOTHING on every dialect.
+	if len(targetIDs) > 0 {
+		links := make([]*CreateVanPermitInput, 0, len(targetIDs))
+		seen := make(map[int64]bool, len(targetIDs))
+		for _, tid := range targetIDs {
+			if seen[tid] {
+				continue
+			}
+			seen[tid] = true
+			row := targetRows[tid]
+			links = append(links, &CreateVanPermitInput{
+				VanID:      parent.ID,
+				PermitCode: row.Code,
+			})
+		}
+		if _, err := c.vanPermitClient.UpsertMany(ctx, links, VanPermitConflictPK, func(o *CallOptions[VanPermitFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &VanPermitFieldOptions{}
+		}); err != nil {
+			return nestedError("Permits", "link", nil, err)
+		}
+	}
+	return nil
+}
+
+// applyVanToolsNested applies the Van.Tools block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// link, disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *vanClient) applyVanToolsNested(ctx context.Context, parent *Van, nested *VanToolsUpdateNested, options CallOptions[VanFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("Tools", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	pid0 := parent.Region
+	pid1 := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if err := c.vanToolClient.HardDeleteWhere(ctx, &VanToolFilter{
+			Region: &comparator.ID{Eq: new(pid0)},
+			VanID:  &comparator.Number[int64]{Eq: new(pid1)},
+		}, func(o *CallOptions[VanToolFieldOptions]) {
+			nestedChildOptions(o, options)
+		}); err != nil {
+			return nestedError("Tools", "clear", nil, err)
+		}
+	}
+
+	targetIDs := make([]int64, 0, len(nested.Create)+len(connectIDs))
+
+	if len(nested.Create) > 0 {
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Tools", "create", nil, ErrNilInput)
+			}
+		}
+		// No traversed FK to elide on an M2M target — the parent's key goes
+		// into the junction row below — so this is the target's own create
+		// input verbatim. The selection is what the link step and the shared
+		// column comparison below need.
+		created, err := c.toolClient.CreateMany(ctx, nested.Create, func(o *CallOptions[ToolFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &ToolFieldOptions{ID: true, Region: true}
+		})
+		if err != nil {
+			return nestedError("Tools", "create", nil, err)
+		}
+		for _, row := range created {
+			if !(row.Region == parent.Region) {
+				// The link row takes this column from the parent, so the new row
+				// could not be linked. Returning rolls it back with the rest.
+				return nestedError("Tools", "create", nil, ErrAlreadyRelated)
+			}
+			targetIDs = append(targetIDs, row.ID)
+		}
+	}
+
+	// The junction FK proves existence, not visibility. Reading through the
+	// target's OWN client applies its tenant filter, soft-delete default and
+	// access rules, so a target in another tenant is NOT_FOUND here rather
+	// than a junction row nobody can ever read.
+	if len(connectIDs) > 0 {
+		found := make(map[int64]bool, len(connectIDs))
+		agrees := make(map[int64]bool, len(connectIDs))
+		// Chunked at c.batchSize. A single statement over the caller's
+		// whole list hits a bind-parameter ceiling that is dialect-dependent
+		// and lowest on SQLite (32766), and every dialect's error for it names
+		// no table, column, edge or verb, so it cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.toolClient.GetMany(ctx, &GetToolsInput{
+				Filter: &ToolFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[ToolFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &ToolFieldOptions{ID: true, Region: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Tools", "connect", nil, err)
+			}
+			for _, row := range visible {
+				found[row.ID] = true
+				agrees[row.ID] = row.Region == parent.Region
+			}
+		}
+		for _, tid := range connectIDs {
+			if !found[tid] {
+				return nestedError("Tools", "connect", tid, ErrNotFound)
+			}
+			if !agrees[tid] {
+				// Both junction keys hold this column and the link row takes it
+				// from the parent, so this target is bound to another key.
+				return nestedError("Tools", "connect", tid, ErrAlreadyRelated)
+			}
+		}
+		targetIDs = append(targetIDs, connectIDs...)
+	}
+
+	// link — UpsertMany, not CreateMany: re-adding an existing link is a set
+	// operation whose answer is "linked", and CreateMany raises a primary-key
+	// violation on it. The junction is a pure link table, so this compiles to
+	// ON CONFLICT DO NOTHING on every dialect.
+	if len(targetIDs) > 0 {
+		links := make([]*CreateVanToolInput, 0, len(targetIDs))
+		seen := make(map[int64]bool, len(targetIDs))
+		for _, tid := range targetIDs {
+			if seen[tid] {
+				continue
+			}
+			seen[tid] = true
+			links = append(links, &CreateVanToolInput{
+				Region: parent.Region,
+				VanID:  parent.ID,
+				ToolID: tid,
+			})
+		}
+		if _, err := c.vanToolClient.UpsertMany(ctx, links, VanToolConflictPK, func(o *CallOptions[VanToolFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &VanToolFieldOptions{}
+		}); err != nil {
+			return nestedError("Tools", "link", nil, err)
+		}
+	}
+
+	// disconnect — no visibility read. The junction key embeds the
+	// parent, so a caller can only ever delete its own links, and a miss is a
+	// no-op. A hard delete is correct because the junction carries no
+	// soft-delete column; one that did would emit no unlink verb at all,
+	// since the read loader's junction query has no soft-delete predicate and
+	// would keep showing the link.
+	if len(disconnectIDs) > 0 {
+		pks := make([]VanToolPK, 0, len(disconnectIDs))
+		unlinking := make(map[int64]bool, len(disconnectIDs))
+		for _, tid := range disconnectIDs {
+			if unlinking[tid] {
+				continue
+			}
+			unlinking[tid] = true
+			pks = append(pks, VanToolPK{
+				Region: parent.Region,
+				VanID:  parent.ID,
+				ToolID: tid,
+			})
+		}
+		// Chunked at c.batchSize; a composite key binds two parameters
+		// per row, so the ceiling arrives at half the id count.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			if err := c.vanToolClient.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[VanToolFieldOptions]) {
+				nestedChildOptions(o, options)
+			}); err != nil {
+				return nestedError("Tools", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a van with the given primary key exists.
+func (c *vanClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[VanFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableVans, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists van: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any van matches the given filter.
+func (c *vanClient) ExistsWhere(ctx context.Context, filter *VanFilter, opts ...func(*CallOptions[VanFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableVans, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists vans where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of vans matching the given filter.
+// A nil filter counts all vans.
+func (c *vanClient) Count(ctx context.Context, filter *VanFilter, opts ...func(*CallOptions[VanFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableVans, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count vans: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of vans with total count for offset-based pagination.
+// A nil filter paginates all vans.
+func (c *vanClient) Paginate(ctx context.Context, input PaginateInput[VanFilter], opts ...func(*CallOptions[VanFieldOptions])) (*PaginateResult[Van], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate vans: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableVans, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[VanFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		vans, err := c.GetMany(ctx, &GetVansInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[Van]{
+			Items:      vans,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate vans: %w", err)
+	}
+	return result.(*PaginateResult[Van]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of vans.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *vanClient) Connection(ctx context.Context, input ConnectionInput[VanFilter], opts ...func(*CallOptions[VanFieldOptions])) (*Connection[Van], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection vans: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableVans, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[VanFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeVanCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeVanCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		vans, err := c.GetMany(ctx, &GetVansInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(vans) > limit
+		if hasMore {
+			vans = vans[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(vans)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Van], len(vans))
+		for i, row := range vans {
+			cursor, err := encodeVanCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Van]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Van]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection vans: %w", err)
+	}
+	return result.(*Connection[Van]), nil
+}
+
+// encodeVanCursor encodes cursor key values as a base64 JSON string.
+func encodeVanCursor(keys []string, v *Van) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = v.ID
+		case "region":
+			out["region"] = v.Region
+		case "depot_id":
+			out["depot_id"] = v.DepotID
+		case "route_id":
+			out["route_id"] = v.RouteID
+		case "plate":
+			out["plate"] = v.Plate
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode van cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeVanCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeVanCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Van
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamVansInput holds query parameters for streaming vans records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamVansInput struct {
+	Filter *VanFilter `json:"filter"`
+	Sorts  []sql.Sort `json:"sorts"`
+}
+
+// StreamVanFieldOptions controls scalar column selection for vans streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamVanFieldOptions struct {
+	ID      bool `json:"id"`
+	Region  bool `json:"region"`
+	DepotID bool `json:"depot_id"`
+	RouteID bool `json:"route_id"`
+	Plate   bool `json:"plate"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamVanFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Region {
+		cols = append(cols, "region")
+	}
+	if fo.DepotID {
+		cols = append(cols, "depot_id")
+	}
+	if fo.RouteID {
+		cols = append(cols, "route_id")
+	}
+	if fo.Plate {
+		cols = append(cols, "plate")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamVanFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Region {
+		return true
+	}
+	if fo.DepotID {
+		return true
+	}
+	if fo.RouteID {
+		return true
+	}
+	if fo.Plate {
+		return true
+	}
+	return false
+}
+
+// scanVanRow scans a single row into a Van entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanVanRow(rows database.Rows, columns []string) (*Van, error) {
+	v := &Van{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &v.ID
+		case "region":
+			targets[idx] = &v.Region
+		case "depot_id":
+			targets[idx] = &v.DepotID
+		case "route_id":
+			targets[idx] = &v.RouteID
+		case "plate":
+			targets[idx] = &v.Plate
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan van: %w", err)
+	}
+
+	return v, nil
+}
+
+// Stream returns an iterator over vans matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *vanClient) Stream(ctx context.Context, input *StreamVansInput, opts ...func(*CallOptions[StreamVanFieldOptions])) iter.Seq2[*Van, error] {
+	return func(yield func(*Van, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamVansInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream vans: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *Van, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream vans: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableVans, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := vanAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				v, err := scanVanRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(v, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate van rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream vans: %w", err))
+		}
+	}
+}
+
+// VanFilter provides type-safe filtering for the vans table.
+type VanFilter struct {
+	DepotID *comparator.NullableNumber[int64] `json:"depot_id"`
+	ID      *comparator.Number[int64]         `json:"id"`
+	Plate   *comparator.String                `json:"plate"`
+	Region  *comparator.String                `json:"region"`
+	RouteID *comparator.NullableNumber[int64] `json:"route_id"`
+	Permits *PermitFilter                     `json:"permits"`
+	Tools   *ToolFilter                       `json:"tools"`
+	And     []*VanFilter                      `json:"and"`
+	Or      []*VanFilter                      `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *VanFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.DepotID != nil {
+		conds = append(conds, f.DepotID.Parse(dialect.QuoteIdentifier("depot_id"), dialect)...)
+	}
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Plate != nil {
+		conds = append(conds, f.Plate.Parse(dialect.QuoteIdentifier("plate"), dialect)...)
+	}
+
+	if f.Region != nil {
+		conds = append(conds, f.Region.Parse(dialect.QuoteIdentifier("region"), dialect)...)
+	}
+
+	if f.RouteID != nil {
+		conds = append(conds, f.RouteID.Parse(dialect.QuoteIdentifier("route_id"), dialect)...)
+	}
+
+	if f.Permits != nil {
+		conds = append(conds, vanPermitsFilterExists(f.Permits, dialect, opts))
+	}
+
+	if f.Tools != nil {
+		conds = append(conds, vanToolsFilterExists(f.Tools, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// vanPermitsFilterExists compiles a PermitFilter set on the
+// Permits relationship into a correlated EXISTS over permits, joined through the van_permits junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func vanPermitsFilterExists(f *PermitFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "van_permits"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "", Name: "permits"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("code") + " = " + jn + "." + dialect.QuoteIdentifier("permit_code") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("van_id") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("id", sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// vanToolsFilterExists compiles a ToolFilter set on the
+// Tools relationship into a correlated EXISTS over tools, joined through the van_tools junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func vanToolsFilterExists(f *ToolFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "van_tools"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "", Name: "tools"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("region") + " = " + jn + "." + dialect.QuoteIdentifier("region") +
+		" AND " + tgt + "." + dialect.QuoteIdentifier("id") + " = " + jn + "." + dialect.QuoteIdentifier("tool_id") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("region") + " = " + sql.CorrelationTokenAt(0) +
+		" AND " + jn + "." + dialect.QuoteIdentifier("van_id") + " = " + sql.CorrelationTokenAt(1)
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists([]string{"region", "id"}, sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// VanFieldOptions controls column selection and relationship loading for vans queries.
+type VanFieldOptions struct {
+	ID      bool                       `json:"id"`
+	Region  bool                       `json:"region"`
+	DepotID bool                       `json:"depot_id"`
+	RouteID bool                       `json:"route_id"`
+	Plate   bool                       `json:"plate"`
+	Permits *PermitRelationshipOptions `json:"permits"`
+	Tools   *ToolRelationshipOptions   `json:"tools"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *VanFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Region {
+		cols = append(cols, "region")
+	}
+	if fo.DepotID {
+		cols = append(cols, "depot_id")
+	}
+	if fo.RouteID {
+		cols = append(cols, "route_id")
+	}
+	if fo.Plate {
+		cols = append(cols, "plate")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *VanFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":      "id",
+		"Region":  "region",
+		"DepotID": "depot_id",
+		"RouteID": "route_id",
+		"Plate":   "plate",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *VanFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Region {
+		return true
+	}
+	if fo.DepotID {
+		return true
+	}
+	if fo.RouteID {
+		return true
+	}
+	if fo.Plate {
+		return true
+	}
+	if fo.Permits != nil {
+		return true
+	}
+	if fo.Tools != nil {
+		return true
+	}
+	return false
+}
+
+// PermitRelationshipOptions controls loading options for Permit relationships.
+type PermitRelationshipOptions struct {
+	FieldOptions *PermitFieldOptions `json:"field_options"`
+	Filter       *PermitFilter       `json:"filter"`
+	Sorts        []sql.Sort          `json:"sorts"`
+}
+
+// ToolRelationshipOptions controls loading options for Tool relationships.
+type ToolRelationshipOptions struct {
+	FieldOptions *ToolFieldOptions `json:"field_options"`
+	Filter       *ToolFilter       `json:"filter"`
+	Sorts        []sql.Sort        `json:"sorts"`
+}
+
+// CreateVanInput holds the fields for creating a vans record.
+type CreateVanInput struct {
+	Region  string                  `json:"region"`
+	DepotID omittable.Value[*int64] `json:"depot_id,omitzero"`
+	RouteID omittable.Value[*int64] `json:"route_id,omitzero"`
+	Plate   string                  `json:"plate"`
+}
+
+// UpdateVanInput holds the fields for updating a vans record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateVanInput struct {
+	Region  omittable.Value[string] `json:"region,omitzero"`
+	DepotID omittable.Value[*int64] `json:"depot_id,omitzero"`
+	RouteID omittable.Value[*int64] `json:"route_id,omitzero"`
+	Plate   omittable.Value[string] `json:"plate,omitzero"`
+}
+
+// GetVansInput holds query parameters for retrieving vans records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetVansInput struct {
+	Filter *VanFilter `json:"filter"`
 	Limit  *int       `json:"limit"`
 	Offset *int       `json:"offset"`
 	Sorts  []sql.Sort `json:"sorts"`

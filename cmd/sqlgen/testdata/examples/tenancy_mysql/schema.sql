@@ -34,3 +34,84 @@ CREATE TABLE documents (
     label VARCHAR(255) NOT NULL,
     PRIMARY KEY (doc_key)
 );
+
+-- Composite tenant foreign keys under nested writes. tasks.workspace_id is the
+-- tenant column and a member of the key, so no edge rewrites it.
+CREATE TABLE cycles (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    workspace_id CHAR(36) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    UNIQUE (workspace_id, id)
+);
+
+CREATE TABLE tasks (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    workspace_id CHAR(36) NOT NULL,
+    cycle_id BIGINT,
+    title VARCHAR(255) NOT NULL,
+    FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id)
+);
+
+CREATE TABLE labels (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    workspace_id CHAR(36) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    UNIQUE (workspace_id, id)
+);
+
+-- A shared parent holding a key into tenanted children: their workspace_id comes
+-- from owner_workspace, which tenancy does not guard, and from the resolver.
+CREATE TABLE templates (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    owner_workspace CHAR(36) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    UNIQUE (owner_workspace, id)
+);
+
+CREATE TABLE template_steps (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    workspace_id CHAR(36) NOT NULL,
+    template_id BIGINT NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    FOREIGN KEY (workspace_id, template_id) REFERENCES templates (owner_workspace, id)
+);
+
+CREATE TABLE template_labels (
+    workspace_id CHAR(36) NOT NULL,
+    template_id BIGINT NOT NULL,
+    label_id BIGINT NOT NULL,
+    PRIMARY KEY (workspace_id, template_id, label_id),
+    FOREIGN KEY (workspace_id, template_id) REFERENCES templates (owner_workspace, id),
+    FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id)
+);
+
+-- A tenant junction between two shared tables: the keys agree on workspace_id,
+-- and only the tenancy check can find that the resolver does not.
+CREATE TABLE stamps (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    owner_workspace CHAR(36) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    UNIQUE (owner_workspace, id)
+);
+
+CREATE TABLE template_stamps (
+    workspace_id CHAR(36) NOT NULL,
+    template_id BIGINT NOT NULL,
+    stamp_id BIGINT NOT NULL,
+    PRIMARY KEY (workspace_id, template_id, stamp_id),
+    FOREIGN KEY (workspace_id, template_id) REFERENCES templates (owner_workspace, id),
+    FOREIGN KEY (workspace_id, stamp_id) REFERENCES stamps (owner_workspace, id)
+);
+
+-- A single-column FK on the tenant column, from a shared parent.
+CREATE TABLE workspaces (
+    id CHAR(36) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE workspace_notes (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    workspace_id CHAR(36) NOT NULL,
+    body VARCHAR(255) NOT NULL,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces (id)
+);

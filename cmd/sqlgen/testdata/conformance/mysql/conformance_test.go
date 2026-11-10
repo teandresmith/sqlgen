@@ -78,6 +78,8 @@ func TestConformance(t *testing.T) {
 				"DELETE FROM revisions", "DELETE FROM labels", "DELETE FROM counters",
 				"DELETE FROM author_tags", "DELETE FROM posts", "DELETE FROM author_profiles",
 				"DELETE FROM tags", "DELETE FROM authors")
+			exec(t, "DELETE FROM van_permits", "DELETE FROM van_tools", "DELETE FROM permits", "DELETE FROM tools",
+				"DELETE FROM slots", "DELETE FROM lockers", "DELETE FROM bays", "DELETE FROM vans", "DELETE FROM routes", "DELETE FROM depots")
 		},
 	})
 }

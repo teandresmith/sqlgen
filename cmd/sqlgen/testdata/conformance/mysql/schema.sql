@@ -98,6 +98,91 @@ CREATE TABLE posts (
     FOREIGN KEY (author_id) REFERENCES authors(id)
 );
 
+-- Nested writes through composite foreign keys, which composite-key parents and
+-- targets cannot carry. Every van key shares region, so region is pinned and
+-- depot_id and route_id are free: this is a tenant key's shape with no tenancy.
+-- Route.Vans sets allow_reparent, Depot.Vans does not. van_tools is a junction
+-- whose two keys share region. van_permits takes permit_code off the target.
+-- lockers hold a key whose two members are both free, so a row can hold a partly
+-- NULL key.
+CREATE TABLE depots (
+    id     BIGINT AUTO_INCREMENT PRIMARY KEY,
+    region VARCHAR(64) NOT NULL,
+    name   VARCHAR(64) NOT NULL UNIQUE,
+    UNIQUE (region, id)
+);
+
+CREATE TABLE routes (
+    id     BIGINT AUTO_INCREMENT PRIMARY KEY,
+    region VARCHAR(64) NOT NULL,
+    name   VARCHAR(64) NOT NULL,
+    UNIQUE (region, id)
+);
+
+CREATE TABLE vans (
+    id       BIGINT AUTO_INCREMENT PRIMARY KEY,
+    region   VARCHAR(64) NOT NULL,
+    depot_id BIGINT,
+    route_id BIGINT,
+    plate    VARCHAR(64) NOT NULL,
+    UNIQUE (region, id),
+    FOREIGN KEY (region, depot_id) REFERENCES depots (region, id),
+    FOREIGN KEY (region, route_id) REFERENCES routes (region, id)
+);
+
+CREATE TABLE tools (
+    id     BIGINT AUTO_INCREMENT PRIMARY KEY,
+    region VARCHAR(64) NOT NULL,
+    name   VARCHAR(64) NOT NULL,
+    UNIQUE (region, id)
+);
+
+CREATE TABLE van_tools (
+    region  VARCHAR(64) NOT NULL,
+    van_id  BIGINT NOT NULL,
+    tool_id BIGINT NOT NULL,
+    PRIMARY KEY (region, van_id, tool_id),
+    FOREIGN KEY (region, van_id) REFERENCES vans (region, id),
+    FOREIGN KEY (region, tool_id) REFERENCES tools (region, id)
+);
+
+CREATE TABLE permits (
+    id   BIGINT AUTO_INCREMENT PRIMARY KEY,
+    code VARCHAR(64) NOT NULL UNIQUE
+);
+
+CREATE TABLE van_permits (
+    van_id      BIGINT NOT NULL,
+    permit_code VARCHAR(64) NOT NULL,
+    PRIMARY KEY (van_id, permit_code),
+    FOREIGN KEY (van_id) REFERENCES vans (id),
+    FOREIGN KEY (permit_code) REFERENCES permits (code)
+);
+
+CREATE TABLE bays (
+    id     BIGINT AUTO_INCREMENT PRIMARY KEY,
+    region VARCHAR(64) NOT NULL,
+    UNIQUE (region, id)
+);
+
+CREATE TABLE lockers (
+    id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+    bay_region VARCHAR(64),
+    bay_id     BIGINT,
+    label      VARCHAR(64) NOT NULL,
+    FOREIGN KEY (bay_region, bay_id) REFERENCES bays (region, id)
+);
+
+-- slots hold the same two free members as lockers, on an edge that sets
+-- allow_reparent, so a row holding a partly NULL key is adopted.
+CREATE TABLE slots (
+    id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+    bay_region VARCHAR(64),
+    bay_id     BIGINT,
+    label      VARCHAR(64) NOT NULL,
+    FOREIGN KEY (bay_region, bay_id) REFERENCES bays (region, id)
+);
+
 -- Edges through composite foreign keys. item_notes (O2M) and item_receipts (O2O,
 -- a unique member) reach the composite primary key of order_items. parcels (O2M)
 -- reach a UNIQUE pair with a nullable referenced column, through nullable

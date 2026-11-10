@@ -590,7 +590,7 @@ type ArticleStatFilter struct {
 // of a nil dereference. And a nil entry inside and / or is skipped rather than
 // fatal, matching the "an unset member contributes no SQL" rule the
 // relationship members already follow.
-func (f *ArticleStatFilter) ToConditions(dialect sql.Dialect) []sql.Condition {
+func (f *ArticleStatFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
 	if f == nil {
 		return nil
 	}
@@ -618,7 +618,7 @@ func (f *ArticleStatFilter) ToConditions(dialect sql.Dialect) []sql.Condition {
 	}
 
 	for _, sub := range f.And {
-		subConds := sub.ToConditions(dialect)
+		subConds := sub.ToConditions(dialect, opts...)
 		if len(subConds) > 0 {
 			conds = append(conds, sql.And(subConds...))
 		}
@@ -636,7 +636,7 @@ func (f *ArticleStatFilter) ToConditions(dialect sql.Dialect) []sql.Condition {
 	// because it is not the empty string, yielding invalid SQL.
 	var orGroup []sql.Condition
 	for _, sub := range f.Or {
-		subConds := sub.ToConditions(dialect)
+		subConds := sub.ToConditions(dialect, opts...)
 		if len(subConds) > 0 {
 			orGroup = append(orGroup, sql.And(subConds...))
 		}

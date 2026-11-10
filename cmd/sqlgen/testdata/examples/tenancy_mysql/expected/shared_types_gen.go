@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/teandresmith/sqlgen/sql"
@@ -42,6 +43,25 @@ func excludeColumns(columns, exclude []string) []string {
 		}
 	}
 	return result
+}
+
+// nestedChildOptions copies the option fields that cross a table boundary
+// on a nested mutation. FieldOptions, LockMode and AllowInTransaction
+// deliberately do not propagate: the inner calls select nothing, take no row
+// lock, and issue no Stream.
+func nestedChildOptions[FO, PFO any](o *CallOptions[FO], parent CallOptions[PFO]) {
+	o.SkipCache, o.SkipEvents = parent.SkipCache, parent.SkipEvents
+	o.SkipHooks = parent.SkipHooks
+	o.SkipTenancy = parent.SkipTenancy
+	o.Tenant = parent.Tenant
+}
+
+// nestedError attributes a nested-mutation failure to its edge and verb.
+// The wrapped error is untouched, so errors.Is against the
+// sentinels and the *ConstraintError dispatch keep working through it; id is
+// nil when the failure is not id-scoped.
+func nestedError(edge, verb string, id any, err error) error {
+	return &NestedMutationError{Edge: edge, Verb: verb, ID: id, Err: err}
 }
 
 // resolveCallOptions applies option functions and returns the resolved struct. SkipHooks implies SkipCache and SkipEvents because cache and events are implemented as hooks.
@@ -158,6 +178,59 @@ func upsertDedupeKey(row []any, positions []int) (string, bool) {
 		key += fmt.Sprintf("%d:%s", len(s), s)
 	}
 	return key, true
+}
+
+// FilterOption carries the per-call data a filter needs, beyond the dialect,
+// to compile its relationship members into correlated EXISTS subqueries.
+// Generated client methods supply the set; ToConditions threads it through
+// And/Or composition and down into each relationship member.
+type FilterOption func(*filterScope)
+
+// filterScope is a resolved FilterOption set.
+type filterScope struct {
+	depth       int
+	tenant      string
+	applyTenant bool
+}
+
+// resolveFilterScope applies option functions and returns the resolved scope.
+func resolveFilterScope(opts []FilterOption) filterScope {
+	var scope filterScope
+	for _, fn := range opts {
+		fn(&scope)
+	}
+	return scope
+}
+
+// nestFilterScope returns opts with the subquery depth set to depth, for the
+// next level of relationship nesting. The set is copied rather than appended in
+// place so two relationship members compiled from the same filter cannot write
+// through each other's backing array.
+func nestFilterScope(opts []FilterOption, depth int) []FilterOption {
+	nested := make([]FilterOption, len(opts), len(opts)+1)
+	copy(nested, opts)
+	return append(nested, func(s *filterScope) {
+		s.depth = depth
+	})
+}
+
+// filterSubqueryAlias returns the table alias a relationship filter's subquery
+// uses at the given nesting depth. Distinct per level, so an inner subquery
+// never shadows the alias its own correlation reference resolves against.
+func filterSubqueryAlias(prefix string, depth int) string {
+	return prefix + strconv.Itoa(depth)
+}
+
+// WithFilterTenant scopes the relationship subqueries a filter compiles to
+// tenant, so a relationship filter reads the related table under the same
+// tenant predicate the table's own read path applies. Generated read and filter-accepting mutation methods pass it
+// automatically from the resolved tenant; converting a filter without it
+// produces subqueries scoped as if CallOptions.SkipTenancy were set.
+func WithFilterTenant(tenant string) FilterOption {
+	return func(s *filterScope) {
+		s.tenant = tenant
+		s.applyTenant = true
+	}
 }
 
 // callerOptions is the SkipHooks / SkipCache / SkipEvents triple a call's

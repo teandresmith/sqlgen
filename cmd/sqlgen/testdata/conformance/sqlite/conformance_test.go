@@ -44,6 +44,9 @@ func TestConformance(t *testing.T) {
 			if _, err := db.Exec("DELETE FROM crate_seals; DELETE FROM seals; DELETE FROM crate_items; DELETE FROM crates; DELETE FROM item_stations; DELETE FROM stations; DELETE FROM parcels; DELETE FROM shelves; DELETE FROM item_receipts; DELETE FROM item_notes; DELETE FROM order_items; DELETE FROM products; DELETE FROM documents; DELETE FROM revisions; DELETE FROM labels; DELETE FROM counters; DELETE FROM author_tags; DELETE FROM posts; DELETE FROM author_profiles; DELETE FROM tags; DELETE FROM authors"); err != nil {
 				t.Fatal(err)
 			}
+			if _, err := db.Exec("DELETE FROM van_permits; DELETE FROM van_tools; DELETE FROM permits; DELETE FROM tools; DELETE FROM slots; DELETE FROM lockers; DELETE FROM bays; DELETE FROM vans; DELETE FROM routes; DELETE FROM depots"); err != nil {
+				t.Fatal(err)
+			}
 		},
 	})
 }

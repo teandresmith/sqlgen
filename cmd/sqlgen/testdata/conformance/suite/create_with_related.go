@@ -881,6 +881,8 @@ func createWithRelated(t *testing.T, h *Harness) {
 			t.Errorf("returned Posts titles (-want +got):\n%s", diff)
 		}
 	})
+
+	createWithRelatedCompositeKey(t, h)
 }
 
 // cwrSelectAll selects the parent's columns and all three relationships.

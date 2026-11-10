@@ -6,8 +6,18 @@ import (
 )
 
 const (
-	TableArticles     hook.TableName = "articles"
-	TableDocuments    hook.TableName = "documents"
-	TableLineItems    hook.TableName = "line_items"
-	TableArticleStats hook.TableName = "article_stats"
+	TableArticles       hook.TableName = "articles"
+	TableCycles         hook.TableName = "cycles"
+	TableDocuments      hook.TableName = "documents"
+	TableLabels         hook.TableName = "labels"
+	TableLineItems      hook.TableName = "line_items"
+	TableStamps         hook.TableName = "stamps"
+	TableTasks          hook.TableName = "tasks"
+	TableTemplateLabels hook.TableName = "template_labels"
+	TableTemplateStamps hook.TableName = "template_stamps"
+	TableTemplateSteps  hook.TableName = "template_steps"
+	TableTemplates      hook.TableName = "templates"
+	TableWorkspaceNotes hook.TableName = "workspace_notes"
+	TableWorkspaces     hook.TableName = "workspaces"
+	TableArticleStats   hook.TableName = "article_stats"
 )

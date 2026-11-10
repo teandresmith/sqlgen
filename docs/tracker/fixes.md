@@ -23,64 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-366
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 32, cmd/sqlgen/gen
-- **Surfaced by:** `/verify 32.6` (2026-11-06)
-- **Vetted:** corrected at `e48ece8b` (2026-11-06)
-
-**Issue.** **The `nested.composite-*` rows apply to `all`, but nested writes through a composite key
-run live on PostgreSQL only.** MySQL and SQLite only compile
-(`TestGenerate_CompositeKeyNestedWritersCompile`). Design §11 item 1 requires a passing test on
-every dialect in Applies-to at phase close, and the phase's "Every dialect" ground rule covers this
-work. Nothing measured is broken there; the unproved paths are MySQL's non-`RETURNING` read-backs
-(`CreateMany` returning `TargetReadFields`, the parent's key columns after a narrowed `Create` or
-`Upsert`) and SQLite's FK enforcement. SQLite writes run through `RETURNING`.
-
-**Root cause.** Every live test is in `tenancy_postgres/tests/nested_composite_test.go`. The
-conformance suite's nested parents are `authors` and `tags` only, and 32.8's task list adds load
-and filter tests to `mysql` and `sqlite`, though its Tests Required says "nested where eligible".
-
-**Suggested fix.**
-- Conformance schema, every dialect: new `depots`, `routes`, `vans`, `tools`, `van_tools`, `permits`,
-  `van_permits`, `bays`, `lockers`. The existing composite tables cannot carry nested writes (`order_items`
-  fails E3 and E1, `shelves` E1, `crates` and `stations` reach composite-PK targets). `region` is a
-  tenant-shaped pinned key with no tenancy; `allow_reparent` on Route.Vans; edges listed by name, except
-  `vans`, since a listed Permits edge cannot carry `disconnect`.
-- New `suite/nested_composite.go`: 13 subtests under `CreateWithRelated`, `UpdateWithRelated` and
-  `UpsertWithRelated`, including narrowed selections, `CreateMany` returning `TargetReadFields`, and a
-  cross-value link as a foreign-key `ConstraintError`, which proves SQLite enforces the composite FK.
-- `tenancy_mysql` and `tenancy`: turn `nested_mutations` on, add composite tenant tables and
-  `tests/nested_composite_test.go`. The two tenancy-specific rows cannot go in the suite, and
-  `tenancy_mysql` alone would leave them unproved on SQLite.
-- Split the `MATCH FULL` half into a new row `nested.composite-match-full-disconnect-nulls-every-member`,
-  applying to `postgres`; the original row stays `all`. Design §10.5's "nested.* (×8)" becomes ×9.
-- Corrected from the original: new tables are needed, the suite alone is not enough, and the design's
-  `all (FULL: postgres)` is not valid Applies-to grammar. 32.8's "nested where eligible" line is met by this.
-- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): split the `MATCH FULL` row or
-  keep one row → split, because gates are green, no golden moves, no public surface changes, and no ruling
-  or PRD behavior is reversed.
-- Prototype results, run at `e48ece8b` on 2026-11-06: gap reproduced by counting composite connect executors:
-  tenancy_postgres 8, every other module 0. **No `nested.composite-*` row fails on MySQL or SQLite.** Gates:
-  conformance on all four legs, `tenancy`, `tenancy_mysql`, their lint, `make lint-conformance`,
-  `TestE2EGoldenFiles`, `TestE2EDatabaseTwin/tenancy*`, `make req-check`, `make refs-check` green. Fail-first:
-  breaking each guarded line failed its subtest on both sqlite and mysql (pinned check, free writes, held
-  and partly NULL cases, the already-ours no-op, disconnect and clear, shared link column, forced parent
-  keys, `TargetReadFields`, the tenant mappings, cross-tenant skip), e.g. `Lockers: connect: sqlgen: already
-  related to another row`; the existing suite passes without the fix. No fail-first: the adoption's `IS NULL`
-  guard, reachable only by a race, and the has-one mapping, unit-only under E3. Golden churn: `tenancy` ~7
-  files (+36061/-8826 in `expected/`, the same in `models/`), which also gains `WithRelated` on `post`, `tag`,
-  `user`; `tenancy_mysql` ~8 files (+30051/-1976, the same in `models/`). With FIX-364: one row conflict in
-  `cli/gen.md` (keep both sides) and 16 generated conformance files, cleared by regenerating. Patch:
-  `.claude/prototypes/FIX-366.patch` (72 files, 19.8 MB).
-
-**References.**
-- PRD §9.9, Appendix B. `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §10.1, §11, §12 Q1.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-371
 
 - **Status:** Open
@@ -366,6 +308,65 @@ mismatch), `:1016` (composite no-op) and `:1018` (single-column no-op), with the
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-366
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** `/verify 32.6` (2026-11-06)
+- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+
+**Issue.** **The `nested.composite-*` rows apply to `all`, but nested writes through a composite key
+run live on PostgreSQL only.** MySQL and SQLite only compile
+(`TestGenerate_CompositeKeyNestedWritersCompile`). Design §11 item 1 requires a passing test on
+every dialect in Applies-to at phase close, and the phase's "Every dialect" ground rule covers this
+work. Nothing measured is broken there; the unproved paths are MySQL's non-`RETURNING` read-backs
+(`CreateMany` returning `TargetReadFields`, the parent's key columns after a narrowed `Create` or
+`Upsert`) and SQLite's FK enforcement. SQLite writes run through `RETURNING`.
+
+**Root cause.** Every live test is in `tenancy_postgres/tests/nested_composite_test.go`. The
+conformance suite's nested parents are `authors` and `tags` only, and 32.8's task list adds load
+and filter tests to `mysql` and `sqlite`, though its Tests Required says "nested where eligible".
+
+**Suggested fix.**
+- Conformance schema, every dialect: new `depots`, `routes`, `vans`, `tools`, `van_tools`, `permits`,
+  `van_permits`, `bays`, `lockers`. The existing composite tables cannot carry nested writes (`order_items`
+  fails E3 and E1, `shelves` E1, `crates` and `stations` reach composite-PK targets). `region` is a
+  tenant-shaped pinned key with no tenancy; `allow_reparent` on Route.Vans; edges listed by name, except
+  `vans`, since a listed Permits edge cannot carry `disconnect`.
+- New `suite/nested_composite.go`: 14 subtests under `CreateWithRelated`, `UpdateWithRelated` and
+  `UpsertWithRelated`, including narrowed selections, `CreateMany` returning `TargetReadFields`, and a
+  cross-value link as a foreign-key `ConstraintError`, which proves SQLite enforces the composite FK.
+- `tenancy_mysql` and `tenancy`: turn `nested_mutations` on, add composite tenant tables and
+  `tests/nested_composite_test.go`. The two tenancy-specific rows cannot go in the suite, and
+  `tenancy_mysql` alone would leave them unproved on SQLite.
+- Split the `MATCH FULL` half into a new row `nested.composite-match-full-disconnect-nulls-every-member`,
+  applying to `postgres`; the original row stays `all`. Design §10.5's "nested.* (×8)" becomes ×9.
+- Corrected from the original: new tables are needed, the suite alone is not enough, and the design's
+  `all (FULL: postgres)` is not valid Applies-to grammar. 32.8's "nested where eligible" line is met by this.
+- Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): split the `MATCH FULL` row or
+  keep one row → split, because gates are green, no golden moves, no public surface changes, and no ruling
+  or PRD behavior is reversed.
+- Prototype results, run at `e48ece8b` on 2026-11-06: gap reproduced by counting composite connect executors:
+  tenancy_postgres 8, every other module 0. **No `nested.composite-*` row fails on MySQL or SQLite.** Gates:
+  conformance on all four legs, `tenancy`, `tenancy_mysql`, their lint, `make lint-conformance`,
+  `TestE2EGoldenFiles`, `TestE2EDatabaseTwin/tenancy*`, `make req-check`, `make refs-check` green. Fail-first:
+  breaking each guarded line failed its subtest on both sqlite and mysql (pinned check, free writes, held
+  and partly NULL cases, the already-ours no-op, disconnect and clear, shared link column, forced parent
+  keys, `TargetReadFields`, the tenant mappings, cross-tenant skip), e.g. `Lockers: connect: sqlgen: already
+  related to another row`; the existing suite passes without the fix. No fail-first: the adoption's `IS NULL`
+  guard, reachable only by a race, and the has-one mapping, unit-only under E3. Golden churn: `tenancy` ~7
+  files (+36061/-8826 in `expected/`, the same in `models/`), which also gains `WithRelated` on `post`, `tag`,
+  `user`; `tenancy_mysql` ~8 files (+30051/-1976, the same in `models/`). With FIX-364: one row conflict in
+  `cli/gen.md` (keep both sides) and 16 generated conformance files, cleared by regenerating. Patch:
+  `.claude/prototypes/FIX-366.patch` (72 files, 19.8 MB).
+- The user ruled on 2026-11-10: extend FIX-366 with a conformance fixture that has two nullable free members and an `allow_reparent` edge, so `nested.composite-connect-held-elsewhere`'s partly-NULL adoption clause is proved on every dialect (FIX-367 added the clause after the vet).
+
+**References.**
+- PRD §9.9, Appendix B. `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` §10.1, §11, §12 Q1.
+
+**Resolution notes.** Test and fixture coverage only; no production defect surfaced. The vetted prototype applied with `git apply --3way` over FIX-363/364/365/368/369/370/367, generated dirs excluded and regenerated. `cli/gen.md`, `client.md` and the design doc's registry rows were hand-merged, keeping every landed row and test (FIX-364's surrogate junction, FIX-368's shared-column rows, FIX-369's unlink row, FIX-367's tests) and adding this fix's conformance and example tests; the `MATCH FULL` split is kept. Two post-vet adaptations, both FIX-368 (`7d36c1a7`) meeting the new fixtures: the conformance subtest that expected a cross-region `van_tools` link to fail as a foreign-key `ConstraintError` at `link` now asserts `ErrAlreadyRelated` at `connect`, naming the target, before the link step, and keeps the SQLite composite-FK proof by creating the junction row directly (`ConstraintForeignKey`); its evidence moved from `nested.junction-key-union` to `nested.composite-connect-pinned-mismatch`. `tenancy` and `tenancy_mysql` gain `stamps`/`template_stamps`, as tenancy_postgres did under FIX-368, so `TestUpdateWithRelated_LinkTenantMismatchIsAlreadyRelated` still reaches the link step (connect and create), and the old labels case becomes `TestUpdateWithRelated_ConnectUnderSharedParentMismatchIsAlreadyRelated`. The two new example tests the prototype named `TestCreateWithRelated_*` call `UpdateWithRelated`, so they are `TestUpdateWithRelated_TenancySetTenantMismatchIsAlreadyRelated` and `TestUpdateWithRelated_SingleColumnTenantKeyMismatchIsAlreadyRelated`, matching FIX-367's renames. By the 2026-11-10 ruling, every conformance schema gains `slots` (two nullable free members, FK to `bays (region, id)`), with `Bay.Slots` listed with `allow_reparent: true`; the subtest `allow_reparent adopts a target holding a partly NULL key` (region held / id held) proves `nested.composite-connect-held-elsewhere`'s adoption clause on every dialect. Fail-first on sqlite: adding the non-reparent partly-NULL refusal to the generated Slots connect failed both cases with `Slots: connect: 1: sqlgen: already related to another row, want nil`. Conformance models regenerated again (31 tables). Golden churn: the vet's files and examples. Over the vet, `models_gen.go` gains ~5.9k lines in `tenancy` and ~6.1k in `tenancy_mysql`, mostly the two stamps tables' generated surface; before the stamps tables the difference was ~66 lines, all FIX-368's shared-column comparison and FIX-369's unlink tenant guard on the templates/labels edges. `cache_gen`, `event_hooks_gen`, `sorter_gen`, `client_gen` and `tablenames_gen` grow with the stamps tables. Conformance models regenerated on all four legs.
 
 ### FIX-367
 

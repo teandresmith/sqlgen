@@ -64,6 +64,25 @@ tables:
   counters:
     # Update and Increment on a missing key return nil rather than ErrNotFound.
     strict_updates: false
+  # Listed by name, so an edge that turns ineligible fails generation. vans is
+  # left to auto-inclusion: its Permits edge has no disconnect, which fails a
+  # listed edge. depots chunks its connect reads across statements.
+  depots:
+    batch_size: 2
+    nested_mutations:
+      relationships:
+        - name: Vans
+  routes:
+    nested_mutations:
+      relationships:
+        - name: Vans
+          allow_reparent: true
+  bays:
+    nested_mutations:
+      relationships:
+        - name: Lockers
+        - name: Slots
+          allow_reparent: true
 overrides:
   types:
     # citext has no built-in Go type.

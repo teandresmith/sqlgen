@@ -66,6 +66,23 @@ func (s AuthorTagSorter) TagID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "tag_id", Direction: direction}
 }
 
+// BaySorter provides type-safe sort helpers for the Bay entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BaySorter struct{}
+
+// NewBaySorter returns a new BaySorter.
+func NewBaySorter() BaySorter { return BaySorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s BaySorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Region returns a sort for the region column in the given direction.
+func (s BaySorter) Region(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "region", Direction: direction}
+}
+
 // CounterSorter provides type-safe sort helpers for the Counter entity.
 // Each method returns a sql.Sort for the corresponding column.
 type CounterSorter struct{}
@@ -162,6 +179,28 @@ func (s CrateSealSorter) ID(direction sql.SortDirection) sql.Sort {
 // SealID returns a sort for the seal_id column in the given direction.
 func (s CrateSealSorter) SealID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "seal_id", Direction: direction}
+}
+
+// DepotSorter provides type-safe sort helpers for the Depot entity.
+// Each method returns a sql.Sort for the corresponding column.
+type DepotSorter struct{}
+
+// NewDepotSorter returns a new DepotSorter.
+func NewDepotSorter() DepotSorter { return DepotSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s DepotSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s DepotSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// Region returns a sort for the region column in the given direction.
+func (s DepotSorter) Region(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "region", Direction: direction}
 }
 
 // DocumentSorter provides type-safe sort helpers for the Document entity.
@@ -284,6 +323,33 @@ func (s LabelSorter) Name(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "name", Direction: direction}
 }
 
+// LockerSorter provides type-safe sort helpers for the Locker entity.
+// Each method returns a sql.Sort for the corresponding column.
+type LockerSorter struct{}
+
+// NewLockerSorter returns a new LockerSorter.
+func NewLockerSorter() LockerSorter { return LockerSorter{} }
+
+// BayID returns a sort for the bay_id column in the given direction.
+func (s LockerSorter) BayID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "bay_id", Direction: direction}
+}
+
+// BayRegion returns a sort for the bay_region column in the given direction.
+func (s LockerSorter) BayRegion(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "bay_region", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s LockerSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s LockerSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
 // OrderItemSorter provides type-safe sort helpers for the OrderItem entity.
 // Each method returns a sql.Sort for the corresponding column.
 type OrderItemSorter struct{}
@@ -331,6 +397,23 @@ func (s ParcelSorter) Label(direction sql.SortDirection) sql.Sort {
 // Region returns a sort for the region column in the given direction.
 func (s ParcelSorter) Region(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "region", Direction: direction}
+}
+
+// PermitSorter provides type-safe sort helpers for the Permit entity.
+// Each method returns a sql.Sort for the corresponding column.
+type PermitSorter struct{}
+
+// NewPermitSorter returns a new PermitSorter.
+func NewPermitSorter() PermitSorter { return PermitSorter{} }
+
+// Code returns a sort for the code column in the given direction.
+func (s PermitSorter) Code(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "code", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s PermitSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
 }
 
 // PostSorter provides type-safe sort helpers for the Post entity.
@@ -414,6 +497,28 @@ func (s RevisionSorter) Number(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "number", Direction: direction}
 }
 
+// RouteSorter provides type-safe sort helpers for the Route entity.
+// Each method returns a sql.Sort for the corresponding column.
+type RouteSorter struct{}
+
+// NewRouteSorter returns a new RouteSorter.
+func NewRouteSorter() RouteSorter { return RouteSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s RouteSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s RouteSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// Region returns a sort for the region column in the given direction.
+func (s RouteSorter) Region(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "region", Direction: direction}
+}
+
 // SealSorter provides type-safe sort helpers for the Seal entity.
 // Each method returns a sql.Sort for the corresponding column.
 type SealSorter struct{}
@@ -458,6 +563,33 @@ func (s ShelfSorter) Tag(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "tag", Direction: direction}
 }
 
+// SlotSorter provides type-safe sort helpers for the Slot entity.
+// Each method returns a sql.Sort for the corresponding column.
+type SlotSorter struct{}
+
+// NewSlotSorter returns a new SlotSorter.
+func NewSlotSorter() SlotSorter { return SlotSorter{} }
+
+// BayID returns a sort for the bay_id column in the given direction.
+func (s SlotSorter) BayID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "bay_id", Direction: direction}
+}
+
+// BayRegion returns a sort for the bay_region column in the given direction.
+func (s SlotSorter) BayRegion(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "bay_region", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s SlotSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s SlotSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
 // StationSorter provides type-safe sort helpers for the Station entity.
 // Each method returns a sql.Sort for the corresponding column.
 type StationSorter struct{}
@@ -495,4 +627,97 @@ func (s TagSorter) ID(direction sql.SortDirection) sql.Sort {
 // Name returns a sort for the name column in the given direction.
 func (s TagSorter) Name(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// ToolSorter provides type-safe sort helpers for the Tool entity.
+// Each method returns a sql.Sort for the corresponding column.
+type ToolSorter struct{}
+
+// NewToolSorter returns a new ToolSorter.
+func NewToolSorter() ToolSorter { return ToolSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s ToolSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s ToolSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// Region returns a sort for the region column in the given direction.
+func (s ToolSorter) Region(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "region", Direction: direction}
+}
+
+// VanSorter provides type-safe sort helpers for the Van entity.
+// Each method returns a sql.Sort for the corresponding column.
+type VanSorter struct{}
+
+// NewVanSorter returns a new VanSorter.
+func NewVanSorter() VanSorter { return VanSorter{} }
+
+// DepotID returns a sort for the depot_id column in the given direction.
+func (s VanSorter) DepotID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "depot_id", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s VanSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Plate returns a sort for the plate column in the given direction.
+func (s VanSorter) Plate(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "plate", Direction: direction}
+}
+
+// Region returns a sort for the region column in the given direction.
+func (s VanSorter) Region(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "region", Direction: direction}
+}
+
+// RouteID returns a sort for the route_id column in the given direction.
+func (s VanSorter) RouteID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "route_id", Direction: direction}
+}
+
+// VanPermitSorter provides type-safe sort helpers for the VanPermit entity.
+// Each method returns a sql.Sort for the corresponding column.
+type VanPermitSorter struct{}
+
+// NewVanPermitSorter returns a new VanPermitSorter.
+func NewVanPermitSorter() VanPermitSorter { return VanPermitSorter{} }
+
+// PermitCode returns a sort for the permit_code column in the given direction.
+func (s VanPermitSorter) PermitCode(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "permit_code", Direction: direction}
+}
+
+// VanID returns a sort for the van_id column in the given direction.
+func (s VanPermitSorter) VanID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "van_id", Direction: direction}
+}
+
+// VanToolSorter provides type-safe sort helpers for the VanTool entity.
+// Each method returns a sql.Sort for the corresponding column.
+type VanToolSorter struct{}
+
+// NewVanToolSorter returns a new VanToolSorter.
+func NewVanToolSorter() VanToolSorter { return VanToolSorter{} }
+
+// Region returns a sort for the region column in the given direction.
+func (s VanToolSorter) Region(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "region", Direction: direction}
+}
+
+// ToolID returns a sort for the tool_id column in the given direction.
+func (s VanToolSorter) ToolID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "tool_id", Direction: direction}
+}
+
+// VanID returns a sort for the van_id column in the given direction.
+func (s VanToolSorter) VanID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "van_id", Direction: direction}
 }

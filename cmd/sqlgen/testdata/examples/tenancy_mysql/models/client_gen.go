@@ -145,13 +145,23 @@ func (c *mysqlVersionCache) get(ctx context.Context) (mysqlVersion, error) {
 // All entity clients share the same querier and configuration.
 // The Client is safe for concurrent use after construction.
 type Client struct {
-	querier      database.Querier
-	opts         clientOptions
-	mysqlVersion *mysqlVersionCache
-	article      *articleClient
-	articleStat  *articleStatClient
-	document     *documentClient
-	lineItem     *lineItemClient
+	querier       database.Querier
+	opts          clientOptions
+	mysqlVersion  *mysqlVersionCache
+	article       *articleClient
+	articleStat   *articleStatClient
+	cycle         *cycleClient
+	document      *documentClient
+	label         *labelClient
+	lineItem      *lineItemClient
+	stamp         *stampClient
+	task          *taskClient
+	template      *templateClient
+	templateLabel *templateLabelClient
+	templateStamp *templateStampClient
+	templateStep  *templateStepClient
+	workspace     *workspaceClient
+	workspaceNote *workspaceNoteClient
 }
 
 // New creates a new Client with the given querier and options.
@@ -179,13 +189,23 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 
 	mysqlVersion := newMySQLVersionCache(querier)
 	c := &Client{
-		querier:      querier,
-		opts:         options,
-		mysqlVersion: mysqlVersion,
-		article:      newArticleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		articleStat:  newArticleStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
-		document:     newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
-		lineItem:     newLineItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		querier:       querier,
+		opts:          options,
+		mysqlVersion:  mysqlVersion,
+		article:       newArticleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		articleStat:   newArticleStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		cycle:         newCycleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		document:      newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		label:         newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		lineItem:      newLineItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		stamp:         newStampClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		task:          newTaskClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		template:      newTemplateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		templateLabel: newTemplateLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		templateStamp: newTemplateStampClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		templateStep:  newTemplateStepClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		workspace:     newWorkspaceClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		workspaceNote: newWorkspaceNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 	}
 
 	// Thread the tenant resolver into every entity client that needs one. That
@@ -213,11 +233,43 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// erroring — a resolver error still propagates.
 	c.article.tenantResolver = options.tenantResolver
 	c.articleStat.tenantResolver = options.tenantResolver
+	c.cycle.tenantResolver = options.tenantResolver
 	c.document.tenantResolver = options.tenantResolver
+	c.label.tenantResolver = options.tenantResolver
 	c.lineItem.tenantResolver = options.tenantResolver
+	c.stamp.tenantResolver = options.tenantResolver
+	c.task.tenantResolver = options.tenantResolver
+	c.template.tenantResolver = options.tenantResolver
+	c.templateLabel.tenantResolver = options.tenantResolver
+	c.templateStamp.tenantResolver = options.tenantResolver
+	c.templateStep.tenantResolver = options.tenantResolver
+	c.workspace.tenantResolver = options.tenantResolver
+	c.workspaceNote.tenantResolver = options.tenantResolver
+
+	// Push the configured CallbackMode down to every entity client that can
+	// carry a nested-mutation surface: the nested methods open the transaction
+	// the whole nested write runs in and pass this mode to it, so
+	// deferred events and cache invalidation flush the way the client was
+	// configured rather than on NewTransaction's default.
+	c.cycle.callbackMode = options.callbackMode
+	c.label.callbackMode = options.callbackMode
+	c.stamp.callbackMode = options.callbackMode
+	c.template.callbackMode = options.callbackMode
+	c.workspace.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
 	// the nested-mutation executors write through
+	c.cycle.taskClient = c.task
+	c.label.templateClient = c.template
+	c.label.templateLabelClient = c.templateLabel
+	c.stamp.templateClient = c.template
+	c.stamp.templateStampClient = c.templateStamp
+	c.template.templateStepClient = c.templateStep
+	c.template.labelClient = c.label
+	c.template.stampClient = c.stamp
+	c.template.templateLabelClient = c.templateLabel
+	c.template.templateStampClient = c.templateStamp
+	c.workspace.workspaceNoteClient = c.workspaceNote
 
 	return c
 }
@@ -232,14 +284,64 @@ func (c *Client) ArticleStat() ArticleStatClient {
 	return c.articleStat
 }
 
+// Cycles returns the CycleClient for Cycle operations.
+func (c *Client) Cycles() CycleClient {
+	return c.cycle
+}
+
 // Documents returns the DocumentClient for Document operations.
 func (c *Client) Documents() DocumentClient {
 	return c.document
 }
 
+// Labels returns the LabelClient for Label operations.
+func (c *Client) Labels() LabelClient {
+	return c.label
+}
+
 // LineItems returns the LineItemClient for LineItem operations.
 func (c *Client) LineItems() LineItemClient {
 	return c.lineItem
+}
+
+// Stamps returns the StampClient for Stamp operations.
+func (c *Client) Stamps() StampClient {
+	return c.stamp
+}
+
+// Tasks returns the TaskClient for Task operations.
+func (c *Client) Tasks() TaskClient {
+	return c.task
+}
+
+// Templates returns the TemplateClient for Template operations.
+func (c *Client) Templates() TemplateClient {
+	return c.template
+}
+
+// TemplateLabels returns the TemplateLabelClient for TemplateLabel operations.
+func (c *Client) TemplateLabels() TemplateLabelClient {
+	return c.templateLabel
+}
+
+// TemplateStamps returns the TemplateStampClient for TemplateStamp operations.
+func (c *Client) TemplateStamps() TemplateStampClient {
+	return c.templateStamp
+}
+
+// TemplateSteps returns the TemplateStepClient for TemplateStep operations.
+func (c *Client) TemplateSteps() TemplateStepClient {
+	return c.templateStep
+}
+
+// Workspaces returns the WorkspaceClient for Workspace operations.
+func (c *Client) Workspaces() WorkspaceClient {
+	return c.workspace
+}
+
+// WorkspaceNotes returns the WorkspaceNoteClient for WorkspaceNote operations.
+func (c *Client) WorkspaceNotes() WorkspaceNoteClient {
+	return c.workspaceNote
 }
 
 // Begin starts a new transaction with the given name.

@@ -1338,6 +1338,8 @@ func updateWithRelated(t *testing.T, h *Harness) {
 			})
 		}
 	})
+
+	updateWithRelatedCompositeKey(t, h)
 }
 
 // uwrSelect returns a call option that sets FieldOptions.

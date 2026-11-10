@@ -127,24 +127,34 @@ type Client struct {
 	author        *authorClient
 	authorProfile *authorProfileClient
 	authorTag     *authorTagClient
+	bay           *bayClient
 	counter       *counterClient
 	crate         *crateClient
 	crateItem     *crateItemClient
 	crateSeal     *crateSealClient
+	depot         *depotClient
 	document      *documentClient
 	itemNote      *itemNoteClient
 	itemReceipt   *itemReceiptClient
 	itemStation   *itemStationClient
 	label         *labelClient
+	locker        *lockerClient
 	orderItem     *orderItemClient
 	parcel        *parcelClient
+	permit        *permitClient
 	post          *postClient
 	product       *productClient
 	revision      *revisionClient
+	route         *routeClient
 	seal          *sealClient
 	shelf         *shelfClient
+	slot          *slotClient
 	station       *stationClient
 	tag           *tagClient
+	tool          *toolClient
+	van           *vanClient
+	vanPermit     *vanPermitClient
+	vanTool       *vanToolClient
 }
 
 // New creates a new Client with the given querier and options.
@@ -165,24 +175,34 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		author:        newAuthorClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		authorProfile: newAuthorProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		authorTag:     newAuthorTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		bay:           newBayClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		counter:       newCounterClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		crate:         newCrateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		crateItem:     newCrateItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		crateSeal:     newCrateSealClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		depot:         newDepotClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		document:      newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		itemNote:      newItemNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		itemReceipt:   newItemReceiptClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		itemStation:   newItemStationClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		label:         newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		locker:        newLockerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		orderItem:     newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		parcel:        newParcelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		permit:        newPermitClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		post:          newPostClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		product:       newProductClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		revision:      newRevisionClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		route:         newRouteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		seal:          newSealClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		shelf:         newShelfClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		slot:          newSlotClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		station:       newStationClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		tag:           newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		tool:          newToolClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		van:           newVanClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		vanPermit:     newVanPermitClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		vanTool:       newVanToolClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 	}
 
 	// Push the configured CallbackMode down to every entity client that can
@@ -191,12 +211,18 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// deferred events and cache invalidation flush the way the client was
 	// configured rather than on NewTransaction's default.
 	c.author.callbackMode = options.callbackMode
+	c.bay.callbackMode = options.callbackMode
 	c.crate.callbackMode = options.callbackMode
+	c.depot.callbackMode = options.callbackMode
+	c.permit.callbackMode = options.callbackMode
 	c.product.callbackMode = options.callbackMode
+	c.route.callbackMode = options.callbackMode
 	c.seal.callbackMode = options.callbackMode
 	c.shelf.callbackMode = options.callbackMode
 	c.station.callbackMode = options.callbackMode
 	c.tag.callbackMode = options.callbackMode
+	c.tool.callbackMode = options.callbackMode
+	c.van.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
 	// the nested-mutation executors write through
@@ -204,14 +230,20 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.author.tagClient = c.tag
 	c.author.authorProfileClient = c.authorProfile
 	c.author.authorTagClient = c.authorTag
+	c.bay.lockerClient = c.locker
+	c.bay.slotClient = c.slot
 	c.crate.orderItemClient = c.orderItem
 	c.crate.sealClient = c.seal
 	c.crate.crateItemClient = c.crateItem
 	c.crate.crateSealClient = c.crateSeal
+	c.depot.vanClient = c.van
 	c.orderItem.itemNoteClient = c.itemNote
 	c.orderItem.crateClient = c.crate
 	c.orderItem.stationClient = c.station
+	c.permit.vanClient = c.van
+	c.permit.vanPermitClient = c.vanPermit
 	c.product.orderItemClient = c.orderItem
+	c.route.vanClient = c.van
 	c.seal.crateClient = c.crate
 	c.seal.crateSealClient = c.crateSeal
 	c.shelf.crateClient = c.crate
@@ -220,6 +252,12 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.station.itemStationClient = c.itemStation
 	c.tag.authorClient = c.author
 	c.tag.authorTagClient = c.authorTag
+	c.tool.vanClient = c.van
+	c.tool.vanToolClient = c.vanTool
+	c.van.permitClient = c.permit
+	c.van.toolClient = c.tool
+	c.van.vanPermitClient = c.vanPermit
+	c.van.vanToolClient = c.vanTool
 
 	return c
 }
@@ -237,6 +275,11 @@ func (c *Client) AuthorProfiles() AuthorProfileClient {
 // AuthorTags returns the AuthorTagClient for AuthorTag operations.
 func (c *Client) AuthorTags() AuthorTagClient {
 	return c.authorTag
+}
+
+// Bays returns the BayClient for Bay operations.
+func (c *Client) Bays() BayClient {
+	return c.bay
 }
 
 // Counters returns the CounterClient for Counter operations.
@@ -257,6 +300,11 @@ func (c *Client) CrateItems() CrateItemClient {
 // CrateSeals returns the CrateSealClient for CrateSeal operations.
 func (c *Client) CrateSeals() CrateSealClient {
 	return c.crateSeal
+}
+
+// Depots returns the DepotClient for Depot operations.
+func (c *Client) Depots() DepotClient {
+	return c.depot
 }
 
 // Documents returns the DocumentClient for Document operations.
@@ -284,6 +332,11 @@ func (c *Client) Labels() LabelClient {
 	return c.label
 }
 
+// Lockers returns the LockerClient for Locker operations.
+func (c *Client) Lockers() LockerClient {
+	return c.locker
+}
+
 // OrderItems returns the OrderItemClient for OrderItem operations.
 func (c *Client) OrderItems() OrderItemClient {
 	return c.orderItem
@@ -292,6 +345,11 @@ func (c *Client) OrderItems() OrderItemClient {
 // Parcels returns the ParcelClient for Parcel operations.
 func (c *Client) Parcels() ParcelClient {
 	return c.parcel
+}
+
+// Permits returns the PermitClient for Permit operations.
+func (c *Client) Permits() PermitClient {
+	return c.permit
 }
 
 // Posts returns the PostClient for Post operations.
@@ -309,6 +367,11 @@ func (c *Client) Revisions() RevisionClient {
 	return c.revision
 }
 
+// Routes returns the RouteClient for Route operations.
+func (c *Client) Routes() RouteClient {
+	return c.route
+}
+
 // Seals returns the SealClient for Seal operations.
 func (c *Client) Seals() SealClient {
 	return c.seal
@@ -319,6 +382,11 @@ func (c *Client) Shelves() ShelfClient {
 	return c.shelf
 }
 
+// Slots returns the SlotClient for Slot operations.
+func (c *Client) Slots() SlotClient {
+	return c.slot
+}
+
 // Stations returns the StationClient for Station operations.
 func (c *Client) Stations() StationClient {
 	return c.station
@@ -327,6 +395,26 @@ func (c *Client) Stations() StationClient {
 // Tags returns the TagClient for Tag operations.
 func (c *Client) Tags() TagClient {
 	return c.tag
+}
+
+// Tools returns the ToolClient for Tool operations.
+func (c *Client) Tools() ToolClient {
+	return c.tool
+}
+
+// Vans returns the VanClient for Van operations.
+func (c *Client) Vans() VanClient {
+	return c.van
+}
+
+// VanPermits returns the VanPermitClient for VanPermit operations.
+func (c *Client) VanPermits() VanPermitClient {
+	return c.vanPermit
+}
+
+// VanTools returns the VanToolClient for VanTool operations.
+func (c *Client) VanTools() VanToolClient {
+	return c.vanTool
 }
 
 // Begin starts a new transaction with the given name.

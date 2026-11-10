@@ -66,6 +66,9 @@ func TestConformance(t *testing.T) {
 			if _, err := db.ExecContext(ctx, "TRUNCATE crate_seals, seals, crate_items, crates, item_stations, stations, parcels, shelves, item_receipts, item_notes, order_items, products, documents, revisions, labels, counters, author_tags, posts, author_profiles, tags, authors RESTART IDENTITY"); err != nil {
 				t.Fatal(err)
 			}
+			if _, err := db.ExecContext(ctx, "TRUNCATE van_permits, van_tools, permits, tools, slots, lockers, bays, vans, routes, depots"); err != nil {
+				t.Fatal(err)
+			}
 		},
 	})
 }
