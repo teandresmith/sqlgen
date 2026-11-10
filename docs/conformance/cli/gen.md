@@ -230,7 +230,7 @@
 | gen.input.json-tag-only | Input structs (`Create*Input`, `Update*Input`) are never scanned from a row: each field carries a `json` tag naming its column and no `db` tag | `unit: cmd/sqlgen/gen: TestInputTemplates_FieldsCarryJSONTagOnly/create input`; `unit: cmd/sqlgen/gen: TestInputTemplates_FieldsCarryJSONTagOnly/update input` | all |  |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: 7cf74319c30aa9aa -->
+<!-- prd: 9.9 sha256: c76f57b3b603575a -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

@@ -324,6 +324,51 @@ func updateWithRelatedCompositeKey(t *testing.T, h *Harness) {
 		assertVan(t, h, van.ID, vanKey{Region: "eu", Depot: &holder.ID})
 	})
 
+	t.Run("connect or create through a key that differs only in case is ErrAlreadyRelated", func(t *testing.T) {
+		h.Require(t, CapCaseInsensitiveText)
+		h.Reset(t)
+		depot := createDepot(t, h, "EU", "north")
+		held, err := h.Client.Vans().Create(ctx, &models.CreateVanInput{Region: "eu", Plate: "held", DepotID: omittable.Set(&depot.ID)})
+		if err != nil {
+			t.Fatalf("Create van the foreign key matches case-insensitively: %v", err)
+		}
+		free := createVan(t, h, "eu", "free")
+
+		uwrWantNested(t, connect(t, depot, held.ID), models.ErrAlreadyRelated, "Vans", "connect", held.ID)
+		uwrWantNested(t, connect(t, depot, free.ID), models.ErrAlreadyRelated, "Vans", "connect", free.ID)
+		assertVan(t, h, held.ID, vanKey{Region: "eu", Depot: &depot.ID})
+		assertVan(t, h, free.ID, vanKey{Region: "eu"})
+
+		// The junction's foreign keys accept the pair; the shared-column checks on
+		// connect and create do not.
+		van := createVan(t, h, "EU", "linked")
+		tool := createTool(t, h, "eu", "tool")
+		_, err = h.Client.Vans().UpdateWithRelated(ctx, van.ID, &models.UpdateVanWithRelatedInput{
+			Tools: &models.VanToolsUpdateNested{Connect: []int64{tool.ID}},
+		})
+		uwrWantNested(t, err, models.ErrAlreadyRelated, "Tools", "connect", tool.ID)
+		if n := len(vanToolLinks(t, h, van.ID)); n != 0 {
+			t.Errorf("links = %d, want 0", n)
+		}
+		_, err = h.Client.Vans().UpdateWithRelated(ctx, van.ID, &models.UpdateVanWithRelatedInput{
+			Tools: &models.VanToolsUpdateNested{Create: []*models.CreateToolInput{{Region: "eu", Name: "made"}}},
+		})
+		uwrWantNested(t, err, models.ErrAlreadyRelated, "Tools", "create", nil)
+		if n := len(vanToolLinks(t, h, van.ID)); n != 0 {
+			t.Errorf("links after create = %d, want 0", n)
+		}
+		tools, err := h.Client.Tools().GetMany(ctx, nil)
+		if err != nil {
+			t.Fatalf("GetMany tools: %v", err)
+		}
+		if len(tools) != 1 {
+			t.Errorf("tools = %d, want 1: the refused create rolls back", len(tools))
+		}
+		if _, err := h.Client.VanTools().Create(ctx, &models.CreateVanToolInput{Region: "EU", VanID: van.ID, ToolID: tool.ID}); err != nil {
+			t.Errorf("Create van tool the foreign keys match case-insensitively: %v", err)
+		}
+	})
+
 	t.Run("connect naming a target holding a partly NULL key is ErrAlreadyRelated naming it", func(t *testing.T) {
 		h.Reset(t)
 		bay := createBay(t, h, "eu")

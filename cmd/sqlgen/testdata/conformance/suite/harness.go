@@ -53,6 +53,9 @@ type Capabilities struct {
 	// CompositeLoadChunk is how many keys of two columns one loader statement
 	// binds (PRD §25.1).
 	CompositeLoadChunk int
+	// CaseInsensitiveText: the conformance schema's plain text columns compare
+	// case-insensitively.
+	CaseInsensitiveText bool
 }
 
 // Capability names one Capabilities field.
@@ -60,6 +63,9 @@ type Capability string
 
 // CapRowLocks is Capabilities.RowLocks.
 const CapRowLocks Capability = "RowLocks"
+
+// CapCaseInsensitiveText is Capabilities.CaseInsensitiveText.
+const CapCaseInsensitiveText Capability = "CaseInsensitiveText"
 
 // Require skips t, naming the capability, when the dialect lacks it.
 func (h *Harness) Require(t *testing.T, c Capability) {
@@ -82,6 +88,8 @@ func (h *Harness) has(c Capability) bool {
 	switch c {
 	case CapRowLocks:
 		return h.Caps.RowLocks
+	case CapCaseInsensitiveText:
+		return h.Caps.CaseInsensitiveText
 	}
 	panic("unknown capability " + string(c))
 }

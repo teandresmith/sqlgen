@@ -129,59 +129,6 @@ M2M loaders bind `[]any`, so they compile, and fail at the driver. Relationship 
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-373
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 32, cmd/sqlgen/gen
-- **Surfaced by:** FIX-366 vet (2026-11-06), filed on the user's yes
-- **Vetted:** corrected at `e48ece8b` plus FIX-366's patch (2026-11-06)
-
-**Issue.** **On a case-insensitive collation, a nested `connect` through a composite key with a string
-member refuses rows the database treats as matching.** Measured on MySQL's default collation, depot region
-`EU`, vans region `eu`: `create van region=eu depot(EU) err=<nil>`, then `re-connect of the row the depot holds
-err=update depot with related: Vans: connect: 1: sqlgen: already related to another row`, and `connect of
-unparented van region=eu to depot EU err=... Vans: connect: 2: sqlgen: already related to another row`. A
-documented no-op and a valid adoption are both refused, loudly, for `connect`. Measured on MySQL 8.0
-(`utf8mb4_0900_ai_ci`), SQLite `TEXT COLLATE NOCASE` and PostgreSQL 16 `CITEXT` alike: the composite no-op,
-the adoption, an `allow_reparent` move and the single-column no-op are all refused. `disconnect`, which compares
-in the database, works. The `depots` and `vans` tables exist only in FIX-366's patch.
-
-**Root cause.** The three-way split compares stringified members in Go, at `nested.go.tmpl:1011` (pinned
-mismatch), `:1016` (composite no-op) and `:1018` (single-column no-op), with the expressions built by
-`resolveNestedOwnerTuple` (`context_nested.go:1114`). Go cannot apply a database collation.
-
-**Suggested fix.**
-- Prototype results, run at `e48ece8b` on 2026-11-06, option A: PRD §9.9.6 paragraph beside §9.5's "Both halves
-  compare values as Go sees them", new row `nested.connect-key-compared-as-go` (mysql), new subtest gated on a
-  new `CapCaseInsensitiveText`. Gates: conformance/mysql `UpdateWithRelated` ok, sqlite skips by capability, suite
-  lint, `make req-check`, `make refs-check` green. Fail-first: under routing (B) the new test fails with `error =
-  <nil>, want sqlgen: already related to another row`; no true before/after pair exists, since A changes no
-  behavior. Golden churn: none. Cut on top of FIX-366, which must land first. Patch:
-  `.claude/prototypes/FIX-373.patch`. Rejected routing option:
-  `/private/tmp/claude-501/-Users-teandresmith-sqlgen/6bed3e18-93e2-46f9-87c1-05edb218fdd4/scratchpad/FIX-373.option-route.patch`.
-- `strings.EqualFold` is rejected: it disagrees with the database both ways (`cafe`=`café` on MySQL) and would
-  report a false no-op on a case-sensitive column.
-- The user ruled on 2026-11-06: option (A) on question 1 and option (a) on question 2, so the §9.9.6 limit paragraph also covers FIX-368's shared-column check. The patch predates question 2's ruling and needs that sentence, and a sentence that a `connect` naming a target's primary key in another case is `ErrNotFound` (measured: `connect: BLUE: sqlgen: resource not found`, stored `blue`), hand-merged with FIX-368's §9.9.6 anchors. FIX-366 lands first.
-  1. How should the split read equality? (A, recommended) A documented limit: +0 statements, no SQL or generated
-     change, no goldens; the refusals stay, loud, with the row untouched, and the error text misleads for a row
-     this parent holds. (B) Route Go mismatches through the adoption and verify read: every case resolves on all
-     three dialects, the refusal path goes from 2 to 4 statements, ~2 lines in tenancy_postgres, but it
-     contradicts §9.9.6's "before the adoption `UPDATE`" and the call succeeds while the returned relationship
-     omits the adopted row, because the loader drops it. (C) A database-computed `CASE WHEN` in the visibility
-     read: +0 statements, but `GetMany` cannot select an expression, so the runtime changes or hooks and tenancy
-     are bypassed; not prototyped. (D) A follow-up read on Go mismatches: +1 per chunk, a new §9.9.7 row, and the
-     same read-back gap as B; not prototyped.
-  2. FIX-368's shared-column check refuses an M2M `connect` HEAD accepts: `m2m connect van EU to tool eu
-     (database FK accepts it): err=[ErrAlreadyRelated]`, on all three dialects. (a, recommended) Accept it under
-     the limit and extend the §9.9.6 paragraph; M2M then matches O2M. (b) On a Go mismatch, read `id IN … AND
-     shared = parent` before refusing: +1 per chunk and a new §9.9.7 row; not prototyped.
-
-**References.**
-- PRD §9.9.3, §9.9.6, §9.9.7. FIX-368.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-374
 
 - **Status:** Open
@@ -308,6 +255,60 @@ mismatch), `:1016` (composite no-op) and `:1018` (single-column no-op), with the
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-373
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 32, cmd/sqlgen/gen
+- **Surfaced by:** FIX-366 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `e48ece8b` plus FIX-366's patch (2026-11-06)
+
+**Issue.** **On a case-insensitive collation, a nested `connect` through a composite key with a string
+member refuses rows the database treats as matching.** Measured on MySQL's default collation, depot region
+`EU`, vans region `eu`: `create van region=eu depot(EU) err=<nil>`, then `re-connect of the row the depot holds
+err=update depot with related: Vans: connect: 1: sqlgen: already related to another row`, and `connect of
+unparented van region=eu to depot EU err=... Vans: connect: 2: sqlgen: already related to another row`. A
+documented no-op and a valid adoption are both refused, loudly, for `connect`. Measured on MySQL 8.0
+(`utf8mb4_0900_ai_ci`), SQLite `TEXT COLLATE NOCASE` and PostgreSQL 16 `CITEXT` alike: the composite no-op,
+the adoption, an `allow_reparent` move and the single-column no-op are all refused. `disconnect`, which compares
+in the database, works. The `depots` and `vans` tables exist only in FIX-366's patch.
+
+**Root cause.** The three-way split compares stringified members in Go, at `nested.go.tmpl:1085` (pinned
+mismatch), `:1090` (composite no-op) and `:1092` (single-column no-op), and FIX-368's M2M shared-column checks at `:699` (`create`) and `:769` (`connect`), with the split's expressions built by
+`resolveNestedOwnerTuple` (`context_nested.go:1142`). Go cannot apply a database collation.
+
+**Suggested fix.**
+- Prototype results, run at `e48ece8b` on 2026-11-06, option A: PRD §9.9.6 paragraph beside §9.5's "Both halves
+  compare values as Go sees them", new row `nested.connect-key-compared-as-go` (mysql), new subtest gated on a
+  new `CapCaseInsensitiveText`. Gates: conformance/mysql `UpdateWithRelated` ok, sqlite skips by capability, suite
+  lint, `make req-check`, `make refs-check` green. Fail-first: under routing (B) the new test fails with `error =
+  <nil>, want sqlgen: already related to another row`; no true before/after pair exists, since A changes no
+  behavior. Golden churn: none. Cut on top of FIX-366, which must land first. Patch:
+  `.claude/prototypes/FIX-373.patch`. Rejected routing option:
+  `/private/tmp/claude-501/-Users-teandresmith-sqlgen/6bed3e18-93e2-46f9-87c1-05edb218fdd4/scratchpad/FIX-373.option-route.patch`.
+- `strings.EqualFold` is rejected: it disagrees with the database both ways (`cafe`=`café` on MySQL) and would
+  report a false no-op on a case-sensitive column.
+- The user ruled on 2026-11-06: option (A) on question 1 and option (a) on question 2, so the §9.9.6 limit paragraph also covers FIX-368's shared-column check. The patch predates question 2's ruling and needs that sentence, and a sentence that a `connect` naming a target's primary key in another case is `ErrNotFound` (measured: `connect: BLUE: sqlgen: resource not found`, stored `blue`), hand-merged with FIX-368's §9.9.6 anchors. FIX-366 lands first.
+  1. How should the split read equality? (A, recommended) A documented limit: +0 statements, no SQL or generated
+     change, no goldens; the refusals stay, loud, with the row untouched, and the error text misleads for a row
+     this parent holds. (B) Route Go mismatches through the adoption and verify read: every case resolves on all
+     three dialects, the refusal path goes from 2 to 4 statements, ~2 lines in tenancy_postgres, but it
+     contradicts §9.9.6's "before the adoption `UPDATE`" and the call succeeds while the returned relationship
+     omits the adopted row, because the loader drops it. (C) A database-computed `CASE WHEN` in the visibility
+     read: +0 statements, but `GetMany` cannot select an expression, so the runtime changes or hooks and tenancy
+     are bypassed; not prototyped. (D) A follow-up read on Go mismatches: +1 per chunk, a new §9.9.7 row, and the
+     same read-back gap as B; not prototyped.
+  2. FIX-368's shared-column check refuses an M2M `connect` HEAD accepts: `m2m connect van EU to tool eu
+     (database FK accepts it): err=[ErrAlreadyRelated]`, on all three dialects. (a, recommended) Accept it under
+     the limit and extend the §9.9.6 paragraph; M2M then matches O2M. (b) On a Go mismatch, read `id IN … AND
+     shared = parent` before refusing: +1 per chunk and a new §9.9.7 row; not prototyped.
+- The user ruled on 2026-11-10: §9.9.6's limit paragraph also covers the M2M nested `create` shared-column check, which compares in Go (measured on MySQL: `Tools: create: sqlgen: already related to another row` for region `eu` on a van with region `EU`).
+
+**References.**
+- PRD §9.9.3, §9.9.6, §9.9.7. FIX-368.
+
+**Resolution notes.** Documented limit, per the 2026-11-06 ruling (option A, and (a) for FIX-368's shared column). No generated or runtime change. PRD §9.9.6 gains a paragraph beside §9.5's "Both halves compare values as Go sees them": the connect split, the pinned check and the M2M shared-column checks on `connect` and `create` compare keys byte for byte, so a case-insensitive collation's case-differing key is `ErrAlreadyRelated`, and a one-to-many `connect` naming a target's primary key in another spelling is `ErrNotFound`. Both new claims measured on MySQL 8.0 before writing: the M2M case by the new subtest (`Tools: connect` refused, `VanTools().Create` with region `EU` and tool `eu` accepted), and the primary-key case by a throwaway string-PK table in a worktree (`connect: BLUE: sqlgen: resource not found`, stored `blue`; `connect blue` ok). New registry row `nested.connect-key-compared-as-go` (mysql), new conformance subtest `UpdateWithRelated/connect or create through a key that differs only in case is ErrAlreadyRelated` gated on new `CapCaseInsensitiveText` (set on MySQL; SQLite, PostgreSQL and postgres_stdlib skip). The prototype applied with `--3way`: the three suite files clean, PRD and registry conflicts hand-merged keeping FIX-369's paragraph and FIX-366's row text, anchors rehashed with `make req-rehash SECTIONS=9.9,9.9.6`. Golden churn: none, as vetted. The primary-key case has no permanent test: the conformance schema has no string-keyed connect target. Verify corrections applied inline: the paragraph's `disconnect`/`clear` sentence now notes FIX-369's Go comparison of a parent-held tenant column, the `ErrNotFound` sentence covers one-to-many only (the only case measured), and the Root cause line refs were moved to HEAD. Per the 2026-11-10 ruling, the paragraph and the row also cover the M2M `create` refusal, and the subtest asserts it with the created tool rolled back. Fail-first: with the generated `Tools` create check disabled in conformance/mysql models, the subtest fails `error = <nil>, want sqlgen: already related to another row`; restored after.
 
 ### FIX-366
 
