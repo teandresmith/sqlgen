@@ -29,7 +29,7 @@
 - **Severity:** tracked
 - **Origin:** phase 6, cmd/sqlgen/gen
 - **Surfaced by:** FIX-363 vet (2026-11-06), filed on the user's yes
-- **Vetted:** corrected at `e48ece8b` plus FIX-363's patch (2026-11-06)
+- **Vetted:** corrected at `0d60d3c9` (2026-11-10)
 
 **Issue.** **A time key on `comparator.ID` is bound as `time.Time.String()` text, which fails or silently
 misses on every dialect.**
@@ -38,27 +38,65 @@ misses on every dialect.**
 - MySQL reads the wall-clock part and ignores the rest, so a key matches only when its zone equals the driver's
   `loc`; otherwise `create stamp: get stamp: sqlgen: resource not found`. `timestamp(6)` fails even when they match.
 - SQLite compares text that never matches: `resource not found` on `Create`, a loader returning `got 1 rows` with
-  no kids (silent wrong data), and a nested `connect` adopting a row gives a false `already related to another
-  row`.
+  no kids (silent wrong data), and a nested `connect` fails. (Re-vet at `0d60d3c9`: the false `already related
+  to another row` no longer shows; the parent's update read-back fails first with `update time_keyed with related:
+  update time_keyed: get time_keyed: sqlgen: resource not found`. Same failure, different message.)
 
-**Root cause.** The first arm of `resolveSimpleComparator` (`cmd/sqlgen/gen/context_table.go:2558`), keyed on
+**Root cause.** The first arm of `resolveSimpleComparator` (`cmd/sqlgen/gen/context_table.go:2564`, key arm at `:2566`), keyed on
 `FKConvert`, puts a time key on `comparator.ID`. PRD §11.2 says that shape "would misclassify `decimal` and `time`
 columns", and its table gives `time.Time` → `Time`, so the code deviates from the PRD.
 
 **Suggested fix.**
-- Prototype results, run at `e48ece8b` with FIX-363's patch on 2026-11-06, option A: `pkComparatorFamily` gains a
-  "Time" arm, `funcPKFilterExpr` and `pkFilterInExpr` emit `comparator.Time` and `NullableTime`, the Time arm moves
-  ahead of the key arm in `resolveSimpleComparator`, SQLite's `types.DateTime` unwraps with `.Time` plus an
-  unexported generated `dateTimeKeys`, and `buildAPIRowKeyMembers` hands GraphQL a `time.Time`. All eight dialect
-  and zone runs give 42 ok (38 on SQLite) with only the `map[time.Time]` connect failures left. Gates: `go test
-  -race -timeout=30m ./gen/... ./cli/...`, sqlite, postgres and mysql examples and lint, `make update-golden`,
-  `make update-golden-e2e`, gofumpt green; the example gates ran with two unrelated go.sum lines present.
-  Fail-first: each site reverted fails `TestTimeKeyComparatorSelection`, `TestTimeKeyFilterExprs`,
-  `TestBuildAPIRowKeys_TimeKeys` or `TestGenerate_TimeKeyBindsAsTime`, and the base generator fails live
-  `TestTimeKeyedRoundTrip` on all three dialects; the existing suite passes without the fix. Golden churn: none from
-  the fix; the `time_keyed` fixture gives postgres +2/~10, mysql +6/~17, sqlite +8/~17 in each of `expected/` and
-  `models/`. Applies on top of FIX-363; checked by reverse apply only. Must not land before the ruling. Patch:
-  `.claude/prototypes/FIX-371.patch` (134 files; the fix is 8 files, +288/-9).
+- Verified fix, option (A), at `0d60d3c9`:
+  - `context_table.go`: `pkComparatorFamily` gains a last arm, `isTimeKeyGoType(base)` → `("Time", "time.Time")`,
+    matching `time.Time` and `types.DateTime` (`sql.NullTime` reaches it through `StdNullUnderlying`). The Time
+    arm in `resolveSimpleComparator` moves ahead of the `FKConvert` key arm.
+  - `funcmap.go`: an explicit `case "Time"` first in `funcPKFilterExpr` (`&comparator.Time{Eq: new(id)}`, or
+    `new(id.Time)` for `types.DateTime`, via FIX-363's `nestedKeyValueExpr`), and an explicit Time branch ahead of
+    the generic one in `pkFilterInExpr` (`&comparator.Time{In: …}`, `&comparator.NullableTime{Time:
+    comparator.Time{In: …}}`, with `dateTimeKeys(…)` for `types.DateTime`).
+  - `context_shared.go`/`orchestrate.go`: `withDateTimeKeys` adds the unexported `dateTimeKeys` helper, gated by
+    `tableHasDateTimeKey`, and keeps the helpers sorted by name.
+  - `context_api.go`: `buildAPIRowKeyMembers(tc, modelsPkg)` gains a `types.DateTime` case that hands GraphQL
+    `time.Time` elements, `.Time` unwraps and `pkFilterInExpr("time.Time", …)`.
+  - PRD §11.2 gains "A time key takes `Time`, not `ID`." Tests: `time_key_internal_test.go`,
+    `time_key_bind_test.go`, and the `time_keyed`/`time_keyed_notes` fixture with `tests/time_key_test.go` in the
+    postgres, mysql and sqlite examples. Composite time members stay supported (a `stamp_tags (stamp_k, tag_id)`
+    probe compiles on all three dialects).
+- Corrected at the re-vet on 2026-11-10 because FIX-370 (`f245cca6`) landed:
+  - Its generic spelling makes a family arm alone emit `&comparator.Time[time.Time]{In: ids}`, which does not
+    compile, since `comparator.Time`/`NullableTime` are plain structs (`comparator/time.go:10`, `:62`). Hence the
+    explicit Time cases.
+  - `buildAPIRowKeyMembers` now derives its filter from `pkFilterInExpr`, so the `types.DateTime` case recomputes
+    it on `time.Time`.
+  - FIX-363's `nestedKeyValueExpr` (`context_nested.go:1811`) is reused instead of a new `timeKeyValueExpr`.
+  - The shared helpers are re-sorted; the old patch's plain append broke the "sorted by name" contract.
+  - The earlier "only the `map[time.Time]` connect failures left" is stale: with the fix, an SQLite connect of an
+    orphan and a re-connect of a held note both give `err=<nil>` in UTC and MST (FIX-363's `.Equal` split).
+    Measured on SQLite only.
+- Prototype results, run at `0d60d3c9` on 2026-11-10:
+  - Reproduction at HEAD, fixture only, `GOWORK=off go test -count=1 -timeout=15m -run TestTimeKeyedRoundTrip
+    ./tests/`: postgres → `iterate time_keyed rows: pgx rows: ERROR: invalid input syntax for type timestamp with
+    time zone: "2026-01-01 20:04:05.123456 -0700 MST" (SQLSTATE 22007)`; mysql and sqlite → `Create: create
+    time_keyed: get time_keyed: sqlgen: resource not found`. A SQLite nested-writes probe: `Get` not found, a
+    loader returning `notes=0` (silent wrong data), `HardDelete` leaving the row, both connects not found.
+  - Gates: `go test -race -count=1 -timeout=30m ./gen/... ./cli/...` ok; gofumpt clean; `make update-golden` no
+    churn; `make update-golden-e2e` PASS (unrelated go.sum lines reverted); postgres, mysql and sqlite examples
+    `go test -race` ok and `golangci-lint` `0 issues.`; live `TestTimeKeyedRoundTrip` ok on all three (MST key).
+  - Fail-first: the `resolveSimpleComparator` arm reverted → `TestTimeKeyComparatorSelection`: `resolveComparatorType()
+    = "*comparator.ID", want "*comparator.Time"`; the `pkComparatorFamily` arm off → `TestTimeKeyFilterExprs`:
+    `funcPKFilterExpr() = "&comparator.ID{Eq: new(id.String())}", want "&comparator.Time{Eq: new(id)}"`; the
+    `pkFilterInExpr` case off → `"&comparator.Time[time.Time]{In: ids}", want "&comparator.Time{In: ids}"`; the
+    `funcPKFilterExpr` case off → `TestGenerate_TimeKeyBindsAsTime`: `cannot use &comparator.ID{…} … as
+    *comparator.Time value`; the DateTime row-key case off → `TestBuildAPIRowKeys_TimeKeys/types.DateTime` fails;
+    `withDateTimeKeys` off → `undefined: dateTimeKeys`; the base generator fails live `TestTimeKeyedRoundTrip` on
+    all three dialects. The existing suite passes without the fix.
+  - Golden churn: from the fix alone, sqlite `shared_types_gen.go` ~1 in each of `expected/` and `models/`. With
+    the fixture: postgres +2/~10, mysql +6/~17, sqlite +8/~17 in each. The fixture without the fix also changes
+    `graph/comparator_translate_gen.go` and `graph/shared_gen.graphqls` in mysql and sqlite; the fix returns them,
+    which is the GraphQL filter-family change the ruling expected.
+  - Patch: `.claude/prototypes/FIX-371.patch` (134 files, +62658/-3859; the fix is 8 files, +293/-9), applies clean
+    at `0d60d3c9`.
 - The user ruled on 2026-11-06: option (A), which the prototype implements. Time and enum keys stay supported, composite members included. The ruling changes public generated surface:
   - (A, recommended, prototyped) Route to `comparator.Time`: `StampFilter.K` goes from `*comparator.ID` to
     `*comparator.Time`, and `KidFilter.StampK` to `*comparator.NullableTime`, with time operands and range
