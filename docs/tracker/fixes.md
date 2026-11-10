@@ -29,7 +29,7 @@
 - **Severity:** tracked
 - **Origin:** phase 6, cmd/sqlgen/gen
 - **Surfaced by:** FIX-363 vet (2026-11-06), filed on the user's yes
-- **Vetted:** corrected at `e48ece8b` (2026-11-06)
+- **Vetted:** corrected at `f36be88e` (2026-11-10)
 
 **Issue.** **A key whose FK differs in width or family from its referenced column breaks generation or
 loads.** Both directions fail to compile on the plain one-column O2M loader: `parent_id bigint REFERENCES kinded
@@ -38,14 +38,18 @@ loads.** Both directions fail to compile on the plain one-column O2M loader: `pa
 &comparator.Number[int64]{…} as *comparator.Number[int32]`. M2M and composite loads compile but fail at runtime on
 a parent key above the FK's range: pgx `unable to encode 4294967301 into binary format for int4 (OID 23)`, lib/pq
 `value "4294967301" is out of range for type integer (22003)`, and one such parent fails the whole load. Under
-`use_pointers: false` nested writers do not compile (`cannot use parent.ID (variable of type int64) as int32
-value`); under the default the edge is dropped by §9.9.4 E1. MySQL 8.0 and 8.4 refuse this DDL (`Error 3780`), so it
+`use_pointers: false` nested writers do not compile (re-vet at `f36be88e`: 6 errors, e.g. `cannot use parent.ID
+(variable of type int32) as int64 value in struct literal` and `invalid operation: cur.Int64 == parent.ID
+(mismatched types int64 and int32)`); under the default the edge is dropped by §9.9.4 E1. MySQL 8.0 and 8.4 refuse this DDL (`Error 3780`), so it
 reaches MySQL only as schema-file input. SQLite differs by storage class (TEXT or REAL FK into INTEGER).
 
-**Root cause.** `get.go.tmpl:474` renders `{{ .FKFieldName }}: {{ pkFilterInExpr .ParentKey $keysVar .FKNullable
-}}`, so the comparator's type comes from the parent key and the filter field's from the FK column. Composite and
+**Root cause.** `get.go.tmpl:474` renders `{{ .FKFieldName }}: {{ pkFilterInExprByGoType (or .FKEnumGoType
+.ParentKey.GoType) $keysVar .FKNullable }}` (FIX-370; line 432 converts each parent key to `FKEnumGoType` for MySQL
+per-column enums), so the comparator's type comes from the parent key and the filter field's from the FK column. Composite and
 M2M loaders bind `[]any`, so they compile, and fail at the driver. Relationship filters are SQL-only and correct.
-`nestedAssignExpr` builds `sql.NullInt32{Int32: parent.ID}` without checking the type.
+`nestedAssignExpr` passes `nestedKeyValueExpr(pkGoType, parentExpr)` (FIX-371) into `sql.NullInt32{Int32: …}`
+without checking the type; HEAD also builds `types.NullDateTime{Time: parent.T}` from a string parent key (same
+root cause, same site).
 
 **Suggested fix.**
 - `wireKeyedLoad` routes an edge through the existing keyed loader when `comparatorsDiffer`, on O2M, has-one and
@@ -62,17 +66,48 @@ M2M loaders bind `[]any`, so they compile, and fail at the driver. Relationship 
 - Auto-accepted the recommended option on 2026-11-06 (`/fix` auto-accept rule): a parent key an integer FK cannot
   hold → skip it and load no children, because gates are green, its only golden effect is a shared comment, it adds
   no public surface, and it extends §13.3's NULL rule. Such a parent has no children, so the result is correct.
-- Prototype results, run at `e48ece8b` on 2026-11-06: reproduced at HEAD on Postgres pgx (5 compile errors), MySQL
-  file-only (3), SQLite family mismatch (5), and the runtime errors above. Gates: `go test -race ./gen/`, examples
-  postgres, postgres_stdlib, sqlite, tenancy_postgres and lint, `TestE2EGoldenFiles`, `make req-check`, `make
-  refs-check` green, some before final test-only or comment edits. Fail-first: reverting the O2M route, the M2M
-  routes, the guard, float bucketing and the nested check each fails its case in
-  `TestGetTemplate_fkComparatorDiffersFromParentKey`, `TestGetTemplate_keyWiderThanFKStaysOutOfTheLoad` or
-  `TestNestedEligibility_nullWrapperOfAnotherWidth`; the existing suite passes without the fix. Golden churn:
-  postgres +6/~10, postgres_stdlib +0/~4, sqlite +12/~18, all fixture tables; tenancy_postgres +0/~1, comment text
-  only, across 10 loaders. No existing edge changed its loader. `comparatorsDiffer` reads `pkComparatorFamily`, so
-  recheck it after FIX-370 and FIX-371. Patch: `.claude/prototypes/FIX-372.patch` (116 files; 14 source, tests,
-  fixtures and docs, the rest generated, so regenerate).
+- Corrected at the re-vet on 2026-11-10, because FIX-370 (`f245cca6`) and FIX-371 (`f36be88e`) landed:
+  - `comparatorsDiffer` treats two enums as matching, so FIX-370's `FKEnumGoType` conversion keeps MySQL per-column
+    enums on the plain list. Without it `TestGenerate_EnumKeysCompile/mysql/stdlib` fails: `generated code does not
+    contain "thingIDs[idx] = ChildrenThingKindEnum(t.Kind)"`. Time needs no exemption: its family param is fixed at
+    `time.Time`, so timestamptz/timestamp and date/timestamptz still match (output byte-identical to HEAD).
+  - The nested check is `nullWrapperHolds`: the database/sql wrappers plus `types.NullDateTime`, `uuid.NullUUID` and
+    `decimal.NullDecimal`, reading a `types.DateTime` key as `time.Time`, and never refusing user-declared wrappers.
+  - The PRD sentence and conformance row say enums convert. Conformance and schema hunks keep FIX-371's `time_keyed`
+    fixture and the expanded `gen.nested.e1-target-shape` row.
+- Auto-accepted the recommended option on 2026-11-10 (`/fix` auto-accept rule): a SQLite Time key next to an FK of
+  another storage class (DATETIME PK with TEXT FK, or the reverse) stays off the tuple loader and keeps HEAD's
+  compile error. Gates are green, no fixture has the pair so there is no golden difference, no public surface, and
+  no PRD behavior is reversed. Routing it keyed (prototyped, measured) compiles but loads 0 children in both
+  directions, silently, because the parent keys as `types.DateTime.String()` (`2024-01-02 03:04:05 +0000 UTC`) while
+  the TEXT FK stores `2024-01-02 03:04:05`. Making the pair correct needs a canonical-spelling decision at a
+  different site, so it is a candidate FIX, not part of this one.
+- Prototype results, run at `f36be88e` on 2026-11-10:
+  - Reproduction (throwaway `cli/zz_probe_keymismatch_test.go`, generate then `go build -gcflags=-e ./...`): pg pgx
+    ints 2 errors (`cannot use &comparator.Number[int64]{…} … as *comparator.Number[int32]`, `&comparator.NullableNumber[int32]{…}
+    … as *comparator.NullableNumber[int64]`); pgx `use_pointers: false` 8; pg stdlib 2; mysql file-only 2; sqlite
+    families 3 (`&comparator.ID{…} … as *comparator.Number[int64]`); pg enum PK with a text FK 2
+    (`&comparator.NullableEnum[KindT]{…} … as *comparator.NullableID`); sqlite DATETIME PK with TEXT FK 8. MySQL
+    per-column enum and pg timestamptz/timestamp compile at HEAD. Runtime with the guard removed: postgres `failed
+    to encode args[2]: unable to encode 4294967301 into binary format for int4 (OID 23)`; postgres_stdlib `pq: value
+    "4294967301" is out of range for type integer (22003)`. The MySQL `Error 3780` refusal was not re-measured.
+  - Gates: `go test -race ./gen/` ok (twice); `SQLGEN_BUILD_GENERATED=1 go test -run
+    'TestGenerate_EnumKeysCompile|TestGenerate_TimeFKNestedWritersCompile' ./cli/` ok; `go test -short ./cli/` ok;
+    `TestE2EGoldenFiles` ok; postgres, postgres_stdlib, sqlite `go test -race` ok and `golangci-lint` 0 issues;
+    tenancy, tenancy_mysql, tenancy_postgres, mysql `go vet` clean; `make req-check`, `make refs-check` ok.
+  - Fail-first: O2M route reverted → `TestGetTemplate_fkComparatorDiffersFromParentKey` (`smalls: the key went
+    through the child's filter`); M2M routes → `TestGetTemplate_keyWiderThanFKStaysOutOfTheLoad/m2m` (`missing "if
+    !(int64(int32(b.ID)) == b.ID) {"`); fit guard → o2m, m2m, composite_member and float_parent cases; float
+    bucketing → `float_parent` and sqlite `TestKeyClass_loadsAcrossComparators` (`1000000: {1, -1, +0}`); enum
+    exemption → `TestGetTemplate_keyComparatorFamilies/mysql_per-column_enums` (`tuple loader = true, want false`);
+    Time carve-out → `.../sqlite_datetime_next_to_text`; nested check → `TestNestedAssignExpr_NullWrapperValue`
+    (`nestedAssignExpr("omittable.Value[sql.NullInt32]", "int64") = "omittable.Set(sql.NullInt32{Int32: parent.K,
+    Valid: true})", want ""`) and `TestNestedEligibility_nullWrapperOfAnotherWidth`. The existing suite passes
+    without the fix.
+  - Golden churn: postgres +6/~10, postgres_stdlib +0/~4, sqlite +12/~18 (fixture tables); tenancy, tenancy_mysql and
+    tenancy_postgres +0/~1 each, comment text only; mysql none. No existing edge changed its loader.
+  - Patch: `.claude/prototypes/FIX-372.patch` (121 files, +98744/-2648; 15 source, tests, fixtures and docs, +754/-10;
+    the rest generated, so regenerate). Applies clean at `f36be88e`.
 
 **References.**
 - PRD §5.3, §11.1, §13.3, §9.9.4 (E1).
