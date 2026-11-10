@@ -660,6 +660,136 @@ func translateUpdateDocumentRequest(in gqlmodel.UpdateDocumentInput) sqlgenresol
 	return out
 }
 
+// translateCreateKeyClassChildInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateKeyClassChildInput(in gqlmodel.CreateKeyClassChildInput) *models.CreateKeyClassChildInput {
+	out := &models.CreateKeyClassChildInput{}
+	if in.ParentID != nil {
+		out.ParentID = omittable.Set(in.ParentID)
+	}
+
+	return out
+}
+
+// translateUpdateKeyClassChildInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateKeyClassChildRequest
+// carries them to the resolver.
+func translateUpdateKeyClassChildInput(in gqlmodel.UpdateKeyClassChildInput) *models.UpdateKeyClassChildInput {
+	out := &models.UpdateKeyClassChildInput{}
+	if val, ok := in.ParentID.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.ParentID.Get()
+			out.ParentID = omittable.Set(zero)
+		} else {
+			out.ParentID = omittable.Set(val)
+		}
+	}
+	return out
+}
+
+// hasUpdateKeyClassChildSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateKeyClassChildSetFields(in gqlmodel.UpdateKeyClassChildInput) bool {
+	if in.ParentID.IsSet() {
+		return true
+	}
+	return false
+}
+
+// translateUpdateKeyClassChildRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateKeyClassChildInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateKeyClassChildRequest(in gqlmodel.UpdateKeyClassChildInput) sqlgenresolver.UpdateKeyClassChildRequest {
+	out := sqlgenresolver.UpdateKeyClassChildRequest{
+		Set:    translateUpdateKeyClassChildInput(in),
+		HasSet: hasUpdateKeyClassChildSetFields(in),
+	}
+	return out
+}
+
+// translateCreateKeyClassRealChildInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateKeyClassRealChildInput(in gqlmodel.CreateKeyClassRealChildInput) *models.CreateKeyClassRealChildInput {
+	out := &models.CreateKeyClassRealChildInput{}
+	if in.ParentID != nil {
+		out.ParentID = omittable.Set(in.ParentID)
+	}
+
+	return out
+}
+
+// translateUpdateKeyClassRealChildInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateKeyClassRealChildRequest
+// carries them to the resolver.
+func translateUpdateKeyClassRealChildInput(in gqlmodel.UpdateKeyClassRealChildInput) *models.UpdateKeyClassRealChildInput {
+	out := &models.UpdateKeyClassRealChildInput{}
+	if val, ok := in.ParentID.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.ParentID.Get()
+			out.ParentID = omittable.Set(zero)
+		} else {
+			out.ParentID = omittable.Set(val)
+		}
+	}
+	return out
+}
+
+// hasUpdateKeyClassRealChildSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateKeyClassRealChildSetFields(in gqlmodel.UpdateKeyClassRealChildInput) bool {
+	if in.ParentID.IsSet() {
+		return true
+	}
+	return false
+}
+
+// translateUpdateKeyClassRealChildRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateKeyClassRealChildInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateKeyClassRealChildRequest(in gqlmodel.UpdateKeyClassRealChildInput) sqlgenresolver.UpdateKeyClassRealChildRequest {
+	out := sqlgenresolver.UpdateKeyClassRealChildRequest{
+		Set:    translateUpdateKeyClassRealChildInput(in),
+		HasSet: hasUpdateKeyClassRealChildSetFields(in),
+	}
+	return out
+}
+
 // translateCreateOrderInput maps a gqlgen-generated input value
 // onto the consumer model's Create<Table>Input. The body shape per field
 // depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×

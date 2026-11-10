@@ -10635,8 +10635,9 @@ func (c *cycleClient) loadRelationships(ctx context.Context, conn database.Queri
 
 	if fo.Tasks != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			cycleKeyed := make([]*Cycle, 0, len(cycles))
 			cycleKeys := make([][]any, 0, len(cycles))
 			for _, c := range cycles {
@@ -14310,8 +14311,9 @@ func (c *labelClient) loadRelationships(ctx context.Context, conn database.Queri
 
 	if fo.Tasks != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			labelKeyed := make([]*Label, 0, len(labels))
 			labelKeys := make([][]any, 0, len(labels))
 			for _, l := range labels {
@@ -14451,8 +14453,9 @@ func (c *labelClient) loadRelationships(ctx context.Context, conn database.Queri
 
 	if fo.Templates != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			labelKeyed := make([]*Label, 0, len(labels))
 			labelKeys := make([][]any, 0, len(labels))
 			for _, l := range labels {
@@ -21156,8 +21159,9 @@ func (c *milestoneClient) loadRelationships(ctx context.Context, conn database.Q
 
 	if fo.Checkpoints != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			milestoneKeyed := make([]*Milestone, 0, len(milestones))
 			milestoneKeys := make([][]any, 0, len(milestones))
 			for _, m := range milestones {
@@ -27605,8 +27609,9 @@ func (c *projectClient) loadRelationships(ctx context.Context, conn database.Que
 
 	if fo.Tasks != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			projectKeyed := make([]*Project, 0, len(projects))
 			projectKeys := make([][]any, 0, len(projects))
 			for _, p := range projects {
@@ -30219,8 +30224,9 @@ func (c *reviewerClient) loadRelationships(ctx context.Context, conn database.Qu
 
 	if fo.Tasks != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			reviewerKeyed := make([]*Reviewer, 0, len(reviewers))
 			reviewerKeys := make([][]any, 0, len(reviewers))
 			for _, r := range reviewers {
@@ -33828,8 +33834,9 @@ func (c *sharedGuardianClient) loadRelationships(ctx context.Context, conn datab
 
 	if fo.SharedKids != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			sharedGuardianKeyed := make([]*SharedGuardian, 0, len(sharedGuardians))
 			sharedGuardianKeys := make([][]any, 0, len(sharedGuardians))
 			for _, s := range sharedGuardians {
@@ -40345,8 +40352,9 @@ func (c *sharedParentClient) loadRelationships(ctx context.Context, conn databas
 
 	if fo.SharedKids != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			sharedParentKeyed := make([]*SharedParent, 0, len(sharedParents))
 			sharedParentKeys := make([][]any, 0, len(sharedParents))
 			for _, s := range sharedParents {
@@ -46797,8 +46805,9 @@ func (c *sprintClient) loadRelationships(ctx context.Context, conn database.Quer
 
 	if fo.Tasks != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			sprintKeyed := make([]*Sprint, 0, len(sprints))
 			sprintKeys := make([][]any, 0, len(sprints))
 			for _, s := range sprints {
@@ -50435,8 +50444,9 @@ func (c *stampClient) loadRelationships(ctx context.Context, conn database.Queri
 
 	if fo.Templates != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			stampKeyed := make([]*Stamp, 0, len(stamps))
 			stampKeys := make([][]any, 0, len(stamps))
 			for _, s := range stamps {
@@ -60640,8 +60650,9 @@ func (c *taskClient) loadRelationships(ctx context.Context, conn database.Querie
 
 	if fo.Labels != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			taskKeyed := make([]*Task, 0, len(tasks))
 			taskKeys := make([][]any, 0, len(tasks))
 			for _, t := range tasks {
@@ -60781,8 +60792,9 @@ func (c *taskClient) loadRelationships(ctx context.Context, conn database.Querie
 
 	if fo.Reviewers != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			taskKeyed := make([]*Task, 0, len(tasks))
 			taskKeys := make([][]any, 0, len(tasks))
 			for _, t := range tasks {
@@ -75301,8 +75313,9 @@ func (c *templateClient) loadRelationships(ctx context.Context, conn database.Qu
 
 	if fo.TemplateNotes != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			templateKeyed := make([]*Template, 0, len(templates))
 			templateKeys := make([][]any, 0, len(templates))
 			for _, t := range templates {
@@ -75373,8 +75386,9 @@ func (c *templateClient) loadRelationships(ctx context.Context, conn database.Qu
 
 	if fo.TemplateSteps != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			templateKeyed := make([]*Template, 0, len(templates))
 			templateKeys := make([][]any, 0, len(templates))
 			for _, t := range templates {
@@ -75442,8 +75456,9 @@ func (c *templateClient) loadRelationships(ctx context.Context, conn database.Qu
 
 	if fo.Labels != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			templateKeyed := make([]*Template, 0, len(templates))
 			templateKeys := make([][]any, 0, len(templates))
 			for _, t := range templates {
@@ -75583,8 +75598,9 @@ func (c *templateClient) loadRelationships(ctx context.Context, conn database.Qu
 
 	if fo.Stamps != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			templateKeyed := make([]*Template, 0, len(templates))
 			templateKeys := make([][]any, 0, len(templates))
 			for _, t := range templates {
@@ -85195,8 +85211,9 @@ func (c *zoneClient) loadRelationships(ctx context.Context, conn database.Querie
 
 	if fo.Plots != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			zoneKeyed := make([]*Zone, 0, len(zones))
 			zoneKeys := make([][]any, 0, len(zones))
 			for _, z := range zones {
@@ -85267,8 +85284,9 @@ func (c *zoneClient) loadRelationships(ctx context.Context, conn database.Querie
 
 	if fo.Sites != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			zoneKeyed := make([]*Zone, 0, len(zones))
 			zoneKeys := make([][]any, 0, len(zones))
 			for _, z := range zones {

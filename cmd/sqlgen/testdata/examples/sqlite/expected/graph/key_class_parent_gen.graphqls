@@ -1,0 +1,57 @@
+"""
+KeyClassParent corresponds to the key_class_parents table.
+"""
+type KeyClassParent {
+  "id"
+  id: Int!
+  "one-to-many relationship with the key_class_children table."
+  keyClassChildren: [KeyClassChild!]!
+  "one-to-many relationship with the key_class_real_children table."
+  keyClassRealChildren: [KeyClassRealChild!]!
+}
+
+type KeyClassParentConnection {
+  edges:      [KeyClassParentEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type KeyClassParentEdge {
+  node:   KeyClassParent!
+  cursor: String!
+}
+
+type KeyClassParentListResult {
+  items:      [KeyClassParent!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input KeyClassParentFilter {
+  keyClassChildren: KeyClassChildFilter
+  keyClassRealChildren: KeyClassRealChildFilter
+  and: [KeyClassParentFilter!]
+  or:  [KeyClassParentFilter!]
+}
+
+enum KeyClassParentSortField {
+  ID
+}
+
+input KeyClassParentSort {
+  field:     KeyClassParentSortField!
+  direction: SortDirection!
+}
+
+extend type Query {
+  keyClassParent(id: Int!): KeyClassParent
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to keyClassParentList instead."
+  keyClassParents(filter: KeyClassParentFilter, first: Int, after: String, last: Int, before: String): KeyClassParentConnection!
+  keyClassParentList(filter: KeyClassParentFilter, sort: [KeyClassParentSort!], limit: Int, offset: Int): KeyClassParentListResult!
+}
+
+extend type Mutation {
+  deleteKeyClassParent(id: Int!): Boolean!
+}

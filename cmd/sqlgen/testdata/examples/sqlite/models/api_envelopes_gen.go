@@ -66,6 +66,18 @@ type DocumentConnection = Connection[Document]
 type DocumentEdge = Edge[Document]
 type DocumentListResult = PaginateResult[Document]
 
+type KeyClassChildConnection = Connection[KeyClassChild]
+type KeyClassChildEdge = Edge[KeyClassChild]
+type KeyClassChildListResult = PaginateResult[KeyClassChild]
+
+type KeyClassParentConnection = Connection[KeyClassParent]
+type KeyClassParentEdge = Edge[KeyClassParent]
+type KeyClassParentListResult = PaginateResult[KeyClassParent]
+
+type KeyClassRealChildConnection = Connection[KeyClassRealChild]
+type KeyClassRealChildEdge = Edge[KeyClassRealChild]
+type KeyClassRealChildListResult = PaginateResult[KeyClassRealChild]
+
 type KeyOnlyRowConnection = Connection[KeyOnlyRow]
 type KeyOnlyRowEdge = Edge[KeyOnlyRow]
 type KeyOnlyRowListResult = PaginateResult[KeyOnlyRow]

@@ -441,6 +441,106 @@ func documentSortFieldToColumn(f gqlmodel.DocumentSortField) string {
 	return ""
 }
 
+// translateKeyClassChildSort converts a gqlgen-generated
+// []*KeyClassChildSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateKeyClassChildSort(in []*gqlmodel.KeyClassChildSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    keyClassChildSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// keyClassChildSortFieldToColumn resolves a gqlgen
+// KeyClassChildSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func keyClassChildSortFieldToColumn(f gqlmodel.KeyClassChildSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	case "PARENT_ID":
+		return "parent_id"
+	}
+	return ""
+}
+
+// translateKeyClassParentSort converts a gqlgen-generated
+// []*KeyClassParentSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateKeyClassParentSort(in []*gqlmodel.KeyClassParentSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    keyClassParentSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// keyClassParentSortFieldToColumn resolves a gqlgen
+// KeyClassParentSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func keyClassParentSortFieldToColumn(f gqlmodel.KeyClassParentSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	}
+	return ""
+}
+
+// translateKeyClassRealChildSort converts a gqlgen-generated
+// []*KeyClassRealChildSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateKeyClassRealChildSort(in []*gqlmodel.KeyClassRealChildSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    keyClassRealChildSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// keyClassRealChildSortFieldToColumn resolves a gqlgen
+// KeyClassRealChildSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func keyClassRealChildSortFieldToColumn(f gqlmodel.KeyClassRealChildSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	case "PARENT_ID":
+		return "parent_id"
+	}
+	return ""
+}
+
 // translateKeyOnlyRowSort converts a gqlgen-generated
 // []*KeyOnlyRowSort into a []sql.Sort. nil / empty input returns nil
 // so the caller's "no sort" path is preserved.

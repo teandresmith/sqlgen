@@ -1831,9 +1831,10 @@ type JunctionColumnContext struct {
 }
 
 // KeyedLoad reports that the edge loads by key tuples: its key has several
-// columns on some side, or a referenced column that can hold a NULL, which the
-// one-column loader's plain list cannot skip. Every other edge keeps that
-// loader.
+// columns on some side, a referenced column that can hold a NULL, which the
+// one-column loader's plain list cannot skip, or an FK column whose comparator
+// differs from the referenced column's, which that list cannot fill. Every
+// other edge keeps that loader.
 func (r RelationshipContext) KeyedLoad() bool {
 	return len(r.LoadKey) > 0
 }

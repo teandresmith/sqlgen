@@ -2005,6 +2005,454 @@ func (m *M) DeleteDocument(ctx context.Context, id int) (bool, error) {
 	return true, nil
 }
 
+// KeyClassChild resolves the single-by-PK query for key_class_children.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) KeyClassChild(ctx context.Context, id int) (*models.KeyClassChild, error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	res, err := q.Client.KeyClassChildren().Get(ctx, int64(id), func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// KeyClassChildren resolves the cursor-paginated Connection query for key_class_children.
+func (q *Q) KeyClassChildren(ctx context.Context, filter *models.KeyClassChildFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.KeyClassChild], error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	res, err := q.Client.KeyClassChildren().Connection(ctx, models.ConnectionInput[models.KeyClassChildFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// KeyClassChildList resolves the offset-paginated ListResult query for key_class_children.
+func (q *Q) KeyClassChildList(ctx context.Context, filter *models.KeyClassChildFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.KeyClassChild], error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.KeyClassChildFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.KeyClassChildren().Paginate(ctx, in, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateKeyClassChild resolves the single-row create mutation for key_class_children.
+func (m *M) CreateKeyClassChild(ctx context.Context, input *models.CreateKeyClassChildInput) (*models.KeyClassChild, error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassChildren().Create(ctx, input, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateKeyClassChildren resolves the bulk create mutation for key_class_children.
+func (m *M) CreateKeyClassChildren(ctx context.Context, inputs []*models.CreateKeyClassChildInput) ([]*models.KeyClassChild, error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassChildren().CreateMany(ctx, inputs, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateKeyClassChildRequest is one updateKeyClassChild /
+// updateKeyClassChildren input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateKeyClassChildRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateKeyClassChildInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateKeyClassChild resolves the single-row update mutation for key_class_children.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateKeyClassChild(ctx context.Context, id int, input UpdateKeyClassChildRequest) (*models.KeyClassChild, error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.KeyClassChildren().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.KeyClassChildren().Get(ctx, int64(id), func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateKeyClassChildren resolves the bulk update-where mutation for key_class_children.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateKeyClassChildren(ctx context.Context, filter *models.KeyClassChildFilter, input UpdateKeyClassChildRequest) ([]*models.KeyClassChild, error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassChildren().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertKeyClassChild resolves the single-row upsert mutation for key_class_children.
+func (m *M) UpsertKeyClassChild(ctx context.Context, input *models.CreateKeyClassChildInput) (*models.KeyClassChild, error) {
+	fo := keyClassChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassChildren().Upsert(ctx, input, models.KeyClassChildConflictPK, func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteKeyClassChild resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteKeyClassChild(ctx context.Context, id int) (bool, error) {
+	if err := m.Client.KeyClassChildren().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.KeyClassChildFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.KeyClassChildFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// KeyClassParent resolves the single-by-PK query for key_class_parents.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) KeyClassParent(ctx context.Context, id int) (*models.KeyClassParent, error) {
+	fo := keyClassParentFieldOptionsFromContext(ctx)
+	res, err := q.Client.KeyClassParents().Get(ctx, int64(id), func(o *models.CallOptions[models.KeyClassParentFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassParentFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// KeyClassParents resolves the cursor-paginated Connection query for key_class_parents.
+func (q *Q) KeyClassParents(ctx context.Context, filter *models.KeyClassParentFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.KeyClassParent], error) {
+	fo := keyClassParentFieldOptionsFromContext(ctx)
+	res, err := q.Client.KeyClassParents().Connection(ctx, models.ConnectionInput[models.KeyClassParentFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.KeyClassParentFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassParentFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// KeyClassParentList resolves the offset-paginated ListResult query for key_class_parents.
+func (q *Q) KeyClassParentList(ctx context.Context, filter *models.KeyClassParentFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.KeyClassParent], error) {
+	fo := keyClassParentFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.KeyClassParentFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.KeyClassParents().Paginate(ctx, in, func(o *models.CallOptions[models.KeyClassParentFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassParentFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteKeyClassParent resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteKeyClassParent(ctx context.Context, id int) (bool, error) {
+	if err := m.Client.KeyClassParents().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.KeyClassParentFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.KeyClassParentFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// KeyClassRealChild resolves the single-by-PK query for key_class_real_children.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) KeyClassRealChild(ctx context.Context, id int) (*models.KeyClassRealChild, error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	res, err := q.Client.KeyClassRealChildren().Get(ctx, int64(id), func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// KeyClassRealChildren resolves the cursor-paginated Connection query for key_class_real_children.
+func (q *Q) KeyClassRealChildren(ctx context.Context, filter *models.KeyClassRealChildFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.KeyClassRealChild], error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	res, err := q.Client.KeyClassRealChildren().Connection(ctx, models.ConnectionInput[models.KeyClassRealChildFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// KeyClassRealChildList resolves the offset-paginated ListResult query for key_class_real_children.
+func (q *Q) KeyClassRealChildList(ctx context.Context, filter *models.KeyClassRealChildFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.KeyClassRealChild], error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.KeyClassRealChildFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.KeyClassRealChildren().Paginate(ctx, in, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateKeyClassRealChild resolves the single-row create mutation for key_class_real_children.
+func (m *M) CreateKeyClassRealChild(ctx context.Context, input *models.CreateKeyClassRealChildInput) (*models.KeyClassRealChild, error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassRealChildren().Create(ctx, input, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateKeyClassRealChildren resolves the bulk create mutation for key_class_real_children.
+func (m *M) CreateKeyClassRealChildren(ctx context.Context, inputs []*models.CreateKeyClassRealChildInput) ([]*models.KeyClassRealChild, error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassRealChildren().CreateMany(ctx, inputs, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateKeyClassRealChildRequest is one updateKeyClassRealChild /
+// updateKeyClassRealChildren input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateKeyClassRealChildRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateKeyClassRealChildInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateKeyClassRealChild resolves the single-row update mutation for key_class_real_children.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateKeyClassRealChild(ctx context.Context, id int, input UpdateKeyClassRealChildRequest) (*models.KeyClassRealChild, error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.KeyClassRealChildren().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.KeyClassRealChildren().Get(ctx, int64(id), func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateKeyClassRealChildren resolves the bulk update-where mutation for key_class_real_children.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateKeyClassRealChildren(ctx context.Context, filter *models.KeyClassRealChildFilter, input UpdateKeyClassRealChildRequest) ([]*models.KeyClassRealChild, error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassRealChildren().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertKeyClassRealChild resolves the single-row upsert mutation for key_class_real_children.
+func (m *M) UpsertKeyClassRealChild(ctx context.Context, input *models.CreateKeyClassRealChildInput) (*models.KeyClassRealChild, error) {
+	fo := keyClassRealChildFieldOptionsFromContext(ctx)
+	res, err := m.Client.KeyClassRealChildren().Upsert(ctx, input, models.KeyClassRealChildConflictPK, func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteKeyClassRealChild resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteKeyClassRealChild(ctx context.Context, id int) (bool, error) {
+	if err := m.Client.KeyClassRealChildren().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.KeyClassRealChildFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.KeyClassRealChildFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
 // KeyOnlyRow resolves the single-by-PK query for key_only_rows.
 // <table>(id) returns null when missing — no separate exists query is
 // needed. ErrNotFound is collapsed to (nil, nil) so the nullable

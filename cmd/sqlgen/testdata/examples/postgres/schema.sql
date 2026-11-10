@@ -480,3 +480,39 @@ CREATE TABLE time_keyed_notes (
     keyed_at TIMESTAMPTZ REFERENCES time_keyed (at),
     note TEXT NOT NULL
 );
+
+-- Foreign keys of another width than the column they reference. PostgreSQL
+-- accepts them, so each loader has to bind a parent key into a column of
+-- another Go type, and a parent too wide for the column has no children.
+CREATE TABLE width_smalls (
+    id INTEGER PRIMARY KEY,
+    scope BIGINT NOT NULL,
+    UNIQUE (scope, id)
+);
+
+CREATE TABLE width_bigs (
+    id BIGINT PRIMARY KEY
+);
+
+CREATE TABLE width_wide_children (
+    id BIGSERIAL PRIMARY KEY,
+    small_id BIGINT REFERENCES width_smalls(id)
+);
+
+CREATE TABLE width_narrow_children (
+    id BIGSERIAL PRIMARY KEY,
+    big_id INTEGER NOT NULL REFERENCES width_bigs(id)
+);
+
+CREATE TABLE width_links (
+    small_id BIGINT NOT NULL REFERENCES width_smalls(id),
+    big_id INTEGER NOT NULL REFERENCES width_bigs(id),
+    PRIMARY KEY (small_id, big_id)
+);
+
+CREATE TABLE width_scoped_children (
+    id BIGSERIAL PRIMARY KEY,
+    scope INTEGER NOT NULL,
+    small_id BIGINT NOT NULL,
+    FOREIGN KEY (scope, small_id) REFERENCES width_smalls(scope, id)
+);

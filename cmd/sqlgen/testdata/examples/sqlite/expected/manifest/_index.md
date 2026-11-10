@@ -21,6 +21,9 @@ Features: audit_columns, graphql, soft_delete, views
 | CategoryStat | `category_stats` | view | [category_stat.md](category_stat.md) |  |
 | DigitLeadingColumn | `digit_leading_columns` | table | [digit_leading_column.md](digit_leading_column.md) |  |
 | Document | `documents` | table | [document.md](document.md) |  |
+| KeyClassChild | `key_class_children` | table | [key_class_child.md](key_class_child.md) |  |
+| KeyClassParent | `key_class_parents` | table | [key_class_parent.md](key_class_parent.md) |  |
+| KeyClassRealChild | `key_class_real_children` | table | [key_class_real_child.md](key_class_real_child.md) |  |
 | KeyOnlyRow | `key_only_rows` | table | [key_only_row.md](key_only_row.md) |  |
 | Order | `orders` | table | [order.md](order.md) |  |
 | OrderItem | `order_items` | table | [order_item.md](order_item.md) |  |

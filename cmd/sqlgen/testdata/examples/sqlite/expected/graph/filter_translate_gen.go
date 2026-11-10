@@ -481,6 +481,108 @@ func translateDocumentFilter(in *gqlmodel.DocumentFilter) *models.DocumentFilter
 	return out
 }
 
+// translateKeyClassChildFilter converts the gqlgen-generated
+// KeyClassChildFilter into a *models.KeyClassChildFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateKeyClassChildFilter(in *gqlmodel.KeyClassChildFilter) *models.KeyClassChildFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.KeyClassChildFilter{}
+	if in.ParentID != nil {
+		out.ParentID = translateNullableIDComparator(in.ParentID)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.KeyClassChildFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateKeyClassChildFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.KeyClassChildFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateKeyClassChildFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateKeyClassParentFilter converts the gqlgen-generated
+// KeyClassParentFilter into a *models.KeyClassParentFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateKeyClassParentFilter(in *gqlmodel.KeyClassParentFilter) *models.KeyClassParentFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.KeyClassParentFilter{}
+	if in.KeyClassChildren != nil {
+		out.KeyClassChildren = translateKeyClassChildFilter(in.KeyClassChildren)
+	}
+	if in.KeyClassRealChildren != nil {
+		out.KeyClassRealChildren = translateKeyClassRealChildFilter(in.KeyClassRealChildren)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.KeyClassParentFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateKeyClassParentFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.KeyClassParentFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateKeyClassParentFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateKeyClassRealChildFilter converts the gqlgen-generated
+// KeyClassRealChildFilter into a *models.KeyClassRealChildFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateKeyClassRealChildFilter(in *gqlmodel.KeyClassRealChildFilter) *models.KeyClassRealChildFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.KeyClassRealChildFilter{}
+	if in.ParentID != nil {
+		out.ParentID = translateNullableNumericComparatorFloat64(in.ParentID)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.KeyClassRealChildFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateKeyClassRealChildFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.KeyClassRealChildFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateKeyClassRealChildFilter(sub))
+		}
+	}
+	return out
+}
+
 // translateKeyOnlyRowFilter converts the gqlgen-generated
 // KeyOnlyRowFilter into a *models.KeyOnlyRowFilter.
 // Returns nil when the input is nil so the model layer's "nil filter ⇒ no

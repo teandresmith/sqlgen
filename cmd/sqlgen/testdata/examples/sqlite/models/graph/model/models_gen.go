@@ -213,6 +213,14 @@ type CreateDocumentInput struct {
 	CreatedAt  *types.DateTime `json:"createdAt,omitempty"`
 }
 
+type CreateKeyClassChildInput struct {
+	ParentID *string `json:"parentID,omitempty"`
+}
+
+type CreateKeyClassRealChildInput struct {
+	ParentID *float64 `json:"parentID,omitempty"`
+}
+
 type CreateOrderInput struct {
 	UserID    int             `json:"userID"`
 	Status    *string         `json:"status,omitempty"`
@@ -366,6 +374,40 @@ type DocumentSort struct {
 	Direction SortDirection     `json:"direction"`
 }
 
+type KeyClassChildFilter struct {
+	ParentID *NullableIDComparator  `json:"parentID,omitempty"`
+	And      []*KeyClassChildFilter `json:"and,omitempty"`
+	Or       []*KeyClassChildFilter `json:"or,omitempty"`
+}
+
+type KeyClassChildSort struct {
+	Field     KeyClassChildSortField `json:"field"`
+	Direction SortDirection          `json:"direction"`
+}
+
+type KeyClassParentFilter struct {
+	KeyClassChildren     *KeyClassChildFilter     `json:"keyClassChildren,omitempty"`
+	KeyClassRealChildren *KeyClassRealChildFilter `json:"keyClassRealChildren,omitempty"`
+	And                  []*KeyClassParentFilter  `json:"and,omitempty"`
+	Or                   []*KeyClassParentFilter  `json:"or,omitempty"`
+}
+
+type KeyClassParentSort struct {
+	Field     KeyClassParentSortField `json:"field"`
+	Direction SortDirection           `json:"direction"`
+}
+
+type KeyClassRealChildFilter struct {
+	ParentID *NullableNumericComparator `json:"parentID,omitempty"`
+	And      []*KeyClassRealChildFilter `json:"and,omitempty"`
+	Or       []*KeyClassRealChildFilter `json:"or,omitempty"`
+}
+
+type KeyClassRealChildSort struct {
+	Field     KeyClassRealChildSortField `json:"field"`
+	Direction SortDirection              `json:"direction"`
+}
+
 type KeyOnlyRowFilter struct {
 	And []*KeyOnlyRowFilter `json:"and,omitempty"`
 	Or  []*KeyOnlyRowFilter `json:"or,omitempty"`
@@ -401,6 +443,18 @@ type NullableDecimalComparator struct {
 	In     []*decimal.Decimal `json:"in,omitempty"`
 	Nin    []*decimal.Decimal `json:"nin,omitempty"`
 	IsNull *bool              `json:"isNull,omitempty"`
+}
+
+type NullableIDComparator struct {
+	Eq     *string  `json:"eq,omitempty"`
+	Neq    *string  `json:"neq,omitempty"`
+	Gt     *string  `json:"gt,omitempty"`
+	Gte    *string  `json:"gte,omitempty"`
+	Lt     *string  `json:"lt,omitempty"`
+	Lte    *string  `json:"lte,omitempty"`
+	In     []string `json:"in,omitempty"`
+	Nin    []string `json:"nin,omitempty"`
+	IsNull *bool    `json:"isNull,omitempty"`
 }
 
 type NullableNumericComparator struct {
@@ -741,6 +795,14 @@ type UpdateDocumentInput struct {
 	EntityType *string         `json:"entityType,omitempty"`
 	Name       *string         `json:"name,omitempty"`
 	CreatedAt  *types.DateTime `json:"createdAt,omitempty"`
+}
+
+type UpdateKeyClassChildInput struct {
+	ParentID graphql.Omittable[*string] `json:"parentID,omitempty"`
+}
+
+type UpdateKeyClassRealChildInput struct {
+	ParentID graphql.Omittable[*float64] `json:"parentID,omitempty"`
 }
 
 type UpdateOrderInput struct {
@@ -1553,6 +1615,169 @@ func (e *DocumentSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e DocumentSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type KeyClassChildSortField string
+
+const (
+	KeyClassChildSortFieldID       KeyClassChildSortField = "ID"
+	KeyClassChildSortFieldParentID KeyClassChildSortField = "PARENT_ID"
+)
+
+var AllKeyClassChildSortField = []KeyClassChildSortField{
+	KeyClassChildSortFieldID,
+	KeyClassChildSortFieldParentID,
+}
+
+func (e KeyClassChildSortField) IsValid() bool {
+	switch e {
+	case KeyClassChildSortFieldID, KeyClassChildSortFieldParentID:
+		return true
+	}
+	return false
+}
+
+func (e KeyClassChildSortField) String() string {
+	return string(e)
+}
+
+func (e *KeyClassChildSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = KeyClassChildSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid KeyClassChildSortField", str)
+	}
+	return nil
+}
+
+func (e KeyClassChildSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *KeyClassChildSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e KeyClassChildSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type KeyClassParentSortField string
+
+const (
+	KeyClassParentSortFieldID KeyClassParentSortField = "ID"
+)
+
+var AllKeyClassParentSortField = []KeyClassParentSortField{
+	KeyClassParentSortFieldID,
+}
+
+func (e KeyClassParentSortField) IsValid() bool {
+	switch e {
+	case KeyClassParentSortFieldID:
+		return true
+	}
+	return false
+}
+
+func (e KeyClassParentSortField) String() string {
+	return string(e)
+}
+
+func (e *KeyClassParentSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = KeyClassParentSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid KeyClassParentSortField", str)
+	}
+	return nil
+}
+
+func (e KeyClassParentSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *KeyClassParentSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e KeyClassParentSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type KeyClassRealChildSortField string
+
+const (
+	KeyClassRealChildSortFieldID       KeyClassRealChildSortField = "ID"
+	KeyClassRealChildSortFieldParentID KeyClassRealChildSortField = "PARENT_ID"
+)
+
+var AllKeyClassRealChildSortField = []KeyClassRealChildSortField{
+	KeyClassRealChildSortFieldID,
+	KeyClassRealChildSortFieldParentID,
+}
+
+func (e KeyClassRealChildSortField) IsValid() bool {
+	switch e {
+	case KeyClassRealChildSortFieldID, KeyClassRealChildSortFieldParentID:
+		return true
+	}
+	return false
+}
+
+func (e KeyClassRealChildSortField) String() string {
+	return string(e)
+}
+
+func (e *KeyClassRealChildSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = KeyClassRealChildSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid KeyClassRealChildSortField", str)
+	}
+	return nil
+}
+
+func (e KeyClassRealChildSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *KeyClassRealChildSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e KeyClassRealChildSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

@@ -123,6 +123,18 @@ input NullableTimeComparator {
   isNull:   Boolean
 }
 
+input NullableIDComparator {
+  eq:     ID
+  neq:    ID
+  gt:     ID
+  gte:    ID
+  lt:     ID
+  lte:    ID
+  in:     [ID!]
+  nin:    [ID!]
+  isNull: Boolean
+}
+
 input DecimalComparator {
   eq:  Decimal
   neq: Decimal

@@ -43,5 +43,11 @@ Features: audit_columns, cache, events, soft_delete, views
 | TimeKeyedNote | `time_keyed_notes` | table | [time_keyed_note.md](time_keyed_note.md) |  |
 | UserCategory | `user_categories` | table | [user_category.md](user_category.md) | Junction table linking users to their preferred categories |
 | Warehouse | `warehouses` | table | [warehouse.md](warehouse.md) | Storage warehouses with type-overridden columns |
+| WidthBig | `width_bigs` | table | [width_big.md](width_big.md) |  |
+| WidthLink | `width_links` | table | [width_link.md](width_link.md) |  |
+| WidthNarrowChild | `width_narrow_children` | table | [width_narrow_child.md](width_narrow_child.md) |  |
+| WidthScopedChild | `width_scoped_children` | table | [width_scoped_child.md](width_scoped_child.md) |  |
+| WidthSmall | `width_smalls` | table | [width_small.md](width_small.md) |  |
+| WidthWideChild | `width_wide_children` | table | [width_wide_child.md](width_wide_child.md) |  |
 
 See [conventions](_conventions.md) for package-wide error sentinels, pagination, comparators, soft-delete, CallOptions, and the omittable reference.

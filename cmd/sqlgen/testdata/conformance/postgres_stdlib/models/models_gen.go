@@ -9080,8 +9080,9 @@ func (c *bayClient) loadRelationships(ctx context.Context, conn database.Querier
 
 	if fo.Lockers != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			bayKeyed := make([]*Bay, 0, len(bays))
 			bayKeys := make([][]any, 0, len(bays))
 			for _, b := range bays {
@@ -9150,8 +9151,9 @@ func (c *bayClient) loadRelationships(ctx context.Context, conn database.Querier
 
 	if fo.Slots != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			bayKeyed := make([]*Bay, 0, len(bays))
 			bayKeys := make([][]any, 0, len(bays))
 			for _, b := range bays {
@@ -19074,8 +19076,9 @@ func (c *crateClient) loadRelationships(ctx context.Context, conn database.Queri
 
 	if fo.OrderItems != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			crateKeyed := make([]*Crate, 0, len(crates))
 			crateKeys := make([][]any, 0, len(crates))
 			for _, c := range crates {
@@ -22043,8 +22046,9 @@ func (c *depotClient) loadRelationships(ctx context.Context, conn database.Queri
 
 	if fo.Vans != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			depotKeyed := make([]*Depot, 0, len(depots))
 			depotKeys := make([][]any, 0, len(depots))
 			for _, d := range depots {
@@ -39163,8 +39167,9 @@ func (c *orderItemClient) loadRelationships(ctx context.Context, conn database.Q
 
 	if fo.ItemNotes != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			orderItemKeyed := make([]*OrderItem, 0, len(orderItems))
 			orderItemKeys := make([][]any, 0, len(orderItems))
 			for _, o := range orderItems {
@@ -39230,8 +39235,9 @@ func (c *orderItemClient) loadRelationships(ctx context.Context, conn database.Q
 
 	if fo.Crates != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			orderItemKeyed := make([]*OrderItem, 0, len(orderItems))
 			orderItemKeys := make([][]any, 0, len(orderItems))
 			for _, o := range orderItems {
@@ -39369,8 +39375,9 @@ func (c *orderItemClient) loadRelationships(ctx context.Context, conn database.Q
 
 	if fo.Stations != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			orderItemKeyed := make([]*OrderItem, 0, len(orderItems))
 			orderItemKeys := make([][]any, 0, len(orderItems))
 			for _, o := range orderItems {
@@ -54293,8 +54300,9 @@ func (c *routeClient) loadRelationships(ctx context.Context, conn database.Queri
 
 	if fo.Vans != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			routeKeyed := make([]*Route, 0, len(routes))
 			routeKeys := make([][]any, 0, len(routes))
 			for _, r := range routes {
@@ -59817,8 +59825,9 @@ func (c *shelfClient) loadRelationships(ctx context.Context, conn database.Queri
 
 	if fo.Crates != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			shelfKeyed := make([]*Shelf, 0, len(shelves))
 			shelfKeys := make([][]any, 0, len(shelves))
 			for _, s := range shelves {
@@ -59890,8 +59899,9 @@ func (c *shelfClient) loadRelationships(ctx context.Context, conn database.Queri
 
 	if fo.Parcels != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			shelfKeyed := make([]*Shelf, 0, len(shelves))
 			shelfKeys := make([][]any, 0, len(shelves))
 			for _, s := range shelves {
@@ -64426,8 +64436,9 @@ func (c *stationClient) loadRelationships(ctx context.Context, conn database.Que
 
 	if fo.OrderItems != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			stationKeyed := make([]*Station, 0, len(stations))
 			stationKeys := make([][]any, 0, len(stations))
 			for _, s := range stations {
@@ -69573,8 +69584,9 @@ func (c *toolClient) loadRelationships(ctx context.Context, conn database.Querie
 
 	if fo.Vans != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			toolKeyed := make([]*Tool, 0, len(tools))
 			toolKeys := make([][]any, 0, len(tools))
 			for _, t := range tools {
@@ -76145,8 +76157,9 @@ func (c *vanClient) loadRelationships(ctx context.Context, conn database.Querier
 
 	if fo.Tools != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			vanKeyed := make([]*Van, 0, len(vans))
 			vanKeys := make([][]any, 0, len(vans))
 			for _, v := range vans {

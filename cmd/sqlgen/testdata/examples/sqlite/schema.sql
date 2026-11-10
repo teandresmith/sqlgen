@@ -275,3 +275,20 @@ CREATE TABLE time_keyed_notes (
     keyed_at DATETIME REFERENCES time_keyed (at),
     note TEXT NOT NULL
 );
+
+-- SQLite maps every integer type to int64, so a key of another width cannot
+-- arise here. A foreign key of another storage class can: it filters through
+-- another comparator than the column it references, and affinity still joins it.
+CREATE TABLE key_class_parents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT
+);
+
+CREATE TABLE key_class_children (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_id TEXT REFERENCES key_class_parents(id)
+);
+
+CREATE TABLE key_class_real_children (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_id REAL REFERENCES key_class_parents(id)
+);

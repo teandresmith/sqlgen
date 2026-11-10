@@ -271,6 +271,43 @@ func translateNullableDecimalComparator(in *gqlmodel.NullableDecimalComparator) 
 	return out
 }
 
+// translateNullableIDComparator translates a GraphQL NullableIDComparator into a
+// *comparator.NullableID for the model layer's filter struct.
+func translateNullableIDComparator(in *gqlmodel.NullableIDComparator) *comparator.NullableID {
+	if in == nil {
+		return nil
+	}
+	out := &comparator.NullableID{}
+	if in.Eq != nil {
+		out.Eq = in.Eq
+	}
+	if in.Neq != nil {
+		out.Neq = in.Neq
+	}
+	if in.Gt != nil {
+		out.Gt = in.Gt
+	}
+	if in.Gte != nil {
+		out.Gte = in.Gte
+	}
+	if in.Lt != nil {
+		out.Lt = in.Lt
+	}
+	if in.Lte != nil {
+		out.Lte = in.Lte
+	}
+	if len(in.In) > 0 {
+		out.In = append([]string(nil), in.In...)
+	}
+	if len(in.Nin) > 0 {
+		out.Nin = append([]string(nil), in.Nin...)
+	}
+	if in.IsNull != nil {
+		out.Null = in.IsNull
+	}
+	return out
+}
+
 // translateNullableNumericComparatorFloat64 translates a GraphQL NullableNumericComparator into a
 // *comparator.NullableNumber[float64] for the model layer's filter struct.
 //

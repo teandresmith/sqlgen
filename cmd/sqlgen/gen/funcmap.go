@@ -941,13 +941,18 @@ func funcKeyTuple(resolver *gotype.Resolver) func([]KeyMemberContext, string, st
 		for i, m := range members {
 			goType, expr := keyRead(m, side, recv)
 			parts[i] = loadKey(goType, expr)
+			if isFloatKey(keyCounterpartGoType(m, side)) && isIntegerKey(goType) {
+				// fmt.Sprint spells a float holding 1000000 as 1e+06.
+				parts[i] = "fmt.Sprint(float64(" + strings.ReplaceAll(resolver.DeriveScalarExtraction(goType).UnwrapExpr, "$v", expr) + "))"
+			}
 		}
 		return fmt.Sprintf("[%d]string{%s}", len(members), strings.Join(parts, ", "))
 	}
 }
 
-// funcKeyGuard returns the condition that every member of a composite key is
-// non-NULL, or "" when none can be NULL.
+// funcKeyGuard returns the condition that every member of a key can be matched:
+// it is non-NULL and, on the referenced side, fits its FK column. It returns ""
+// when nothing can rule a member out.
 func funcKeyGuard(resolver *gotype.Resolver) func([]KeyMemberContext, string, string) string {
 	guard := funcFKLoadGuard(resolver)
 	return func(members []KeyMemberContext, side, recv string) string {
@@ -957,9 +962,57 @@ func funcKeyGuard(resolver *gotype.Resolver) func([]KeyMemberContext, string, st
 			if g := guard(goType, expr); g != "" {
 				parts = append(parts, g)
 			}
+			if side == "referenced" {
+				value := strings.ReplaceAll(resolver.DeriveScalarExtraction(goType).UnwrapExpr, "$v", expr)
+				if g := keyFitsGuard(goType, m.GoType, value); g != "" {
+					parts = append(parts, g)
+				}
+			}
 		}
 		return strings.Join(parts, " && ")
 	}
+}
+
+// integerBits is the width of each integer Go type a key column can bind to,
+// negative for an unsigned one.
+var integerBits = map[string]int{
+	"int8": 8, "int16": 16, "int32": 32, "int64": 64, "int": 64,
+	"uint8": -8, "uint16": -16, "uint32": -32, "uint64": -64, "uint": -64,
+}
+
+// keyCounterpartGoType is the Go type on the other end of a key member's pair.
+func keyCounterpartGoType(m KeyMemberContext, side string) string {
+	if side == "referenced" {
+		return m.GoType
+	}
+	return m.Referenced.GoType
+}
+
+func isFloatKey(goType string) bool {
+	_, base := pkComparatorFamily(goType)
+	return base == "float32" || base == "float64"
+}
+
+func isIntegerKey(goType string) bool {
+	_, base := pkComparatorFamily(goType)
+	return integerBits[base] != 0
+}
+
+// keyFitsGuard returns the condition that a key fits the integer FK column
+// referencing it, or "" when every value does. A driver refuses to bind a value
+// its column's type cannot hold, and no row can reference one.
+func keyFitsGuard(referencedGoType, fkGoType, value string) string {
+	_, ref := pkComparatorFamily(referencedGoType)
+	_, fk := pkComparatorFamily(fkGoType)
+	refBits, fkBits := integerBits[ref], integerBits[fk]
+	if fkBits == 0 || !isFloatKey(ref) && refBits == 0 {
+		return ""
+	}
+	refSize, fkSize := max(refBits, -refBits), max(fkBits, -fkBits)
+	if refBits != 0 && ((refBits > 0) == (fkBits > 0) && refSize <= fkSize || fkBits > 0 && refSize < fkSize) {
+		return ""
+	}
+	return fmt.Sprintf("%s(%s(%s)) == %s", ref, fk, value, value)
 }
 
 // funcKeyValues returns the []any a tuple IN binds for one key, each member

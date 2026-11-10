@@ -73,6 +73,9 @@ type Client struct {
 	categoryStat       *categoryStatClient
 	digitLeadingColumn *digitLeadingColumnClient
 	document           *documentClient
+	keyClassChild      *keyClassChildClient
+	keyClassParent     *keyClassParentClient
+	keyClassRealChild  *keyClassRealChildClient
 	keyOnlyRow         *keyOnlyRowClient
 	order              *orderClient
 	orderItem          *orderItemClient
@@ -117,6 +120,9 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		categoryStat:       newCategoryStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		digitLeadingColumn: newDigitLeadingColumnClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		document:           newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		keyClassChild:      newKeyClassChildClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		keyClassParent:     newKeyClassParentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		keyClassRealChild:  newKeyClassRealChildClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		keyOnlyRow:         newKeyOnlyRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		order:              newOrderClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		orderItem:          newOrderItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -147,6 +153,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.binaryKey.callbackMode = options.callbackMode
 	c.category.callbackMode = options.callbackMode
 	c.document.callbackMode = options.callbackMode
+	c.keyClassParent.callbackMode = options.callbackMode
 	c.order.callbackMode = options.callbackMode
 	c.owner.callbackMode = options.callbackMode
 	c.product.callbackMode = options.callbackMode
@@ -169,6 +176,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.category.userCategoryClient = c.userCategory
 	c.document.assetClient = c.asset
 	c.document.assetDocumentLinkClient = c.assetDocumentLink
+	c.keyClassParent.keyClassChildClient = c.keyClassChild
+	c.keyClassParent.keyClassRealChildClient = c.keyClassRealChild
 	c.order.orderItemClient = c.orderItem
 	c.owner.badgeClient = c.badge
 	c.owner.ownerBadgeClient = c.ownerBadge
@@ -237,6 +246,21 @@ func (c *Client) DigitLeadingColumns() DigitLeadingColumnClient {
 // Documents returns the DocumentClient for Document operations.
 func (c *Client) Documents() DocumentClient {
 	return c.document
+}
+
+// KeyClassChildren returns the KeyClassChildClient for KeyClassChild operations.
+func (c *Client) KeyClassChildren() KeyClassChildClient {
+	return c.keyClassChild
+}
+
+// KeyClassParents returns the KeyClassParentClient for KeyClassParent operations.
+func (c *Client) KeyClassParents() KeyClassParentClient {
+	return c.keyClassParent
+}
+
+// KeyClassRealChildren returns the KeyClassRealChildClient for KeyClassRealChild operations.
+func (c *Client) KeyClassRealChildren() KeyClassRealChildClient {
+	return c.keyClassRealChild
 }
 
 // KeyOnlyRows returns the KeyOnlyRowClient for KeyOnlyRow operations.

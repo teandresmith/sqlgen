@@ -5188,6 +5188,1251 @@
     },
     {
       "kind": "table",
+      "name": "KeyClassChild",
+      "table": "key_class_children",
+      "file_prefix": "key_class_child",
+      "files": [
+        "key_class_child_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "key_class_children_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "parent_id",
+          "go_field": "ParentID",
+          "go_type": "*string",
+          "db_type": "text",
+          "nullable": true,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.NullableID",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*KeyClassChild",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"parent_id\" FROM \"key_class_children\" WHERE \"id\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetKeyClassChildrenInput"
+              }
+            ],
+            "returns": "[]*KeyClassChild",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"parent_id\" FROM \"key_class_children\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"key_class_children\" WHERE \"id\" = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyClassChildFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"key_class_children\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyClassChildFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"key_class_children\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[KeyClassChildFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[KeyClassChild]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[KeyClassChildFilter]"
+              }
+            ],
+            "returns": "*Connection[KeyClassChild]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamKeyClassChildrenInput"
+              }
+            ],
+            "returns": "iter.Seq2[*KeyClassChild, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"parent_id\" FROM \"key_class_children\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateKeyClassChildInput"
+              }
+            ],
+            "returns": "*KeyClassChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_class_children\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateKeyClassChildInput"
+              }
+            ],
+            "returns": "[]*KeyClassChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_class_children\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateKeyClassChildInput"
+              }
+            ],
+            "returns": "*KeyClassChild",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"key_class_children\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateKeyClassChildItem"
+              }
+            ],
+            "returns": "[]*KeyClassChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"key_class_children\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyClassChildFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateKeyClassChildInput"
+              }
+            ],
+            "returns": "[]*KeyClassChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"key_class_children\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateKeyClassChildInput"
+              },
+              {
+                "name": "target",
+                "type": "KeyClassChildConflictTarget"
+              }
+            ],
+            "returns": "*KeyClassChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated KeyClassChildConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_class_children\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateKeyClassChildInput"
+              },
+              {
+                "name": "target",
+                "type": "KeyClassChildConflictTarget"
+              }
+            ],
+            "returns": "[]*KeyClassChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same KeyClassChildConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_class_children\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"key_class_children\" WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"key_class_children\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyClassChildFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"key_class_children\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "KeyClassChildFilter",
+        "fields": [
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "ParentID",
+            "type": "*comparator.NullableID"
+          },
+          {
+            "name": "And",
+            "type": "[]*KeyClassChildFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*KeyClassChildFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "KeyClassChildSort",
+        "fields": [
+          "ID",
+          "ParentID"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.KeyClassChildren().Get(ctx, 1)",
+          "rows, err := client.KeyClassChildren().GetMany(ctx, &models.GetKeyClassChildrenInput{Filter: &models.KeyClassChildFilter{ParentID: &comparator.NullableID{Null: new(true)}}})"
+        ],
+        "write": [
+          "created, err := client.KeyClassChildren().Create(ctx, &models.CreateKeyClassChildInput{})",
+          "updated, err := client.KeyClassChildren().Update(ctx, 1, &models.UpdateKeyClassChildInput{ParentID: omittable.Set(new(\"example\"))})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
+      "name": "KeyClassParent",
+      "table": "key_class_parents",
+      "file_prefix": "key_class_parent",
+      "files": [
+        "key_class_parent_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "key_class_parents_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        }
+      ],
+      "relationships": [
+        {
+          "name": "key_class_children",
+          "kind": "o2m",
+          "target_entity": "KeyClassChild",
+          "fk": {
+            "table": "key_class_children",
+            "columns": [
+              "parent_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "key_class_children(parent_id) → key_class_parents(id)"
+          }
+        },
+        {
+          "name": "key_class_real_children",
+          "kind": "o2m",
+          "target_entity": "KeyClassRealChild",
+          "fk": {
+            "table": "key_class_real_children",
+            "columns": [
+              "parent_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "key_class_real_children(parent_id) → key_class_parents(id)"
+          }
+        }
+      ],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*KeyClassParent",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\" FROM \"key_class_parents\" WHERE \"id\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetKeyClassParentsInput"
+              }
+            ],
+            "returns": "[]*KeyClassParent",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\" FROM \"key_class_parents\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"key_class_parents\" WHERE \"id\" = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyClassParentFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"key_class_parents\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyClassParentFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"key_class_parents\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[KeyClassParentFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[KeyClassParent]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[KeyClassParentFilter]"
+              }
+            ],
+            "returns": "*Connection[KeyClassParent]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamKeyClassParentsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*KeyClassParent, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\" FROM \"key_class_parents\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateKeyClassParentInput"
+              }
+            ],
+            "returns": "*KeyClassParent",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_class_parents\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateKeyClassParentInput"
+              }
+            ],
+            "returns": "[]*KeyClassParent",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_class_parents\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateKeyClassParentInput"
+              }
+            ],
+            "returns": "*KeyClassParent",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"key_class_parents\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateKeyClassParentItem"
+              }
+            ],
+            "returns": "[]*KeyClassParent",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"key_class_parents\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyClassParentFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateKeyClassParentInput"
+              }
+            ],
+            "returns": "[]*KeyClassParent",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"key_class_parents\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateKeyClassParentInput"
+              },
+              {
+                "name": "target",
+                "type": "KeyClassParentConflictTarget"
+              }
+            ],
+            "returns": "*KeyClassParent",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated KeyClassParentConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_class_parents\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateKeyClassParentInput"
+              },
+              {
+                "name": "target",
+                "type": "KeyClassParentConflictTarget"
+              }
+            ],
+            "returns": "[]*KeyClassParent",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same KeyClassParentConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_class_parents\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"key_class_parents\" WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"key_class_parents\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyClassParentFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"key_class_parents\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "KeyClassParentFilter",
+        "fields": [
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "And",
+            "type": "[]*KeyClassParentFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*KeyClassParentFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "KeyClassParentSort",
+        "fields": [
+          "ID"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.KeyClassParents().Get(ctx, 1)",
+          "rows, err := client.KeyClassParents().GetMany(ctx, &models.GetKeyClassParentsInput{Filter: &models.KeyClassParentFilter{ID: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+        ],
+        "write": [
+          "created, err := client.KeyClassParents().Create(ctx, &models.CreateKeyClassParentInput{})",
+          "updated, err := client.KeyClassParents().Update(ctx, 1, &models.UpdateKeyClassParentInput{})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
+      "name": "KeyClassRealChild",
+      "table": "key_class_real_children",
+      "file_prefix": "key_class_real_child",
+      "files": [
+        "key_class_real_child_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "key_class_real_children_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "parent_id",
+          "go_field": "ParentID",
+          "go_type": "*float64",
+          "db_type": "real",
+          "nullable": true,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.NullableNumber[float64]",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*KeyClassRealChild",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"parent_id\" FROM \"key_class_real_children\" WHERE \"id\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetKeyClassRealChildrenInput"
+              }
+            ],
+            "returns": "[]*KeyClassRealChild",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"parent_id\" FROM \"key_class_real_children\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"key_class_real_children\" WHERE \"id\" = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyClassRealChildFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"key_class_real_children\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyClassRealChildFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"key_class_real_children\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[KeyClassRealChildFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[KeyClassRealChild]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[KeyClassRealChildFilter]"
+              }
+            ],
+            "returns": "*Connection[KeyClassRealChild]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamKeyClassRealChildrenInput"
+              }
+            ],
+            "returns": "iter.Seq2[*KeyClassRealChild, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"parent_id\" FROM \"key_class_real_children\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateKeyClassRealChildInput"
+              }
+            ],
+            "returns": "*KeyClassRealChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_class_real_children\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateKeyClassRealChildInput"
+              }
+            ],
+            "returns": "[]*KeyClassRealChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_class_real_children\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateKeyClassRealChildInput"
+              }
+            ],
+            "returns": "*KeyClassRealChild",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"key_class_real_children\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateKeyClassRealChildItem"
+              }
+            ],
+            "returns": "[]*KeyClassRealChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"key_class_real_children\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyClassRealChildFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateKeyClassRealChildInput"
+              }
+            ],
+            "returns": "[]*KeyClassRealChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"key_class_real_children\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateKeyClassRealChildInput"
+              },
+              {
+                "name": "target",
+                "type": "KeyClassRealChildConflictTarget"
+              }
+            ],
+            "returns": "*KeyClassRealChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated KeyClassRealChildConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_class_real_children\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateKeyClassRealChildInput"
+              },
+              {
+                "name": "target",
+                "type": "KeyClassRealChildConflictTarget"
+              }
+            ],
+            "returns": "[]*KeyClassRealChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same KeyClassRealChildConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"key_class_real_children\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"key_class_real_children\" WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"key_class_real_children\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*KeyClassRealChildFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"key_class_real_children\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "KeyClassRealChildFilter",
+        "fields": [
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "ParentID",
+            "type": "*comparator.NullableNumber[float64]"
+          },
+          {
+            "name": "And",
+            "type": "[]*KeyClassRealChildFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*KeyClassRealChildFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "KeyClassRealChildSort",
+        "fields": [
+          "ID",
+          "ParentID"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.KeyClassRealChildren().Get(ctx, 1)",
+          "rows, err := client.KeyClassRealChildren().GetMany(ctx, &models.GetKeyClassRealChildrenInput{Filter: &models.KeyClassRealChildFilter{ParentID: &comparator.NullableNumber[float64]{Null: new(true)}}})"
+        ],
+        "write": [
+          "created, err := client.KeyClassRealChildren().Create(ctx, &models.CreateKeyClassRealChildInput{})",
+          "updated, err := client.KeyClassRealChildren().Update(ctx, 1, &models.UpdateKeyClassRealChildInput{ParentID: omittable.Set(new(float64(1)))})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
       "name": "KeyOnlyRow",
       "table": "key_only_rows",
       "file_prefix": "key_only_row",

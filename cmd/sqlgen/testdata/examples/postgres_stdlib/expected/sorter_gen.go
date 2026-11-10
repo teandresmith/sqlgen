@@ -504,3 +504,105 @@ func (s WarehouseSorter) Price(direction sql.SortDirection) sql.Sort {
 func (s WarehouseSorter) RelatedIDS(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "related_ids", Direction: direction}
 }
+
+// WidthBigSorter provides type-safe sort helpers for the WidthBig entity.
+// Each method returns a sql.Sort for the corresponding column.
+type WidthBigSorter struct{}
+
+// NewWidthBigSorter returns a new WidthBigSorter.
+func NewWidthBigSorter() WidthBigSorter { return WidthBigSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s WidthBigSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// WidthLinkSorter provides type-safe sort helpers for the WidthLink entity.
+// Each method returns a sql.Sort for the corresponding column.
+type WidthLinkSorter struct{}
+
+// NewWidthLinkSorter returns a new WidthLinkSorter.
+func NewWidthLinkSorter() WidthLinkSorter { return WidthLinkSorter{} }
+
+// BigID returns a sort for the big_id column in the given direction.
+func (s WidthLinkSorter) BigID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "big_id", Direction: direction}
+}
+
+// SmallID returns a sort for the small_id column in the given direction.
+func (s WidthLinkSorter) SmallID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "small_id", Direction: direction}
+}
+
+// WidthNarrowChildSorter provides type-safe sort helpers for the WidthNarrowChild entity.
+// Each method returns a sql.Sort for the corresponding column.
+type WidthNarrowChildSorter struct{}
+
+// NewWidthNarrowChildSorter returns a new WidthNarrowChildSorter.
+func NewWidthNarrowChildSorter() WidthNarrowChildSorter { return WidthNarrowChildSorter{} }
+
+// BigID returns a sort for the big_id column in the given direction.
+func (s WidthNarrowChildSorter) BigID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "big_id", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s WidthNarrowChildSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// WidthScopedChildSorter provides type-safe sort helpers for the WidthScopedChild entity.
+// Each method returns a sql.Sort for the corresponding column.
+type WidthScopedChildSorter struct{}
+
+// NewWidthScopedChildSorter returns a new WidthScopedChildSorter.
+func NewWidthScopedChildSorter() WidthScopedChildSorter { return WidthScopedChildSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s WidthScopedChildSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Scope returns a sort for the scope column in the given direction.
+func (s WidthScopedChildSorter) Scope(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "scope", Direction: direction}
+}
+
+// SmallID returns a sort for the small_id column in the given direction.
+func (s WidthScopedChildSorter) SmallID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "small_id", Direction: direction}
+}
+
+// WidthSmallSorter provides type-safe sort helpers for the WidthSmall entity.
+// Each method returns a sql.Sort for the corresponding column.
+type WidthSmallSorter struct{}
+
+// NewWidthSmallSorter returns a new WidthSmallSorter.
+func NewWidthSmallSorter() WidthSmallSorter { return WidthSmallSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s WidthSmallSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Scope returns a sort for the scope column in the given direction.
+func (s WidthSmallSorter) Scope(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "scope", Direction: direction}
+}
+
+// WidthWideChildSorter provides type-safe sort helpers for the WidthWideChild entity.
+// Each method returns a sql.Sort for the corresponding column.
+type WidthWideChildSorter struct{}
+
+// NewWidthWideChildSorter returns a new WidthWideChildSorter.
+func NewWidthWideChildSorter() WidthWideChildSorter { return WidthWideChildSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s WidthWideChildSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// SmallID returns a sort for the small_id column in the given direction.
+func (s WidthWideChildSorter) SmallID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "small_id", Direction: direction}
+}

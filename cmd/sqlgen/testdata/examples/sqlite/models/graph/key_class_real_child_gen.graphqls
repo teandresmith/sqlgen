@@ -1,0 +1,66 @@
+"""
+KeyClassRealChild corresponds to the key_class_real_children table.
+"""
+type KeyClassRealChild {
+  "id"
+  id: Int!
+  "parent_id"
+  parentID: Float
+}
+
+type KeyClassRealChildConnection {
+  edges:      [KeyClassRealChildEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type KeyClassRealChildEdge {
+  node:   KeyClassRealChild!
+  cursor: String!
+}
+
+type KeyClassRealChildListResult {
+  items:      [KeyClassRealChild!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input KeyClassRealChildFilter {
+  parentID: NullableNumericComparator
+  and: [KeyClassRealChildFilter!]
+  or:  [KeyClassRealChildFilter!]
+}
+
+enum KeyClassRealChildSortField {
+  ID
+  PARENT_ID
+}
+
+input KeyClassRealChildSort {
+  field:     KeyClassRealChildSortField!
+  direction: SortDirection!
+}
+input CreateKeyClassRealChildInput {
+  parentID: Float
+}
+input UpdateKeyClassRealChildInput {
+  parentID: Float
+}
+
+extend type Query {
+  keyClassRealChild(id: Int!): KeyClassRealChild
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to keyClassRealChildList instead."
+  keyClassRealChildren(filter: KeyClassRealChildFilter, first: Int, after: String, last: Int, before: String): KeyClassRealChildConnection!
+  keyClassRealChildList(filter: KeyClassRealChildFilter, sort: [KeyClassRealChildSort!], limit: Int, offset: Int): KeyClassRealChildListResult!
+}
+
+extend type Mutation {
+  createKeyClassRealChild(input: CreateKeyClassRealChildInput!): KeyClassRealChild!
+  createKeyClassRealChildren(inputs: [CreateKeyClassRealChildInput!]!): [KeyClassRealChild!]!
+  updateKeyClassRealChild(id: Int!, input: UpdateKeyClassRealChildInput!): KeyClassRealChild!
+  updateKeyClassRealChildren(filter: KeyClassRealChildFilter!, input: UpdateKeyClassRealChildInput!): [KeyClassRealChild!]!
+  upsertKeyClassRealChild(input: CreateKeyClassRealChildInput!): KeyClassRealChild!
+  deleteKeyClassRealChild(id: Int!): Boolean!
+}

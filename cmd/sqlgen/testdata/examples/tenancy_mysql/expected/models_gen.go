@@ -4451,8 +4451,9 @@ func (c *cycleClient) loadRelationships(ctx context.Context, conn database.Queri
 
 	if fo.Tasks != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			cycleKeyed := make([]*Cycle, 0, len(cycles))
 			cycleKeys := make([][]any, 0, len(cycles))
 			for _, c := range cycles {
@@ -10719,8 +10720,9 @@ func (c *labelClient) loadRelationships(ctx context.Context, conn database.Queri
 
 	if fo.Templates != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			labelKeyed := make([]*Label, 0, len(labels))
 			labelKeys := make([][]any, 0, len(labels))
 			for _, l := range labels {
@@ -17060,8 +17062,9 @@ func (c *stampClient) loadRelationships(ctx context.Context, conn database.Queri
 
 	if fo.Templates != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			stampKeyed := make([]*Stamp, 0, len(stamps))
 			stampKeys := make([][]any, 0, len(stamps))
 			for _, s := range stamps {
@@ -30618,8 +30621,9 @@ func (c *templateClient) loadRelationships(ctx context.Context, conn database.Qu
 
 	if fo.TemplateSteps != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			templateKeyed := make([]*Template, 0, len(templates))
 			templateKeys := make([][]any, 0, len(templates))
 			for _, t := range templates {
@@ -30687,8 +30691,9 @@ func (c *templateClient) loadRelationships(ctx context.Context, conn database.Qu
 
 	if fo.Labels != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			templateKeyed := make([]*Template, 0, len(templates))
 			templateKeys := make([][]any, 0, len(templates))
 			for _, t := range templates {
@@ -30828,8 +30833,9 @@ func (c *templateClient) loadRelationships(ctx context.Context, conn database.Qu
 
 	if fo.Stamps != nil {
 		g.Go(func() error {
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			templateKeyed := make([]*Template, 0, len(templates))
 			templateKeys := make([][]any, 0, len(templates))
 			for _, t := range templates {

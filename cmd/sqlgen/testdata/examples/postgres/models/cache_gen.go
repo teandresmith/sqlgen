@@ -50,6 +50,12 @@ const fingerprintTimeKeyed = "36a05f4d"
 const fingerprintTimeKeyedNote = "ab3d4695"
 const fingerprintUserCategory = "e8982915"
 const fingerprintWarehouse = "a35c03cd"
+const fingerprintWidthBig = "dabd3227"
+const fingerprintWidthLink = "ea61d35d"
+const fingerprintWidthNarrowChild = "1980dda5"
+const fingerprintWidthScopedChild = "ddd80feb"
+const fingerprintWidthSmall = "f434bf37"
+const fingerprintWidthWideChild = "ec8ba01e"
 
 // cacheOptions captures runtime-injectable overrides for a Cache instance.
 // All per-table TTL, serializer, key prefix, hydration, and circuit-breaker
@@ -7924,6 +7930,1539 @@ func (c *Cache) hydrateWarehouse(pk uuid.UUID, next hook.QueryHandler) {
 	}()
 }
 
+// keyForWidthBig builds the cache key for WidthBig by PK.
+func (c *Cache) keyForWidthBig(pk int64) string {
+	return cache.BuildKey(c.prefix, "public", "width_bigs", fingerprintWidthBig, pk)
+}
+
+// ttlForWidthBig returns the resolved TTL for WidthBig cache entries.
+func (c *Cache) ttlForWidthBig() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipWidthBig reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipWidthBig(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*WidthBigFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	if typed.WidthNarrowChildren != nil {
+		return true
+	}
+	if typed.WidthSmalls != nil {
+		return true
+	}
+	return false
+}
+
+// fullParentFieldOptionsWidthBig returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsWidthBig() *WidthBigFieldOptions {
+	return &WidthBigFieldOptions{
+		ID: true,
+	}
+}
+
+// readThroughWidthBig implements the cache read-through path for WidthBig:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughWidthBig(ctx context.Context, pk int64, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForWidthBig(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*WidthBig](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableWidthBigs, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableWidthBigs, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableWidthBigs)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableWidthBigs)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableWidthBigs)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateWidthBig(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*WidthBig](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*WidthBig)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthBig())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableWidthBigs, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthBigs, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableWidthBigs)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setWidthBig caches a full WidthBig entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setWidthBig(ctx context.Context, entity *WidthBig) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForWidthBig(entity.ID)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthBig())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableWidthBigs, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthBigs, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableWidthBigs)
+	}
+}
+
+// hydrateWidthBig launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateWidthBig(pk int64, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForWidthBig(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableWidthBigs)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableWidthBigs,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[WidthBigFieldOptions]{
+				FieldOptions: fullParentFieldOptionsWidthBig(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthBigs, err)
+			}
+			return
+		}
+		entity, ok := result.(*WidthBig)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthBigs, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthBigs, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthBig())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableWidthBigs, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthBigs, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthBigs, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableWidthBigs)
+			c.metrics.HydrationComplete(schema, TableWidthBigs, nil)
+		}
+	}()
+}
+
+// keyForWidthLink builds the cache key for WidthLink with composite PK.
+// The []any is constructed in DDL PRIMARY KEY column order inside this one
+// function — call sites never reorder (key-order invariant).
+func (c *Cache) keyForWidthLink(pk WidthLinkPK) string {
+	return cache.BuildCompositeKey(c.prefix, "public", "width_links", fingerprintWidthLink, []any{
+		pk.SmallID,
+		pk.BigID,
+	})
+}
+
+// ttlForWidthLink returns the resolved TTL for WidthLink cache entries.
+func (c *Cache) ttlForWidthLink() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipWidthLink reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipWidthLink(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*WidthLinkFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	_ = typed
+	return false
+}
+
+// fullParentFieldOptionsWidthLink returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsWidthLink() *WidthLinkFieldOptions {
+	return &WidthLinkFieldOptions{
+		SmallID: true,
+		BigID:   true,
+	}
+}
+
+// readThroughWidthLink implements the cache read-through path for WidthLink:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughWidthLink(ctx context.Context, pk WidthLinkPK, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForWidthLink(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*WidthLink](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableWidthLinks, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableWidthLinks, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableWidthLinks)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableWidthLinks)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableWidthLinks)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateWidthLink(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*WidthLink](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*WidthLink)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthLink())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableWidthLinks, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthLinks, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableWidthLinks)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setWidthLink caches a full WidthLink entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setWidthLink(ctx context.Context, entity *WidthLink) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForWidthLink(WidthLinkPK{
+		SmallID: entity.SmallID,
+		BigID:   entity.BigID,
+	})
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthLink())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableWidthLinks, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthLinks, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableWidthLinks)
+	}
+}
+
+// hydrateWidthLink launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateWidthLink(pk WidthLinkPK, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForWidthLink(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableWidthLinks)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableWidthLinks,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[WidthLinkFieldOptions]{
+				FieldOptions: fullParentFieldOptionsWidthLink(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthLinks, err)
+			}
+			return
+		}
+		entity, ok := result.(*WidthLink)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthLinks, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthLinks, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthLink())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableWidthLinks, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthLinks, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthLinks, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableWidthLinks)
+			c.metrics.HydrationComplete(schema, TableWidthLinks, nil)
+		}
+	}()
+}
+
+// keyForWidthNarrowChild builds the cache key for WidthNarrowChild by PK.
+func (c *Cache) keyForWidthNarrowChild(pk int64) string {
+	return cache.BuildKey(c.prefix, "public", "width_narrow_children", fingerprintWidthNarrowChild, pk)
+}
+
+// ttlForWidthNarrowChild returns the resolved TTL for WidthNarrowChild cache entries.
+func (c *Cache) ttlForWidthNarrowChild() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipWidthNarrowChild reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipWidthNarrowChild(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*WidthNarrowChildFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	_ = typed
+	return false
+}
+
+// fullParentFieldOptionsWidthNarrowChild returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsWidthNarrowChild() *WidthNarrowChildFieldOptions {
+	return &WidthNarrowChildFieldOptions{
+		ID:    true,
+		BigID: true,
+	}
+}
+
+// readThroughWidthNarrowChild implements the cache read-through path for WidthNarrowChild:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughWidthNarrowChild(ctx context.Context, pk int64, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForWidthNarrowChild(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*WidthNarrowChild](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableWidthNarrowChildren, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableWidthNarrowChildren, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableWidthNarrowChildren)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableWidthNarrowChildren)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableWidthNarrowChildren)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateWidthNarrowChild(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*WidthNarrowChild](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*WidthNarrowChild)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthNarrowChild())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableWidthNarrowChildren, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthNarrowChildren, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableWidthNarrowChildren)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setWidthNarrowChild caches a full WidthNarrowChild entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setWidthNarrowChild(ctx context.Context, entity *WidthNarrowChild) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForWidthNarrowChild(entity.ID)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthNarrowChild())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableWidthNarrowChildren, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthNarrowChildren, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableWidthNarrowChildren)
+	}
+}
+
+// hydrateWidthNarrowChild launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateWidthNarrowChild(pk int64, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForWidthNarrowChild(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableWidthNarrowChildren)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableWidthNarrowChildren,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[WidthNarrowChildFieldOptions]{
+				FieldOptions: fullParentFieldOptionsWidthNarrowChild(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthNarrowChildren, err)
+			}
+			return
+		}
+		entity, ok := result.(*WidthNarrowChild)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthNarrowChildren, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthNarrowChildren, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthNarrowChild())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableWidthNarrowChildren, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthNarrowChildren, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthNarrowChildren, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableWidthNarrowChildren)
+			c.metrics.HydrationComplete(schema, TableWidthNarrowChildren, nil)
+		}
+	}()
+}
+
+// keyForWidthScopedChild builds the cache key for WidthScopedChild by PK.
+func (c *Cache) keyForWidthScopedChild(pk int64) string {
+	return cache.BuildKey(c.prefix, "public", "width_scoped_children", fingerprintWidthScopedChild, pk)
+}
+
+// ttlForWidthScopedChild returns the resolved TTL for WidthScopedChild cache entries.
+func (c *Cache) ttlForWidthScopedChild() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipWidthScopedChild reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipWidthScopedChild(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*WidthScopedChildFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	_ = typed
+	return false
+}
+
+// fullParentFieldOptionsWidthScopedChild returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsWidthScopedChild() *WidthScopedChildFieldOptions {
+	return &WidthScopedChildFieldOptions{
+		ID:      true,
+		Scope:   true,
+		SmallID: true,
+	}
+}
+
+// readThroughWidthScopedChild implements the cache read-through path for WidthScopedChild:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughWidthScopedChild(ctx context.Context, pk int64, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForWidthScopedChild(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*WidthScopedChild](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableWidthScopedChildren, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableWidthScopedChildren, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableWidthScopedChildren)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableWidthScopedChildren)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableWidthScopedChildren)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateWidthScopedChild(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*WidthScopedChild](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*WidthScopedChild)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthScopedChild())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableWidthScopedChildren, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthScopedChildren, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableWidthScopedChildren)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setWidthScopedChild caches a full WidthScopedChild entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setWidthScopedChild(ctx context.Context, entity *WidthScopedChild) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForWidthScopedChild(entity.ID)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthScopedChild())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableWidthScopedChildren, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthScopedChildren, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableWidthScopedChildren)
+	}
+}
+
+// hydrateWidthScopedChild launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateWidthScopedChild(pk int64, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForWidthScopedChild(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableWidthScopedChildren)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableWidthScopedChildren,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[WidthScopedChildFieldOptions]{
+				FieldOptions: fullParentFieldOptionsWidthScopedChild(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthScopedChildren, err)
+			}
+			return
+		}
+		entity, ok := result.(*WidthScopedChild)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthScopedChildren, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthScopedChildren, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthScopedChild())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableWidthScopedChildren, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthScopedChildren, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthScopedChildren, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableWidthScopedChildren)
+			c.metrics.HydrationComplete(schema, TableWidthScopedChildren, nil)
+		}
+	}()
+}
+
+// keyForWidthSmall builds the cache key for WidthSmall by PK.
+func (c *Cache) keyForWidthSmall(pk int32) string {
+	return cache.BuildKey(c.prefix, "public", "width_smalls", fingerprintWidthSmall, pk)
+}
+
+// ttlForWidthSmall returns the resolved TTL for WidthSmall cache entries.
+func (c *Cache) ttlForWidthSmall() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipWidthSmall reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipWidthSmall(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*WidthSmallFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	if typed.WidthBigs != nil {
+		return true
+	}
+	if typed.WidthScopedChildren != nil {
+		return true
+	}
+	if typed.WidthWideChildren != nil {
+		return true
+	}
+	return false
+}
+
+// fullParentFieldOptionsWidthSmall returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsWidthSmall() *WidthSmallFieldOptions {
+	return &WidthSmallFieldOptions{
+		ID:    true,
+		Scope: true,
+	}
+}
+
+// readThroughWidthSmall implements the cache read-through path for WidthSmall:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughWidthSmall(ctx context.Context, pk int32, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForWidthSmall(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*WidthSmall](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableWidthSmalls, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableWidthSmalls, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableWidthSmalls)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableWidthSmalls)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableWidthSmalls)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateWidthSmall(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*WidthSmall](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*WidthSmall)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthSmall())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableWidthSmalls, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthSmalls, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableWidthSmalls)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setWidthSmall caches a full WidthSmall entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setWidthSmall(ctx context.Context, entity *WidthSmall) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForWidthSmall(entity.ID)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthSmall())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableWidthSmalls, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthSmalls, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableWidthSmalls)
+	}
+}
+
+// hydrateWidthSmall launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateWidthSmall(pk int32, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForWidthSmall(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableWidthSmalls)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableWidthSmalls,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[WidthSmallFieldOptions]{
+				FieldOptions: fullParentFieldOptionsWidthSmall(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthSmalls, err)
+			}
+			return
+		}
+		entity, ok := result.(*WidthSmall)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthSmalls, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthSmalls, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthSmall())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableWidthSmalls, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthSmalls, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthSmalls, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableWidthSmalls)
+			c.metrics.HydrationComplete(schema, TableWidthSmalls, nil)
+		}
+	}()
+}
+
+// keyForWidthWideChild builds the cache key for WidthWideChild by PK.
+func (c *Cache) keyForWidthWideChild(pk int64) string {
+	return cache.BuildKey(c.prefix, "public", "width_wide_children", fingerprintWidthWideChild, pk)
+}
+
+// ttlForWidthWideChild returns the resolved TTL for WidthWideChild cache entries.
+func (c *Cache) ttlForWidthWideChild() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipWidthWideChild reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipWidthWideChild(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*WidthWideChildFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	_ = typed
+	return false
+}
+
+// fullParentFieldOptionsWidthWideChild returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsWidthWideChild() *WidthWideChildFieldOptions {
+	return &WidthWideChildFieldOptions{
+		ID:      true,
+		SmallID: true,
+	}
+}
+
+// readThroughWidthWideChild implements the cache read-through path for WidthWideChild:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughWidthWideChild(ctx context.Context, pk int64, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForWidthWideChild(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*WidthWideChild](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableWidthWideChildren, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableWidthWideChildren, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableWidthWideChildren)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableWidthWideChildren)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableWidthWideChildren)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateWidthWideChild(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*WidthWideChild](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*WidthWideChild)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthWideChild())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableWidthWideChildren, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthWideChildren, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableWidthWideChildren)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setWidthWideChild caches a full WidthWideChild entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setWidthWideChild(ctx context.Context, entity *WidthWideChild) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForWidthWideChild(entity.ID)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthWideChild())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableWidthWideChildren, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthWideChildren, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableWidthWideChildren)
+	}
+}
+
+// hydrateWidthWideChild launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateWidthWideChild(pk int64, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForWidthWideChild(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableWidthWideChildren)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableWidthWideChildren,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[WidthWideChildFieldOptions]{
+				FieldOptions: fullParentFieldOptionsWidthWideChild(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthWideChildren, err)
+			}
+			return
+		}
+		entity, ok := result.(*WidthWideChild)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthWideChildren, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthWideChildren, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForWidthWideChild())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableWidthWideChildren, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableWidthWideChildren, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableWidthWideChildren, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableWidthWideChildren)
+			c.metrics.HydrationComplete(schema, TableWidthWideChildren, nil)
+		}
+	}()
+}
+
 // patternsForSourceTable returns the view BuildTablePattern strings that the
 // mutation hook must invalidate after a mutation on source table.
 func (c *Cache) patternsForSourceTable(table hook.TableName) []string {
@@ -8139,6 +9678,42 @@ func (c *Cache) keysFor(table hook.TableName, pks []any) ([]string, error) {
 			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
 		}
 		return keys, nil
+	case TableWidthBigs:
+		keys, err := cache.KeysFromAny(pks, c.keyForWidthBig)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableWidthLinks:
+		keys, err := cache.KeysFromAny(pks, c.keyForWidthLink)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableWidthNarrowChildren:
+		keys, err := cache.KeysFromAny(pks, c.keyForWidthNarrowChild)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableWidthScopedChildren:
+		keys, err := cache.KeysFromAny(pks, c.keyForWidthScopedChild)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableWidthSmalls:
+		keys, err := cache.KeysFromAny(pks, c.keyForWidthSmall)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableWidthWideChildren:
+		keys, err := cache.KeysFromAny(pks, c.keyForWidthWideChild)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
 	default:
 		return nil, fmt.Errorf("cache: unknown or non-cached table %q", table)
 	}
@@ -8223,6 +9798,18 @@ func cacheRelationFor(table hook.TableName) (schema, name string, ok bool) {
 		return "public", "user_categories", true
 	case TableWarehouses:
 		return "public", "warehouses", true
+	case TableWidthBigs:
+		return "public", "width_bigs", true
+	case TableWidthLinks:
+		return "public", "width_links", true
+	case TableWidthNarrowChildren:
+		return "public", "width_narrow_children", true
+	case TableWidthScopedChildren:
+		return "public", "width_scoped_children", true
+	case TableWidthSmalls:
+		return "public", "width_smalls", true
+	case TableWidthWideChildren:
+		return "public", "width_wide_children", true
 	}
 	return "", "", false
 }
@@ -8512,6 +10099,42 @@ func (c *Cache) QueryHook() hook.QueryHook {
 					return next(ctx, q)
 				}
 				return c.readThroughWarehouse(ctx, pk, q, next)
+			case TableWidthBigs:
+				pk, ok := q.PK.(int64)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughWidthBig(ctx, pk, q, next)
+			case TableWidthLinks:
+				pk, ok := q.PK.(WidthLinkPK)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughWidthLink(ctx, pk, q, next)
+			case TableWidthNarrowChildren:
+				pk, ok := q.PK.(int64)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughWidthNarrowChild(ctx, pk, q, next)
+			case TableWidthScopedChildren:
+				pk, ok := q.PK.(int64)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughWidthScopedChild(ctx, pk, q, next)
+			case TableWidthSmalls:
+				pk, ok := q.PK.(int32)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughWidthSmall(ctx, pk, q, next)
+			case TableWidthWideChildren:
+				pk, ok := q.PK.(int64)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughWidthWideChild(ctx, pk, q, next)
 			}
 			return next(ctx, q)
 		}
@@ -8678,6 +10301,30 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 			case TableWarehouses:
 				if entity, ok := result.(*Warehouse); ok {
 					c.setWarehouse(ctx, entity)
+				}
+			case TableWidthBigs:
+				if entity, ok := result.(*WidthBig); ok {
+					c.setWidthBig(ctx, entity)
+				}
+			case TableWidthLinks:
+				if entity, ok := result.(*WidthLink); ok {
+					c.setWidthLink(ctx, entity)
+				}
+			case TableWidthNarrowChildren:
+				if entity, ok := result.(*WidthNarrowChild); ok {
+					c.setWidthNarrowChild(ctx, entity)
+				}
+			case TableWidthScopedChildren:
+				if entity, ok := result.(*WidthScopedChild); ok {
+					c.setWidthScopedChild(ctx, entity)
+				}
+			case TableWidthSmalls:
+				if entity, ok := result.(*WidthSmall); ok {
+					c.setWidthSmall(ctx, entity)
+				}
+			case TableWidthWideChildren:
+				if entity, ok := result.(*WidthWideChild); ok {
+					c.setWidthWideChild(ctx, entity)
 				}
 			}
 			return nil
@@ -8866,6 +10513,42 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 						c.setWarehouse(ctx, entity)
 					}
 				}
+			case TableWidthBigs:
+				if entities, ok := result.([]*WidthBig); ok {
+					for _, entity := range entities {
+						c.setWidthBig(ctx, entity)
+					}
+				}
+			case TableWidthLinks:
+				if entities, ok := result.([]*WidthLink); ok {
+					for _, entity := range entities {
+						c.setWidthLink(ctx, entity)
+					}
+				}
+			case TableWidthNarrowChildren:
+				if entities, ok := result.([]*WidthNarrowChild); ok {
+					for _, entity := range entities {
+						c.setWidthNarrowChild(ctx, entity)
+					}
+				}
+			case TableWidthScopedChildren:
+				if entities, ok := result.([]*WidthScopedChild); ok {
+					for _, entity := range entities {
+						c.setWidthScopedChild(ctx, entity)
+					}
+				}
+			case TableWidthSmalls:
+				if entities, ok := result.([]*WidthSmall); ok {
+					for _, entity := range entities {
+						c.setWidthSmall(ctx, entity)
+					}
+				}
+			case TableWidthWideChildren:
+				if entities, ok := result.([]*WidthWideChild); ok {
+					for _, entity := range entities {
+						c.setWidthWideChild(ctx, entity)
+					}
+				}
 			}
 			return nil
 		case hook.OpUpdate, hook.OpUpsert, hook.OpSoftDelete, hook.OpHardDelete,
@@ -9045,6 +10728,18 @@ func hasAnyRelationshipFieldOptions(table hook.TableName, callOpts any) bool {
 		return hasAnyRelationshipUserCategory(fo)
 	case TableWarehouses:
 		return hasAnyRelationshipWarehouse(fo)
+	case TableWidthBigs:
+		return hasAnyRelationshipWidthBig(fo)
+	case TableWidthLinks:
+		return hasAnyRelationshipWidthLink(fo)
+	case TableWidthNarrowChildren:
+		return hasAnyRelationshipWidthNarrowChild(fo)
+	case TableWidthScopedChildren:
+		return hasAnyRelationshipWidthScopedChild(fo)
+	case TableWidthSmalls:
+		return hasAnyRelationshipWidthSmall(fo)
+	case TableWidthWideChildren:
+		return hasAnyRelationshipWidthWideChild(fo)
 	}
 	return false
 }

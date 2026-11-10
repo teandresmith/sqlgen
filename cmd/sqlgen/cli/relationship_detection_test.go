@@ -375,6 +375,52 @@ CREATE TABLE stamp_kids (id integer PRIMARY KEY, stamp_k datetime(6) REFERENCES 
 	}
 }
 
+// A declared edge whose FK is a nullable datetime column into an integer key
+// gets no nested writer, since types.NullDateTime cannot hold the parent's key,
+// and the package builds.
+func TestGenerate_DeclaredTimeFKIntoIntegerKeyCompiles(t *testing.T) {
+	const cfg = `version: 1
+input:
+  dialect: sqlite
+  paths: [schema.sql]
+output:
+  driver: stdlib
+  dir: out
+  package: models
+  layout: single_file
+overrides:
+  use_pointers: %v
+generation:
+  nested_mutations:
+    enabled: true
+tables:
+  users:
+    relationships:
+      - name: Profile
+        type: one_to_one
+        table: profiles
+        fk: user_at
+`
+	const schema = `CREATE TABLE users (id integer PRIMARY KEY);
+CREATE TABLE profiles (id integer PRIMARY KEY, user_at datetime);`
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, usePointers := range []bool{true, false} {
+		t.Run(fmt.Sprintf("use_pointers %v", usePointers), func(t *testing.T) {
+			dir, stderr, err := runCommand(t, "generate", schema, fmt.Sprintf(cfg, usePointers))
+			if err != nil {
+				t.Fatalf("generate: %v\nstderr: %s", err, stderr)
+			}
+			if testing.Short() && os.Getenv("SQLGEN_BUILD_GENERATED") == "" {
+				return
+			}
+			buildGenerated(t, root, dir)
+		})
+	}
+}
+
 // buildGenerated builds the package generate wrote under dir/out as a consumer
 // module would, against the runtime of the checkout at root. Callers skip it
 // under -short unless SQLGEN_BUILD_GENERATED is set, which `make

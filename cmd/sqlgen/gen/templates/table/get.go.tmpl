@@ -730,8 +730,9 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 
 {{- define "table/load-collect-keys" -}}
 {{- $v := .Table.VarName -}}
-			// Collect each parent's key. A parent whose key holds a NULL is
-			// referenced by nothing, so it stays out of the load.
+			// Collect each parent's key. A parent whose key holds a NULL or a
+			// value too wide for the FK is referenced by nothing, so it stays out
+			// of the load.
 			{{ .KeyedVar }} := make([]*{{ .Table.StructName }}, 0, len({{ .ResultVar }}))
 			{{ .KeysVar }} := make([][]any, 0, len({{ .ResultVar }}))
 			for _, {{ $v }} := range {{ .ResultVar }} {

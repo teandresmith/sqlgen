@@ -45,6 +45,12 @@ sqlgen manifest. Start here: [./manifest/_index.md](./manifest/_index.md).
 - **TimeKeyedNote** (`time_keyed_notes`, table) — [./manifest/time_keyed_note.md](./manifest/time_keyed_note.md)
 - **UserCategory** (`user_categories`, table) — [./manifest/user_category.md](./manifest/user_category.md)
 - **Warehouse** (`warehouses`, table) — [./manifest/warehouse.md](./manifest/warehouse.md)
+- **WidthBig** (`width_bigs`, table) — [./manifest/width_big.md](./manifest/width_big.md)
+- **WidthLink** (`width_links`, table) — [./manifest/width_link.md](./manifest/width_link.md)
+- **WidthNarrowChild** (`width_narrow_children`, table) — [./manifest/width_narrow_child.md](./manifest/width_narrow_child.md)
+- **WidthScopedChild** (`width_scoped_children`, table) — [./manifest/width_scoped_child.md](./manifest/width_scoped_child.md)
+- **WidthSmall** (`width_smalls`, table) — [./manifest/width_small.md](./manifest/width_small.md)
+- **WidthWideChild** (`width_wide_children`, table) — [./manifest/width_wide_child.md](./manifest/width_wide_child.md)
 
 ## Conventions
 

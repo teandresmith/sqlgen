@@ -16104,6 +16104,2745 @@
           "updated, err := client.Warehouses().Update(ctx, uuid.NewV4(), &models.UpdateWarehouseInput{Name: omittable.Set(\"example\")})"
         ]
       }
+    },
+    {
+      "kind": "table",
+      "name": "WidthBig",
+      "table": "width_bigs",
+      "schema": "public",
+      "file_prefix": "width_big",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "width_bigs_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": {
+          "ttl_seconds": 3600,
+          "hydration": "eager",
+          "key_pattern": "sqlgen:widthbig:{id}",
+          "invalidates_on": [
+            "Update",
+            "UpdateMany",
+            "UpdateWhere",
+            "Upsert",
+            "UpsertMany",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
+          ]
+        },
+        "events": {
+          "enabled": true,
+          "types": [
+            "WidthBigCreated",
+            "WidthBigDeleted",
+            "WidthBigUpdated"
+          ],
+          "payload_shape": "models.WidthBigEvent"
+        },
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "bigint",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        }
+      ],
+      "relationships": [
+        {
+          "name": "width_narrow_children",
+          "kind": "o2m",
+          "target_entity": "WidthNarrowChild",
+          "fk": {
+            "table": "width_narrow_children",
+            "schema": "public",
+            "columns": [
+              "big_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "width_narrow_children_big_id_fkey"
+          }
+        },
+        {
+          "name": "width_smalls",
+          "kind": "m2m",
+          "target_entity": "WidthSmall",
+          "junction": {
+            "table": "width_links",
+            "schema": "public",
+            "local_fk": {
+              "columns": [
+                "big_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "width_links_big_id_fkey"
+            },
+            "target_fk": {
+              "columns": [
+                "small_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "width_links_small_id_fkey"
+            }
+          }
+        }
+      ],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*WidthBig",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "postgres": "SELECT \"id\" FROM \"public\".\"width_bigs\" WHERE \"id\" = $1 LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetWidthBigsInput"
+              }
+            ],
+            "returns": "[]*WidthBig",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT \"id\" FROM \"public\".\"width_bigs\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"width_bigs\" WHERE \"id\" = $1)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthBigFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"width_bigs\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthBigFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"width_bigs\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[WidthBigFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[WidthBig]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[WidthBigFilter]"
+              }
+            ],
+            "returns": "*Connection[WidthBig]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamWidthBigsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*WidthBig, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "postgres": "SELECT \"id\" FROM \"public\".\"width_bigs\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWidthBigInput"
+              }
+            ],
+            "returns": "*WidthBig",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_bigs\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWidthBigInput"
+              }
+            ],
+            "returns": "[]*WidthBig",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_bigs\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateWidthBigInput"
+              }
+            ],
+            "returns": "*WidthBig",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_bigs\" SET <set> WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateWidthBigItem"
+              }
+            ],
+            "returns": "[]*WidthBig",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_bigs\" SET <set> WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthBigFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateWidthBigInput"
+              }
+            ],
+            "returns": "[]*WidthBig",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_bigs\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWidthBigInput"
+              },
+              {
+                "name": "target",
+                "type": "WidthBigConflictTarget"
+              }
+            ],
+            "returns": "*WidthBig",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated WidthBigConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_bigs\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWidthBigInput"
+              },
+              {
+                "name": "target",
+                "type": "WidthBigConflictTarget"
+              }
+            ],
+            "returns": "[]*WidthBig",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same WidthBigConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_bigs\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_bigs\" WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_bigs\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthBigFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_bigs\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "WidthBigFilter",
+        "fields": [
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "And",
+            "type": "[]*WidthBigFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*WidthBigFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "WidthBigSort",
+        "fields": [
+          "ID"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.WidthBigs().Get(ctx, 1)",
+          "rows, err := client.WidthBigs().GetMany(ctx, &models.GetWidthBigsInput{Filter: &models.WidthBigFilter{ID: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+        ],
+        "write": [
+          "created, err := client.WidthBigs().Create(ctx, &models.CreateWidthBigInput{ID: 1})",
+          "updated, err := client.WidthBigs().Update(ctx, 1, &models.UpdateWidthBigInput{})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
+      "name": "WidthLink",
+      "table": "width_links",
+      "schema": "public",
+      "file_prefix": "width_link",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "width_links_pkey",
+          "columns": [
+            "small_id",
+            "big_id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "composite",
+        "struct": "WidthLinkPK",
+        "columns": [
+          {
+            "name": "small_id",
+            "go_field": "SmallID",
+            "go_type": "int64"
+          },
+          {
+            "name": "big_id",
+            "go_field": "BigID",
+            "go_type": "int32"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": {
+          "ttl_seconds": 3600,
+          "hydration": "eager",
+          "key_pattern": "sqlgen:widthlink:{small_id}:{big_id}",
+          "invalidates_on": [
+            "Update",
+            "UpdateMany",
+            "UpdateWhere",
+            "Upsert",
+            "UpsertMany",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
+          ]
+        },
+        "events": {
+          "enabled": true,
+          "types": [
+            "WidthLinkCreated",
+            "WidthLinkDeleted",
+            "WidthLinkUpdated"
+          ],
+          "payload_shape": "models.WidthLinkEvent"
+        },
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "small_id",
+          "go_field": "SmallID",
+          "go_type": "int64",
+          "db_type": "bigint",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "big_id",
+          "go_field": "BigID",
+          "go_type": "int32",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Number[int32]",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "pk",
+                "type": "WidthLinkPK"
+              }
+            ],
+            "returns": "*WidthLink",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "postgres": "SELECT \"big_id\", \"small_id\" FROM \"public\".\"width_links\" WHERE \"small_id\" = $1 AND \"big_id\" = $2 LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetWidthLinksInput"
+              }
+            ],
+            "returns": "[]*WidthLink",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT \"big_id\", \"small_id\" FROM \"public\".\"width_links\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "pk",
+                "type": "WidthLinkPK"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"width_links\" WHERE \"small_id\" = $1 AND \"big_id\" = $2)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthLinkFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"width_links\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthLinkFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"width_links\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[WidthLinkFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[WidthLink]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[WidthLinkFilter]"
+              }
+            ],
+            "returns": "*Connection[WidthLink]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamWidthLinksInput"
+              }
+            ],
+            "returns": "iter.Seq2[*WidthLink, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "postgres": "SELECT \"big_id\", \"small_id\" FROM \"public\".\"width_links\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWidthLinkInput"
+              }
+            ],
+            "returns": "*WidthLink",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_links\" (<columns>) VALUES (<values>)"
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWidthLinkInput"
+              }
+            ],
+            "returns": "[]*WidthLink",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_links\" (<columns>) VALUES <values>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "pk",
+                "type": "WidthLinkPK"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateWidthLinkInput"
+              }
+            ],
+            "returns": "*WidthLink",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_links\" SET <set> WHERE \"small_id\" = $1 AND \"big_id\" = $2"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateWidthLinkItem"
+              }
+            ],
+            "returns": "[]*WidthLink",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_links\" SET <set> WHERE \"small_id\" = $1 AND \"big_id\" = $2"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthLinkFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateWidthLinkInput"
+              }
+            ],
+            "returns": "[]*WidthLink",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_links\" SET <set> WHERE <filter> RETURNING \"small_id\", \"big_id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWidthLinkInput"
+              },
+              {
+                "name": "target",
+                "type": "WidthLinkConflictTarget"
+              }
+            ],
+            "returns": "*WidthLink",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated WidthLinkConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_links\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWidthLinkInput"
+              },
+              {
+                "name": "target",
+                "type": "WidthLinkConflictTarget"
+              }
+            ],
+            "returns": "[]*WidthLink",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same WidthLinkConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_links\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "pk",
+                "type": "WidthLinkPK"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_links\" WHERE \"small_id\" = $1 AND \"big_id\" = $2"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "pks",
+                "type": "[]WidthLinkPK"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_links\" WHERE (\"small_id\", \"big_id\") IN (<pks>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthLinkFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_links\" WHERE <filter> RETURNING \"small_id\", \"big_id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "WidthLinkFilter",
+        "fields": [
+          {
+            "name": "BigID",
+            "type": "*comparator.Number[int32]"
+          },
+          {
+            "name": "SmallID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "And",
+            "type": "[]*WidthLinkFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*WidthLinkFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "WidthLinkSort",
+        "fields": [
+          "BigID",
+          "SmallID"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.WidthLinks().Get(ctx, models.WidthLinkPK{SmallID: 1, BigID: 1})",
+          "rows, err := client.WidthLinks().GetMany(ctx, &models.GetWidthLinksInput{Filter: &models.WidthLinkFilter{BigID: &comparator.Number[int32]{Eq: new(int32(1))}}})"
+        ],
+        "write": [
+          "created, err := client.WidthLinks().Create(ctx, &models.CreateWidthLinkInput{SmallID: 1, BigID: 1})",
+          "updated, err := client.WidthLinks().Update(ctx, models.WidthLinkPK{SmallID: 1, BigID: 1}, &models.UpdateWidthLinkInput{})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
+      "name": "WidthNarrowChild",
+      "table": "width_narrow_children",
+      "schema": "public",
+      "file_prefix": "width_narrow_child",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "width_narrow_children_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": {
+          "ttl_seconds": 3600,
+          "hydration": "eager",
+          "key_pattern": "sqlgen:widthnarrowchild:{id}",
+          "invalidates_on": [
+            "Update",
+            "UpdateMany",
+            "UpdateWhere",
+            "Upsert",
+            "UpsertMany",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
+          ]
+        },
+        "events": {
+          "enabled": true,
+          "types": [
+            "WidthNarrowChildCreated",
+            "WidthNarrowChildDeleted",
+            "WidthNarrowChildUpdated"
+          ],
+          "payload_shape": "models.WidthNarrowChildEvent"
+        },
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "bigint",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "big_id",
+          "go_field": "BigID",
+          "go_type": "int32",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.Number[int32]",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*WidthNarrowChild",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "postgres": "SELECT \"big_id\", \"id\" FROM \"public\".\"width_narrow_children\" WHERE \"id\" = $1 LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetWidthNarrowChildrenInput"
+              }
+            ],
+            "returns": "[]*WidthNarrowChild",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT \"big_id\", \"id\" FROM \"public\".\"width_narrow_children\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"width_narrow_children\" WHERE \"id\" = $1)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthNarrowChildFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"width_narrow_children\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthNarrowChildFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"width_narrow_children\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[WidthNarrowChildFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[WidthNarrowChild]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[WidthNarrowChildFilter]"
+              }
+            ],
+            "returns": "*Connection[WidthNarrowChild]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamWidthNarrowChildrenInput"
+              }
+            ],
+            "returns": "iter.Seq2[*WidthNarrowChild, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "postgres": "SELECT \"big_id\", \"id\" FROM \"public\".\"width_narrow_children\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWidthNarrowChildInput"
+              }
+            ],
+            "returns": "*WidthNarrowChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_narrow_children\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWidthNarrowChildInput"
+              }
+            ],
+            "returns": "[]*WidthNarrowChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_narrow_children\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateWidthNarrowChildInput"
+              }
+            ],
+            "returns": "*WidthNarrowChild",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_narrow_children\" SET <set> WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateWidthNarrowChildItem"
+              }
+            ],
+            "returns": "[]*WidthNarrowChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_narrow_children\" SET <set> WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthNarrowChildFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateWidthNarrowChildInput"
+              }
+            ],
+            "returns": "[]*WidthNarrowChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_narrow_children\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWidthNarrowChildInput"
+              },
+              {
+                "name": "target",
+                "type": "WidthNarrowChildConflictTarget"
+              }
+            ],
+            "returns": "*WidthNarrowChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated WidthNarrowChildConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_narrow_children\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWidthNarrowChildInput"
+              },
+              {
+                "name": "target",
+                "type": "WidthNarrowChildConflictTarget"
+              }
+            ],
+            "returns": "[]*WidthNarrowChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same WidthNarrowChildConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_narrow_children\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_narrow_children\" WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_narrow_children\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthNarrowChildFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_narrow_children\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "WidthNarrowChildFilter",
+        "fields": [
+          {
+            "name": "BigID",
+            "type": "*comparator.Number[int32]"
+          },
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "And",
+            "type": "[]*WidthNarrowChildFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*WidthNarrowChildFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "WidthNarrowChildSort",
+        "fields": [
+          "BigID",
+          "ID"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.WidthNarrowChildren().Get(ctx, 1)",
+          "rows, err := client.WidthNarrowChildren().GetMany(ctx, &models.GetWidthNarrowChildrenInput{Filter: &models.WidthNarrowChildFilter{BigID: &comparator.Number[int32]{Eq: new(int32(1))}}})"
+        ],
+        "write": [
+          "created, err := client.WidthNarrowChildren().Create(ctx, &models.CreateWidthNarrowChildInput{BigID: 1})",
+          "updated, err := client.WidthNarrowChildren().Update(ctx, 1, &models.UpdateWidthNarrowChildInput{BigID: omittable.Set(int32(1))})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
+      "name": "WidthScopedChild",
+      "table": "width_scoped_children",
+      "schema": "public",
+      "file_prefix": "width_scoped_child",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "width_scoped_children_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": {
+          "ttl_seconds": 3600,
+          "hydration": "eager",
+          "key_pattern": "sqlgen:widthscopedchild:{id}",
+          "invalidates_on": [
+            "Update",
+            "UpdateMany",
+            "UpdateWhere",
+            "Upsert",
+            "UpsertMany",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
+          ]
+        },
+        "events": {
+          "enabled": true,
+          "types": [
+            "WidthScopedChildCreated",
+            "WidthScopedChildDeleted",
+            "WidthScopedChildUpdated"
+          ],
+          "payload_shape": "models.WidthScopedChildEvent"
+        },
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "bigint",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "scope",
+          "go_field": "Scope",
+          "go_type": "int32",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.Number[int32]",
+          "comment": ""
+        },
+        {
+          "name": "small_id",
+          "go_field": "SmallID",
+          "go_type": "int64",
+          "db_type": "bigint",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*WidthScopedChild",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "postgres": "SELECT \"id\", \"scope\", \"small_id\" FROM \"public\".\"width_scoped_children\" WHERE \"id\" = $1 LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetWidthScopedChildrenInput"
+              }
+            ],
+            "returns": "[]*WidthScopedChild",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT \"id\", \"scope\", \"small_id\" FROM \"public\".\"width_scoped_children\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"width_scoped_children\" WHERE \"id\" = $1)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthScopedChildFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"width_scoped_children\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthScopedChildFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"width_scoped_children\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[WidthScopedChildFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[WidthScopedChild]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[WidthScopedChildFilter]"
+              }
+            ],
+            "returns": "*Connection[WidthScopedChild]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamWidthScopedChildrenInput"
+              }
+            ],
+            "returns": "iter.Seq2[*WidthScopedChild, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "postgres": "SELECT \"id\", \"scope\", \"small_id\" FROM \"public\".\"width_scoped_children\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWidthScopedChildInput"
+              }
+            ],
+            "returns": "*WidthScopedChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_scoped_children\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWidthScopedChildInput"
+              }
+            ],
+            "returns": "[]*WidthScopedChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_scoped_children\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateWidthScopedChildInput"
+              }
+            ],
+            "returns": "*WidthScopedChild",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_scoped_children\" SET <set> WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateWidthScopedChildItem"
+              }
+            ],
+            "returns": "[]*WidthScopedChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_scoped_children\" SET <set> WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthScopedChildFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateWidthScopedChildInput"
+              }
+            ],
+            "returns": "[]*WidthScopedChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_scoped_children\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWidthScopedChildInput"
+              },
+              {
+                "name": "target",
+                "type": "WidthScopedChildConflictTarget"
+              }
+            ],
+            "returns": "*WidthScopedChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated WidthScopedChildConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_scoped_children\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWidthScopedChildInput"
+              },
+              {
+                "name": "target",
+                "type": "WidthScopedChildConflictTarget"
+              }
+            ],
+            "returns": "[]*WidthScopedChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same WidthScopedChildConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_scoped_children\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_scoped_children\" WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_scoped_children\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthScopedChildFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_scoped_children\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "WidthScopedChildFilter",
+        "fields": [
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "Scope",
+            "type": "*comparator.Number[int32]"
+          },
+          {
+            "name": "SmallID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "And",
+            "type": "[]*WidthScopedChildFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*WidthScopedChildFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "WidthScopedChildSort",
+        "fields": [
+          "ID",
+          "Scope",
+          "SmallID"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.WidthScopedChildren().Get(ctx, 1)",
+          "rows, err := client.WidthScopedChildren().GetMany(ctx, &models.GetWidthScopedChildrenInput{Filter: &models.WidthScopedChildFilter{Scope: &comparator.Number[int32]{Eq: new(int32(1))}}})"
+        ],
+        "write": [
+          "created, err := client.WidthScopedChildren().Create(ctx, &models.CreateWidthScopedChildInput{Scope: 1, SmallID: 1})",
+          "updated, err := client.WidthScopedChildren().Update(ctx, 1, &models.UpdateWidthScopedChildInput{Scope: omittable.Set(int32(1))})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
+      "name": "WidthSmall",
+      "table": "width_smalls",
+      "schema": "public",
+      "file_prefix": "width_small",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "width_smalls_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        },
+        {
+          "name": "width_smalls_scope_id_key",
+          "columns": [
+            "scope",
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int32"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": {
+          "ttl_seconds": 3600,
+          "hydration": "eager",
+          "key_pattern": "sqlgen:widthsmall:{id}",
+          "invalidates_on": [
+            "Update",
+            "UpdateMany",
+            "UpdateWhere",
+            "Upsert",
+            "UpsertMany",
+            "Increment",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
+          ]
+        },
+        "events": {
+          "enabled": true,
+          "types": [
+            "WidthSmallCreated",
+            "WidthSmallDeleted",
+            "WidthSmallUpdated"
+          ],
+          "payload_shape": "models.WidthSmallEvent"
+        },
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int32",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Number[int32]",
+          "comment": ""
+        },
+        {
+          "name": "scope",
+          "go_field": "Scope",
+          "go_type": "int64",
+          "db_type": "bigint",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        }
+      ],
+      "relationships": [
+        {
+          "name": "width_bigs",
+          "kind": "m2m",
+          "target_entity": "WidthBig",
+          "junction": {
+            "table": "width_links",
+            "schema": "public",
+            "local_fk": {
+              "columns": [
+                "small_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "width_links_small_id_fkey"
+            },
+            "target_fk": {
+              "columns": [
+                "big_id"
+              ],
+              "references": [
+                "id"
+              ],
+              "constraint": "width_links_big_id_fkey"
+            }
+          }
+        },
+        {
+          "name": "width_scoped_children",
+          "kind": "o2m",
+          "target_entity": "WidthScopedChild",
+          "fk": {
+            "table": "width_scoped_children",
+            "schema": "public",
+            "columns": [
+              "scope",
+              "small_id"
+            ],
+            "references": [
+              "scope",
+              "id"
+            ],
+            "constraint": "width_scoped_children_scope_small_id_fkey"
+          }
+        },
+        {
+          "name": "width_wide_children",
+          "kind": "o2m",
+          "target_entity": "WidthWideChild",
+          "fk": {
+            "table": "width_wide_children",
+            "schema": "public",
+            "columns": [
+              "small_id"
+            ],
+            "references": [
+              "id"
+            ],
+            "constraint": "width_wide_children_small_id_fkey"
+          }
+        }
+      ],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int32"
+              }
+            ],
+            "returns": "*WidthSmall",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "postgres": "SELECT \"id\", \"scope\" FROM \"public\".\"width_smalls\" WHERE \"id\" = $1 LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetWidthSmallsInput"
+              }
+            ],
+            "returns": "[]*WidthSmall",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT \"id\", \"scope\" FROM \"public\".\"width_smalls\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int32"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"width_smalls\" WHERE \"id\" = $1)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthSmallFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"width_smalls\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthSmallFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"width_smalls\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[WidthSmallFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[WidthSmall]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[WidthSmallFilter]"
+              }
+            ],
+            "returns": "*Connection[WidthSmall]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamWidthSmallsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*WidthSmall, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "postgres": "SELECT \"id\", \"scope\" FROM \"public\".\"width_smalls\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWidthSmallInput"
+              }
+            ],
+            "returns": "*WidthSmall",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_smalls\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWidthSmallInput"
+              }
+            ],
+            "returns": "[]*WidthSmall",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_smalls\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int32"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateWidthSmallInput"
+              }
+            ],
+            "returns": "*WidthSmall",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_smalls\" SET <set> WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateWidthSmallItem"
+              }
+            ],
+            "returns": "[]*WidthSmall",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_smalls\" SET <set> WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthSmallFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateWidthSmallInput"
+              }
+            ],
+            "returns": "[]*WidthSmall",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_smalls\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWidthSmallInput"
+              },
+              {
+                "name": "target",
+                "type": "WidthSmallConflictTarget"
+              }
+            ],
+            "returns": "*WidthSmall",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated WidthSmallConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_smalls\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWidthSmallInput"
+              },
+              {
+                "name": "target",
+                "type": "WidthSmallConflictTarget"
+              }
+            ],
+            "returns": "[]*WidthSmall",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same WidthSmallConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_smalls\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "Increment",
+            "params": [
+              {
+                "name": "id",
+                "type": "int32"
+              },
+              {
+                "name": "input",
+                "type": "IncrementInput[WidthSmallIncrementColumn]"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Atomic single-column arithmetic. The column is restricted to the generated WidthSmallIncrementColumn enum — numeric, and identifying nothing: neither PK, FK, nor the tenant column. A negative amount decrements.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_smalls\" SET <column> = <column> + $1 WHERE \"id\" = $2"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int32"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_smalls\" WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int32"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_smalls\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthSmallFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_smalls\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "WidthSmallFilter",
+        "fields": [
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int32]"
+          },
+          {
+            "name": "Scope",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "And",
+            "type": "[]*WidthSmallFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*WidthSmallFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "WidthSmallSort",
+        "fields": [
+          "ID",
+          "Scope"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.WidthSmalls().Get(ctx, 1)",
+          "rows, err := client.WidthSmalls().GetMany(ctx, &models.GetWidthSmallsInput{Filter: &models.WidthSmallFilter{Scope: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+        ],
+        "write": [
+          "created, err := client.WidthSmalls().Create(ctx, &models.CreateWidthSmallInput{ID: 1, Scope: 1})",
+          "updated, err := client.WidthSmalls().Update(ctx, 1, &models.UpdateWidthSmallInput{Scope: omittable.Set(int64(1))})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
+      "name": "WidthWideChild",
+      "table": "width_wide_children",
+      "schema": "public",
+      "file_prefix": "width_wide_child",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "width_wide_children_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": {
+          "ttl_seconds": 3600,
+          "hydration": "eager",
+          "key_pattern": "sqlgen:widthwidechild:{id}",
+          "invalidates_on": [
+            "Update",
+            "UpdateMany",
+            "UpdateWhere",
+            "Upsert",
+            "UpsertMany",
+            "HardDelete",
+            "HardDeleteMany",
+            "HardDeleteWhere"
+          ]
+        },
+        "events": {
+          "enabled": true,
+          "types": [
+            "WidthWideChildCreated",
+            "WidthWideChildDeleted",
+            "WidthWideChildUpdated"
+          ],
+          "payload_shape": "models.WidthWideChildEvent"
+        },
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "bigint",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "small_id",
+          "go_field": "SmallID",
+          "go_type": "*int64",
+          "db_type": "bigint",
+          "nullable": true,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.NullableNumber[int64]",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*WidthWideChild",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "postgres": "SELECT \"id\", \"small_id\" FROM \"public\".\"width_wide_children\" WHERE \"id\" = $1 LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetWidthWideChildrenInput"
+              }
+            ],
+            "returns": "[]*WidthWideChild",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT \"id\", \"small_id\" FROM \"public\".\"width_wide_children\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"width_wide_children\" WHERE \"id\" = $1)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthWideChildFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"width_wide_children\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthWideChildFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "postgres": "SELECT COUNT(*) FROM \"public\".\"width_wide_children\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[WidthWideChildFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[WidthWideChild]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[WidthWideChildFilter]"
+              }
+            ],
+            "returns": "*Connection[WidthWideChild]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamWidthWideChildrenInput"
+              }
+            ],
+            "returns": "iter.Seq2[*WidthWideChild, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "postgres": "SELECT \"id\", \"small_id\" FROM \"public\".\"width_wide_children\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWidthWideChildInput"
+              }
+            ],
+            "returns": "*WidthWideChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_wide_children\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWidthWideChildInput"
+              }
+            ],
+            "returns": "[]*WidthWideChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_wide_children\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateWidthWideChildInput"
+              }
+            ],
+            "returns": "*WidthWideChild",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_wide_children\" SET <set> WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateWidthWideChildItem"
+              }
+            ],
+            "returns": "[]*WidthWideChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_wide_children\" SET <set> WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthWideChildFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateWidthWideChildInput"
+              }
+            ],
+            "returns": "[]*WidthWideChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "UPDATE \"public\".\"width_wide_children\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateWidthWideChildInput"
+              },
+              {
+                "name": "target",
+                "type": "WidthWideChildConflictTarget"
+              }
+            ],
+            "returns": "*WidthWideChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated WidthWideChildConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_wide_children\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateWidthWideChildInput"
+              },
+              {
+                "name": "target",
+                "type": "WidthWideChildConflictTarget"
+              }
+            ],
+            "returns": "[]*WidthWideChild",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same WidthWideChildConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "postgres": "INSERT INTO \"public\".\"width_wide_children\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_wide_children\" WHERE \"id\" = $1"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_wide_children\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*WidthWideChildFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "postgres": "DELETE FROM \"public\".\"width_wide_children\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "WidthWideChildFilter",
+        "fields": [
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "SmallID",
+            "type": "*comparator.NullableNumber[int64]"
+          },
+          {
+            "name": "And",
+            "type": "[]*WidthWideChildFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*WidthWideChildFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "WidthWideChildSort",
+        "fields": [
+          "ID",
+          "SmallID"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.WidthWideChildren().Get(ctx, 1)",
+          "rows, err := client.WidthWideChildren().GetMany(ctx, &models.GetWidthWideChildrenInput{Filter: &models.WidthWideChildFilter{SmallID: &comparator.NullableNumber[int64]{Null: new(true)}}})"
+        ],
+        "write": [
+          "created, err := client.WidthWideChildren().Create(ctx, &models.CreateWidthWideChildInput{})",
+          "updated, err := client.WidthWideChildren().Update(ctx, 1, &models.UpdateWidthWideChildInput{SmallID: omittable.Set(new(int64(1)))})"
+        ]
+      }
     }
   ],
   "enums": [

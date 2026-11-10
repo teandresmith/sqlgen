@@ -77,6 +77,11 @@ func TestNestedAssignExpr_NullWrapperValue(t *testing.T) {
 		{"sqlite datetime", "omittable.Value[types.NullDateTime]", "types.DateTime", "omittable.Set(types.NullDateTime{Time: parent.K.Time, Valid: true})"},
 		{"pointer", "omittable.Value[*types.DateTime]", "types.DateTime", "omittable.Set(&parent.K)"},
 		{"same type", "omittable.Value[types.DateTime]", "types.DateTime", "omittable.Set(parent.K)"},
+		{"sql.NullTime over a datetime", "omittable.Value[sql.NullTime]", "types.DateTime", "omittable.Set(sql.NullTime{Time: parent.K.Time, Valid: true})"},
+		// A wrapper over another type than the key cannot carry it.
+		{"datetime wrapper over a text key", "omittable.Value[types.NullDateTime]", "string", ""},
+		{"narrower sql wrapper", "omittable.Value[sql.NullInt32]", "int64", ""},
+		{"wider sql wrapper", "omittable.Value[sql.NullInt64]", "int32", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -1579,6 +1579,9 @@ func nestedAssignExpr(goType string, required bool, pkGoType, parentExpr string,
 	case "*" + pkGoType:
 		return "omittable.Set(&" + parentExpr + ")"
 	}
+	if !nullWrapperHolds(inner, pkGoType) {
+		return ""
+	}
 	lit := nullWrapperLiteral(inner, nestedKeyValueExpr(pkGoType, parentExpr), resolver)
 	if lit == "" {
 		return ""
@@ -1804,6 +1807,32 @@ func nestedParentKeyExpr(comparatorType string, parentKey ColumnContext) string 
 		return funcFKToString(parentKey, expr)
 	}
 	return nestedKeyValueExpr(parentKey.GoType, expr)
+}
+
+// builtinWrapperValues is the Go type each built-in integration's Null wrapper
+// holds; database/sql's come from gotype.StdNullUnderlying.
+var builtinWrapperValues = map[string]string{
+	"types.NullDateTime":  "time.Time",
+	"uuid.NullUUID":       "uuid.UUID",
+	"decimal.NullDecimal": "decimal.Decimal",
+}
+
+// nullWrapperHolds reports whether a Null wrapper can carry the parent's key,
+// read as nestedKeyValueExpr reads it. A built-in wrapper holds one Go type:
+// sql.NullInt32 cannot carry an int64 key, nor types.NullDateTime a string. A
+// user-declared wrapper's value type is the consumer's, so it is not refused.
+func nullWrapperHolds(wrapper, pkGoType string) bool {
+	held, ok := gotype.StdNullUnderlying(wrapper)
+	if !ok {
+		held, ok = builtinWrapperValues[wrapper]
+	}
+	if !ok {
+		return true
+	}
+	if pkGoType == dateTimeGoType {
+		pkGoType = "time.Time"
+	}
+	return held == pkGoType
 }
 
 // nestedKeyValueExpr reads a key column as the value comparator.Time and

@@ -106,6 +106,12 @@ type Client struct {
 	timeKeyedNote     *timeKeyedNoteClient
 	userCategory      *userCategoryClient
 	warehouse         *warehouseClient
+	widthBig          *widthBigClient
+	widthLink         *widthLinkClient
+	widthNarrowChild  *widthNarrowChildClient
+	widthScopedChild  *widthScopedChildClient
+	widthSmall        *widthSmallClient
+	widthWideChild    *widthWideChildClient
 }
 
 // New creates a new Client with the given querier and options.
@@ -167,6 +173,12 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		timeKeyedNote:     newTimeKeyedNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		userCategory:      newUserCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		warehouse:         newWarehouseClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthBig:          newWidthBigClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthLink:         newWidthLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthNarrowChild:  newWidthNarrowChildClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthScopedChild:  newWidthScopedChildClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthSmall:        newWidthSmallClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		widthWideChild:    newWidthWideChildClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 	}
 
 	// Push the configured CallbackMode down to every entity client that can
@@ -185,6 +197,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.publicUser.callbackMode = options.callbackMode
 	c.timeKeyed.callbackMode = options.callbackMode
 	c.warehouse.callbackMode = options.callbackMode
+	c.widthBig.callbackMode = options.callbackMode
+	c.widthSmall.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
 	// the nested-mutation executors write through
@@ -213,6 +227,13 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.publicUser.userCategoryClient = c.userCategory
 	c.timeKeyed.timeKeyedNoteClient = c.timeKeyedNote
 	c.warehouse.warehouseClient = c.warehouse
+	c.widthBig.widthNarrowChildClient = c.widthNarrowChild
+	c.widthBig.widthSmallClient = c.widthSmall
+	c.widthBig.widthLinkClient = c.widthLink
+	c.widthSmall.widthScopedChildClient = c.widthScopedChild
+	c.widthSmall.widthWideChildClient = c.widthWideChild
+	c.widthSmall.widthBigClient = c.widthBig
+	c.widthSmall.widthLinkClient = c.widthLink
 
 	return c
 }
@@ -380,6 +401,36 @@ func (c *Client) UserCategories() UserCategoryClient {
 // Warehouses returns the WarehouseClient for Warehouse operations.
 func (c *Client) Warehouses() WarehouseClient {
 	return c.warehouse
+}
+
+// WidthBigs returns the WidthBigClient for WidthBig operations.
+func (c *Client) WidthBigs() WidthBigClient {
+	return c.widthBig
+}
+
+// WidthLinks returns the WidthLinkClient for WidthLink operations.
+func (c *Client) WidthLinks() WidthLinkClient {
+	return c.widthLink
+}
+
+// WidthNarrowChildren returns the WidthNarrowChildClient for WidthNarrowChild operations.
+func (c *Client) WidthNarrowChildren() WidthNarrowChildClient {
+	return c.widthNarrowChild
+}
+
+// WidthScopedChildren returns the WidthScopedChildClient for WidthScopedChild operations.
+func (c *Client) WidthScopedChildren() WidthScopedChildClient {
+	return c.widthScopedChild
+}
+
+// WidthSmalls returns the WidthSmallClient for WidthSmall operations.
+func (c *Client) WidthSmalls() WidthSmallClient {
+	return c.widthSmall
+}
+
+// WidthWideChildren returns the WidthWideChildClient for WidthWideChild operations.
+func (c *Client) WidthWideChildren() WidthWideChildClient {
+	return c.widthWideChild
 }
 
 // Begin starts a new transaction with the given name.

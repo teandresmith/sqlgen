@@ -1,0 +1,66 @@
+"""
+KeyClassChild corresponds to the key_class_children table.
+"""
+type KeyClassChild {
+  "id"
+  id: Int!
+  "parent_id"
+  parentID: String
+}
+
+type KeyClassChildConnection {
+  edges:      [KeyClassChildEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type KeyClassChildEdge {
+  node:   KeyClassChild!
+  cursor: String!
+}
+
+type KeyClassChildListResult {
+  items:      [KeyClassChild!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input KeyClassChildFilter {
+  parentID: NullableIDComparator
+  and: [KeyClassChildFilter!]
+  or:  [KeyClassChildFilter!]
+}
+
+enum KeyClassChildSortField {
+  ID
+  PARENT_ID
+}
+
+input KeyClassChildSort {
+  field:     KeyClassChildSortField!
+  direction: SortDirection!
+}
+input CreateKeyClassChildInput {
+  parentID: String
+}
+input UpdateKeyClassChildInput {
+  parentID: String
+}
+
+extend type Query {
+  keyClassChild(id: Int!): KeyClassChild
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to keyClassChildList instead."
+  keyClassChildren(filter: KeyClassChildFilter, first: Int, after: String, last: Int, before: String): KeyClassChildConnection!
+  keyClassChildList(filter: KeyClassChildFilter, sort: [KeyClassChildSort!], limit: Int, offset: Int): KeyClassChildListResult!
+}
+
+extend type Mutation {
+  createKeyClassChild(input: CreateKeyClassChildInput!): KeyClassChild!
+  createKeyClassChildren(inputs: [CreateKeyClassChildInput!]!): [KeyClassChild!]!
+  updateKeyClassChild(id: Int!, input: UpdateKeyClassChildInput!): KeyClassChild!
+  updateKeyClassChildren(filter: KeyClassChildFilter!, input: UpdateKeyClassChildInput!): [KeyClassChild!]!
+  upsertKeyClassChild(input: CreateKeyClassChildInput!): KeyClassChild!
+  deleteKeyClassChild(id: Int!): Boolean!
+}

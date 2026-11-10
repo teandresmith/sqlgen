@@ -245,6 +245,52 @@ func (s DocumentSorter) Name(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "name", Direction: direction}
 }
 
+// KeyClassChildSorter provides type-safe sort helpers for the KeyClassChild entity.
+// Each method returns a sql.Sort for the corresponding column.
+type KeyClassChildSorter struct{}
+
+// NewKeyClassChildSorter returns a new KeyClassChildSorter.
+func NewKeyClassChildSorter() KeyClassChildSorter { return KeyClassChildSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s KeyClassChildSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// ParentID returns a sort for the parent_id column in the given direction.
+func (s KeyClassChildSorter) ParentID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "parent_id", Direction: direction}
+}
+
+// KeyClassParentSorter provides type-safe sort helpers for the KeyClassParent entity.
+// Each method returns a sql.Sort for the corresponding column.
+type KeyClassParentSorter struct{}
+
+// NewKeyClassParentSorter returns a new KeyClassParentSorter.
+func NewKeyClassParentSorter() KeyClassParentSorter { return KeyClassParentSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s KeyClassParentSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// KeyClassRealChildSorter provides type-safe sort helpers for the KeyClassRealChild entity.
+// Each method returns a sql.Sort for the corresponding column.
+type KeyClassRealChildSorter struct{}
+
+// NewKeyClassRealChildSorter returns a new KeyClassRealChildSorter.
+func NewKeyClassRealChildSorter() KeyClassRealChildSorter { return KeyClassRealChildSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s KeyClassRealChildSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// ParentID returns a sort for the parent_id column in the given direction.
+func (s KeyClassRealChildSorter) ParentID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "parent_id", Direction: direction}
+}
+
 // KeyOnlyRowSorter provides type-safe sort helpers for the KeyOnlyRow entity.
 // Each method returns a sql.Sort for the corresponding column.
 type KeyOnlyRowSorter struct{}

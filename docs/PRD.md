@@ -8897,6 +8897,8 @@ Relationship loading requires converting FK values to comparator-compatible type
 
 The guard + unwrap path applies to every FK column read off a *child* entity, one per member of a composite key. A child with a NULL member matches no parent. Parent-side / target-side reads are of the columns the key references. A primary key is never nullable, and a referenced UNIQUE column that holds a NULL is skipped before the query, since nothing references it.
 
+An FK column need not share the Go type of the column it references: PostgreSQL accepts a foreign key of another integer width, and SQLite one of another storage class, such as TEXT or REAL into INTEGER. When its comparator is of another family or type argument (§11.2), it cannot take the referenced keys, so the loader binds them as key tuples instead, on every dialect. A time key next to a key of another family, which only SQLite accepts, is not yet supported. Two enums differ only by name, so the loader converts each key to the FK's enum instead. A key that an integer FK column cannot hold, such as one past its width or a fractional one, is skipped before the query on every key shape: a driver refuses to bind it, and no row can reference it.
+
 ### 13.4 Manual Relationship Configuration
 
 When automatic detection is insufficient (e.g., polymorphic FKs, non-standard naming, missing FK constraints), relationships can be explicitly defined in config. See [TableRelationship in 4.8](#48-tableconfig-per-table).

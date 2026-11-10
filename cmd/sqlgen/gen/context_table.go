@@ -225,13 +225,13 @@ func wireKeyedLoad(r *RelationshipContext, parent *TableContext, colsByTable map
 		junction := lookupTableCols(colsByTable, r.JunctionSchema, r.JunctionTable)
 		local := loadKeyMembers(r.JunctionLocal, junction, parentCols)
 		reference := loadKeyMembers(r.JunctionReference, junction, targetCols)
-		if r.CompositeKey() || referencesNullable(local) || referencesNullable(reference) {
+		if r.CompositeKey() || referencesNullable(local) || referencesNullable(reference) || comparatorsDiffer(local) || comparatorsDiffer(reference) {
 			r.LoadKey, r.LoadReferenceKey = local, reference
 			wireJunctionColumns(r)
 		}
 	case r.Type == parser.OneToMany || r.FKOnTarget:
 		key := loadKeyMembers(r.Key, targetCols, parentCols)
-		if r.CompositeKey() || referencesNullable(key) {
+		if r.CompositeKey() || referencesNullable(key) || comparatorsDiffer(key) {
 			r.LoadKey = key
 		}
 	}
@@ -239,6 +239,29 @@ func wireKeyedLoad(r *RelationshipContext, parent *TableContext, colsByTable map
 
 func referencesNullable(key []KeyMemberContext) bool {
 	return slices.ContainsFunc(key, func(m KeyMemberContext) bool { return m.Referenced.Nullable })
+}
+
+// comparatorsDiffer reports a key member whose column filters through another
+// comparator than the column it references, so that a list of referenced keys
+// does not assign into the holder's filter field. Two enums differ only by
+// name, which MySQL gives each column: the one-column loader converts the
+// parent's keys to the FK's enum (FKEnumGoType), and every other loader binds
+// them as the strings they are. Every time key filters through comparator.Time,
+// whatever its Go type. A time key next to a key of another family, which only
+// SQLite accepts, is left out: the tuple loader compiles for it but matches no
+// row, since neither side spells the time as the other stores it.
+func comparatorsDiffer(key []KeyMemberContext) bool {
+	return slices.ContainsFunc(key, func(m KeyMemberContext) bool {
+		family, param := pkComparatorFamily(m.GoType)
+		refFamily, refParam := pkComparatorFamily(m.Referenced.GoType)
+		switch {
+		case family == "Enum" && refFamily == "Enum":
+			return false
+		case (family == "Time") != (refFamily == "Time"):
+			return false
+		}
+		return family != refFamily || param != refParam
+	})
 }
 
 // loadKeyMembers resolves key pairs against the table holding the key and the
