@@ -144,6 +144,60 @@
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
+### FIX-380
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-372 re-vet (2026-11-10), filed on the user's yes
+
+**Issue.** **A SQLite time key next to an FK of another storage class does not compile, and routing it through
+the tuple loader would load nothing.** A generated SQLite schema of `CREATE TABLE stamps (k DATETIME PRIMARY
+KEY); CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, k TEXT REFERENCES stamps (k));`, then `go build
+-gcflags=-e ./...`, gives `cannot use &comparator.NullableTime{…} (value of type *comparator.NullableTime) as
+*comparator.NullableID value in struct literal`. The reverse pair (TEXT PK with a DATETIME FK) fails the same way
+with the types swapped. Routed through the keyed tuple loader instead (prototyped during the FIX-372 re-vet, not
+landed), it compiles but loads no children in either direction: `parent 2024-01-02 03:04:05 +0000 UTC kids=0` and
+`parent "2024-01-02 03:04:05" kids=0`. Only SQLite accepts the pair; PRD §13.3 states it is not yet supported.
+
+**Root cause.** The two sides spell the same instant differently, and no layer picks one spelling.
+- The DATETIME side is `types.DateTime`. It filters through `comparator.Time` (FIX-371), binds through
+  `DateTime.Value()` in the configured output layout (RFC3339Nano by default, `types/datetime.go:146`), and in a
+  tuple-loader bucket key spells as `fmt.Sprint` (`2024-01-02 03:04:05 +0000 UTC`).
+- The TEXT side is a `string` on `comparator.ID` that holds whatever text was stored (`2024-01-02 03:04:05`).
+- So the plain one-column loader cannot assign one comparator into the other's field, and the tuple loader compares
+  text that never matches. `comparatorsDiffer` (`cmd/sqlgen/gen/context_table.go:253`, the `(family == "Time") !=
+  (refFamily == "Time")` arm) deliberately keeps the pair off the tuple loader. A loud compile error beats a silent
+  empty load (auto-accepted in FIX-372).
+
+**Suggested fix.**
+- Pending the user's ruling, before vetting:
+  - (A) Pick a canonical text spelling for a SQLite time key compared against TEXT, for example the layout
+    `types.DateTime` binds (`SetOutputLayout`, RFC3339Nano by default). Convert the time side to it, both when
+    binding the other side's filter and when building the tuple-loader bucket key. Then lift the
+    `comparatorsDiffer` carve-out for the pair. Rows whose TEXT was stored in another spelling would still match
+    no parent, so the limit needs documenting.
+  - (B) Refuse the pair at generation with a diagnostic naming the edge and the two storage classes, instead of
+    leaving a Go compile error. Keep PRD §13.3's "not yet supported" and make it a stated generation error.
+- The user ruled on 2026-11-10: option (B). Refuse the pair at generation with a diagnostic that names the edge,
+  both columns and their storage classes, and suggests declaring both columns with the same storage class. Option
+  (A) was declined: a TEXT value stored in another spelling would still match no parent silently, and the bind
+  layout (`SetOutputLayout`) is a runtime setting the generator cannot see.
+- Either way, add a SQLite example fixture for both directions (DATETIME PK with TEXT FK, TEXT PK with DATETIME FK)
+  and a live load test, or a generation-error test for (B).
+- Recheck the nested-write side for the same pair. FIX-372's `nullWrapperHolds` reads a `types.DateTime` key as
+  `time.Time`; confirm the E1 drop or the conversion matches the option chosen.
+
+**References.**
+- PRD §13.3 (FK type conversion; "A time key next to a key of another family, which only SQLite accepts, is not
+  yet supported"), §11.2 (comparator families).
+- FIX-372 (`c88b5c7e`; the carve-out and its auto-accept), FIX-371 (`f36be88e`; time keys on `comparator.Time`),
+  FIX-363 (datetime key terms).
+- `cmd/sqlgen/gen/key_mismatch_test.go`, `TestGetTemplate_keyComparatorFamilies/sqlite_datetime_next_to_text` (pins
+  the carve-out, and must change with either option).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
 <!-- fixes:open:end -->
 
 ## Resolved
