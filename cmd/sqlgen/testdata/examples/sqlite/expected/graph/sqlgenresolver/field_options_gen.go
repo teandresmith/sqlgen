@@ -1227,6 +1227,94 @@ func tagFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []grap
 	return fo
 }
 
+// timeKeyedFieldOptionsFromContext returns the
+// models.TimeKeyedFieldOptions for the current GraphQL request.
+func timeKeyedFieldOptionsFromContext(ctx context.Context) *models.TimeKeyedFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "TimeKeyedConnection", "TimeKeyedListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.TimeKeyedFieldOptions{}
+	}
+	return timeKeyedFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// timeKeyedFieldOptionsFromCollected walks one level of
+// the TimeKeyed selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func timeKeyedFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.TimeKeyedFieldOptions {
+	fo := &models.TimeKeyedFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "at":
+			fo.At = true
+		case "label":
+			fo.Label = true
+		case "timeKeyedNotes":
+			fo.TimeKeyedNotes = &models.TimeKeyedNoteRelationshipOptions{
+				FieldOptions: timeKeyedNoteFieldOptionsFromCollected(opCtx, f.Sub),
+			}
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.At = true
+	}
+	return fo
+}
+
+// timeKeyedNoteFieldOptionsFromContext returns the
+// models.TimeKeyedNoteFieldOptions for the current GraphQL request.
+func timeKeyedNoteFieldOptionsFromContext(ctx context.Context) *models.TimeKeyedNoteFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "TimeKeyedNoteConnection", "TimeKeyedNoteListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.TimeKeyedNoteFieldOptions{}
+	}
+	return timeKeyedNoteFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// timeKeyedNoteFieldOptionsFromCollected walks one level of
+// the TimeKeyedNote selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func timeKeyedNoteFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.TimeKeyedNoteFieldOptions {
+	fo := &models.TimeKeyedNoteFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "keyedAt":
+			fo.KeyedAt = true
+		case "note":
+			fo.Note = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
 // userFieldOptionsFromContext returns the
 // models.UserFieldOptions for the current GraphQL request.
 func userFieldOptionsFromContext(ctx context.Context) *models.UserFieldOptions {

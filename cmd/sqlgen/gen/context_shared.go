@@ -47,6 +47,36 @@ func BuildSharedTypesContext(pkg string, tenancyEnabled bool, tenantGoType, tena
 	}
 }
 
+// withDateTimeKeys adds dateTimeKeys to a shared-types context. A table keyed
+// by types.DateTime collects its keys as []types.DateTime, and comparator.Time
+// takes the []time.Time they wrap.
+func withDateTimeKeys(ctx SharedTypesContext) SharedTypesContext {
+	ctx.Imports = UniqueImports(append(ctx.Imports, "time", "github.com/teandresmith/sqlgen/types"))
+	ctx.Helpers = append(ctx.Helpers, SharedHelperDefinition{
+		Name:      "dateTimeKeys",
+		Signature: "(keys []types.DateTime) []time.Time",
+		Doc:       "dateTimeKeys returns the time.Time each key wraps.",
+		Body: `	times := make([]time.Time, len(keys))
+	for i, k := range keys {
+		times[i] = k.Time
+	}
+	return times`,
+	})
+	slices.SortFunc(ctx.Helpers, func(a, b SharedHelperDefinition) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return ctx
+}
+
+// tableHasDateTimeKey reports whether a table has a PK or FK column bound to
+// types.DateTime, whose key lists pkFilterInExpr passes through dateTimeKeys.
+func tableHasDateTimeKey(tc TableContext) bool {
+	return slices.ContainsFunc(tc.Columns, func(col ColumnContext) bool {
+		base := strings.TrimPrefix(col.GoType, "*")
+		return (col.PrimaryKey || col.FKReference != nil) && (base == dateTimeGoType || base == "types.NullDateTime")
+	})
+}
+
 // callerOptionsDecl declares the record CallOptions.caller holds; the
 // emitted doc comment explains why internal hops need it.
 const callerOptionsDecl = `// callerOptions is the SkipHooks / SkipCache / SkipEvents triple a call's

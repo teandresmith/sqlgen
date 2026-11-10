@@ -86,6 +86,8 @@ type Client struct {
 	reservedWordColumn *reservedWordColumnClient
 	sluggedRow         *sluggedRowClient
 	tag                *tagClient
+	timeKeyed          *timeKeyedClient
+	timeKeyedNote      *timeKeyedNoteClient
 	user               *userClient
 	userCategory       *userCategoryClient
 	warehouse          *warehouseClient
@@ -128,6 +130,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		reservedWordColumn: newReservedWordColumnClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		sluggedRow:         newSluggedRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		tag:                newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		timeKeyed:          newTimeKeyedClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		timeKeyedNote:      newTimeKeyedNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		user:               newUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		userCategory:       newUserCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		warehouse:          newWarehouseClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -146,6 +150,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.order.callbackMode = options.callbackMode
 	c.owner.callbackMode = options.callbackMode
 	c.product.callbackMode = options.callbackMode
+	c.timeKeyed.callbackMode = options.callbackMode
 	c.user.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
@@ -170,6 +175,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.owner.ownerProfileClient = c.ownerProfile
 	c.product.orderItemClient = c.orderItem
 	c.product.productTagLabelClient = c.productTagLabel
+	c.timeKeyed.timeKeyedNoteClient = c.timeKeyedNote
 	c.user.orderClient = c.order
 	c.user.categoryClient = c.category
 	c.user.profileClient = c.profile
@@ -296,6 +302,16 @@ func (c *Client) SluggedRows() SluggedRowClient {
 // Tags returns the TagClient for Tag operations.
 func (c *Client) Tags() TagClient {
 	return c.tag
+}
+
+// TimeKeyeds returns the TimeKeyedClient for TimeKeyed operations.
+func (c *Client) TimeKeyeds() TimeKeyedClient {
+	return c.timeKeyed
+}
+
+// TimeKeyedNotes returns the TimeKeyedNoteClient for TimeKeyedNote operations.
+func (c *Client) TimeKeyedNotes() TimeKeyedNoteClient {
+	return c.timeKeyedNote
 }
 
 // Users returns the UserClient for User operations.

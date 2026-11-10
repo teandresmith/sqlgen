@@ -26,6 +26,8 @@ Features: audit_columns, graphql, soft_delete, views
 | Profile | `profiles` | table | [profile.md](profile.md) | Extended user profile information |
 | SluggedRow | `slugged_rows` | table | [slugged_row.md](slugged_row.md) |  |
 | Tag | `tags` | table | [tag.md](tag.md) | Content tags with boolean soft delete |
+| TimeKeyed | `time_keyed` | table | [time_keyed.md](time_keyed.md) |  |
+| TimeKeyedNote | `time_keyed_notes` | table | [time_keyed_note.md](time_keyed_note.md) |  |
 | User | `users` | table | [user.md](user.md) | Registered user accounts |
 | UserCategory | `user_categories` | table | [user_category.md](user_category.md) | Junction table linking users to their preferred categories |
 | UserEvent | `user_events` | table | [user_event.md](user_event.md) | User activity events; the one nullable-FK child table in this schema |

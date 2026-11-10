@@ -10,6 +10,7 @@ import (
 	models "github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/sqlite/models"
 	"github.com/teandresmith/sqlgen/comparator"
 	"github.com/teandresmith/sqlgen/sql"
+	"github.com/teandresmith/sqlgen/types"
 )
 
 // Per-table query and mutation methods on *Q and *M. The
@@ -4722,6 +4723,372 @@ func (m *M) RestoreTag(ctx context.Context, id int) (*models.Tag, error) {
 		return nil, mapErrorToGQL(err)
 	}
 	return res, nil
+}
+
+// TimeKeyed resolves the single-by-PK query for time_keyed.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) TimeKeyed(ctx context.Context, at types.DateTime) (*models.TimeKeyed, error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	res, err := q.Client.TimeKeyeds().Get(ctx, at, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TimeKeyeds resolves the cursor-paginated Connection query for time_keyed.
+func (q *Q) TimeKeyeds(ctx context.Context, filter *models.TimeKeyedFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.TimeKeyed], error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	res, err := q.Client.TimeKeyeds().Connection(ctx, models.ConnectionInput[models.TimeKeyedFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TimeKeyedList resolves the offset-paginated ListResult query for time_keyed.
+func (q *Q) TimeKeyedList(ctx context.Context, filter *models.TimeKeyedFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.TimeKeyed], error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.TimeKeyedFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.TimeKeyeds().Paginate(ctx, in, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTimeKeyed resolves the single-row create mutation for time_keyed.
+func (m *M) CreateTimeKeyed(ctx context.Context, input *models.CreateTimeKeyedInput) (*models.TimeKeyed, error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyeds().Create(ctx, input, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTimeKeyeds resolves the bulk create mutation for time_keyed.
+func (m *M) CreateTimeKeyeds(ctx context.Context, inputs []*models.CreateTimeKeyedInput) ([]*models.TimeKeyed, error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyeds().CreateMany(ctx, inputs, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateTimeKeyedRequest is one updateTimeKeyed /
+// updateTimeKeyeds input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateTimeKeyedRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateTimeKeyedInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateTimeKeyed resolves the single-row update mutation for time_keyed.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateTimeKeyed(ctx context.Context, at types.DateTime, input UpdateTimeKeyedRequest) (*models.TimeKeyed, error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.TimeKeyeds().Update(ctx, at, input.Set, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.TimeKeyeds().Get(ctx, at, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateTimeKeyeds resolves the bulk update-where mutation for time_keyed.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateTimeKeyeds(ctx context.Context, filter *models.TimeKeyedFilter, input UpdateTimeKeyedRequest) ([]*models.TimeKeyed, error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyeds().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertTimeKeyed resolves the single-row upsert mutation for time_keyed.
+func (m *M) UpsertTimeKeyed(ctx context.Context, input *models.CreateTimeKeyedInput) (*models.TimeKeyed, error) {
+	fo := timeKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyeds().Upsert(ctx, input, models.TimeKeyedConflictPK, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteTimeKeyed resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteTimeKeyed(ctx context.Context, at types.DateTime) (bool, error) {
+	if err := m.Client.TimeKeyeds().HardDelete(ctx, at, func(o *models.CallOptions[models.TimeKeyedFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// TimeKeyedNote resolves the single-by-PK query for time_keyed_notes.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) TimeKeyedNote(ctx context.Context, id int) (*models.TimeKeyedNote, error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := q.Client.TimeKeyedNotes().Get(ctx, int64(id), func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TimeKeyedNotes resolves the cursor-paginated Connection query for time_keyed_notes.
+func (q *Q) TimeKeyedNotes(ctx context.Context, filter *models.TimeKeyedNoteFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.TimeKeyedNote], error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := q.Client.TimeKeyedNotes().Connection(ctx, models.ConnectionInput[models.TimeKeyedNoteFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TimeKeyedNoteList resolves the offset-paginated ListResult query for time_keyed_notes.
+func (q *Q) TimeKeyedNoteList(ctx context.Context, filter *models.TimeKeyedNoteFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.TimeKeyedNote], error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.TimeKeyedNoteFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.TimeKeyedNotes().Paginate(ctx, in, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTimeKeyedNote resolves the single-row create mutation for time_keyed_notes.
+func (m *M) CreateTimeKeyedNote(ctx context.Context, input *models.CreateTimeKeyedNoteInput) (*models.TimeKeyedNote, error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyedNotes().Create(ctx, input, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTimeKeyedNotes resolves the bulk create mutation for time_keyed_notes.
+func (m *M) CreateTimeKeyedNotes(ctx context.Context, inputs []*models.CreateTimeKeyedNoteInput) ([]*models.TimeKeyedNote, error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyedNotes().CreateMany(ctx, inputs, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateTimeKeyedNoteRequest is one updateTimeKeyedNote /
+// updateTimeKeyedNotes input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateTimeKeyedNoteRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateTimeKeyedNoteInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateTimeKeyedNote resolves the single-row update mutation for time_keyed_notes.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateTimeKeyedNote(ctx context.Context, id int, input UpdateTimeKeyedNoteRequest) (*models.TimeKeyedNote, error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.TimeKeyedNotes().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.TimeKeyedNotes().Get(ctx, int64(id), func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateTimeKeyedNotes resolves the bulk update-where mutation for time_keyed_notes.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateTimeKeyedNotes(ctx context.Context, filter *models.TimeKeyedNoteFilter, input UpdateTimeKeyedNoteRequest) ([]*models.TimeKeyedNote, error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyedNotes().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertTimeKeyedNote resolves the single-row upsert mutation for time_keyed_notes.
+func (m *M) UpsertTimeKeyedNote(ctx context.Context, input *models.CreateTimeKeyedNoteInput) (*models.TimeKeyedNote, error) {
+	fo := timeKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.TimeKeyedNotes().Upsert(ctx, input, models.TimeKeyedNoteConflictPK, func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteTimeKeyedNote resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteTimeKeyedNote(ctx context.Context, id int) (bool, error) {
+	if err := m.Client.TimeKeyedNotes().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.TimeKeyedNoteFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.TimeKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
 }
 
 // User resolves the single-by-PK query for users.

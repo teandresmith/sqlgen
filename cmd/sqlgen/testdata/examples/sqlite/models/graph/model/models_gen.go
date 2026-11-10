@@ -288,6 +288,16 @@ type CreateTagInput struct {
 	IsDeleted *bool  `json:"isDeleted,omitempty"`
 }
 
+type CreateTimeKeyedInput struct {
+	At    types.DateTime `json:"at"`
+	Label string         `json:"label"`
+}
+
+type CreateTimeKeyedNoteInput struct {
+	KeyedAt *types.NullDateTime `json:"keyedAt,omitempty"`
+	Note    string              `json:"note"`
+}
+
 type CreateUserCategoryInput struct {
 	UserID     int `json:"userID"`
 	CategoryID int `json:"categoryID"`
@@ -654,6 +664,30 @@ type TimeComparator struct {
 	Nbetween *TimeRange   `json:"nbetween,omitempty"`
 }
 
+type TimeKeyedFilter struct {
+	Label          *StringComparator    `json:"label,omitempty"`
+	TimeKeyedNotes *TimeKeyedNoteFilter `json:"timeKeyedNotes,omitempty"`
+	And            []*TimeKeyedFilter   `json:"and,omitempty"`
+	Or             []*TimeKeyedFilter   `json:"or,omitempty"`
+}
+
+type TimeKeyedNoteFilter struct {
+	KeyedAt *NullableTimeComparator `json:"keyedAt,omitempty"`
+	Note    *StringComparator       `json:"note,omitempty"`
+	And     []*TimeKeyedNoteFilter  `json:"and,omitempty"`
+	Or      []*TimeKeyedNoteFilter  `json:"or,omitempty"`
+}
+
+type TimeKeyedNoteSort struct {
+	Field     TimeKeyedNoteSortField `json:"field"`
+	Direction SortDirection          `json:"direction"`
+}
+
+type TimeKeyedSort struct {
+	Field     TimeKeyedSortField `json:"field"`
+	Direction SortDirection      `json:"direction"`
+}
+
 type TimeRange struct {
 	From time.Time `json:"from"`
 	To   time.Time `json:"to"`
@@ -786,6 +820,15 @@ type UpdateSluggedRowInput struct {
 type UpdateTagInput struct {
 	Name      *string `json:"name,omitempty"`
 	IsDeleted *bool   `json:"isDeleted,omitempty"`
+}
+
+type UpdateTimeKeyedInput struct {
+	Label *string `json:"label,omitempty"`
+}
+
+type UpdateTimeKeyedNoteInput struct {
+	KeyedAt graphql.Omittable[*types.NullDateTime] `json:"keyedAt,omitempty"`
+	Note    *string                                `json:"note,omitempty"`
 }
 
 type UpdateUserInput struct {
@@ -2344,6 +2387,118 @@ func (e *TagSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e TagSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TimeKeyedNoteSortField string
+
+const (
+	TimeKeyedNoteSortFieldID      TimeKeyedNoteSortField = "ID"
+	TimeKeyedNoteSortFieldKeyedAt TimeKeyedNoteSortField = "KEYED_AT"
+	TimeKeyedNoteSortFieldNote    TimeKeyedNoteSortField = "NOTE"
+)
+
+var AllTimeKeyedNoteSortField = []TimeKeyedNoteSortField{
+	TimeKeyedNoteSortFieldID,
+	TimeKeyedNoteSortFieldKeyedAt,
+	TimeKeyedNoteSortFieldNote,
+}
+
+func (e TimeKeyedNoteSortField) IsValid() bool {
+	switch e {
+	case TimeKeyedNoteSortFieldID, TimeKeyedNoteSortFieldKeyedAt, TimeKeyedNoteSortFieldNote:
+		return true
+	}
+	return false
+}
+
+func (e TimeKeyedNoteSortField) String() string {
+	return string(e)
+}
+
+func (e *TimeKeyedNoteSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TimeKeyedNoteSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TimeKeyedNoteSortField", str)
+	}
+	return nil
+}
+
+func (e TimeKeyedNoteSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TimeKeyedNoteSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TimeKeyedNoteSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TimeKeyedSortField string
+
+const (
+	TimeKeyedSortFieldAt    TimeKeyedSortField = "AT"
+	TimeKeyedSortFieldLabel TimeKeyedSortField = "LABEL"
+)
+
+var AllTimeKeyedSortField = []TimeKeyedSortField{
+	TimeKeyedSortFieldAt,
+	TimeKeyedSortFieldLabel,
+}
+
+func (e TimeKeyedSortField) IsValid() bool {
+	switch e {
+	case TimeKeyedSortFieldAt, TimeKeyedSortFieldLabel:
+		return true
+	}
+	return false
+}
+
+func (e TimeKeyedSortField) String() string {
+	return string(e)
+}
+
+func (e *TimeKeyedSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TimeKeyedSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TimeKeyedSortField", str)
+	}
+	return nil
+}
+
+func (e TimeKeyedSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TimeKeyedSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TimeKeyedSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

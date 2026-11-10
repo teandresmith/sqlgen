@@ -546,6 +546,9 @@ func generateSupport(tmpl *template.Template, cfg *config.RootConfig, opts *Opti
 		return tc.Nested != nil
 	})
 	sharedCtx := BuildSharedTypesContext(opts.Package, tenancyEnabled, tenantGoType, tenantImport, hasFilterOptions, hasUpsertMany, hasNested)
+	if slices.ContainsFunc(tableContexts, tableHasDateTimeKey) {
+		sharedCtx = withDateTimeKeys(sharedCtx)
+	}
 	sharedPath := filepath.Join(opts.OutputDir, "shared_types_gen.go")
 	if err := renderAndWrite(tmpl, "shared-types", sharedCtx, sharedCtx.Package, sharedCtx.Imports, sharedPath, version); err != nil {
 		return nil, fmt.Errorf("generating shared types: %w", err)

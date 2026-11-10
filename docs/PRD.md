@@ -8430,6 +8430,8 @@ The code generator selects the comparator based on the resolved Go type and dial
 
 Nullable variants are selected automatically when the column is nullable.
 
+**A time key takes `Time`, not `ID`.** The `ID` row is for text keys. A primary or foreign key bound to `time.Time` or `types.DateTime` filters through `Time` / `NullableTime`, and the generated client binds the value rather than a rendering of it: PostgreSQL rejects `time.Time.String()`, SQLite compares the text the SQL builder writes, and MySQL compares wall time in the driver's `loc`, so no single text form reads back on all three.
+
 **`uuid` columns select `ID` / `NullableID`, keyed on the SQL type.** Every UUID
 binding filters as an identifier — the default `uuid.UUID` / `*uuid.UUID`, the
 wrapper-backed integrations' `uuid.NullUUID`, and a column overridden to `string`

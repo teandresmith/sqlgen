@@ -2443,8 +2443,9 @@ func resolveGenericComparator(col ColumnContext, baseGoType string) string {
 
 // pkComparatorFamily classifies which comparator family a PK or FK column's
 // filter field takes, given its Go type. Returns the family's base name
-// ("ID", "Enum", "Number", "Opaque") and, for the generic families, the type
-// parameter.
+// ("ID", "Enum", "Number", "Opaque", "Time") and the type parameter: for the
+// generic families their type argument, for "Time" the operand type the
+// non-generic comparator.Time takes.
 //
 // This exists so the generated client's own PK-filter expressions
 // (funcPKFilterExpr / pkFilterInExpr / funcPKIsStringType in funcmap.go) are
@@ -2455,7 +2456,9 @@ func resolveGenericComparator(col ColumnContext, baseGoType string) string {
 // `net` types started resolving to comparator.Opaque[T], a `BLOB PRIMARY KEY`
 // still had `&comparator.ID{…}` assigned into its `*comparator.Opaque[[]byte]`
 // field and the generated package stopped compiling. The arms below mirror
-// resolveGenericComparator's order exactly; the two must move together.
+// resolveGenericComparator's order exactly; the two must move together. The
+// last arm mirrors resolveSimpleComparator's time arm, which sits ahead of its
+// key arm for the same reason.
 //
 // IsSet and IsSlice columns are not modelled: the Go type alone does not
 // identify them, and neither compiles as a key.
@@ -2473,9 +2476,23 @@ func pkComparatorFamily(goType string) (family, typeParam string) {
 		return "Number", base
 	case isOpaqueComparatorGoType(base):
 		return "Opaque", base
+	case isTimeKeyGoType(base):
+		return "Time", "time.Time"
 	}
 	return "ID", ""
 }
+
+// isTimeKeyGoType reports whether a key column's Go type filters through
+// comparator.Time (PRD §11.2). A time key has no text form every dialect and
+// driver reads back: PostgreSQL rejects time.Time.String(), SQLite compares the
+// text the SQL builder writes, and MySQL compares wall time in the driver's
+// loc. Binding the value lets the SQL builder and the driver spell it.
+func isTimeKeyGoType(goType string) bool {
+	return goType == "time.Time" || goType == dateTimeGoType
+}
+
+// dateTimeGoType is SQLite's default Go type for a date/time column.
+const dateTimeGoType = "types.DateTime"
 
 // isOpaqueComparatorGoType reports whether a Go type filters through
 // `comparator.Opaque[T]` (PRD §11.2). These are the four types the built-in
@@ -2563,6 +2580,9 @@ func formatGenericComparator(base, typeParam string, nullable bool) string {
 
 func resolveSimpleComparator(col ColumnContext, baseGoType string, dialect config.Dialect) string {
 	switch {
+	case baseGoType == "time.Time", baseGoType == dateTimeGoType, baseGoType == "types.NullDateTime":
+		// Ahead of the key arm: a time key binds as a time, not as text (§11.2).
+		return "Time"
 	case (col.PrimaryKey || col.FKReference != nil) && (baseGoType == "string" || col.FKConvert != gotype.FKStringNone):
 		return "ID"
 	case strings.EqualFold(col.SQLType, "uuid"):
@@ -2581,8 +2601,6 @@ func resolveSimpleComparator(col ColumnContext, baseGoType string, dialect confi
 		return "String"
 	case baseGoType == "bool":
 		return "Bool"
-	case baseGoType == "time.Time", baseGoType == "types.DateTime", baseGoType == "types.NullDateTime":
-		return "Time"
 	case baseGoType == "map[string]any", baseGoType == "types.JSON":
 		// json/jsonb columns resolve to types.JSON via gotype (PRD §7.6); the original map[string]any arm stays for overrides or
 		// direct configs that map a column to the bare Go type.

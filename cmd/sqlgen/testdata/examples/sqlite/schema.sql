@@ -262,3 +262,16 @@ CREATE TABLE slugged_rows (
     name TEXT NOT NULL DEFAULT '',
     slug TEXT NOT NULL UNIQUE DEFAULT 'x'
 );
+
+-- time_keyed / time_keyed_notes: a datetime primary key and foreign key bind as
+-- the text the SQL builder writes, which is what a write stored.
+CREATE TABLE time_keyed (
+    at DATETIME PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE time_keyed_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    keyed_at DATETIME REFERENCES time_keyed (at),
+    note TEXT NOT NULL
+);

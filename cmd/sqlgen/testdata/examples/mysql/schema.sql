@@ -200,3 +200,17 @@ CREATE TABLE slugged_rows (
     name VARCHAR(64) NOT NULL DEFAULT '',
     slug VARCHAR(64) NOT NULL UNIQUE DEFAULT 'x'
 );
+
+-- time_keyed / time_keyed_notes: a DATETIME primary key and foreign key bind as
+-- times, so a key in any zone reaches the driver's loc conversion.
+CREATE TABLE time_keyed (
+    at DATETIME(6) PRIMARY KEY,
+    label VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE time_keyed_notes (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    keyed_at DATETIME(6),
+    note VARCHAR(50) NOT NULL,
+    FOREIGN KEY (keyed_at) REFERENCES time_keyed (at)
+);

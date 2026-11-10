@@ -46,6 +46,8 @@ const fingerprintRateLimit = "9fc9645b"
 const fingerprintSequenceRow = "4ccd7440"
 const fingerprintSluggedRow = "910e56d5"
 const fingerprintTag = "145e5547"
+const fingerprintTimeKeyed = "36a05f4d"
+const fingerprintTimeKeyedNote = "ab3d4695"
 const fingerprintUserCategory = "e8982915"
 const fingerprintWarehouse = "a35c03cd"
 
@@ -6892,6 +6894,513 @@ func (c *Cache) hydrateTag(pk uuid.UUID, next hook.QueryHandler) {
 	}()
 }
 
+// keyForTimeKeyed builds the cache key for TimeKeyed by PK.
+func (c *Cache) keyForTimeKeyed(pk time.Time) string {
+	return cache.BuildKey(c.prefix, "public", "time_keyed", fingerprintTimeKeyed, pk)
+}
+
+// ttlForTimeKeyed returns the resolved TTL for TimeKeyed cache entries.
+func (c *Cache) ttlForTimeKeyed() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipTimeKeyed reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipTimeKeyed(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*TimeKeyedFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	if typed.TimeKeyedNotes != nil {
+		return true
+	}
+	return false
+}
+
+// fullParentFieldOptionsTimeKeyed returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsTimeKeyed() *TimeKeyedFieldOptions {
+	return &TimeKeyedFieldOptions{
+		At:    true,
+		Label: true,
+	}
+}
+
+// readThroughTimeKeyed implements the cache read-through path for TimeKeyed:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughTimeKeyed(ctx context.Context, pk time.Time, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForTimeKeyed(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*TimeKeyed](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableTimeKeyeds, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableTimeKeyeds, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableTimeKeyeds)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableTimeKeyeds)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableTimeKeyeds)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateTimeKeyed(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*TimeKeyed](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*TimeKeyed)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForTimeKeyed())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableTimeKeyeds, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableTimeKeyeds, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableTimeKeyeds)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setTimeKeyed caches a full TimeKeyed entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setTimeKeyed(ctx context.Context, entity *TimeKeyed) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForTimeKeyed(entity.At)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForTimeKeyed())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableTimeKeyeds, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableTimeKeyeds, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableTimeKeyeds)
+	}
+}
+
+// hydrateTimeKeyed launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateTimeKeyed(pk time.Time, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForTimeKeyed(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableTimeKeyeds)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableTimeKeyeds,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[TimeKeyedFieldOptions]{
+				FieldOptions: fullParentFieldOptionsTimeKeyed(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTimeKeyeds, err)
+			}
+			return
+		}
+		entity, ok := result.(*TimeKeyed)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTimeKeyeds, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTimeKeyeds, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForTimeKeyed())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableTimeKeyeds, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableTimeKeyeds, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTimeKeyeds, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableTimeKeyeds)
+			c.metrics.HydrationComplete(schema, TableTimeKeyeds, nil)
+		}
+	}()
+}
+
+// keyForTimeKeyedNote builds the cache key for TimeKeyedNote by PK.
+func (c *Cache) keyForTimeKeyedNote(pk int64) string {
+	return cache.BuildKey(c.prefix, "public", "time_keyed_notes", fingerprintTimeKeyedNote, pk)
+}
+
+// ttlForTimeKeyedNote returns the resolved TTL for TimeKeyedNote cache entries.
+func (c *Cache) ttlForTimeKeyedNote() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipTimeKeyedNote reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipTimeKeyedNote(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*TimeKeyedNoteFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	_ = typed
+	return false
+}
+
+// fullParentFieldOptionsTimeKeyedNote returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsTimeKeyedNote() *TimeKeyedNoteFieldOptions {
+	return &TimeKeyedNoteFieldOptions{
+		ID:      true,
+		KeyedAt: true,
+		Note:    true,
+	}
+}
+
+// readThroughTimeKeyedNote implements the cache read-through path for TimeKeyedNote:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughTimeKeyedNote(ctx context.Context, pk int64, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForTimeKeyedNote(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*TimeKeyedNote](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableTimeKeyedNotes, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableTimeKeyedNotes, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableTimeKeyedNotes)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableTimeKeyedNotes)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableTimeKeyedNotes)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateTimeKeyedNote(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*TimeKeyedNote](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*TimeKeyedNote)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForTimeKeyedNote())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableTimeKeyedNotes, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableTimeKeyedNotes, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableTimeKeyedNotes)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setTimeKeyedNote caches a full TimeKeyedNote entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setTimeKeyedNote(ctx context.Context, entity *TimeKeyedNote) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForTimeKeyedNote(entity.ID)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForTimeKeyedNote())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableTimeKeyedNotes, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableTimeKeyedNotes, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableTimeKeyedNotes)
+	}
+}
+
+// hydrateTimeKeyedNote launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateTimeKeyedNote(pk int64, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForTimeKeyedNote(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableTimeKeyedNotes)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableTimeKeyedNotes,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[TimeKeyedNoteFieldOptions]{
+				FieldOptions: fullParentFieldOptionsTimeKeyedNote(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTimeKeyedNotes, err)
+			}
+			return
+		}
+		entity, ok := result.(*TimeKeyedNote)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTimeKeyedNotes, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTimeKeyedNotes, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForTimeKeyedNote())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableTimeKeyedNotes, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableTimeKeyedNotes, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableTimeKeyedNotes, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableTimeKeyedNotes)
+			c.metrics.HydrationComplete(schema, TableTimeKeyedNotes, nil)
+		}
+	}()
+}
+
 // keyForUserCategory builds the cache key for UserCategory with composite PK.
 // The []any is constructed in DDL PRIMARY KEY column order inside this one
 // function — call sites never reorder (key-order invariant).
@@ -7606,6 +8115,18 @@ func (c *Cache) keysFor(table hook.TableName, pks []any) ([]string, error) {
 			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
 		}
 		return keys, nil
+	case TableTimeKeyeds:
+		keys, err := cache.KeysFromAny(pks, c.keyForTimeKeyed)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableTimeKeyedNotes:
+		keys, err := cache.KeysFromAny(pks, c.keyForTimeKeyedNote)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
 	case TableUserCategories:
 		keys, err := cache.KeysFromAny(pks, c.keyForUserCategory)
 		if err != nil {
@@ -7694,6 +8215,10 @@ func cacheRelationFor(table hook.TableName) (schema, name string, ok bool) {
 		return "public", "slugged_rows", true
 	case TableTags:
 		return "public", "tags", true
+	case TableTimeKeyeds:
+		return "public", "time_keyed", true
+	case TableTimeKeyedNotes:
+		return "public", "time_keyed_notes", true
 	case TableUserCategories:
 		return "public", "user_categories", true
 	case TableWarehouses:
@@ -7963,6 +8488,18 @@ func (c *Cache) QueryHook() hook.QueryHook {
 					return next(ctx, q)
 				}
 				return c.readThroughTag(ctx, pk, q, next)
+			case TableTimeKeyeds:
+				pk, ok := q.PK.(time.Time)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughTimeKeyed(ctx, pk, q, next)
+			case TableTimeKeyedNotes:
+				pk, ok := q.PK.(int64)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughTimeKeyedNote(ctx, pk, q, next)
 			case TableUserCategories:
 				pk, ok := q.PK.(UserCategoryPK)
 				if !ok {
@@ -8125,6 +8662,14 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 			case TableTags:
 				if entity, ok := result.(*Tag); ok {
 					c.setTag(ctx, entity)
+				}
+			case TableTimeKeyeds:
+				if entity, ok := result.(*TimeKeyed); ok {
+					c.setTimeKeyed(ctx, entity)
+				}
+			case TableTimeKeyedNotes:
+				if entity, ok := result.(*TimeKeyedNote); ok {
+					c.setTimeKeyedNote(ctx, entity)
 				}
 			case TableUserCategories:
 				if entity, ok := result.(*UserCategory); ok {
@@ -8295,6 +8840,18 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 				if entities, ok := result.([]*Tag); ok {
 					for _, entity := range entities {
 						c.setTag(ctx, entity)
+					}
+				}
+			case TableTimeKeyeds:
+				if entities, ok := result.([]*TimeKeyed); ok {
+					for _, entity := range entities {
+						c.setTimeKeyed(ctx, entity)
+					}
+				}
+			case TableTimeKeyedNotes:
+				if entities, ok := result.([]*TimeKeyedNote); ok {
+					for _, entity := range entities {
+						c.setTimeKeyedNote(ctx, entity)
 					}
 				}
 			case TableUserCategories:
@@ -8480,6 +9037,10 @@ func hasAnyRelationshipFieldOptions(table hook.TableName, callOpts any) bool {
 		return hasAnyRelationshipSluggedRow(fo)
 	case TableTags:
 		return hasAnyRelationshipTag(fo)
+	case TableTimeKeyeds:
+		return hasAnyRelationshipTimeKeyed(fo)
+	case TableTimeKeyedNotes:
+		return hasAnyRelationshipTimeKeyedNote(fo)
 	case TableUserCategories:
 		return hasAnyRelationshipUserCategory(fo)
 	case TableWarehouses:

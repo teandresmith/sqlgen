@@ -655,6 +655,76 @@ func tagSortFieldToColumn(f gqlmodel.TagSortField) string {
 	return ""
 }
 
+// translateTimeKeyedSort converts a gqlgen-generated
+// []*TimeKeyedSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateTimeKeyedSort(in []*gqlmodel.TimeKeyedSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    timeKeyedSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// timeKeyedSortFieldToColumn resolves a gqlgen
+// TimeKeyedSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func timeKeyedSortFieldToColumn(f gqlmodel.TimeKeyedSortField) string {
+	switch string(f) {
+	case "AT":
+		return "at"
+	case "LABEL":
+		return "label"
+	}
+	return ""
+}
+
+// translateTimeKeyedNoteSort converts a gqlgen-generated
+// []*TimeKeyedNoteSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateTimeKeyedNoteSort(in []*gqlmodel.TimeKeyedNoteSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    timeKeyedNoteSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// timeKeyedNoteSortFieldToColumn resolves a gqlgen
+// TimeKeyedNoteSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func timeKeyedNoteSortFieldToColumn(f gqlmodel.TimeKeyedNoteSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	case "KEYED_AT":
+		return "keyed_at"
+	case "NOTE":
+		return "note"
+	}
+	return ""
+}
+
 // translateUserSort converts a gqlgen-generated
 // []*UserSort into a []sql.Sort. nil / empty input returns nil
 // so the caller's "no sort" path is preserved.

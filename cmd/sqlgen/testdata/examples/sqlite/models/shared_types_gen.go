@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/teandresmith/sqlgen/sql"
+	"github.com/teandresmith/sqlgen/types"
 )
 
 // CallOptions controls per-call behavior overrides.
@@ -26,6 +27,15 @@ type CallOptions[FO any] struct {
 type IncrementInput[C ~string] struct {
 	Column C   `json:"column"`
 	Amount int `json:"amount"`
+}
+
+// dateTimeKeys returns the time.Time each key wraps.
+func dateTimeKeys(keys []types.DateTime) []time.Time {
+	times := make([]time.Time, len(keys))
+	for i, k := range keys {
+		times[i] = k.Time
+	}
+	return times
 }
 
 // excludeColumns returns columns with any entries in exclude removed.

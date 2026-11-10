@@ -700,6 +700,78 @@ func translateTagFilter(in *gqlmodel.TagFilter) *models.TagFilter {
 	return out
 }
 
+// translateTimeKeyedFilter converts the gqlgen-generated
+// TimeKeyedFilter into a *models.TimeKeyedFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateTimeKeyedFilter(in *gqlmodel.TimeKeyedFilter) *models.TimeKeyedFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.TimeKeyedFilter{}
+	if in.Label != nil {
+		out.Label = translateStringComparator(in.Label)
+	}
+	if in.TimeKeyedNotes != nil {
+		out.TimeKeyedNotes = translateTimeKeyedNoteFilter(in.TimeKeyedNotes)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.TimeKeyedFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateTimeKeyedFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.TimeKeyedFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateTimeKeyedFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateTimeKeyedNoteFilter converts the gqlgen-generated
+// TimeKeyedNoteFilter into a *models.TimeKeyedNoteFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateTimeKeyedNoteFilter(in *gqlmodel.TimeKeyedNoteFilter) *models.TimeKeyedNoteFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.TimeKeyedNoteFilter{}
+	if in.KeyedAt != nil {
+		out.KeyedAt = translateNullableTimeComparator(in.KeyedAt)
+	}
+	if in.Note != nil {
+		out.Note = translateStringComparator(in.Note)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.TimeKeyedNoteFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateTimeKeyedNoteFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.TimeKeyedNoteFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateTimeKeyedNoteFilter(sub))
+		}
+	}
+	return out
+}
+
 // translateUserFilter converts the gqlgen-generated
 // UserFilter into a *models.UserFilter.
 // Returns nil when the input is nil so the model layer's "nil filter ⇒ no

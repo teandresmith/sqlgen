@@ -140,6 +140,8 @@ type Client struct {
 	profile           *profileClient
 	sluggedRow        *sluggedRowClient
 	tag               *tagClient
+	timeKeyed         *timeKeyedClient
+	timeKeyedNote     *timeKeyedNoteClient
 	user              *userClient
 	userCategory      *userCategoryClient
 	userEvent         *userEventClient
@@ -177,6 +179,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		profile:           newProfileClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		sluggedRow:        newSluggedRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		tag:               newTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		timeKeyed:         newTimeKeyedClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		timeKeyedNote:     newTimeKeyedNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		user:              newUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		userCategory:      newUserCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		userEvent:         newUserEventClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
@@ -193,6 +197,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.document.callbackMode = options.callbackMode
 	c.order.callbackMode = options.callbackMode
 	c.product.callbackMode = options.callbackMode
+	c.timeKeyed.callbackMode = options.callbackMode
 	c.user.callbackMode = options.callbackMode
 
 	// Wire up cross-client references for relationship loading and the clients
@@ -207,6 +212,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.order.orderItemClient = c.orderItem
 	c.product.orderItemClient = c.orderItem
 	c.product.productTagLabelClient = c.productTagLabel
+	c.timeKeyed.timeKeyedNoteClient = c.timeKeyedNote
 	c.user.orderClient = c.order
 	c.user.userEventClient = c.userEvent
 	c.user.categoryClient = c.category
@@ -294,6 +300,16 @@ func (c *Client) SluggedRows() SluggedRowClient {
 // Tags returns the TagClient for Tag operations.
 func (c *Client) Tags() TagClient {
 	return c.tag
+}
+
+// TimeKeyeds returns the TimeKeyedClient for TimeKeyed operations.
+func (c *Client) TimeKeyeds() TimeKeyedClient {
+	return c.timeKeyed
+}
+
+// TimeKeyedNotes returns the TimeKeyedNoteClient for TimeKeyedNote operations.
+func (c *Client) TimeKeyedNotes() TimeKeyedNoteClient {
+	return c.timeKeyedNote
 }
 
 // Users returns the UserClient for User operations.

@@ -467,3 +467,16 @@ CREATE TABLE host_fingerprints (
     fingerprint_digest BYTEA NOT NULL REFERENCES fingerprints(digest),
     PRIMARY KEY (host_addr, fingerprint_digest)
 );
+
+-- time_keyed / time_keyed_notes: a timestamptz primary key and foreign key
+-- bind as times, not as text PostgreSQL cannot parse.
+CREATE TABLE time_keyed (
+    at TIMESTAMPTZ PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE time_keyed_notes (
+    id BIGSERIAL PRIMARY KEY,
+    keyed_at TIMESTAMPTZ REFERENCES time_keyed (at),
+    note TEXT NOT NULL
+);

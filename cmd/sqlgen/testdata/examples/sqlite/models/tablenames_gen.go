@@ -28,6 +28,8 @@ const (
 	TableReservedWordColumns hook.TableName = "reserved_word_columns"
 	TableSluggedRows         hook.TableName = "slugged_rows"
 	TableTags                hook.TableName = "tags"
+	TableTimeKeyeds          hook.TableName = "time_keyed"
+	TableTimeKeyedNotes      hook.TableName = "time_keyed_notes"
 	TableUserCategories      hook.TableName = "user_categories"
 	TableUsers               hook.TableName = "users"
 	TableWarehouses          hook.TableName = "warehouses"

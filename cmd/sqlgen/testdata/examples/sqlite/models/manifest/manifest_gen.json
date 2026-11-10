@@ -11189,6 +11189,857 @@
     },
     {
       "kind": "table",
+      "name": "TimeKeyed",
+      "table": "time_keyed",
+      "file_prefix": "time_keyed",
+      "files": [
+        "time_keyed_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "time_keyed_pkey",
+          "columns": [
+            "at"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "at",
+            "go_field": "At",
+            "go_type": "types.DateTime"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "at",
+          "go_field": "At",
+          "go_type": "types.DateTime",
+          "db_type": "datetime",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Time",
+          "comment": ""
+        },
+        {
+          "name": "label",
+          "go_field": "Label",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [
+        {
+          "name": "time_keyed_notes",
+          "kind": "o2m",
+          "target_entity": "TimeKeyedNote",
+          "fk": {
+            "table": "time_keyed_notes",
+            "columns": [
+              "keyed_at"
+            ],
+            "references": [
+              "at"
+            ],
+            "constraint": "time_keyed_notes(keyed_at) → time_keyed(at)"
+          }
+        }
+      ],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "types.DateTime"
+              }
+            ],
+            "returns": "*TimeKeyed",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"at\", \"label\" FROM \"time_keyed\" WHERE \"at\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetTimeKeyedsInput"
+              }
+            ],
+            "returns": "[]*TimeKeyed",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"at\", \"label\" FROM \"time_keyed\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "types.DateTime"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"time_keyed\" WHERE \"at\" = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TimeKeyedFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"time_keyed\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TimeKeyedFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"time_keyed\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[TimeKeyedFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[TimeKeyed]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[TimeKeyedFilter]"
+              }
+            ],
+            "returns": "*Connection[TimeKeyed]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamTimeKeyedsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*TimeKeyed, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"at\", \"label\" FROM \"time_keyed\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTimeKeyedInput"
+              }
+            ],
+            "returns": "*TimeKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"time_keyed\" (<columns>) VALUES (<values>) RETURNING \"at\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTimeKeyedInput"
+              }
+            ],
+            "returns": "[]*TimeKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"time_keyed\" (<columns>) VALUES <values> RETURNING \"at\""
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "types.DateTime"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateTimeKeyedInput"
+              }
+            ],
+            "returns": "*TimeKeyed",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"time_keyed\" SET <set> WHERE \"at\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateTimeKeyedItem"
+              }
+            ],
+            "returns": "[]*TimeKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"time_keyed\" SET <set> WHERE \"at\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TimeKeyedFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateTimeKeyedInput"
+              }
+            ],
+            "returns": "[]*TimeKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"time_keyed\" SET <set> WHERE <filter> RETURNING \"at\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTimeKeyedInput"
+              },
+              {
+                "name": "target",
+                "type": "TimeKeyedConflictTarget"
+              }
+            ],
+            "returns": "*TimeKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated TimeKeyedConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"time_keyed\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"at\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTimeKeyedInput"
+              },
+              {
+                "name": "target",
+                "type": "TimeKeyedConflictTarget"
+              }
+            ],
+            "returns": "[]*TimeKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same TimeKeyedConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"time_keyed\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "types.DateTime"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"time_keyed\" WHERE \"at\" = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]types.DateTime"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"time_keyed\" WHERE \"at\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TimeKeyedFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"time_keyed\" WHERE <filter> RETURNING \"at\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "TimeKeyedFilter",
+        "fields": [
+          {
+            "name": "At",
+            "type": "*comparator.Time"
+          },
+          {
+            "name": "Label",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "And",
+            "type": "[]*TimeKeyedFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*TimeKeyedFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "TimeKeyedSort",
+        "fields": [
+          "At",
+          "Label"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.TimeKeyeds().Get(ctx, *new(types.DateTime))",
+          "rows, err := client.TimeKeyeds().GetMany(ctx, &models.GetTimeKeyedsInput{Filter: &models.TimeKeyedFilter{Label: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.TimeKeyeds().Create(ctx, &models.CreateTimeKeyedInput{At: *new(types.DateTime), Label: \"example\"})",
+          "updated, err := client.TimeKeyeds().Update(ctx, *new(types.DateTime), &models.UpdateTimeKeyedInput{Label: omittable.Set(\"example\")})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
+      "name": "TimeKeyedNote",
+      "table": "time_keyed_notes",
+      "file_prefix": "time_keyed_note",
+      "files": [
+        "time_keyed_note_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "time_keyed_notes_pkey",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "integer",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "keyed_at",
+          "go_field": "KeyedAt",
+          "go_type": "types.NullDateTime",
+          "db_type": "datetime",
+          "nullable": true,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.NullableTime",
+          "comment": ""
+        },
+        {
+          "name": "note",
+          "go_field": "Note",
+          "go_type": "string",
+          "db_type": "text",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*TimeKeyedNote",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"keyed_at\", \"note\" FROM \"time_keyed_notes\" WHERE \"id\" = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetTimeKeyedNotesInput"
+              }
+            ],
+            "returns": "[]*TimeKeyedNote",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"keyed_at\", \"note\" FROM \"time_keyed_notes\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"time_keyed_notes\" WHERE \"id\" = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TimeKeyedNoteFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT EXISTS(SELECT 1 FROM \"time_keyed_notes\" WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TimeKeyedNoteFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "sqlite": "SELECT COUNT(*) FROM \"time_keyed_notes\" WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[TimeKeyedNoteFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[TimeKeyedNote]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[TimeKeyedNoteFilter]"
+              }
+            ],
+            "returns": "*Connection[TimeKeyedNote]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamTimeKeyedNotesInput"
+              }
+            ],
+            "returns": "iter.Seq2[*TimeKeyedNote, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "sqlite": "SELECT \"id\", \"keyed_at\", \"note\" FROM \"time_keyed_notes\" WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTimeKeyedNoteInput"
+              }
+            ],
+            "returns": "*TimeKeyedNote",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"time_keyed_notes\" (<columns>) VALUES (<values>) RETURNING \"id\""
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTimeKeyedNoteInput"
+              }
+            ],
+            "returns": "[]*TimeKeyedNote",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"time_keyed_notes\" (<columns>) VALUES <values> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateTimeKeyedNoteInput"
+              }
+            ],
+            "returns": "*TimeKeyedNote",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"time_keyed_notes\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateTimeKeyedNoteItem"
+              }
+            ],
+            "returns": "[]*TimeKeyedNote",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"time_keyed_notes\" SET <set> WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TimeKeyedNoteFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateTimeKeyedNoteInput"
+              }
+            ],
+            "returns": "[]*TimeKeyedNote",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "UPDATE \"time_keyed_notes\" SET <set> WHERE <filter> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateTimeKeyedNoteInput"
+              },
+              {
+                "name": "target",
+                "type": "TimeKeyedNoteConflictTarget"
+              }
+            ],
+            "returns": "*TimeKeyedNote",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated TimeKeyedNoteConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"time_keyed_notes\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded> RETURNING \"id\""
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateTimeKeyedNoteInput"
+              },
+              {
+                "name": "target",
+                "type": "TimeKeyedNoteConflictTarget"
+              }
+            ],
+            "returns": "[]*TimeKeyedNote",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same TimeKeyedNoteConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "sqlite": "INSERT INTO \"time_keyed_notes\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"time_keyed_notes\" WHERE \"id\" = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"time_keyed_notes\" WHERE \"id\" IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*TimeKeyedNoteFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "sqlite": "DELETE FROM \"time_keyed_notes\" WHERE <filter> RETURNING \"id\""
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "TimeKeyedNoteFilter",
+        "fields": [
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "KeyedAt",
+            "type": "*comparator.NullableTime"
+          },
+          {
+            "name": "Note",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "And",
+            "type": "[]*TimeKeyedNoteFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*TimeKeyedNoteFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "TimeKeyedNoteSort",
+        "fields": [
+          "ID",
+          "KeyedAt",
+          "Note"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.TimeKeyedNotes().Get(ctx, 1)",
+          "rows, err := client.TimeKeyedNotes().GetMany(ctx, &models.GetTimeKeyedNotesInput{Filter: &models.TimeKeyedNoteFilter{Note: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.TimeKeyedNotes().Create(ctx, &models.CreateTimeKeyedNoteInput{Note: \"example\"})",
+          "updated, err := client.TimeKeyedNotes().Update(ctx, 1, &models.UpdateTimeKeyedNoteInput{Note: omittable.Set(\"example\")})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
       "name": "User",
       "table": "users",
       "file_prefix": "user",

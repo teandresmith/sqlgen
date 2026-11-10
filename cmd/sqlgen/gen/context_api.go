@@ -2858,6 +2858,14 @@ func buildAPIRowKeyMembers(tc TableContext, modelsPkg string) APIRowKeys {
 	elem, fromRow, fromKey := base, "row."+col.FieldName, "%s"
 	filter := pkFilterInExpr(base, "keys", false)
 	switch {
+	case base == dateTimeGoType:
+		// comparator.Time takes the time.Time a types.DateTime wraps, and the
+		// shared dateTimeKeys helper is not visible from this package.
+		elem = "time.Time"
+		fromRow = nestedKeyValueExpr(base, fromRow)
+		fromKey = nestedKeyValueExpr(base, fromKey)
+		filter = pkFilterInExpr(elem, "keys", false)
+		imports = append(imports, "time")
 	case family == "Enum":
 		// The enum is declared in the models package; the resolver is not.
 		elem = modelsPkg + "." + base

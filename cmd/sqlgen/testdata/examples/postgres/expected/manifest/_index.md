@@ -39,6 +39,8 @@ Features: audit_columns, cache, events, soft_delete, views
 | SequenceRow | `sequence_rows` | table | [sequence_row.md](sequence_row.md) |  |
 | SluggedRow | `slugged_rows` | table | [slugged_row.md](slugged_row.md) |  |
 | Tag | `tags` | table | [tag.md](tag.md) | Content tags with boolean soft delete |
+| TimeKeyed | `time_keyed` | table | [time_keyed.md](time_keyed.md) |  |
+| TimeKeyedNote | `time_keyed_notes` | table | [time_keyed_note.md](time_keyed_note.md) |  |
 | UserCategory | `user_categories` | table | [user_category.md](user_category.md) | Junction table linking users to their preferred categories |
 | Warehouse | `warehouses` | table | [warehouse.md](warehouse.md) | Storage warehouses with type-overridden columns |
 

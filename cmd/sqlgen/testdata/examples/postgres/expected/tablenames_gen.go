@@ -31,6 +31,8 @@ const (
 	TableSequenceRows       hook.TableName = "public.sequence_rows"
 	TableSluggedRows        hook.TableName = "public.slugged_rows"
 	TableTags               hook.TableName = "public.tags"
+	TableTimeKeyeds         hook.TableName = "public.time_keyed"
+	TableTimeKeyedNotes     hook.TableName = "public.time_keyed_notes"
 	TableUserCategories     hook.TableName = "public.user_categories"
 	TablePublicUsers        hook.TableName = "public.users"
 	TableWarehouses         hook.TableName = "public.warehouses"

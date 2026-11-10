@@ -118,6 +118,14 @@ type TagConnection = Connection[Tag]
 type TagEdge = Edge[Tag]
 type TagListResult = PaginateResult[Tag]
 
+type TimeKeyedConnection = Connection[TimeKeyed]
+type TimeKeyedEdge = Edge[TimeKeyed]
+type TimeKeyedListResult = PaginateResult[TimeKeyed]
+
+type TimeKeyedNoteConnection = Connection[TimeKeyedNote]
+type TimeKeyedNoteEdge = Edge[TimeKeyedNote]
+type TimeKeyedNoteListResult = PaginateResult[TimeKeyedNote]
+
 type UserConnection = Connection[User]
 type UserEdge = Edge[User]
 type UserListResult = PaginateResult[User]

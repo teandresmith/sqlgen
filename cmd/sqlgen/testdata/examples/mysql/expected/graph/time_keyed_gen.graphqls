@@ -1,0 +1,111 @@
+"""
+TimeKeyed corresponds to the time_keyed table.
+"""
+type TimeKeyed {
+  "at"
+  at: Time!
+  "label"
+  label: String!
+  "one-to-many relationship with the time_keyed_notes table."
+  timeKeyedNotes: [TimeKeyedNote!]!
+}
+
+type TimeKeyedConnection {
+  edges:      [TimeKeyedEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type TimeKeyedEdge {
+  node:   TimeKeyed!
+  cursor: String!
+}
+
+type TimeKeyedListResult {
+  items:      [TimeKeyed!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input TimeKeyedFilter {
+  label: StringComparator
+  timeKeyedNotes: TimeKeyedNoteFilter
+  and: [TimeKeyedFilter!]
+  or:  [TimeKeyedFilter!]
+}
+
+enum TimeKeyedSortField {
+  AT
+  LABEL
+}
+
+input TimeKeyedSort {
+  field:     TimeKeyedSortField!
+  direction: SortDirection!
+}
+input CreateTimeKeyedInput {
+  at: Time!
+  label: String!
+}
+input UpdateTimeKeyedInput {
+  label: String
+}
+
+extend type Query {
+  timeKeyed(at: Time!): TimeKeyed
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to timeKeyedList instead."
+  timeKeyeds(filter: TimeKeyedFilter, first: Int, after: String, last: Int, before: String): TimeKeyedConnection!
+  timeKeyedList(filter: TimeKeyedFilter, sort: [TimeKeyedSort!], limit: Int, offset: Int): TimeKeyedListResult!
+}
+
+extend type Mutation {
+  createTimeKeyed(input: CreateTimeKeyedInput!): TimeKeyed!
+  createTimeKeyeds(inputs: [CreateTimeKeyedInput!]!): [TimeKeyed!]!
+  updateTimeKeyed(at: Time!, input: UpdateTimeKeyedInput!): TimeKeyed!
+  updateTimeKeyeds(filter: TimeKeyedFilter!, input: UpdateTimeKeyedInput!): [TimeKeyed!]!
+  upsertTimeKeyed(input: CreateTimeKeyedInput!): TimeKeyed!
+  deleteTimeKeyed(at: Time!): Boolean!
+}
+
+input CreateTimeKeyedWithRelatedInput {
+  timeKeyed: CreateTimeKeyedInput!
+  timeKeyedNotes: TimeKeyedTimeKeyedNotesCreateNested
+}
+
+input UpdateTimeKeyedWithRelatedInput {
+  timeKeyed: UpdateTimeKeyedInput
+  timeKeyedNotes: TimeKeyedTimeKeyedNotesUpdateNested
+}
+
+input UpsertTimeKeyedWithRelatedInput {
+  timeKeyed: CreateTimeKeyedInput!
+  timeKeyedNotes: TimeKeyedTimeKeyedNotesUpdateNested
+}
+
+enum TimeKeyedConflictTarget {
+  PK
+}
+
+input TimeKeyedTimeKeyedNotesCreateNested {
+  create: [TimeKeyedTimeKeyedNotesCreateInput!]
+  connect: [Int!]
+}
+
+input TimeKeyedTimeKeyedNotesUpdateNested {
+  clear: Boolean
+  create: [TimeKeyedTimeKeyedNotesCreateInput!]
+  connect: [Int!]
+  disconnect: [Int!]
+}
+
+input TimeKeyedTimeKeyedNotesCreateInput {
+  note: String!
+}
+
+extend type Mutation {
+  createTimeKeyedWithRelated(input: CreateTimeKeyedWithRelatedInput!): TimeKeyed!
+  updateTimeKeyedWithRelated(at: Time!, input: UpdateTimeKeyedWithRelatedInput!): TimeKeyed!
+  upsertTimeKeyedWithRelated(input: UpsertTimeKeyedWithRelatedInput!, conflictTarget: TimeKeyedConflictTarget! = PK): TimeKeyed!
+}

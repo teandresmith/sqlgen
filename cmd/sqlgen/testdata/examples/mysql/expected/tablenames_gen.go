@@ -20,6 +20,8 @@ const (
 	TableProfiles           hook.TableName = "profiles"
 	TableSluggedRows        hook.TableName = "slugged_rows"
 	TableTags               hook.TableName = "tags"
+	TableTimeKeyeds         hook.TableName = "time_keyed"
+	TableTimeKeyedNotes     hook.TableName = "time_keyed_notes"
 	TableUserCategories     hook.TableName = "user_categories"
 	TableUserEvents         hook.TableName = "user_events"
 	TableUsers              hook.TableName = "users"

@@ -41,6 +41,8 @@ sqlgen manifest. Start here: [./manifest/_index.md](./manifest/_index.md).
 - **SequenceRow** (`sequence_rows`, table) — [./manifest/sequence_row.md](./manifest/sequence_row.md)
 - **SluggedRow** (`slugged_rows`, table) — [./manifest/slugged_row.md](./manifest/slugged_row.md)
 - **Tag** (`tags`, table) — [./manifest/tag.md](./manifest/tag.md)
+- **TimeKeyed** (`time_keyed`, table) — [./manifest/time_keyed.md](./manifest/time_keyed.md)
+- **TimeKeyedNote** (`time_keyed_notes`, table) — [./manifest/time_keyed_note.md](./manifest/time_keyed_note.md)
 - **UserCategory** (`user_categories`, table) — [./manifest/user_category.md](./manifest/user_category.md)
 - **Warehouse** (`warehouses`, table) — [./manifest/warehouse.md](./manifest/warehouse.md)
 

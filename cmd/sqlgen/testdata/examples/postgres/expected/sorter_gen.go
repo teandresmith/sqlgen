@@ -752,6 +752,45 @@ func (s TagSorter) Name(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "name", Direction: direction}
 }
 
+// TimeKeyedSorter provides type-safe sort helpers for the TimeKeyed entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TimeKeyedSorter struct{}
+
+// NewTimeKeyedSorter returns a new TimeKeyedSorter.
+func NewTimeKeyedSorter() TimeKeyedSorter { return TimeKeyedSorter{} }
+
+// At returns a sort for the at column in the given direction.
+func (s TimeKeyedSorter) At(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "at", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s TimeKeyedSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// TimeKeyedNoteSorter provides type-safe sort helpers for the TimeKeyedNote entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TimeKeyedNoteSorter struct{}
+
+// NewTimeKeyedNoteSorter returns a new TimeKeyedNoteSorter.
+func NewTimeKeyedNoteSorter() TimeKeyedNoteSorter { return TimeKeyedNoteSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s TimeKeyedNoteSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// KeyedAt returns a sort for the keyed_at column in the given direction.
+func (s TimeKeyedNoteSorter) KeyedAt(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "keyed_at", Direction: direction}
+}
+
+// Note returns a sort for the note column in the given direction.
+func (s TimeKeyedNoteSorter) Note(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "note", Direction: direction}
+}
+
 // UserCategorySorter provides type-safe sort helpers for the UserCategory entity.
 // Each method returns a sql.Sort for the corresponding column.
 type UserCategorySorter struct{}

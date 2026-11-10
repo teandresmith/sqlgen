@@ -1835,6 +1835,249 @@ func translateUpdateTagRequest(in gqlmodel.UpdateTagInput) sqlgenresolver.Update
 	return out
 }
 
+// translateCreateTimeKeyedInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateTimeKeyedInput(in gqlmodel.CreateTimeKeyedInput) *models.CreateTimeKeyedInput {
+	out := &models.CreateTimeKeyedInput{}
+	out.At = in.At
+	out.Label = in.Label
+
+	return out
+}
+
+// translateUpdateTimeKeyedInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateTimeKeyedRequest
+// carries them to the resolver.
+func translateUpdateTimeKeyedInput(in gqlmodel.UpdateTimeKeyedInput) *models.UpdateTimeKeyedInput {
+	out := &models.UpdateTimeKeyedInput{}
+	if in.Label != nil {
+		out.Label = omittable.Set(*in.Label)
+	}
+	return out
+}
+
+// hasUpdateTimeKeyedSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateTimeKeyedSetFields(in gqlmodel.UpdateTimeKeyedInput) bool {
+	if in.Label != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateTimeKeyedRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateTimeKeyedInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateTimeKeyedRequest(in gqlmodel.UpdateTimeKeyedInput) sqlgenresolver.UpdateTimeKeyedRequest {
+	out := sqlgenresolver.UpdateTimeKeyedRequest{
+		Set:    translateUpdateTimeKeyedInput(in),
+		HasSet: hasUpdateTimeKeyedSetFields(in),
+	}
+	return out
+}
+
+// translateCreateTimeKeyedWithRelatedInput maps the gqlgen-generated nested create
+// input onto the model's. The flat half goes through the ordinary
+// create translator, so the wrapper cannot drift from the input it contains.
+func translateCreateTimeKeyedWithRelatedInput(in gqlmodel.CreateTimeKeyedWithRelatedInput) *models.CreateTimeKeyedWithRelatedInput {
+	out := &models.CreateTimeKeyedWithRelatedInput{}
+	if in.TimeKeyed != nil {
+		out.TimeKeyed = *translateCreateTimeKeyedInput(*in.TimeKeyed)
+	}
+	out.TimeKeyedNotes = translateTimeKeyedTimeKeyedNotesCreateNested(in.TimeKeyedNotes)
+	return out
+}
+
+// translateUpdateTimeKeyedWithRelatedInput maps the gqlgen-generated nested update
+// input onto the model's. An omitted flat half leaves every parent
+// column alone, and the parent write then issues no UPDATE at all.
+// The flat half's `_inc` / `_dec` operators have no place on the Go input;
+// this table has no incrementable column, so the input carries none.
+func translateUpdateTimeKeyedWithRelatedInput(in gqlmodel.UpdateTimeKeyedWithRelatedInput) *models.UpdateTimeKeyedWithRelatedInput {
+	out := &models.UpdateTimeKeyedWithRelatedInput{}
+	if in.TimeKeyed != nil {
+		out.TimeKeyed = *translateUpdateTimeKeyedInput(*in.TimeKeyed)
+	}
+	out.TimeKeyedNotes = translateTimeKeyedTimeKeyedNotesUpdateNested(in.TimeKeyedNotes)
+	return out
+}
+
+// translateUpsertTimeKeyedWithRelatedInput maps the gqlgen-generated nested upsert
+// input onto the model's. Its nested half is the update-side block verbatim.
+func translateUpsertTimeKeyedWithRelatedInput(in gqlmodel.UpsertTimeKeyedWithRelatedInput) *models.UpsertTimeKeyedWithRelatedInput {
+	out := &models.UpsertTimeKeyedWithRelatedInput{}
+	if in.TimeKeyed != nil {
+		out.TimeKeyed = *translateCreateTimeKeyedInput(*in.TimeKeyed)
+	}
+	out.TimeKeyedNotes = translateTimeKeyedTimeKeyedNotesUpdateNested(in.TimeKeyedNotes)
+	return out
+}
+
+// translateTimeKeyedConflictTarget maps the GraphQL conflict-target enum onto
+// the model's constant. Cases compare on the raw enum value, as
+// the sort translators do, so the mapping does not depend on how gqlgen spells
+// the enum's Go constants. gqlgen rejects an undeclared value before the
+// resolver runs; the error is for a schema and a translator that disagree,
+// which must fail loudly rather than fall back to some other target.
+func translateTimeKeyedConflictTarget(v gqlmodel.TimeKeyedConflictTarget) (models.TimeKeyedConflictTarget, error) {
+	switch string(v) {
+	case "PK":
+		return models.TimeKeyedConflictPK, nil
+	}
+	var none models.TimeKeyedConflictTarget
+	return none, sqlgenresolver.InvalidInputError("upsert time_keyed with related: unknown conflict target \"" + string(v) + "\"")
+}
+
+// translateTimeKeyedTimeKeyedNotesCreateNested maps the create-side verb block for
+// TimeKeyed.TimeKeyedNotes.
+//
+// A nil block is an edge the caller did not touch.
+func translateTimeKeyedTimeKeyedNotesCreateNested(in *gqlmodel.TimeKeyedTimeKeyedNotesCreateNested) *models.TimeKeyedTimeKeyedNotesCreateNested {
+	if in == nil {
+		return nil
+	}
+	out := &models.TimeKeyedTimeKeyedNotesCreateNested{}
+	for _, c := range in.Create {
+		if c == nil {
+			continue
+		}
+		out.Create = append(out.Create, translateTimeKeyedTimeKeyedNotesCreateInput(*c))
+	}
+	for _, v := range in.Connect {
+		out.Connect = append(out.Connect, int64(v))
+	}
+	return out
+}
+
+// translateTimeKeyedTimeKeyedNotesUpdateNested maps the update-side verb block for
+// TimeKeyed.TimeKeyedNotes.
+//
+// A nil block is an edge the caller did not touch.
+func translateTimeKeyedTimeKeyedNotesUpdateNested(in *gqlmodel.TimeKeyedTimeKeyedNotesUpdateNested) *models.TimeKeyedTimeKeyedNotesUpdateNested {
+	if in == nil {
+		return nil
+	}
+	out := &models.TimeKeyedTimeKeyedNotesUpdateNested{}
+	if in.Clear != nil {
+		out.Clear = *in.Clear
+	}
+	for _, c := range in.Create {
+		if c == nil {
+			continue
+		}
+		out.Create = append(out.Create, translateTimeKeyedTimeKeyedNotesCreateInput(*c))
+	}
+	for _, v := range in.Connect {
+		out.Connect = append(out.Connect, int64(v))
+	}
+	for _, v := range in.Disconnect {
+		out.Disconnect = append(out.Disconnect, int64(v))
+	}
+	return out
+}
+
+// translateTimeKeyedTimeKeyedNotesCreateInput maps one element of the `create` verb for
+// TimeKeyed.TimeKeyedNotes.
+//
+// It is the target's create input without the columns the edge sets itself
+// from the parent's key.
+func translateTimeKeyedTimeKeyedNotesCreateInput(in gqlmodel.TimeKeyedTimeKeyedNotesCreateInput) *models.TimeKeyedTimeKeyedNotesCreateInput {
+	out := &models.TimeKeyedTimeKeyedNotesCreateInput{}
+	out.Note = in.Note
+
+	return out
+}
+
+// translateCreateTimeKeyedNoteInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateTimeKeyedNoteInput(in gqlmodel.CreateTimeKeyedNoteInput) *models.CreateTimeKeyedNoteInput {
+	out := &models.CreateTimeKeyedNoteInput{}
+	if in.KeyedAt != nil {
+		out.KeyedAt = omittable.Set(in.KeyedAt)
+	}
+	out.Note = in.Note
+
+	return out
+}
+
+// translateUpdateTimeKeyedNoteInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateTimeKeyedNoteRequest
+// carries them to the resolver.
+func translateUpdateTimeKeyedNoteInput(in gqlmodel.UpdateTimeKeyedNoteInput) *models.UpdateTimeKeyedNoteInput {
+	out := &models.UpdateTimeKeyedNoteInput{}
+	if val, ok := in.KeyedAt.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.KeyedAt.Get()
+			out.KeyedAt = omittable.Set(zero)
+		} else {
+			out.KeyedAt = omittable.Set(val)
+		}
+	}
+	if in.Note != nil {
+		out.Note = omittable.Set(*in.Note)
+	}
+	return out
+}
+
+// hasUpdateTimeKeyedNoteSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateTimeKeyedNoteSetFields(in gqlmodel.UpdateTimeKeyedNoteInput) bool {
+	if in.KeyedAt.IsSet() {
+		return true
+	}
+	if in.Note != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateTimeKeyedNoteRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateTimeKeyedNoteInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateTimeKeyedNoteRequest(in gqlmodel.UpdateTimeKeyedNoteInput) sqlgenresolver.UpdateTimeKeyedNoteRequest {
+	out := sqlgenresolver.UpdateTimeKeyedNoteRequest{
+		Set:    translateUpdateTimeKeyedNoteInput(in),
+		HasSet: hasUpdateTimeKeyedNoteSetFields(in),
+	}
+	return out
+}
+
 // translateCreateUserInput maps a gqlgen-generated input value
 // onto the consumer model's Create<Table>Input. The body shape per field
 // depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
