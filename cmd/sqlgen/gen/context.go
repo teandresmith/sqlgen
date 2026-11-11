@@ -894,6 +894,10 @@ type NestedEdgeContext struct {
 	// ConnectIDGoType is the Go type of one entry in the `connect` list — the
 	// target's PK type.
 	ConnectIDGoType string
+	// ConnectBucketGoType is the map key type the executor buckets target ids
+	// on: `time.Time` for a time key, which buckets as its UTC instant
+	// (nestedBucketKey), and ConnectIDGoType for every other key.
+	ConnectBucketGoType string
 	// ConnectKeyGoType is the element type the target's PK comparator takes:
 	// `string` for the comparator.ID family, the key's own Go type for
 	// comparator.Number and comparator.Opaque (PRD §11.2). ConnectKeyExpr

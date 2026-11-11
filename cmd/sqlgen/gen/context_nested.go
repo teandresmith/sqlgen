@@ -804,6 +804,7 @@ func resolveNestedToMany(
 	}
 
 	edge.ConnectIDGoType = target.PKColumns[0].GoType
+	edge.ConnectBucketGoType = nestedBucketGoType(edge.ConnectIDGoType)
 
 	// §9.9.4's has-one occupancy clause — the occupancy read `create` runs
 	// first. Every other verb that would survive needs the same two terms for
@@ -1342,6 +1343,7 @@ func resolveNestedM2M(
 	}
 	resolveJunctionSharedRead(edge, local, reference, parents, target, resolver)
 	edge.ConnectIDGoType = target.PKColumns[0].GoType
+	edge.ConnectBucketGoType = nestedBucketGoType(edge.ConnectIDGoType)
 	// An M2M `connect` writes its link row through the junction's own
 	// UpsertMany and is unlinked again through its HardDelete surface; the
 	// client generates both on every junction that emits a conflict target
@@ -1842,6 +1844,17 @@ func nestedKeyValueExpr(goType, expr string) string {
 		return expr + ".Time"
 	}
 	return expr
+}
+
+// nestedBucketGoType is the map key type the nested executor buckets a target
+// key of goType on (NestedEdgeContext.ConnectBucketGoType). A time key buckets
+// as a time.Time in UTC, see funcNestedBucketKey; every other key buckets as
+// itself.
+func nestedBucketGoType(goType string) string {
+	if isTimeKeyGoType(goType) {
+		return "time.Time"
+	}
+	return goType
 }
 
 // nestedNullAssignExpr renders the right-hand side that sets a nullable FK to

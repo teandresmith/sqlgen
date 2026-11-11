@@ -143,6 +143,7 @@ func resetDB(t *testing.T) {
 		"products", "order_items",
 		"template_stamps", "stamps", "template_labels", "template_steps", "templates", "tasks", "cycles", "labels",
 		"workspace_notes",
+		"moment_tag_links", "moment_tags", "moments", "moment_owners",
 		"audit_logs", "legacy_widgets", "workspaces",
 	}
 	for _, table := range tables {

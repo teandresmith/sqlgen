@@ -115,3 +115,32 @@ CREATE TABLE workspace_notes (
     body VARCHAR(255) NOT NULL,
     FOREIGN KEY (workspace_id) REFERENCES workspaces (id)
 );
+
+-- moments: a time-keyed nested target. The executor buckets the ids a
+-- connect or disconnect names by instant, so a key in another zone than the
+-- row the driver scans back still names that row. moment_owners carries O2M
+-- over the nullable owner_id, moment_tags M2M over moment_tag_links.
+CREATE TABLE moment_owners (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE moments (
+    at DATETIME(6) PRIMARY KEY,
+    owner_id BIGINT,
+    label VARCHAR(255) NOT NULL,
+    FOREIGN KEY (owner_id) REFERENCES moment_owners (id)
+);
+
+CREATE TABLE moment_tags (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE moment_tag_links (
+    tag_id BIGINT NOT NULL,
+    moment_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (tag_id, moment_at),
+    FOREIGN KEY (tag_id) REFERENCES moment_tags (id),
+    FOREIGN KEY (moment_at) REFERENCES moments (at)
+);

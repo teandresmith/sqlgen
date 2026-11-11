@@ -154,6 +154,10 @@ type Client struct {
 	document      *documentClient
 	label         *labelClient
 	lineItem      *lineItemClient
+	moment        *momentClient
+	momentOwner   *momentOwnerClient
+	momentTag     *momentTagClient
+	momentTagLink *momentTagLinkClient
 	stamp         *stampClient
 	task          *taskClient
 	template      *templateClient
@@ -198,6 +202,10 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		document:      newDocumentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		label:         newLabelClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		lineItem:      newLineItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		moment:        newMomentClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		momentOwner:   newMomentOwnerClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		momentTag:     newMomentTagClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		momentTagLink: newMomentTagLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		stamp:         newStampClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		task:          newTaskClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		template:      newTemplateClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
@@ -253,6 +261,9 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// configured rather than on NewTransaction's default.
 	c.cycle.callbackMode = options.callbackMode
 	c.label.callbackMode = options.callbackMode
+	c.moment.callbackMode = options.callbackMode
+	c.momentOwner.callbackMode = options.callbackMode
+	c.momentTag.callbackMode = options.callbackMode
 	c.stamp.callbackMode = options.callbackMode
 	c.template.callbackMode = options.callbackMode
 	c.workspace.callbackMode = options.callbackMode
@@ -262,6 +273,11 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.cycle.taskClient = c.task
 	c.label.templateClient = c.template
 	c.label.templateLabelClient = c.templateLabel
+	c.moment.momentTagClient = c.momentTag
+	c.moment.momentTagLinkClient = c.momentTagLink
+	c.momentOwner.momentClient = c.moment
+	c.momentTag.momentClient = c.moment
+	c.momentTag.momentTagLinkClient = c.momentTagLink
 	c.stamp.templateClient = c.template
 	c.stamp.templateStampClient = c.templateStamp
 	c.template.templateStepClient = c.templateStep
@@ -302,6 +318,26 @@ func (c *Client) Labels() LabelClient {
 // LineItems returns the LineItemClient for LineItem operations.
 func (c *Client) LineItems() LineItemClient {
 	return c.lineItem
+}
+
+// Moments returns the MomentClient for Moment operations.
+func (c *Client) Moments() MomentClient {
+	return c.moment
+}
+
+// MomentOwners returns the MomentOwnerClient for MomentOwner operations.
+func (c *Client) MomentOwners() MomentOwnerClient {
+	return c.momentOwner
+}
+
+// MomentTags returns the MomentTagClient for MomentTag operations.
+func (c *Client) MomentTags() MomentTagClient {
+	return c.momentTag
+}
+
+// MomentTagLinks returns the MomentTagLinkClient for MomentTagLink operations.
+func (c *Client) MomentTagLinks() MomentTagLinkClient {
+	return c.momentTagLink
 }
 
 // Stamps returns the StampClient for Stamp operations.

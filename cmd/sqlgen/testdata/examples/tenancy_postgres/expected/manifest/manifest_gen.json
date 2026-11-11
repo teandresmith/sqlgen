@@ -231,6 +231,34 @@
       "file": "entities/milestone.json"
     },
     {
+      "name": "Moment",
+      "table": "moments",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/moment.json"
+    },
+    {
+      "name": "MomentOwner",
+      "table": "moment_owners",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/moment_owner.json"
+    },
+    {
+      "name": "MomentTag",
+      "table": "moment_tags",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/moment_tag.json"
+    },
+    {
+      "name": "MomentTagLink",
+      "table": "moment_tag_links",
+      "schema": "public",
+      "kind": "table",
+      "file": "entities/moment_tag_link.json"
+    },
+    {
       "name": "Plot",
       "table": "plots",
       "schema": "public",

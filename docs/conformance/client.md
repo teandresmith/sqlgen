@@ -471,7 +471,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | increment.composite-pk | On a composite-PK table `Increment` takes the `{Table}PK` struct and matches all PK columns, so only that tuple changes, and it records that tuple as its affected key | `conformance: Increment/a composite key increments only its own tuple` | all | client-methods: Increment × composite-pk |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: c76f57b3b603575a -->
+<!-- prd: 9.9 sha256: 2edb2b803d32adfe -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -495,6 +495,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | nested.composite-connect-held-elsewhere | A target parented to another row through a composite key, or holding a partly NULL key, is `ErrAlreadyRelated` naming it; `allow_reparent` adopts a partly NULL key | `example: tenancy_postgres: TestUpdateWithRelated_ConnectTargetHeldByAnotherParentIsAlreadyRelated`; `example: tenancy_postgres: TestUpdateWithRelated_PartlyNullKeyIsAlreadyRelated`; `example: tenancy_postgres: TestUpdateWithRelated_AllowReparentAdoptsAPartlyNullKey`; `conformance: UpdateWithRelated/connect naming a target held through a composite key by another parent is ErrAlreadyRelated naming it`; `conformance: UpdateWithRelated/connect naming a target holding a partly NULL key is ErrAlreadyRelated naming it`; `conformance: UpdateWithRelated/allow_reparent adopts a target holding a partly NULL key` | all |  |
 | nested.composite-disconnect-nulls-free-members | `disconnect` and `clear` null the free members only | `example: tenancy_postgres: TestUpdateWithRelated_DisconnectNullsOnlyFreeMembers`; `conformance: UpdateWithRelated/disconnect and clear null only the free member and leave another parent's row`; `conformance: UpdateWithRelated/connect, disconnect and clear write every free member of a key` | all |  |
 | nested.composite-match-full-disconnect-nulls-every-member | Under PostgreSQL `MATCH FULL` with every member free, `disconnect` and `clear` null every member | `example: tenancy_postgres: TestUpdateWithRelated_MatchFullDisconnectNullsEveryMember` | postgres |  |
+| nested.time-key-instant | A time key buckets by its instant: an O2M `connect` and an M2M `connect` and `disconnect` naming a time key in any zone, `time.Local` included, name the row holding that instant, and naming one instant under both `connect` and `disconnect` in two zones is `ErrNestedVerbConflict` | `example: tenancy: TestNestedTimeKeyZones`; `example: tenancy_mysql: TestNestedTimeKeyZones`; `example: tenancy_postgres: TestNestedTimeKeyZones` | all |  |
 
 ## §9.9.3 The eligibility matrix
 <!-- prd: 9.9.3 sha256: 2229a1f684957efb -->

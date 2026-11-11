@@ -79,6 +79,7 @@ func FuncMapWithResolver(dialect sql.Dialect, resolver *gotype.Resolver) templat
 		"fkStringExpr":       funcFKStringExpr,
 		"fkToString":         funcFKToString,
 		"fkToStringByGoType": funcFKToStringByGoType,
+		"nestedBucketKey":    funcNestedBucketKey,
 		"fkNullGuard":        funcFKNullGuard,
 		"fkLoadGuard":        funcFKLoadGuard(resolver),
 		"fkLoadKey":          funcFKLoadKey(resolver),
@@ -839,6 +840,23 @@ func funcFKToString(col ColumnContext, varExpr string) string {
 	default:
 		return "fmt.Sprint(" + varExpr + ")"
 	}
+}
+
+// funcNestedBucketKey renders expr, a nested target key of goType, as the key
+// the nested executor buckets and compares it on (PRD §9.9.6). A time key
+// renders as its instant in UTC: `==` and a map lookup on a time.Time also
+// compare the zone pointer, so a key named in another zone, or in time.Local
+// against a row the driver scanned in UTC, misses the row it names. UTC also
+// strips a monotonic reading. Every other key renders unchanged. The bucket's
+// type is nestedBucketGoType.
+func funcNestedBucketKey(goType, expr string) string {
+	if !isTimeKeyGoType(goType) {
+		return expr
+	}
+	if strings.HasPrefix(expr, "*") {
+		expr = "(" + expr + ")"
+	}
+	return nestedKeyValueExpr(goType, expr) + ".UTC()"
 }
 
 // funcFKToStringByGoType is funcFKToString driven by a Go type string instead

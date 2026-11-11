@@ -53,6 +53,16 @@ views:
   article_stats: {}
 
 tables:
+  # The time-keyed nested target, both edges listed so a change that made
+  # either ineligible fails generation (see schema.sql).
+  moment_owners:
+    nested_mutations:
+      relationships:
+        - name: Moments
+  moment_tags:
+    nested_mutations:
+      relationships:
+        - name: Moments
   articles: {}
   line_items: {}
   documents: {}

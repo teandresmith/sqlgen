@@ -1,0 +1,439 @@
+{
+  "kind": "table",
+  "name": "MomentTagLink",
+  "table": "moment_tag_links",
+  "schema": "public",
+  "file_prefix": "moment_tag_link",
+  "files": [
+    "models_gen.go"
+  ],
+  "comment": "",
+  "indexes": [
+    {
+      "name": "moment_tag_links_pkey",
+      "columns": [
+        "tag_id",
+        "moment_at"
+      ],
+      "unique": true,
+      "method": "btree"
+    }
+  ],
+  "pk": {
+    "kind": "composite",
+    "struct": "MomentTagLinkPK",
+    "columns": [
+      {
+        "name": "tag_id",
+        "go_field": "TagID",
+        "go_type": "int64"
+      },
+      {
+        "name": "moment_at",
+        "go_field": "MomentAt",
+        "go_type": "time.Time"
+      }
+    ]
+  },
+  "features": {
+    "soft_delete": null,
+    "cache": {
+      "ttl_seconds": 3600,
+      "hydration": "eager",
+      "key_pattern": "sqlgen:momenttaglink:{tag_id}:{moment_at}",
+      "invalidates_on": [
+        "Update",
+        "UpdateMany",
+        "UpdateWhere",
+        "Upsert",
+        "UpsertMany",
+        "HardDelete",
+        "HardDeleteMany",
+        "HardDeleteWhere"
+      ]
+    },
+    "events": {
+      "enabled": true,
+      "types": [
+        "MomentTagLinkCreated",
+        "MomentTagLinkDeleted",
+        "MomentTagLinkUpdated"
+      ],
+      "payload_shape": "models.MomentTagLinkEvent"
+    },
+    "tenancy": null
+  },
+  "columns": [
+    {
+      "name": "tag_id",
+      "go_field": "TagID",
+      "go_type": "int64",
+      "db_type": "bigint",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.Number[int64]",
+      "comment": ""
+    },
+    {
+      "name": "moment_at",
+      "go_field": "MomentAt",
+      "go_type": "time.Time",
+      "db_type": "timestamptz",
+      "nullable": false,
+      "pk": true,
+      "unique": false,
+      "comparator": "comparator.Time",
+      "comment": ""
+    }
+  ],
+  "relationships": [],
+  "methods": {
+    "query": [
+      {
+        "name": "Get",
+        "params": [
+          {
+            "name": "pk",
+            "type": "MomentTagLinkPK"
+          }
+        ],
+        "returns": "*MomentTagLink",
+        "errors": [
+          "ErrNotFound"
+        ],
+        "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+        "sql_bodies": {
+          "postgres": "SELECT \"moment_at\", \"tag_id\" FROM \"public\".\"moment_tag_links\" WHERE \"tag_id\" = $1 AND \"moment_at\" = $2 LIMIT 1"
+        }
+      },
+      {
+        "name": "GetMany",
+        "params": [
+          {
+            "name": "input",
+            "type": "*GetMomentTagLinksInput"
+          }
+        ],
+        "returns": "[]*MomentTagLink",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT \"moment_at\", \"tag_id\" FROM \"public\".\"moment_tag_links\" WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+        }
+      },
+      {
+        "name": "Exists",
+        "params": [
+          {
+            "name": "pk",
+            "type": "MomentTagLinkPK"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"moment_tag_links\" WHERE \"tag_id\" = $1 AND \"moment_at\" = $2)"
+        }
+      },
+      {
+        "name": "ExistsWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*MomentTagLinkFilter"
+          }
+        ],
+        "returns": "bool",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT EXISTS(SELECT 1 FROM \"public\".\"moment_tag_links\" WHERE <filter>)"
+        }
+      },
+      {
+        "name": "Count",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*MomentTagLinkFilter"
+          }
+        ],
+        "returns": "int64",
+        "errors": [],
+        "sql_bodies": {
+          "postgres": "SELECT COUNT(*) FROM \"public\".\"moment_tag_links\" WHERE <filter>"
+        }
+      },
+      {
+        "name": "Paginate",
+        "params": [
+          {
+            "name": "input",
+            "type": "PaginateInput[MomentTagLinkFilter]"
+          }
+        ],
+        "returns": "*PaginateResult[MomentTagLink]",
+        "errors": [],
+        "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Connection",
+        "params": [
+          {
+            "name": "input",
+            "type": "ConnectionInput[MomentTagLinkFilter]"
+          }
+        ],
+        "returns": "*Connection[MomentTagLink]",
+        "errors": [
+          "ErrInvalidCursor"
+        ],
+        "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+      },
+      {
+        "name": "Stream",
+        "params": [
+          {
+            "name": "input",
+            "type": "*StreamMomentTagLinksInput"
+          }
+        ],
+        "returns": "iter.Seq2[*MomentTagLink, error]",
+        "errors": [],
+        "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+        "sql_bodies": {
+          "postgres": "SELECT \"moment_at\", \"tag_id\" FROM \"public\".\"moment_tag_links\" WHERE <filter> ORDER BY <sort>"
+        }
+      }
+    ],
+    "mutation": [
+      {
+        "name": "Create",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateMomentTagLinkInput"
+          }
+        ],
+        "returns": "*MomentTagLink",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"moment_tag_links\" (<columns>) VALUES (<values>)"
+        }
+      },
+      {
+        "name": "CreateMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateMomentTagLinkInput"
+          }
+        ],
+        "returns": "[]*MomentTagLink",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"moment_tag_links\" (<columns>) VALUES <values>"
+        }
+      },
+      {
+        "name": "Update",
+        "params": [
+          {
+            "name": "pk",
+            "type": "MomentTagLinkPK"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateMomentTagLinkInput"
+          }
+        ],
+        "returns": "*MomentTagLink",
+        "errors": [
+          "ErrNotFound",
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"moment_tag_links\" SET <set> WHERE \"tag_id\" = $1 AND \"moment_at\" = $2"
+        }
+      },
+      {
+        "name": "UpdateMany",
+        "params": [
+          {
+            "name": "items",
+            "type": "[]UpdateMomentTagLinkItem"
+          }
+        ],
+        "returns": "[]*MomentTagLink",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"moment_tag_links\" SET <set> WHERE \"tag_id\" = $1 AND \"moment_at\" = $2"
+        }
+      },
+      {
+        "name": "UpdateWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*MomentTagLinkFilter"
+          },
+          {
+            "name": "input",
+            "type": "*UpdateMomentTagLinkInput"
+          }
+        ],
+        "returns": "[]*MomentTagLink",
+        "errors": [
+          "ErrNilInput",
+          "ErrEmptyFilter",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "UPDATE \"public\".\"moment_tag_links\" SET <set> WHERE <filter> RETURNING \"tag_id\", \"moment_at\""
+        }
+      },
+      {
+        "name": "Upsert",
+        "params": [
+          {
+            "name": "input",
+            "type": "*CreateMomentTagLinkInput"
+          },
+          {
+            "name": "target",
+            "type": "MomentTagLinkConflictTarget"
+          }
+        ],
+        "returns": "*MomentTagLink",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "One method over the generated MomentTagLinkConflictTarget enum — the target argument selects the conflict columns at call time.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"moment_tag_links\" (<columns>) VALUES (<values>) ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "UpsertMany",
+        "params": [
+          {
+            "name": "inputs",
+            "type": "[]*CreateMomentTagLinkInput"
+          },
+          {
+            "name": "target",
+            "type": "MomentTagLinkConflictTarget"
+          }
+        ],
+        "returns": "[]*MomentTagLink",
+        "errors": [
+          "ErrNilInput",
+          "ErrConstraintViolation"
+        ],
+        "notes": "Batched in generation.batch_size chunks over the same MomentTagLinkConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+        "sql_bodies": {
+          "postgres": "INSERT INTO \"public\".\"moment_tag_links\" (<columns>) VALUES <values> ON CONFLICT (<conflict_target>) DO UPDATE SET <excluded>"
+        }
+      },
+      {
+        "name": "HardDelete",
+        "params": [
+          {
+            "name": "pk",
+            "type": "MomentTagLinkPK"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — a primary key that does not exist is not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"moment_tag_links\" WHERE \"tag_id\" = $1 AND \"moment_at\" = $2"
+        }
+      },
+      {
+        "name": "HardDeleteMany",
+        "params": [
+          {
+            "name": "pks",
+            "type": "[]MomentTagLinkPK"
+          }
+        ],
+        "returns": "",
+        "errors": [],
+        "notes": "Idempotent — primary keys that do not exist are not an error.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"moment_tag_links\" WHERE (\"tag_id\", \"moment_at\") IN (<pks>)"
+        }
+      },
+      {
+        "name": "HardDeleteWhere",
+        "params": [
+          {
+            "name": "filter",
+            "type": "*MomentTagLinkFilter"
+          }
+        ],
+        "returns": "",
+        "errors": [
+          "ErrEmptyFilter"
+        ],
+        "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+        "sql_bodies": {
+          "postgres": "DELETE FROM \"public\".\"moment_tag_links\" WHERE <filter> RETURNING \"tag_id\", \"moment_at\""
+        }
+      }
+    ]
+  },
+  "filter": {
+    "type": "MomentTagLinkFilter",
+    "fields": [
+      {
+        "name": "MomentAt",
+        "type": "*comparator.Time"
+      },
+      {
+        "name": "TagID",
+        "type": "*comparator.Number[int64]"
+      },
+      {
+        "name": "And",
+        "type": "[]*MomentTagLinkFilter"
+      },
+      {
+        "name": "Or",
+        "type": "[]*MomentTagLinkFilter"
+      }
+    ]
+  },
+  "sort": {
+    "type": "MomentTagLinkSort",
+    "fields": [
+      "MomentAt",
+      "TagID"
+    ]
+  },
+  "examples": {
+    "read": [
+      "row, err := client.MomentTagLinks().Get(ctx, models.MomentTagLinkPK{TagID: 1, MomentAt: time.Now()})",
+      "rows, err := client.MomentTagLinks().GetMany(ctx, &models.GetMomentTagLinksInput{Filter: &models.MomentTagLinkFilter{TagID: &comparator.Number[int64]{Eq: new(int64(1))}}})"
+    ],
+    "write": [
+      "created, err := client.MomentTagLinks().Create(ctx, &models.CreateMomentTagLinkInput{TagID: 1, MomentAt: time.Now()})",
+      "updated, err := client.MomentTagLinks().Update(ctx, models.MomentTagLinkPK{TagID: 1, MomentAt: time.Now()}, &models.UpdateMomentTagLinkInput{})"
+    ]
+  }
+}

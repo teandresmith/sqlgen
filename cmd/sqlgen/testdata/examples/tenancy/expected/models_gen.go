@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"time"
 	"uuid"
 
 	"github.com/teandresmith/sqlgen/comparator"
@@ -15598,6 +15599,10004 @@ type GetLegacyWidgetsInput struct {
 	Limit  *int                `json:"limit"`
 	Offset *int                `json:"offset"`
 	Sorts  []sql.Sort          `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type MomentOwner struct {
+	ID   int64  `db:"id" json:"id"`
+	Name string `db:"name" json:"name"`
+
+	// Moments - one-to-many relationship with the moments table.
+	Moments []*Moment `db:"-" json:"moments"`
+}
+
+// MomentOwnerClient provides type-safe operations for the moment_owners table.
+type MomentOwnerClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single momentOwner by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error)
+
+	// GetMany returns moment_owners matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetMomentOwnersInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) ([]*MomentOwner, error)
+
+	// Exists returns true if a momentOwner with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any momentOwner matches the given filter.
+	ExistsWhere(ctx context.Context, filter *MomentOwnerFilter, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (bool, error)
+
+	// Count returns the number of moment_owners matching the given filter.
+	Count(ctx context.Context, filter *MomentOwnerFilter, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new momentOwner and returns the created entity.
+	Create(ctx context.Context, input *CreateMomentOwnerInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error)
+
+	// CreateMany inserts multiple moment_owners in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateMomentOwnerInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) ([]*MomentOwner, error)
+
+	// Update partially updates a momentOwner by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateMomentOwnerInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error)
+
+	// UpdateMany updates multiple moment_owners and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateMomentOwnerItem, opts ...func(*CallOptions[MomentOwnerFieldOptions])) ([]*MomentOwner, error)
+
+	// UpdateWhere updates all moment_owners matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *MomentOwnerFilter, input *UpdateMomentOwnerInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) ([]*MomentOwner, error)
+
+	// Upsert inserts a momentOwner or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateMomentOwnerInput, target MomentOwnerConflictTarget, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error)
+
+	// UpsertMany inserts or updates multiple moment_owners in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateMomentOwnerInput, target MomentOwnerConflictTarget, opts ...func(*CallOptions[MomentOwnerFieldOptions])) ([]*MomentOwner, error)
+
+	// CreateWithRelated creates a momentOwner together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateMomentOwnerWithRelatedInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error)
+
+	// UpdateWithRelated updates a momentOwner together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdateMomentOwnerWithRelatedInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error)
+
+	// UpsertWithRelated inserts or updates a momentOwner together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertMomentOwnerWithRelatedInput, target MomentOwnerConflictTarget, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a momentOwner from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[MomentOwnerFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple moment_owners from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[MomentOwnerFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all moment_owners matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *MomentOwnerFilter, opts ...func(*CallOptions[MomentOwnerFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of moment_owners with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[MomentOwnerFilter], opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*PaginateResult[MomentOwner], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of moment_owners.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[MomentOwnerFilter], opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*Connection[MomentOwner], error)
+
+	// Stream returns an iterator over moment_owners matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamMomentOwnersInput, opts ...func(*CallOptions[StreamMomentOwnerFieldOptions])) iter.Seq2[*MomentOwner, error]
+}
+
+// momentOwnerClient implements the MomentOwnerClient interface.
+type momentOwnerClient struct {
+	querier            database.Querier
+	dialect            sql.Dialect
+	table              sql.Table
+	batchSize          int
+	queryLimit         int
+	pageSize           int
+	cursorKeys         []string
+	strictUpdates      bool
+	mutationHooks      []hook.MutationHook
+	queryHooks         []hook.QueryHook
+	panicHandler       hook.PanicHandler
+	callbackMode       database.CallbackMode
+	momentsDefaultSort []sql.Sort
+	momentClient       *momentClient
+}
+
+// newMomentOwnerClient creates a new momentOwnerClient.
+func newMomentOwnerClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *momentOwnerClient {
+	return &momentOwnerClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "moment_owners"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *momentOwnerClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *momentOwnerClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// momentOwnerAllColumns is the column list for full-entity reads, sorted for determinism.
+var momentOwnerAllColumns = []string{"id", "name"}
+
+// scanMomentOwners scans rows into MomentOwner entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanMomentOwners(rows database.Rows, columns []string) ([]*MomentOwner, error) {
+	var result []*MomentOwner
+	for rows.Next() {
+		m := &MomentOwner{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &m.ID
+			case "name":
+				targets[idx] = &m.Name
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan moment_owner: %w", err)
+		}
+
+		result = append(result, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate moment_owner rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single moment_owner by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *momentOwnerClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get moment_owner: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableMomentOwners, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[MomentOwnerFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[MomentOwnerFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		momentOwners, err := c.GetMany(ctx, &GetMomentOwnersInput{
+			Filter: &MomentOwnerFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(momentOwners) == 0 {
+			return nil, ErrNotFound
+		}
+		return momentOwners[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get moment_owner: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*MomentOwner), nil
+}
+
+// GetMany returns moment_owners matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *momentOwnerClient) GetMany(ctx context.Context, input *GetMomentOwnersInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) ([]*MomentOwner, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetMomentOwnersInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many moment_owners: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableMomentOwners, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := momentOwnerAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "id")
+				}
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var momentOwners []*MomentOwner
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		momentOwners, err = scanMomentOwners(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, momentOwners, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return momentOwners, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many moment_owners: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentOwner), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the id column into a narrowed projection when one is:
+// loadRelationships maps every child back through m.ID, which
+// an unselected column would leave at its zero value.
+func (fo *MomentOwnerFieldOptions) loadsRelationships() bool {
+	if fo.Moments != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache, SkipEvents, SkipTenancy and Tenant. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// A child that fell back to the ctx resolver instead of the parent's explicit
+// Tenant would read the two halves of one row set under two tenants, and on the
+// explicit-tenant bootstrap path, where ctx carries no tenant at all, fail with
+// tenancy.ErrMissing while the parent succeeded.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *momentOwnerClient) loadRelationships(ctx context.Context, conn database.Querier, momentOwners []*MomentOwner, options CallOptions[MomentOwnerFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Moments != nil {
+		g.Go(func() error {
+			// Collect parent FK values
+			momentOwnerIDs := make([]int64, len(momentOwners))
+			for idx, m := range momentOwners {
+				momentOwnerIDs[idx] = m.ID
+			}
+
+			sorts := fo.Moments.Sorts
+			if len(sorts) == 0 {
+				sorts = c.momentsDefaultSort
+			}
+
+			// Load via related entity client, 16383 parent keys per
+			// statement: half the dialect's bind-parameter limit, leaving the rest
+			// for the relationship's filters. Each parent's children come from one
+			// statement, so the sorts order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// (momentOwners) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+			var relatedMoments []*Moment
+			for start := 0; start < len(momentOwnerIDs); start += 16383 {
+				chunk := momentOwnerIDs[start:min(start+16383, len(momentOwnerIDs))]
+
+				// Build FK-based filter, merged with consumer filter
+				filter := &MomentFilter{
+					OwnerID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{In: chunk}},
+				}
+				if fo.Moments.Filter != nil {
+					filter.And = append(filter.And, fo.Moments.Filter)
+				}
+
+				loaded, err := c.momentClient.GetMany(ctx, &GetMomentsInput{
+					Filter: filter,
+					Sorts:  sorts,
+					Limit:  new(0),
+					// The mapping below keys every child on its FK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every child onto the zero value.
+					requiredColumns: []string{"owner_id"},
+				}, func(co *CallOptions[MomentFieldOptions]) {
+					co.FieldOptions = fo.Moments.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+					co.SkipTenancy = options.SkipTenancy
+					co.Tenant = options.Tenant
+				})
+				if err != nil {
+					return fmt.Errorf("load moment_owner moments: %w", err)
+				}
+				relatedMoments = append(relatedMoments, loaded...)
+			}
+
+			// Map results back to parent entities by FK. The FK column on the
+			// child table may be nullable and resolved to a Null-wrapper struct
+			// (e.g., uuid.NullUUID) — fkLoadGuard skips invalid rows and
+			// fkLoadKey unwraps the underlying scalar before stringifying.
+			byFK := make(map[string][]*Moment)
+			for _, r := range relatedMoments {
+				if !(r.OwnerID != nil) {
+					continue
+				}
+				key := fmt.Sprint((*r.OwnerID))
+				byFK[key] = append(byFK[key], r)
+			}
+			for i := range momentOwners {
+				momentOwners[i].Moments = byFK[fmt.Sprint(momentOwners[i].ID)]
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new moment_owner and returns the created entity.
+func (c *momentOwnerClient) Create(ctx context.Context, input *CreateMomentOwnerInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateMomentOwnerInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create moment_owner: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableMomentOwners, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"name"}
+		args := []any{input.Name}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[MomentOwnerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create moment_owner: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*MomentOwner), nil
+}
+
+// CreateMany inserts multiple moment_owners in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *momentOwnerClient) CreateMany(ctx context.Context, inputs []*CreateMomentOwnerInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) ([]*MomentOwner, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many moment_owners: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableMomentOwners, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*MomentOwner{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"name"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.Name,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetMomentOwnersInput{
+			Filter: &MomentOwnerFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[MomentOwnerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many moment_owners: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentOwner), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *momentOwnerClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *momentOwnerClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan moment_owner id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a moment_owner by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *momentOwnerClient) Update(ctx context.Context, id int64, input *UpdateMomentOwnerInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update moment_owner: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableMomentOwners, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[MomentOwnerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[MomentOwnerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update moment_owner: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*MomentOwner), nil
+}
+
+// UpdateMomentOwnerItem pairs a primary key with an update input for batch updates.
+type UpdateMomentOwnerItem struct {
+	ID    int64                   `json:"id"`
+	Input *UpdateMomentOwnerInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple moment_owners and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *momentOwnerClient) UpdateMany(ctx context.Context, items []UpdateMomentOwnerItem, opts ...func(*CallOptions[MomentOwnerFieldOptions])) ([]*MomentOwner, error) {
+	// UpdateMomentOwnerItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many moment_owners: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableMomentOwners, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*MomentOwner{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateMomentOwnerItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_moment_owner", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetMomentOwnersInput{
+			Filter: &MomentOwnerFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[MomentOwnerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many moment_owners: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentOwner), nil
+}
+
+// UpdateWhere updates all moment_owners matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *momentOwnerClient) UpdateWhere(ctx context.Context, filter *MomentOwnerFilter, input *UpdateMomentOwnerInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) ([]*MomentOwner, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update moment_owners where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableMomentOwners, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetMomentOwnersInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[MomentOwnerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated moment_owner id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetMomentOwnersInput{
+			Filter: &MomentOwnerFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[MomentOwnerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update moment_owners where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentOwner), nil
+}
+
+// HardDelete permanently removes a moment_owner from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *momentOwnerClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[MomentOwnerFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableMomentOwners, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete moment_owner: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple moment_owners from the database.
+func (c *momentOwnerClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[MomentOwnerFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableMomentOwners, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted moment_owner key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many moment_owners: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all moment_owners matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *momentOwnerClient) HardDeleteWhere(ctx context.Context, filter *MomentOwnerFilter, opts ...func(*CallOptions[MomentOwnerFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableMomentOwners, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted moment_owner id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete moment_owners where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *momentOwnerClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// MomentOwnerConflictTarget identifies a unique constraint for upsert conflict detection.
+type MomentOwnerConflictTarget int
+
+const (
+	MomentOwnerConflictPK MomentOwnerConflictTarget = iota // PRIMARY KEY (id)
+)
+
+// momentOwnerConflictColumns maps each conflict target to its column set.
+var momentOwnerConflictColumns = map[MomentOwnerConflictTarget][]string{
+	MomentOwnerConflictPK: {"id"},
+}
+
+// Upsert inserts a moment_owner or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *momentOwnerClient) Upsert(ctx context.Context, input *CreateMomentOwnerInput, target MomentOwnerConflictTarget, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateMomentOwnerInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert moment_owner: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableMomentOwners, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"name"}
+		args := []any{input.Name}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := momentOwnerConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[MomentOwnerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert moment_owner: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*MomentOwner), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *momentOwnerClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *momentOwnerClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple moment_owners in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// moment_owners.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *momentOwnerClient) UpsertMany(ctx context.Context, inputs []*CreateMomentOwnerInput, target MomentOwnerConflictTarget, opts ...func(*CallOptions[MomentOwnerFieldOptions])) ([]*MomentOwner, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many moment_owners: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableMomentOwners, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*MomentOwner{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"name"}
+		conflictColumns := momentOwnerConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateMomentOwnerInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.Name,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateMomentOwnerInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetMomentOwnersInput{
+			Filter: &MomentOwnerFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[MomentOwnerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many moment_owners: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentOwner), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// moment_owners.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *momentOwnerClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level momentOwnerConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanMomentOwners
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanMomentOwners(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = momentOwnerColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// momentOwnerColumnValue returns one column's value off a scanned
+// MomentOwner, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanMomentOwners.
+func momentOwnerColumnValue(m *MomentOwner, column string) any {
+	switch column {
+	case "id":
+		return m.ID
+	case "name":
+		return m.Name
+	}
+	return nil
+}
+
+// CreateMomentOwnerWithRelatedInput holds the fields for creating a moment_owners record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateMomentOwnerWithRelatedInput struct {
+	// MomentOwner holds the parent's own columns — identical to the input Create accepts.
+	MomentOwner CreateMomentOwnerInput `json:"moment_owner"`
+
+	// Moments - one-to-many relationship with the moments table.
+	Moments *MomentOwnerMomentsCreateNested `json:"moments,omitempty"`
+}
+
+// UpdateMomentOwnerWithRelatedInput holds the fields for updating a moment_owners record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateMomentOwnerWithRelatedInput struct {
+	// MomentOwner holds the parent's own columns — identical to the input Update accepts.
+	MomentOwner UpdateMomentOwnerInput `json:"moment_owner"`
+
+	// Moments - one-to-many relationship with the moments table.
+	Moments *MomentOwnerMomentsUpdateNested `json:"moments,omitempty"`
+}
+
+// UpsertMomentOwnerWithRelatedInput holds the fields for upserting a moment_owners record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateMomentOwnerInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertMomentOwnerWithRelatedInput struct {
+	// MomentOwner holds the parent's own columns — identical to the input Upsert accepts.
+	MomentOwner CreateMomentOwnerInput `json:"moment_owner"`
+
+	// Moments - one-to-many relationship with the moments table.
+	Moments *MomentOwnerMomentsUpdateNested `json:"moments,omitempty"`
+}
+
+// MomentOwnerMomentsCreateNested is the create-side verb block for MomentOwner.Moments.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type MomentOwnerMomentsCreateNested struct {
+	Create  []*MomentOwnerMomentsCreateInput `json:"create,omitempty"`
+	Connect []types.DateTime                 `json:"connect,omitempty"`
+}
+
+// MomentOwnerMomentsUpdateNested is the update-side verb block for MomentOwner.Moments,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type MomentOwnerMomentsUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool                             `json:"clear,omitempty"`
+	Create     []*MomentOwnerMomentsCreateInput `json:"create,omitempty"`
+	Connect    []types.DateTime                 `json:"connect,omitempty"`
+	Disconnect []types.DateTime                 `json:"disconnect,omitempty"`
+}
+
+// MomentOwnerMomentsCreateInput is CreateMomentInput with the traversed
+// foreign key removed — that column is always set from the parent's primary key,
+// so leaving it would force the caller to supply a value that is then
+// overwritten.
+type MomentOwnerMomentsCreateInput struct {
+	At    types.DateTime `json:"at"`
+	Label string         `json:"label"`
+}
+
+// momentOwnerMomentsNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func momentOwnerMomentsNestedFromCreate(n *MomentOwnerMomentsCreateNested) *MomentOwnerMomentsUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &MomentOwnerMomentsUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// momentOwnerNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+func momentOwnerNestedParentFieldOptions(fo *MomentOwnerFieldOptions) *MomentOwnerFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.Moments = nil
+	scalars.ID = true
+	return &scalars
+}
+
+// momentOwnerNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func momentOwnerNestedSelectsRelationship(fo *MomentOwnerFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.Moments != nil
+}
+
+// CreateWithRelated creates a momentOwner together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *momentOwnerClient) CreateWithRelated(ctx context.Context, input *CreateMomentOwnerWithRelatedInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create moment_owner with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *MomentOwner
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err := database.WithTransaction(ctx, c.querier, "create_moment_owner_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.MomentOwner, func(o *CallOptions[MomentOwnerFieldOptions]) {
+			*o = options
+			o.FieldOptions = momentOwnerNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyMomentOwnerMomentsNested(ctx, parent, momentOwnerMomentsNestedFromCreate(input.Moments), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if momentOwnerNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[MomentOwnerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create moment_owner with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a momentOwner together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *momentOwnerClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdateMomentOwnerWithRelatedInput, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update moment_owner with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *MomentOwner
+	err := database.WithTransaction(ctx, c.querier, "update_moment_owner_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.MomentOwner, func(o *CallOptions[MomentOwnerFieldOptions]) {
+			*o = options
+			o.FieldOptions = momentOwnerNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyMomentOwnerMomentsNested(ctx, parent, input.Moments, options); err != nil {
+			return err
+		}
+
+		if momentOwnerNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[MomentOwnerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update moment_owner with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a momentOwner together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *momentOwnerClient) UpsertWithRelated(ctx context.Context, input *UpsertMomentOwnerWithRelatedInput, target MomentOwnerConflictTarget, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*MomentOwner, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert moment_owner with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *MomentOwner
+	err := database.WithTransaction(ctx, c.querier, "upsert_moment_owner_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.MomentOwner, target, func(o *CallOptions[MomentOwnerFieldOptions]) {
+			*o = options
+			o.FieldOptions = momentOwnerNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyMomentOwnerMomentsNested(ctx, parent, input.Moments, options); err != nil {
+			return err
+		}
+
+		if momentOwnerNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[MomentOwnerFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert moment_owner with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applyMomentOwnerMomentsNested applies the MomentOwner.Moments block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *momentOwnerClient) applyMomentOwnerMomentsNested(ctx context.Context, parent *MomentOwner, nested *MomentOwnerMomentsUpdateNested, options CallOptions[MomentOwnerFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[time.Time]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v.Time.UTC()] = true
+		}
+		for _, v := range connectIDs {
+			if named[v.Time.UTC()] {
+				return nestedError("Moments", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+		// The create half bites only when the caller supplies an explicit key
+		// on a create entry — a nested create normally mints a new row and
+		// carries no target id, which is why the intersection above is the
+		// case that usually fires.
+		for _, n := range nested.Create {
+			if n == nil {
+				continue
+			}
+			if v := n.At; named[v.Time.UTC()] {
+				return nestedError("Moments", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	// The connect adoption's verify read filters on it too.
+	pid := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if _, err := c.momentClient.UpdateWhere(ctx,
+			&MomentFilter{
+				OwnerID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid)}},
+			},
+			&UpdateMomentInput{OwnerID: omittable.Set[*int64](nil)},
+			func(o *CallOptions[MomentFieldOptions]) {
+				nestedChildOptions(o, options)
+				// Nothing selected — the inner call does not need its result
+				// back, so it skips the read that would hand the rows over.
+				o.FieldOptions = &MomentFieldOptions{}
+			}); err != nil {
+			return nestedError("Moments", "clear", nil, err)
+		}
+	}
+
+	if len(nested.Create) > 0 {
+		inputs := make([]*CreateMomentInput, 0, len(nested.Create))
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Moments", "create", nil, ErrNilInput)
+			}
+			inputs = append(inputs, &CreateMomentInput{
+				OwnerID: omittable.Set(&parent.ID),
+				At:      n.At,
+				Label:   n.Label,
+			})
+		}
+		if _, err := c.momentClient.CreateMany(ctx, inputs, func(o *CallOptions[MomentFieldOptions]) {
+			nestedChildOptions(o, options)
+			// Nothing selected — the inner call does not need its result back,
+			// so it costs one statement rather than a statement plus a read.
+			o.FieldOptions = &MomentFieldOptions{}
+		}); err != nil {
+			return nestedError("Moments", "create", nil, err)
+		}
+	}
+
+	// connect — adopt unparented rows. The visibility read is not optional:
+	// the UPDATE's row count alone cannot separate "no such row" from "already
+	// parented", and the FK constraint proves a row exists, not that the caller
+	// may see it.
+	if len(connectIDs) > 0 {
+		owner := make(map[time.Time]*int64, len(connectIDs))
+		// Chunked at c.batchSize, for the reason the disconnect below is:
+		// a single `IN` over the caller's whole list hits a dialect-dependent
+		// bind ceiling whose error cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]types.DateTime, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.momentClient.GetMany(ctx, &GetMomentsInput{
+				Filter: &MomentFilter{
+					At: &comparator.Time{In: dateTimeKeys(ids)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[MomentFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &MomentFieldOptions{At: true, OwnerID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Moments", "connect", nil, err)
+			}
+			for _, row := range visible {
+				owner[row.At.Time.UTC()] = row.OwnerID
+			}
+		}
+
+		adopt := make([]types.DateTime, 0, len(connectIDs))
+		// A repeated id is ONE adoption: connect is a set operation, and the
+		// UPDATE matches the row once however many times the caller named it.
+		// Queueing it twice would trip the shortfall check below and report a
+		// conflict that did not happen.
+		queued := make(map[time.Time]bool, len(connectIDs))
+		for _, v := range connectIDs {
+			cur, ok := owner[v.Time.UTC()]
+			switch {
+			case !ok:
+				// Absent, another tenant's, or soft-deleted — indistinguishable
+				// to this caller, and all NOT_FOUND. Never CONFLICT: that would
+				// confirm the row exists.
+				return nestedError("Moments", "connect", v, ErrNotFound)
+			case cur != nil && (*cur) == parent.ID:
+				// Already ours — the requested end state holds, so this is a
+				// no-op rather than a conflict.
+				continue
+			case cur != nil:
+				return nestedError("Moments", "connect", v, ErrAlreadyRelated)
+			}
+			if queued[v.Time.UTC()] {
+				continue
+			}
+			queued[v.Time.UTC()] = true
+			adopt = append(adopt, v)
+		}
+
+		if len(adopt) > 0 {
+			adoptedCount := 0
+			// The adoption is chunked on the same ceiling the read above
+			// is, and the shortfall check sums across chunks: a row lost in one
+			// chunk is a lost race whichever chunk it landed in.
+			for start := 0; start < len(adopt); start += c.batchSize {
+				adopting := adopt[start:min(start+c.batchSize, len(adopt))]
+				if _, err := c.momentClient.UpdateWhere(ctx,
+					&MomentFilter{
+						At: &comparator.Time{In: dateTimeKeys(adopting)},
+						// The `IS NULL` guard is what makes the adoption atomic
+						// against a concurrent connect that parented the row
+						// between the read above and this statement.
+						OwnerID: &comparator.NullableNumber[int64]{Null: new(true)},
+					},
+					&UpdateMomentInput{OwnerID: omittable.Set(&parent.ID)},
+					func(o *CallOptions[MomentFieldOptions]) {
+						nestedChildOptions(o, options)
+						// Nothing selected — the verify read below counts
+						// the adoption, not the rows UpdateWhere reports.
+						o.FieldOptions = &MomentFieldOptions{}
+					}); err != nil {
+					return nestedError("Moments", "connect", nil, err)
+				}
+				// The verify read counts this chunk's ids that now name this
+				// parent. Inside the transaction a plain read sees its own
+				// writes, so it counts what the UPDATE adopted and never a row
+				// another connection parented first — on every dialect, with
+				// no lock. UpdateWhere's report cannot do this on MySQL, where
+				// a pre-SELECT names the rows. Hooks are
+				// skipped as on the terminal re-read: this is part of the write.
+				adopted, err := c.momentClient.GetMany(ctx, &GetMomentsInput{
+					Filter: &MomentFilter{
+						At:      &comparator.Time{In: dateTimeKeys(adopting)},
+						OwnerID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid)}},
+					},
+					Limit: new(0),
+				}, func(o *CallOptions[MomentFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &MomentFieldOptions{At: true}
+					o.SkipHooks = true
+					o.LockMode = sql.LockNone
+				})
+				if err != nil {
+					return nestedError("Moments", "connect", nil, err)
+				}
+				adoptedCount += len(adopted)
+			}
+			if adoptedCount != len(adopt) {
+				// Lost the race — parented between the read and the UPDATE.
+				// Same outcome, reported the same way.
+				return nestedError("Moments", "connect", nil, ErrAlreadyRelated)
+			}
+		}
+	}
+
+	// disconnect — unlink, scoped to THIS parent. The `fk = parent` term is
+	// what stops a caller detaching another parent's row by guessing its id,
+	// and it is why a disconnect needs no visibility read where a connect does.
+	// A miss is a no-op, not an error.
+	if len(disconnectIDs) > 0 {
+		// Chunked at c.batchSize. The ceiling is a dialect-dependent bind
+		// limit, lowest on SQLite at 32766, and the error names nothing that
+		// can attribute — so it is removed rather than documented.
+		for start := 0; start < len(disconnectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(disconnectIDs))
+			ids := make([]types.DateTime, 0, end-start)
+			for _, v := range disconnectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			if _, err := c.momentClient.UpdateWhere(ctx,
+				&MomentFilter{
+					At:      &comparator.Time{In: dateTimeKeys(ids)},
+					OwnerID: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{Eq: new(pid)}},
+				},
+				&UpdateMomentInput{OwnerID: omittable.Set[*int64](nil)},
+				func(o *CallOptions[MomentFieldOptions]) {
+					nestedChildOptions(o, options)
+					o.FieldOptions = &MomentFieldOptions{}
+				}); err != nil {
+				return nestedError("Moments", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a moment_owner with the given primary key exists.
+func (c *momentOwnerClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableMomentOwners, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists moment_owner: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any moment_owner matches the given filter.
+func (c *momentOwnerClient) ExistsWhere(ctx context.Context, filter *MomentOwnerFilter, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableMomentOwners, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists moment_owners where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of moment_owners matching the given filter.
+// A nil filter counts all moment_owners.
+func (c *momentOwnerClient) Count(ctx context.Context, filter *MomentOwnerFilter, opts ...func(*CallOptions[MomentOwnerFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableMomentOwners, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count moment_owners: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of moment_owners with total count for offset-based pagination.
+// A nil filter paginates all moment_owners.
+func (c *momentOwnerClient) Paginate(ctx context.Context, input PaginateInput[MomentOwnerFilter], opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*PaginateResult[MomentOwner], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate moment_owners: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableMomentOwners, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[MomentOwnerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		momentOwners, err := c.GetMany(ctx, &GetMomentOwnersInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[MomentOwner]{
+			Items:      momentOwners,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate moment_owners: %w", err)
+	}
+	return result.(*PaginateResult[MomentOwner]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of moment_owners.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *momentOwnerClient) Connection(ctx context.Context, input ConnectionInput[MomentOwnerFilter], opts ...func(*CallOptions[MomentOwnerFieldOptions])) (*Connection[MomentOwner], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection moment_owners: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableMomentOwners, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[MomentOwnerFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeMomentOwnerCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeMomentOwnerCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		momentOwners, err := c.GetMany(ctx, &GetMomentOwnersInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(momentOwners) > limit
+		if hasMore {
+			momentOwners = momentOwners[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(momentOwners)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[MomentOwner], len(momentOwners))
+		for i, row := range momentOwners {
+			cursor, err := encodeMomentOwnerCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[MomentOwner]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[MomentOwner]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection moment_owners: %w", err)
+	}
+	return result.(*Connection[MomentOwner]), nil
+}
+
+// encodeMomentOwnerCursor encodes cursor key values as a base64 JSON string.
+func encodeMomentOwnerCursor(keys []string, m *MomentOwner) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = m.ID
+		case "name":
+			out["name"] = m.Name
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode moment_owner cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeMomentOwnerCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeMomentOwnerCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row MomentOwner
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamMomentOwnersInput holds query parameters for streaming moment_owners records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamMomentOwnersInput struct {
+	Filter *MomentOwnerFilter `json:"filter"`
+	Sorts  []sql.Sort         `json:"sorts"`
+}
+
+// StreamMomentOwnerFieldOptions controls scalar column selection for moment_owners streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamMomentOwnerFieldOptions struct {
+	ID   bool `json:"id"`
+	Name bool `json:"name"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamMomentOwnerFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamMomentOwnerFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	return false
+}
+
+// scanMomentOwnerRow scans a single row into a MomentOwner entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanMomentOwnerRow(rows database.Rows, columns []string) (*MomentOwner, error) {
+	m := &MomentOwner{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &m.ID
+		case "name":
+			targets[idx] = &m.Name
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan moment_owner: %w", err)
+	}
+
+	return m, nil
+}
+
+// Stream returns an iterator over moment_owners matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *momentOwnerClient) Stream(ctx context.Context, input *StreamMomentOwnersInput, opts ...func(*CallOptions[StreamMomentOwnerFieldOptions])) iter.Seq2[*MomentOwner, error] {
+	return func(yield func(*MomentOwner, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamMomentOwnersInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream moment_owners: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *MomentOwner, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream moment_owners: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableMomentOwners, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := momentOwnerAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				m, err := scanMomentOwnerRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(m, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate moment_owner rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream moment_owners: %w", err))
+		}
+	}
+}
+
+// MomentOwnerFilter provides type-safe filtering for the moment_owners table.
+type MomentOwnerFilter struct {
+	ID      *comparator.Number[int64] `json:"id"`
+	Name    *comparator.String        `json:"name"`
+	Moments *MomentFilter             `json:"moments"`
+	And     []*MomentOwnerFilter      `json:"and"`
+	Or      []*MomentOwnerFilter      `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *MomentOwnerFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Name != nil {
+		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	if f.Moments != nil {
+		conds = append(conds, momentOwnerMomentsFilterExists(f.Moments, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// momentOwnerMomentsFilterExists compiles a MomentFilter set on the
+// Moments relationship into a correlated EXISTS over moments.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func momentOwnerMomentsFilterExists(f *MomentFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "moments"}) + " " + tgt +
+		" WHERE " + tgt + "." + dialect.QuoteIdentifier("owner_id") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("id", sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// MomentOwnerFieldOptions controls column selection and relationship loading for moment_owners queries.
+type MomentOwnerFieldOptions struct {
+	ID      bool                       `json:"id"`
+	Name    bool                       `json:"name"`
+	Moments *MomentRelationshipOptions `json:"moments"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *MomentOwnerFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *MomentOwnerFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":   "id",
+		"Name": "name",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *MomentOwnerFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	if fo.Moments != nil {
+		return true
+	}
+	return false
+}
+
+// MomentRelationshipOptions controls loading options for Moment relationships.
+type MomentRelationshipOptions struct {
+	FieldOptions *MomentFieldOptions `json:"field_options"`
+	Filter       *MomentFilter       `json:"filter"`
+	Sorts        []sql.Sort          `json:"sorts"`
+}
+
+// CreateMomentOwnerInput holds the fields for creating a moment_owners record.
+type CreateMomentOwnerInput struct {
+	Name string `json:"name"`
+}
+
+// UpdateMomentOwnerInput holds the fields for updating a moment_owners record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateMomentOwnerInput struct {
+	Name omittable.Value[string] `json:"name,omitzero"`
+}
+
+// GetMomentOwnersInput holds query parameters for retrieving moment_owners records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetMomentOwnersInput struct {
+	Filter *MomentOwnerFilter `json:"filter"`
+	Limit  *int               `json:"limit"`
+	Offset *int               `json:"offset"`
+	Sorts  []sql.Sort         `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+// MomentTagLinkPK - composite primary key for the moment_tag_links table.
+type MomentTagLinkPK struct {
+	TagID    int64          `db:"tag_id" json:"tag_id"`
+	MomentAt types.DateTime `db:"moment_at" json:"moment_at"`
+}
+type MomentTagLink struct {
+	TagID    int64          `db:"tag_id" json:"tag_id"`
+	MomentAt types.DateTime `db:"moment_at" json:"moment_at"`
+}
+
+// MomentTagLinkClient provides type-safe operations for the moment_tag_links table.
+type MomentTagLinkClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single momentTagLink by primary key.
+	Get(ctx context.Context, pk MomentTagLinkPK, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (*MomentTagLink, error)
+
+	// GetMany returns moment_tag_links matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetMomentTagLinksInput, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) ([]*MomentTagLink, error)
+
+	// Exists returns true if a momentTagLink with the given primary key exists.
+	Exists(ctx context.Context, pk MomentTagLinkPK, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any momentTagLink matches the given filter.
+	ExistsWhere(ctx context.Context, filter *MomentTagLinkFilter, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (bool, error)
+
+	// Count returns the number of moment_tag_links matching the given filter.
+	Count(ctx context.Context, filter *MomentTagLinkFilter, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new momentTagLink and returns the created entity.
+	Create(ctx context.Context, input *CreateMomentTagLinkInput, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (*MomentTagLink, error)
+
+	// CreateMany inserts multiple moment_tag_links in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateMomentTagLinkInput, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) ([]*MomentTagLink, error)
+
+	// Update partially updates a momentTagLink by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, pk MomentTagLinkPK, input *UpdateMomentTagLinkInput, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (*MomentTagLink, error)
+
+	// UpdateMany updates multiple moment_tag_links and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateMomentTagLinkItem, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) ([]*MomentTagLink, error)
+
+	// UpdateWhere updates all moment_tag_links matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *MomentTagLinkFilter, input *UpdateMomentTagLinkInput, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) ([]*MomentTagLink, error)
+
+	// Upsert inserts a momentTagLink or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateMomentTagLinkInput, target MomentTagLinkConflictTarget, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (*MomentTagLink, error)
+
+	// UpsertMany inserts or updates multiple moment_tag_links in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateMomentTagLinkInput, target MomentTagLinkConflictTarget, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) ([]*MomentTagLink, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a momentTagLink from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, pk MomentTagLinkPK, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple moment_tag_links from the database.
+	HardDeleteMany(ctx context.Context, pks []MomentTagLinkPK, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all moment_tag_links matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *MomentTagLinkFilter, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of moment_tag_links with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[MomentTagLinkFilter], opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (*PaginateResult[MomentTagLink], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of moment_tag_links.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[MomentTagLinkFilter], opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (*Connection[MomentTagLink], error)
+
+	// Stream returns an iterator over moment_tag_links matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamMomentTagLinksInput, opts ...func(*CallOptions[StreamMomentTagLinkFieldOptions])) iter.Seq2[*MomentTagLink, error]
+}
+
+// momentTagLinkClient implements the MomentTagLinkClient interface.
+type momentTagLinkClient struct {
+	querier       database.Querier
+	dialect       sql.Dialect
+	table         sql.Table
+	batchSize     int
+	queryLimit    int
+	pageSize      int
+	cursorKeys    []string
+	strictUpdates bool
+	mutationHooks []hook.MutationHook
+	queryHooks    []hook.QueryHook
+	panicHandler  hook.PanicHandler
+}
+
+// newMomentTagLinkClient creates a new momentTagLinkClient.
+func newMomentTagLinkClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *momentTagLinkClient {
+	return &momentTagLinkClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "moment_tag_links"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"tag_id", "moment_at"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *momentTagLinkClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *momentTagLinkClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// momentTagLinkAllColumns is the column list for full-entity reads, sorted for determinism.
+var momentTagLinkAllColumns = []string{"moment_at", "tag_id"}
+
+// scanMomentTagLinks scans rows into MomentTagLink entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanMomentTagLinks(rows database.Rows, columns []string) ([]*MomentTagLink, error) {
+	var result []*MomentTagLink
+	for rows.Next() {
+		m := &MomentTagLink{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "tag_id":
+				targets[idx] = &m.TagID
+			case "moment_at":
+				targets[idx] = &m.MomentAt
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan moment_tag_link: %w", err)
+		}
+
+		result = append(result, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate moment_tag_link rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single moment_tag_link by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *momentTagLinkClient) Get(ctx context.Context, pk MomentTagLinkPK, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (*MomentTagLink, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get moment_tag_link: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableMomentTagLinks, Schema: "",
+		PK: pk, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[MomentTagLinkFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		momentTagLinks, err := c.GetMany(ctx, &GetMomentTagLinksInput{
+			Filter: &MomentTagLinkFilter{
+				TagID:    &comparator.Number[int64]{Eq: new(pk.TagID)},
+				MomentAt: &comparator.Time{Eq: new(pk.MomentAt.Time)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(momentTagLinks) == 0 {
+			return nil, ErrNotFound
+		}
+		return momentTagLinks[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get moment_tag_link: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*MomentTagLink), nil
+}
+
+// GetMany returns moment_tag_links matching the given filter, field selection, and sort criteria.
+func (c *momentTagLinkClient) GetMany(ctx context.Context, input *GetMomentTagLinksInput, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) ([]*MomentTagLink, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetMomentTagLinksInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many moment_tag_links: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableMomentTagLinks, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := momentTagLinkAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var momentTagLinks []*MomentTagLink
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		momentTagLinks, err = scanMomentTagLinks(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return momentTagLinks, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many moment_tag_links: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentTagLink), nil
+}
+
+// Create inserts a new moment_tag_link and returns the created entity.
+func (c *momentTagLinkClient) Create(ctx context.Context, input *CreateMomentTagLinkInput, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (*MomentTagLink, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateMomentTagLinkInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create moment_tag_link: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableMomentTagLinks, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"tag_id", "moment_at"}
+		args := []any{input.TagID, input.MomentAt}
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns: columns,
+			Values:  args,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, err
+		}
+
+		m.AffectedPKs = []any{MomentTagLinkPK{TagID: input.TagID, MomentAt: input.MomentAt}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, MomentTagLinkPK{TagID: input.TagID, MomentAt: input.MomentAt}, func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create moment_tag_link: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*MomentTagLink), nil
+}
+
+// CreateMany inserts multiple moment_tag_links in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *momentTagLinkClient) CreateMany(ctx context.Context, inputs []*CreateMomentTagLinkInput, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) ([]*MomentTagLink, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many moment_tag_links: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableMomentTagLinks, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*MomentTagLink{}, nil
+		}
+		var allPKs []MomentTagLinkPK
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"tag_id", "moment_at"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.TagID,
+					input.MomentAt,
+				})
+			}
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:   columns,
+				ValueRows: valueRows,
+			})
+			_, err := conn.Exec(ctx, query, queryArgs...)
+			if err != nil {
+				return nil, err
+			}
+			for _, input := range batch {
+				allPKs = append(allPKs, MomentTagLinkPK{TagID: input.TagID, MomentAt: input.MomentAt})
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(allPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		return c.GetMany(ctx, &GetMomentTagLinksInput{
+			Filter: &MomentTagLinkFilter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many moment_tag_links: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentTagLink), nil
+}
+
+// Update partially updates a moment_tag_link by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *momentTagLinkClient) Update(ctx context.Context, pk MomentTagLinkPK, input *UpdateMomentTagLinkInput, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (*MomentTagLink, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update moment_tag_link: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableMomentTagLinks, Schema: "",
+		PK: pk, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, pk, func(o *CallOptions[MomentTagLinkFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: sql.BuildCompositePKConditions(c.dialect,
+				[]string{"tag_id", "moment_at"},
+				[]any{pk.TagID, pk.MomentAt}),
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{pk}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, pk, func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update moment_tag_link: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*MomentTagLink), nil
+}
+
+// UpdateMomentTagLinkItem pairs a primary key with an update input for batch updates.
+type UpdateMomentTagLinkItem struct {
+	PK    MomentTagLinkPK           `json:"pk"`
+	Input *UpdateMomentTagLinkInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple moment_tag_links and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *momentTagLinkClient) UpdateMany(ctx context.Context, items []UpdateMomentTagLinkItem, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) ([]*MomentTagLink, error) {
+	// UpdateMomentTagLinkItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many moment_tag_links: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableMomentTagLinks, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*MomentTagLink{}, nil
+		}
+		var allPKs []MomentTagLinkPK
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateMomentTagLinkItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_moment_tag_link", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allPKs = append(allPKs, item.PK)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: sql.BuildCompositePKConditions(c.dialect,
+							[]string{"tag_id", "moment_at"},
+							[]any{item.PK.TagID, item.PK.MomentAt}),
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.PK, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.PK, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allPKs = append(allPKs, item.PK)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.PK
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetMomentTagLinksInput{
+			Filter: &MomentTagLinkFilter{PKs: allPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many moment_tag_links: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentTagLink), nil
+}
+
+// UpdateWhere updates all moment_tag_links matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *momentTagLinkClient) UpdateWhere(ctx context.Context, filter *MomentTagLinkFilter, input *UpdateMomentTagLinkInput, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) ([]*MomentTagLink, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update moment_tag_links where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableMomentTagLinks, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetMomentTagLinksInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[MomentTagLinkFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING — get affected composite PKs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"tag_id", "moment_at"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var pks []MomentTagLinkPK
+		for rows.Next() {
+			var pk MomentTagLinkPK
+			if err := rows.Scan(&pk.TagID, &pk.MomentAt); err != nil {
+				return nil, fmt.Errorf("scan updated moment_tag_link pk: %w", err)
+			}
+			pks = append(pks, pk)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(pks) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(pks)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.GetMany(ctx, &GetMomentTagLinksInput{
+			Filter: &MomentTagLinkFilter{PKs: pks},
+			Limit:  new(0),
+		}, func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update moment_tag_links where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentTagLink), nil
+}
+
+// HardDelete permanently removes a moment_tag_link from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *momentTagLinkClient) HardDelete(ctx context.Context, pk MomentTagLinkPK, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableMomentTagLinks, Schema: "",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: sql.BuildCompositePKConditions(c.dialect,
+				[]string{"tag_id", "moment_at"},
+				[]any{pk.TagID, pk.MomentAt}),
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{pk}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete moment_tag_link: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple moment_tag_links from the database.
+func (c *momentTagLinkClient) HardDeleteMany(ctx context.Context, pks []MomentTagLinkPK, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableMomentTagLinks, Schema: "",
+		Input: pks, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[MomentTagLinkPK]struct{}, len(pks))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			pkValues := make([][]any, end-start)
+			for i, pk := range pks[start:end] {
+				pkValues[i] = []any{pk.TagID, pk.MomentAt}
+			}
+			hardConds := []sql.Condition{
+				sql.BuildCompositePKBatchCondition(c.dialect, []string{"tag_id", "moment_at"}, pkValues),
+			}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"tag_id", "moment_at"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[MomentTagLinkPK]struct{}, end-start)
+			for rows.Next() {
+				var rowPK MomentTagLinkPK
+				if err := rows.Scan(&rowPK.TagID, &rowPK.MomentAt); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted moment_tag_link key: %w", err)
+				}
+				batchKeys[rowPK] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, pks[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(pks))
+		for _, key := range pks {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many moment_tag_links: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all moment_tag_links matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *momentTagLinkClient) HardDeleteWhere(ctx context.Context, filter *MomentTagLinkFilter, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableMomentTagLinks, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING — get affected composite PKs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"tag_id", "moment_at"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var pks []MomentTagLinkPK
+		for rows.Next() {
+			var pk MomentTagLinkPK
+			if err := rows.Scan(&pk.TagID, &pk.MomentAt); err != nil {
+				return nil, fmt.Errorf("scan deleted moment_tag_link pk: %w", err)
+			}
+			pks = append(pks, pk)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(pks)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete moment_tag_links where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *momentTagLinkClient) recordWrittenKeys(written map[MomentTagLinkPK]struct{}, listed []MomentTagLinkPK, rowKeys map[MomentTagLinkPK]struct{}) {
+	found := make(map[MomentTagLinkPK]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// MomentTagLinkConflictTarget identifies a unique constraint for upsert conflict detection.
+type MomentTagLinkConflictTarget int
+
+const (
+	MomentTagLinkConflictPK MomentTagLinkConflictTarget = iota // PRIMARY KEY (tag_id, moment_at)
+)
+
+// momentTagLinkConflictColumns maps each conflict target to its column set.
+var momentTagLinkConflictColumns = map[MomentTagLinkConflictTarget][]string{
+	MomentTagLinkConflictPK: {"tag_id", "moment_at"},
+}
+
+// Upsert inserts a moment_tag_link or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *momentTagLinkClient) Upsert(ctx context.Context, input *CreateMomentTagLinkInput, target MomentTagLinkConflictTarget, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (*MomentTagLink, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateMomentTagLinkInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert moment_tag_link: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableMomentTagLinks, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"tag_id", "moment_at"}
+		args := []any{input.TagID, input.MomentAt}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := momentTagLinkConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "tag_id", "moment_at"))
+
+		query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+			Columns:             columns,
+			Values:              args,
+			UpsertConflictKeys:  conflictColumns,
+			UpsertUpdateColumns: updateColumns,
+		})
+		_, err := conn.Exec(ctx, query, queryArgs...)
+		if err != nil {
+			return nil, err
+		}
+
+		m.AffectedPKs = []any{MomentTagLinkPK{TagID: input.TagID, MomentAt: input.MomentAt}}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, MomentTagLinkPK{TagID: input.TagID, MomentAt: input.MomentAt}, func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert moment_tag_link: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*MomentTagLink), nil
+}
+
+// UpsertMany inserts or updates multiple moment_tag_links in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+func (c *momentTagLinkClient) UpsertMany(ctx context.Context, inputs []*CreateMomentTagLinkInput, target MomentTagLinkConflictTarget, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) ([]*MomentTagLink, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many moment_tag_links: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableMomentTagLinks, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*MomentTagLink{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"tag_id", "moment_at"}
+		conflictColumns := momentTagLinkConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "tag_id", "moment_at"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateMomentTagLinkInput, 0, len(inputs))
+		rowPKs := make([]MomentTagLinkPK, 0, len(inputs))
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.TagID,
+				input.MomentAt,
+			})
+			rowInputs = append(rowInputs, input)
+			rowPKs = append(rowPKs, MomentTagLinkPK{TagID: input.TagID, MomentAt: input.MomentAt})
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateMomentTagLinkInput, 0, len(rowInputs))
+			dedupedPKs := make([]MomentTagLinkPK, 0, len(rowPKs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedPKs[j] = rowPKs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedPKs = append(dedupedPKs, rowPKs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowPKs = dedupedPKs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(rowPKs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Re-fetch via composite PK filter
+		written, err := c.GetMany(ctx, &GetMomentTagLinksInput{
+			Filter: &MomentTagLinkFilter{PKs: rowPKs},
+			Limit:  new(0),
+		}, func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowPKs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many moment_tag_links: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentTagLink), nil
+}
+
+// Exists returns true if a moment_tag_link with the given primary key exists.
+func (c *momentTagLinkClient) Exists(ctx context.Context, pk MomentTagLinkPK, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableMomentTagLinks, Schema: "",
+		PK: pk, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := sql.BuildCompositePKConditions(c.dialect,
+			[]string{"tag_id", "moment_at"},
+			[]any{pk.TagID, pk.MomentAt})
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists moment_tag_link: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any moment_tag_link matches the given filter.
+func (c *momentTagLinkClient) ExistsWhere(ctx context.Context, filter *MomentTagLinkFilter, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableMomentTagLinks, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists moment_tag_links where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of moment_tag_links matching the given filter.
+// A nil filter counts all moment_tag_links.
+func (c *momentTagLinkClient) Count(ctx context.Context, filter *MomentTagLinkFilter, opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableMomentTagLinks, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count moment_tag_links: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of moment_tag_links with total count for offset-based pagination.
+// A nil filter paginates all moment_tag_links.
+func (c *momentTagLinkClient) Paginate(ctx context.Context, input PaginateInput[MomentTagLinkFilter], opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (*PaginateResult[MomentTagLink], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate moment_tag_links: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableMomentTagLinks, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		momentTagLinks, err := c.GetMany(ctx, &GetMomentTagLinksInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[MomentTagLink]{
+			Items:      momentTagLinks,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate moment_tag_links: %w", err)
+	}
+	return result.(*PaginateResult[MomentTagLink]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of moment_tag_links.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *momentTagLinkClient) Connection(ctx context.Context, input ConnectionInput[MomentTagLinkFilter], opts ...func(*CallOptions[MomentTagLinkFieldOptions])) (*Connection[MomentTagLink], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection moment_tag_links: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableMomentTagLinks, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeMomentTagLinkCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeMomentTagLinkCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		momentTagLinks, err := c.GetMany(ctx, &GetMomentTagLinksInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(momentTagLinks) > limit
+		if hasMore {
+			momentTagLinks = momentTagLinks[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(momentTagLinks)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[MomentTagLink], len(momentTagLinks))
+		for i, row := range momentTagLinks {
+			cursor, err := encodeMomentTagLinkCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[MomentTagLink]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[MomentTagLink]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection moment_tag_links: %w", err)
+	}
+	return result.(*Connection[MomentTagLink]), nil
+}
+
+// encodeMomentTagLinkCursor encodes cursor key values as a base64 JSON string.
+func encodeMomentTagLinkCursor(keys []string, m *MomentTagLink) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "tag_id":
+			out["tag_id"] = m.TagID
+		case "moment_at":
+			out["moment_at"] = m.MomentAt
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode moment_tag_link cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeMomentTagLinkCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeMomentTagLinkCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row MomentTagLink
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "tag_id":
+			err = json.Unmarshal(raw[key], &row.TagID)
+			out[key] = row.TagID
+		case "moment_at":
+			err = json.Unmarshal(raw[key], &row.MomentAt)
+			out[key] = row.MomentAt
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamMomentTagLinksInput holds query parameters for streaming moment_tag_links records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamMomentTagLinksInput struct {
+	Filter *MomentTagLinkFilter `json:"filter"`
+	Sorts  []sql.Sort           `json:"sorts"`
+}
+
+// StreamMomentTagLinkFieldOptions controls scalar column selection for moment_tag_links streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamMomentTagLinkFieldOptions struct {
+	TagID    bool `json:"tag_id"`
+	MomentAt bool `json:"moment_at"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamMomentTagLinkFieldOptions) Columns() []string {
+	var cols []string
+	if fo.TagID {
+		cols = append(cols, "tag_id")
+	}
+	if fo.MomentAt {
+		cols = append(cols, "moment_at")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamMomentTagLinkFieldOptions) HasSelectedColumns() bool {
+	if fo.TagID {
+		return true
+	}
+	if fo.MomentAt {
+		return true
+	}
+	return false
+}
+
+// scanMomentTagLinkRow scans a single row into a MomentTagLink entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanMomentTagLinkRow(rows database.Rows, columns []string) (*MomentTagLink, error) {
+	m := &MomentTagLink{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "tag_id":
+			targets[idx] = &m.TagID
+		case "moment_at":
+			targets[idx] = &m.MomentAt
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan moment_tag_link: %w", err)
+	}
+
+	return m, nil
+}
+
+// Stream returns an iterator over moment_tag_links matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *momentTagLinkClient) Stream(ctx context.Context, input *StreamMomentTagLinksInput, opts ...func(*CallOptions[StreamMomentTagLinkFieldOptions])) iter.Seq2[*MomentTagLink, error] {
+	return func(yield func(*MomentTagLink, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamMomentTagLinksInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream moment_tag_links: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *MomentTagLink, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream moment_tag_links: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableMomentTagLinks, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := momentTagLinkAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				m, err := scanMomentTagLinkRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(m, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate moment_tag_link rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream moment_tag_links: %w", err))
+		}
+	}
+}
+
+// MomentTagLinkFilter provides type-safe filtering for the moment_tag_links table.
+type MomentTagLinkFilter struct {
+	MomentAt *comparator.Time          `json:"moment_at"`
+	TagID    *comparator.Number[int64] `json:"tag_id"`
+	PKs      []MomentTagLinkPK         `json:"pks"`
+	And      []*MomentTagLinkFilter    `json:"and"`
+	Or       []*MomentTagLinkFilter    `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *MomentTagLinkFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.MomentAt != nil {
+		conds = append(conds, f.MomentAt.Parse(dialect.QuoteIdentifier("moment_at"), dialect)...)
+	}
+
+	if f.TagID != nil {
+		conds = append(conds, f.TagID.Parse(dialect.QuoteIdentifier("tag_id"), dialect)...)
+	}
+
+	if len(f.PKs) > 0 {
+		var pkConds []sql.Condition
+		for _, pk := range f.PKs {
+			pkConds = append(pkConds, sql.And(
+				sql.Condition{Clause: dialect.QuoteIdentifier("tag_id") + " = $", Value: pk.TagID},
+				sql.Condition{Clause: dialect.QuoteIdentifier("moment_at") + " = $", Value: pk.MomentAt},
+			))
+		}
+		conds = append(conds, sql.Or(pkConds...))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// MomentTagLinkFieldOptions controls column selection and relationship loading for moment_tag_links queries.
+type MomentTagLinkFieldOptions struct {
+	TagID    bool `json:"tag_id"`
+	MomentAt bool `json:"moment_at"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *MomentTagLinkFieldOptions) Columns() []string {
+	var cols []string
+	if fo.TagID {
+		cols = append(cols, "tag_id")
+	}
+	if fo.MomentAt {
+		cols = append(cols, "moment_at")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *MomentTagLinkFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"TagID":    "tag_id",
+		"MomentAt": "moment_at",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *MomentTagLinkFieldOptions) HasSelectedColumns() bool {
+	if fo.TagID {
+		return true
+	}
+	if fo.MomentAt {
+		return true
+	}
+	return false
+}
+
+// CreateMomentTagLinkInput holds the fields for creating a moment_tag_links record.
+type CreateMomentTagLinkInput struct {
+	TagID    int64          `json:"tag_id"`
+	MomentAt types.DateTime `json:"moment_at"`
+}
+
+// UpdateMomentTagLinkInput holds the fields for updating a moment_tag_links record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateMomentTagLinkInput struct {
+}
+
+// GetMomentTagLinksInput holds query parameters for retrieving moment_tag_links records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetMomentTagLinksInput struct {
+	Filter *MomentTagLinkFilter `json:"filter"`
+	Limit  *int                 `json:"limit"`
+	Offset *int                 `json:"offset"`
+	Sorts  []sql.Sort           `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type MomentTag struct {
+	ID   int64  `db:"id" json:"id"`
+	Name string `db:"name" json:"name"`
+
+	// Moments - many-to-many relationship with the moments table.
+	Moments []*Moment `db:"-" json:"moments"`
+}
+
+// MomentTagClient provides type-safe operations for the moment_tags table.
+type MomentTagClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single momentTag by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error)
+
+	// GetMany returns moment_tags matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetMomentTagsInput, opts ...func(*CallOptions[MomentTagFieldOptions])) ([]*MomentTag, error)
+
+	// Exists returns true if a momentTag with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[MomentTagFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any momentTag matches the given filter.
+	ExistsWhere(ctx context.Context, filter *MomentTagFilter, opts ...func(*CallOptions[MomentTagFieldOptions])) (bool, error)
+
+	// Count returns the number of moment_tags matching the given filter.
+	Count(ctx context.Context, filter *MomentTagFilter, opts ...func(*CallOptions[MomentTagFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new momentTag and returns the created entity.
+	Create(ctx context.Context, input *CreateMomentTagInput, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error)
+
+	// CreateMany inserts multiple moment_tags in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateMomentTagInput, opts ...func(*CallOptions[MomentTagFieldOptions])) ([]*MomentTag, error)
+
+	// Update partially updates a momentTag by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateMomentTagInput, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error)
+
+	// UpdateMany updates multiple moment_tags and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateMomentTagItem, opts ...func(*CallOptions[MomentTagFieldOptions])) ([]*MomentTag, error)
+
+	// UpdateWhere updates all moment_tags matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *MomentTagFilter, input *UpdateMomentTagInput, opts ...func(*CallOptions[MomentTagFieldOptions])) ([]*MomentTag, error)
+
+	// Upsert inserts a momentTag or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateMomentTagInput, target MomentTagConflictTarget, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error)
+
+	// UpsertMany inserts or updates multiple moment_tags in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateMomentTagInput, target MomentTagConflictTarget, opts ...func(*CallOptions[MomentTagFieldOptions])) ([]*MomentTag, error)
+
+	// CreateWithRelated creates a momentTag together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateMomentTagWithRelatedInput, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error)
+
+	// UpdateWithRelated updates a momentTag together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id int64, input *UpdateMomentTagWithRelatedInput, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error)
+
+	// UpsertWithRelated inserts or updates a momentTag together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertMomentTagWithRelatedInput, target MomentTagConflictTarget, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a momentTag from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[MomentTagFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple moment_tags from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[MomentTagFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all moment_tags matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *MomentTagFilter, opts ...func(*CallOptions[MomentTagFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of moment_tags with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[MomentTagFilter], opts ...func(*CallOptions[MomentTagFieldOptions])) (*PaginateResult[MomentTag], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of moment_tags.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[MomentTagFilter], opts ...func(*CallOptions[MomentTagFieldOptions])) (*Connection[MomentTag], error)
+
+	// Stream returns an iterator over moment_tags matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamMomentTagsInput, opts ...func(*CallOptions[StreamMomentTagFieldOptions])) iter.Seq2[*MomentTag, error]
+}
+
+// momentTagClient implements the MomentTagClient interface.
+type momentTagClient struct {
+	querier             database.Querier
+	dialect             sql.Dialect
+	table               sql.Table
+	batchSize           int
+	queryLimit          int
+	pageSize            int
+	cursorKeys          []string
+	strictUpdates       bool
+	mutationHooks       []hook.MutationHook
+	queryHooks          []hook.QueryHook
+	panicHandler        hook.PanicHandler
+	callbackMode        database.CallbackMode
+	momentsDefaultSort  []sql.Sort
+	momentClient        *momentClient
+	momentTagLinkClient *momentTagLinkClient
+}
+
+// newMomentTagClient creates a new momentTagClient.
+func newMomentTagClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *momentTagClient {
+	return &momentTagClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "moment_tags"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *momentTagClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *momentTagClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// momentTagAllColumns is the column list for full-entity reads, sorted for determinism.
+var momentTagAllColumns = []string{"id", "name"}
+
+// scanMomentTags scans rows into MomentTag entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanMomentTags(rows database.Rows, columns []string) ([]*MomentTag, error) {
+	var result []*MomentTag
+	for rows.Next() {
+		m := &MomentTag{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &m.ID
+			case "name":
+				targets[idx] = &m.Name
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan moment_tag: %w", err)
+		}
+
+		result = append(result, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate moment_tag rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single moment_tag by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *momentTagClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get moment_tag: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableMomentTags, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[MomentTagFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[MomentTagFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		momentTags, err := c.GetMany(ctx, &GetMomentTagsInput{
+			Filter: &MomentTagFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(momentTags) == 0 {
+			return nil, ErrNotFound
+		}
+		return momentTags[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get moment_tag: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*MomentTag), nil
+}
+
+// GetMany returns moment_tags matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *momentTagClient) GetMany(ctx context.Context, input *GetMomentTagsInput, opts ...func(*CallOptions[MomentTagFieldOptions])) ([]*MomentTag, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetMomentTagsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many moment_tags: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableMomentTags, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := momentTagAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "id")
+				}
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var momentTags []*MomentTag
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		momentTags, err = scanMomentTags(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, momentTags, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return momentTags, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many moment_tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentTag), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the id column into a narrowed projection when one is:
+// loadRelationships maps every child back through m.ID, which
+// an unselected column would leave at its zero value.
+func (fo *MomentTagFieldOptions) loadsRelationships() bool {
+	if fo.Moments != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache, SkipEvents, SkipTenancy and Tenant. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// A child that fell back to the ctx resolver instead of the parent's explicit
+// Tenant would read the two halves of one row set under two tenants, and on the
+// explicit-tenant bootstrap path, where ctx carries no tenant at all, fail with
+// tenancy.ErrMissing while the parent succeeded.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *momentTagClient) loadRelationships(ctx context.Context, conn database.Querier, momentTags []*MomentTag, options CallOptions[MomentTagFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.Moments != nil {
+		g.Go(func() error {
+			// Collect parent IDs
+			momentTagIDs := make([]int64, len(momentTags))
+			for idx, m := range momentTags {
+				momentTagIDs[idx] = m.ID
+			}
+
+			sorts := fo.Moments.Sorts
+			if len(sorts) == 0 {
+				sorts = c.momentsDefaultSort
+			}
+
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(momentTagIDs); start += 16383 {
+				chunk := momentTagIDs[start:min(start+16383, len(momentTagIDs))]
+
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "moment_tag_links"}, sql.SelectOptions{
+						Columns:    []string{"tag_id", "moment_at"},
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("tag_id")).In(toAnySlice(chunk)...)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load moment_tag moments junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load moment_tag moments junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "tag_id":
+							localIdx = i
+						case "moment_at":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey int64
+						var refKey types.DateTime
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan moment_tag moments junction: %w", err)
+						}
+						parentID, targetID := fmt.Sprint(localKey), refKey.String()
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate moment_tag moments junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("tag_id")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("at")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("moment_at") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "moment_tag_links"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &MomentFilter{}
+				if fo.Moments.Filter != nil {
+					filter.And = append(filter.And, fo.Moments.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (momentTags) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedMoments, err := c.momentClient.GetMany(ctx, &GetMomentsInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"at"},
+				}, func(co *CallOptions[MomentFieldOptions]) {
+					co.FieldOptions = fo.Moments.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+					co.SkipTenancy = options.SkipTenancy
+					co.Tenant = options.Tenant
+				})
+				if err != nil {
+					return fmt.Errorf("load moment_tag moments: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				parentsByTarget := make(map[string][]int, len(relatedMoments))
+				for i := start; i < start+len(chunk); i++ {
+					for _, tID := range parentToTargetIDs[fmt.Sprint(momentTags[i].ID)] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedMoments {
+					for _, i := range parentsByTarget[t.At.String()] {
+						momentTags[i].Moments = append(momentTags[i].Moments, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new moment_tag and returns the created entity.
+func (c *momentTagClient) Create(ctx context.Context, input *CreateMomentTagInput, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateMomentTagInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create moment_tag: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableMomentTags, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"name"}
+		args := []any{input.Name}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[MomentTagFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create moment_tag: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*MomentTag), nil
+}
+
+// CreateMany inserts multiple moment_tags in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *momentTagClient) CreateMany(ctx context.Context, inputs []*CreateMomentTagInput, opts ...func(*CallOptions[MomentTagFieldOptions])) ([]*MomentTag, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many moment_tags: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableMomentTags, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*MomentTag{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"name"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.Name,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetMomentTagsInput{
+			Filter: &MomentTagFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[MomentTagFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many moment_tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentTag), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *momentTagClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *momentTagClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan moment_tag id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a moment_tag by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *momentTagClient) Update(ctx context.Context, id int64, input *UpdateMomentTagInput, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update moment_tag: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableMomentTags, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[MomentTagFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[MomentTagFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update moment_tag: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*MomentTag), nil
+}
+
+// UpdateMomentTagItem pairs a primary key with an update input for batch updates.
+type UpdateMomentTagItem struct {
+	ID    int64                 `json:"id"`
+	Input *UpdateMomentTagInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple moment_tags and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *momentTagClient) UpdateMany(ctx context.Context, items []UpdateMomentTagItem, opts ...func(*CallOptions[MomentTagFieldOptions])) ([]*MomentTag, error) {
+	// UpdateMomentTagItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many moment_tags: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableMomentTags, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*MomentTag{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateMomentTagItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_moment_tag", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.Name.Get(); ok {
+						setClauses["name"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.ID)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.ID, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.ID, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.ID)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetMomentTagsInput{
+			Filter: &MomentTagFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[MomentTagFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many moment_tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentTag), nil
+}
+
+// UpdateWhere updates all moment_tags matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *momentTagClient) UpdateWhere(ctx context.Context, filter *MomentTagFilter, input *UpdateMomentTagInput, opts ...func(*CallOptions[MomentTagFieldOptions])) ([]*MomentTag, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update moment_tags where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableMomentTags, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Name.Get(); ok {
+			setClauses["name"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetMomentTagsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[MomentTagFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated moment_tag id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetMomentTagsInput{
+			Filter: &MomentTagFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[MomentTagFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update moment_tags where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentTag), nil
+}
+
+// HardDelete permanently removes a moment_tag from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *momentTagClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[MomentTagFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableMomentTags, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete moment_tag: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple moment_tags from the database.
+func (c *momentTagClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[MomentTagFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableMomentTags, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted moment_tag key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many moment_tags: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all moment_tags matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *momentTagClient) HardDeleteWhere(ctx context.Context, filter *MomentTagFilter, opts ...func(*CallOptions[MomentTagFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableMomentTags, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted moment_tag id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete moment_tags where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *momentTagClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// MomentTagConflictTarget identifies a unique constraint for upsert conflict detection.
+type MomentTagConflictTarget int
+
+const (
+	MomentTagConflictPK MomentTagConflictTarget = iota // PRIMARY KEY (id)
+)
+
+// momentTagConflictColumns maps each conflict target to its column set.
+var momentTagConflictColumns = map[MomentTagConflictTarget][]string{
+	MomentTagConflictPK: {"id"},
+}
+
+// Upsert inserts a moment_tag or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *momentTagClient) Upsert(ctx context.Context, input *CreateMomentTagInput, target MomentTagConflictTarget, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateMomentTagInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert moment_tag: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableMomentTags, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"name"}
+		args := []any{input.Name}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := momentTagConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[MomentTagFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert moment_tag: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*MomentTag), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *momentTagClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *momentTagClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple moment_tags in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// moment_tags.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *momentTagClient) UpsertMany(ctx context.Context, inputs []*CreateMomentTagInput, target MomentTagConflictTarget, opts ...func(*CallOptions[MomentTagFieldOptions])) ([]*MomentTag, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many moment_tags: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableMomentTags, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*MomentTag{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"name"}
+		conflictColumns := momentTagConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateMomentTagInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.Name,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateMomentTagInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetMomentTagsInput{
+			Filter: &MomentTagFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[MomentTagFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many moment_tags: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*MomentTag), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// moment_tags.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *momentTagClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level momentTagConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanMomentTags
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanMomentTags(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = momentTagColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// momentTagColumnValue returns one column's value off a scanned
+// MomentTag, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanMomentTags.
+func momentTagColumnValue(m *MomentTag, column string) any {
+	switch column {
+	case "id":
+		return m.ID
+	case "name":
+		return m.Name
+	}
+	return nil
+}
+
+// CreateMomentTagWithRelatedInput holds the fields for creating a moment_tags record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateMomentTagWithRelatedInput struct {
+	// MomentTag holds the parent's own columns — identical to the input Create accepts.
+	MomentTag CreateMomentTagInput `json:"moment_tag"`
+
+	// Moments - many-to-many relationship with the moments table.
+	Moments *MomentTagMomentsCreateNested `json:"moments,omitempty"`
+}
+
+// UpdateMomentTagWithRelatedInput holds the fields for updating a moment_tags record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateMomentTagWithRelatedInput struct {
+	// MomentTag holds the parent's own columns — identical to the input Update accepts.
+	MomentTag UpdateMomentTagInput `json:"moment_tag"`
+
+	// Moments - many-to-many relationship with the moments table.
+	Moments *MomentTagMomentsUpdateNested `json:"moments,omitempty"`
+}
+
+// UpsertMomentTagWithRelatedInput holds the fields for upserting a moment_tags record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateMomentTagInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertMomentTagWithRelatedInput struct {
+	// MomentTag holds the parent's own columns — identical to the input Upsert accepts.
+	MomentTag CreateMomentTagInput `json:"moment_tag"`
+
+	// Moments - many-to-many relationship with the moments table.
+	Moments *MomentTagMomentsUpdateNested `json:"moments,omitempty"`
+}
+
+// MomentTagMomentsCreateNested is the create-side verb block for MomentTag.Moments.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type MomentTagMomentsCreateNested struct {
+	Create  []*CreateMomentInput `json:"create,omitempty"`
+	Connect []types.DateTime     `json:"connect,omitempty"`
+}
+
+// MomentTagMomentsUpdateNested is the update-side verb block for MomentTag.Moments,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type MomentTagMomentsUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool                 `json:"clear,omitempty"`
+	Create     []*CreateMomentInput `json:"create,omitempty"`
+	Connect    []types.DateTime     `json:"connect,omitempty"`
+	Disconnect []types.DateTime     `json:"disconnect,omitempty"`
+}
+
+// momentTagMomentsNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func momentTagMomentsNestedFromCreate(n *MomentTagMomentsCreateNested) *MomentTagMomentsUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &MomentTagMomentsUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// momentTagNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+func momentTagNestedParentFieldOptions(fo *MomentTagFieldOptions) *MomentTagFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.Moments = nil
+	scalars.ID = true
+	return &scalars
+}
+
+// momentTagNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func momentTagNestedSelectsRelationship(fo *MomentTagFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.Moments != nil
+}
+
+// CreateWithRelated creates a momentTag together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *momentTagClient) CreateWithRelated(ctx context.Context, input *CreateMomentTagWithRelatedInput, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create moment_tag with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *MomentTag
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err := database.WithTransaction(ctx, c.querier, "create_moment_tag_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.MomentTag, func(o *CallOptions[MomentTagFieldOptions]) {
+			*o = options
+			o.FieldOptions = momentTagNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyMomentTagMomentsNested(ctx, parent, momentTagMomentsNestedFromCreate(input.Moments), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if momentTagNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[MomentTagFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create moment_tag with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a momentTag together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *momentTagClient) UpdateWithRelated(ctx context.Context, id int64, input *UpdateMomentTagWithRelatedInput, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update moment_tag with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *MomentTag
+	err := database.WithTransaction(ctx, c.querier, "update_moment_tag_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.MomentTag, func(o *CallOptions[MomentTagFieldOptions]) {
+			*o = options
+			o.FieldOptions = momentTagNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyMomentTagMomentsNested(ctx, parent, input.Moments, options); err != nil {
+			return err
+		}
+
+		if momentTagNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[MomentTagFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update moment_tag with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a momentTag together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *momentTagClient) UpsertWithRelated(ctx context.Context, input *UpsertMomentTagWithRelatedInput, target MomentTagConflictTarget, opts ...func(*CallOptions[MomentTagFieldOptions])) (*MomentTag, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert moment_tag with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *MomentTag
+	err := database.WithTransaction(ctx, c.querier, "upsert_moment_tag_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.MomentTag, target, func(o *CallOptions[MomentTagFieldOptions]) {
+			*o = options
+			o.FieldOptions = momentTagNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyMomentTagMomentsNested(ctx, parent, input.Moments, options); err != nil {
+			return err
+		}
+
+		if momentTagNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.ID, func(o *CallOptions[MomentTagFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert moment_tag with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applyMomentTagMomentsNested applies the MomentTag.Moments block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// link, disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *momentTagClient) applyMomentTagMomentsNested(ctx context.Context, parent *MomentTag, nested *MomentTagMomentsUpdateNested, options CallOptions[MomentTagFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[time.Time]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v.Time.UTC()] = true
+		}
+		for _, v := range connectIDs {
+			if named[v.Time.UTC()] {
+				return nestedError("Moments", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+		// The create half bites only when the caller supplies an explicit key
+		// on a create entry — a nested create normally mints a new row and
+		// carries no target id, which is why the intersection above is the
+		// case that usually fires.
+		for _, n := range nested.Create {
+			if n == nil {
+				continue
+			}
+			if v := n.At; named[v.Time.UTC()] {
+				return nestedError("Moments", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	pid := parent.ID
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if err := c.momentTagLinkClient.HardDeleteWhere(ctx, &MomentTagLinkFilter{
+			TagID: &comparator.Number[int64]{Eq: new(pid)},
+		}, func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			nestedChildOptions(o, options)
+		}); err != nil {
+			return nestedError("Moments", "clear", nil, err)
+		}
+	}
+
+	targetIDs := make([]types.DateTime, 0, len(nested.Create)+len(connectIDs))
+
+	if len(nested.Create) > 0 {
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("Moments", "create", nil, ErrNilInput)
+			}
+		}
+		// No traversed FK to elide on an M2M target — the parent's key goes
+		// into the junction row below — so this is the target's own create
+		// input verbatim. The PK-only selection is what the link step needs.
+		created, err := c.momentClient.CreateMany(ctx, nested.Create, func(o *CallOptions[MomentFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &MomentFieldOptions{At: true}
+		})
+		if err != nil {
+			return nestedError("Moments", "create", nil, err)
+		}
+		for _, row := range created {
+			targetIDs = append(targetIDs, row.At)
+		}
+	}
+
+	// The junction FK proves existence, not visibility. Reading through the
+	// target's OWN client applies its tenant filter, soft-delete default and
+	// access rules, so a target in another tenant is NOT_FOUND here rather
+	// than a junction row nobody can ever read.
+	if len(connectIDs) > 0 {
+		found := make(map[time.Time]bool, len(connectIDs))
+		// Chunked at c.batchSize. A single statement over the caller's
+		// whole list hits a bind-parameter ceiling that is dialect-dependent
+		// and lowest on SQLite (32766), and every dialect's error for it names
+		// no table, column, edge or verb, so it cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]types.DateTime, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.momentClient.GetMany(ctx, &GetMomentsInput{
+				Filter: &MomentFilter{
+					At: &comparator.Time{In: dateTimeKeys(ids)},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[MomentFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &MomentFieldOptions{At: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("Moments", "connect", nil, err)
+			}
+			for _, row := range visible {
+				found[row.At.Time.UTC()] = true
+			}
+		}
+		for _, tid := range connectIDs {
+			if !found[tid.Time.UTC()] {
+				return nestedError("Moments", "connect", tid, ErrNotFound)
+			}
+		}
+		targetIDs = append(targetIDs, connectIDs...)
+	}
+
+	// link — UpsertMany, not CreateMany: re-adding an existing link is a set
+	// operation whose answer is "linked", and CreateMany raises a primary-key
+	// violation on it. The junction is a pure link table, so this compiles to
+	// ON CONFLICT DO NOTHING on every dialect.
+	if len(targetIDs) > 0 {
+		links := make([]*CreateMomentTagLinkInput, 0, len(targetIDs))
+		seen := make(map[time.Time]bool, len(targetIDs))
+		for _, tid := range targetIDs {
+			if seen[tid.Time.UTC()] {
+				continue
+			}
+			seen[tid.Time.UTC()] = true
+			links = append(links, &CreateMomentTagLinkInput{
+				TagID:    parent.ID,
+				MomentAt: tid,
+			})
+		}
+		if _, err := c.momentTagLinkClient.UpsertMany(ctx, links, MomentTagLinkConflictPK, func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &MomentTagLinkFieldOptions{}
+		}); err != nil {
+			return nestedError("Moments", "link", nil, err)
+		}
+	}
+
+	// disconnect — no visibility read. The junction key embeds the
+	// parent, so a caller can only ever delete its own links, and a miss is a
+	// no-op. A hard delete is correct because the junction carries no
+	// soft-delete column; one that did would emit no unlink verb at all,
+	// since the read loader's junction query has no soft-delete predicate and
+	// would keep showing the link.
+	if len(disconnectIDs) > 0 {
+		pks := make([]MomentTagLinkPK, 0, len(disconnectIDs))
+		unlinking := make(map[time.Time]bool, len(disconnectIDs))
+		for _, tid := range disconnectIDs {
+			if unlinking[tid.Time.UTC()] {
+				continue
+			}
+			unlinking[tid.Time.UTC()] = true
+			pks = append(pks, MomentTagLinkPK{
+				TagID:    parent.ID,
+				MomentAt: tid,
+			})
+		}
+		// Chunked at c.batchSize; a composite key binds two parameters
+		// per row, so the ceiling arrives at half the id count.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			if err := c.momentTagLinkClient.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[MomentTagLinkFieldOptions]) {
+				nestedChildOptions(o, options)
+			}); err != nil {
+				return nestedError("Moments", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a moment_tag with the given primary key exists.
+func (c *momentTagClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[MomentTagFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableMomentTags, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists moment_tag: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any moment_tag matches the given filter.
+func (c *momentTagClient) ExistsWhere(ctx context.Context, filter *MomentTagFilter, opts ...func(*CallOptions[MomentTagFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableMomentTags, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists moment_tags where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of moment_tags matching the given filter.
+// A nil filter counts all moment_tags.
+func (c *momentTagClient) Count(ctx context.Context, filter *MomentTagFilter, opts ...func(*CallOptions[MomentTagFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableMomentTags, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count moment_tags: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of moment_tags with total count for offset-based pagination.
+// A nil filter paginates all moment_tags.
+func (c *momentTagClient) Paginate(ctx context.Context, input PaginateInput[MomentTagFilter], opts ...func(*CallOptions[MomentTagFieldOptions])) (*PaginateResult[MomentTag], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate moment_tags: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableMomentTags, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[MomentTagFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		momentTags, err := c.GetMany(ctx, &GetMomentTagsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[MomentTag]{
+			Items:      momentTags,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate moment_tags: %w", err)
+	}
+	return result.(*PaginateResult[MomentTag]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of moment_tags.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *momentTagClient) Connection(ctx context.Context, input ConnectionInput[MomentTagFilter], opts ...func(*CallOptions[MomentTagFieldOptions])) (*Connection[MomentTag], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection moment_tags: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableMomentTags, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[MomentTagFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeMomentTagCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeMomentTagCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		momentTags, err := c.GetMany(ctx, &GetMomentTagsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(momentTags) > limit
+		if hasMore {
+			momentTags = momentTags[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(momentTags)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[MomentTag], len(momentTags))
+		for i, row := range momentTags {
+			cursor, err := encodeMomentTagCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[MomentTag]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[MomentTag]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection moment_tags: %w", err)
+	}
+	return result.(*Connection[MomentTag]), nil
+}
+
+// encodeMomentTagCursor encodes cursor key values as a base64 JSON string.
+func encodeMomentTagCursor(keys []string, m *MomentTag) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = m.ID
+		case "name":
+			out["name"] = m.Name
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode moment_tag cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeMomentTagCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeMomentTagCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row MomentTag
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamMomentTagsInput holds query parameters for streaming moment_tags records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamMomentTagsInput struct {
+	Filter *MomentTagFilter `json:"filter"`
+	Sorts  []sql.Sort       `json:"sorts"`
+}
+
+// StreamMomentTagFieldOptions controls scalar column selection for moment_tags streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamMomentTagFieldOptions struct {
+	ID   bool `json:"id"`
+	Name bool `json:"name"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamMomentTagFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamMomentTagFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	return false
+}
+
+// scanMomentTagRow scans a single row into a MomentTag entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanMomentTagRow(rows database.Rows, columns []string) (*MomentTag, error) {
+	m := &MomentTag{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &m.ID
+		case "name":
+			targets[idx] = &m.Name
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan moment_tag: %w", err)
+	}
+
+	return m, nil
+}
+
+// Stream returns an iterator over moment_tags matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *momentTagClient) Stream(ctx context.Context, input *StreamMomentTagsInput, opts ...func(*CallOptions[StreamMomentTagFieldOptions])) iter.Seq2[*MomentTag, error] {
+	return func(yield func(*MomentTag, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamMomentTagsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream moment_tags: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *MomentTag, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream moment_tags: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableMomentTags, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := momentTagAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				m, err := scanMomentTagRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(m, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate moment_tag rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream moment_tags: %w", err))
+		}
+	}
+}
+
+// MomentTagFilter provides type-safe filtering for the moment_tags table.
+type MomentTagFilter struct {
+	ID      *comparator.Number[int64] `json:"id"`
+	Name    *comparator.String        `json:"name"`
+	Moments *MomentFilter             `json:"moments"`
+	And     []*MomentTagFilter        `json:"and"`
+	Or      []*MomentTagFilter        `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *MomentTagFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.Name != nil {
+		conds = append(conds, f.Name.Parse(dialect.QuoteIdentifier("name"), dialect)...)
+	}
+
+	if f.Moments != nil {
+		conds = append(conds, momentTagMomentsFilterExists(f.Moments, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// momentTagMomentsFilterExists compiles a MomentFilter set on the
+// Moments relationship into a correlated EXISTS over moments, joined through the moment_tag_links junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func momentTagMomentsFilterExists(f *MomentFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "moment_tag_links"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "", Name: "moments"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("at") + " = " + jn + "." + dialect.QuoteIdentifier("moment_at") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("tag_id") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("id", sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// MomentTagFieldOptions controls column selection and relationship loading for moment_tags queries.
+type MomentTagFieldOptions struct {
+	ID      bool                       `json:"id"`
+	Name    bool                       `json:"name"`
+	Moments *MomentRelationshipOptions `json:"moments"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *MomentTagFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.Name {
+		cols = append(cols, "name")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *MomentTagFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":   "id",
+		"Name": "name",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *MomentTagFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.Name {
+		return true
+	}
+	if fo.Moments != nil {
+		return true
+	}
+	return false
+}
+
+// CreateMomentTagInput holds the fields for creating a moment_tags record.
+type CreateMomentTagInput struct {
+	Name string `json:"name"`
+}
+
+// UpdateMomentTagInput holds the fields for updating a moment_tags record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateMomentTagInput struct {
+	Name omittable.Value[string] `json:"name,omitzero"`
+}
+
+// GetMomentTagsInput holds query parameters for retrieving moment_tags records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetMomentTagsInput struct {
+	Filter *MomentTagFilter `json:"filter"`
+	Limit  *int             `json:"limit"`
+	Offset *int             `json:"offset"`
+	Sorts  []sql.Sort       `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type Moment struct {
+	At      types.DateTime `db:"at" json:"at"`
+	OwnerID *int64         `db:"owner_id" json:"owner_id"`
+	Label   string         `db:"label" json:"label"`
+
+	// MomentTags - many-to-many relationship with the moment_tags table.
+	MomentTags []*MomentTag `db:"-" json:"moment_tags"`
+}
+
+// MomentClient provides type-safe operations for the moments table.
+type MomentClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single moment by primary key.
+	Get(ctx context.Context, id types.DateTime, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error)
+
+	// GetMany returns moments matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetMomentsInput, opts ...func(*CallOptions[MomentFieldOptions])) ([]*Moment, error)
+
+	// Exists returns true if a moment with the given primary key exists.
+	Exists(ctx context.Context, id types.DateTime, opts ...func(*CallOptions[MomentFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any moment matches the given filter.
+	ExistsWhere(ctx context.Context, filter *MomentFilter, opts ...func(*CallOptions[MomentFieldOptions])) (bool, error)
+
+	// Count returns the number of moments matching the given filter.
+	Count(ctx context.Context, filter *MomentFilter, opts ...func(*CallOptions[MomentFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new moment and returns the created entity.
+	Create(ctx context.Context, input *CreateMomentInput, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error)
+
+	// CreateMany inserts multiple moments in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateMomentInput, opts ...func(*CallOptions[MomentFieldOptions])) ([]*Moment, error)
+
+	// Update partially updates a moment by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id types.DateTime, input *UpdateMomentInput, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error)
+
+	// UpdateMany updates multiple moments and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateMomentItem, opts ...func(*CallOptions[MomentFieldOptions])) ([]*Moment, error)
+
+	// UpdateWhere updates all moments matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *MomentFilter, input *UpdateMomentInput, opts ...func(*CallOptions[MomentFieldOptions])) ([]*Moment, error)
+
+	// Upsert inserts a moment or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateMomentInput, target MomentConflictTarget, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error)
+
+	// UpsertMany inserts or updates multiple moments in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateMomentInput, target MomentConflictTarget, opts ...func(*CallOptions[MomentFieldOptions])) ([]*Moment, error)
+
+	// CreateWithRelated creates a moment together with rows on its nested
+	// relationships, in a single transaction. Nested rows are written through
+	// the target table's own client, so their hooks, events, cache
+	// invalidation and tenancy behave exactly as on a direct call.
+	CreateWithRelated(ctx context.Context, input *CreateMomentWithRelatedInput, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error)
+
+	// UpdateWithRelated updates a moment together with rows on its nested
+	// relationships, in a single transaction. The nested blocks add `disconnect`
+	// and `clear` to the create-side verbs, because the parent already exists
+	// and there are rows to unlink.
+	UpdateWithRelated(ctx context.Context, id types.DateTime, input *UpdateMomentWithRelatedInput, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error)
+
+	// UpsertWithRelated inserts or updates a moment together with rows on
+	// its nested relationships, in a single transaction. It reuses the
+	// update-side nested block verbatim — each verb means the same thing on
+	// either branch, so one block is correct on both. `create` is not
+	// idempotent: repeating an upsert that carries it inserts again.
+	UpsertWithRelated(ctx context.Context, input *UpsertMomentWithRelatedInput, target MomentConflictTarget, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a moment from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id types.DateTime, opts ...func(*CallOptions[MomentFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple moments from the database.
+	HardDeleteMany(ctx context.Context, ids []types.DateTime, opts ...func(*CallOptions[MomentFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all moments matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *MomentFilter, opts ...func(*CallOptions[MomentFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of moments with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[MomentFilter], opts ...func(*CallOptions[MomentFieldOptions])) (*PaginateResult[Moment], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of moments.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[MomentFilter], opts ...func(*CallOptions[MomentFieldOptions])) (*Connection[Moment], error)
+
+	// Stream returns an iterator over moments matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamMomentsInput, opts ...func(*CallOptions[StreamMomentFieldOptions])) iter.Seq2[*Moment, error]
+}
+
+// momentClient implements the MomentClient interface.
+type momentClient struct {
+	querier               database.Querier
+	dialect               sql.Dialect
+	table                 sql.Table
+	batchSize             int
+	queryLimit            int
+	pageSize              int
+	cursorKeys            []string
+	strictUpdates         bool
+	mutationHooks         []hook.MutationHook
+	queryHooks            []hook.QueryHook
+	panicHandler          hook.PanicHandler
+	callbackMode          database.CallbackMode
+	momentTagsDefaultSort []sql.Sort
+	momentTagClient       *momentTagClient
+	momentTagLinkClient   *momentTagLinkClient
+}
+
+// newMomentClient creates a new momentClient.
+func newMomentClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *momentClient {
+	return &momentClient{
+		querier:       querier,
+		dialect:       sql.NewSQLiteDialect(),
+		table:         sql.Table{Schema: "", Name: "moments"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"at"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *momentClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *momentClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// momentAllColumns is the column list for full-entity reads, sorted for determinism.
+var momentAllColumns = []string{"at", "label", "owner_id"}
+
+// scanMoments scans rows into Moment entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanMoments(rows database.Rows, columns []string) ([]*Moment, error) {
+	var result []*Moment
+	for rows.Next() {
+		m := &Moment{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "at":
+				targets[idx] = &m.At
+			case "owner_id":
+				targets[idx] = &m.OwnerID
+			case "label":
+				targets[idx] = &m.Label
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan moment: %w", err)
+		}
+
+		result = append(result, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate moment rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single moment by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *momentClient) Get(ctx context.Context, id types.DateTime, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get moment: LockMode is unsupported on sqlite dialect")
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableMoments, Schema: "",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[MomentFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[MomentFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		moments, err := c.GetMany(ctx, &GetMomentsInput{
+			Filter: &MomentFilter{
+				At: &comparator.Time{Eq: new(id.Time)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(moments) == 0 {
+			return nil, ErrNotFound
+		}
+		return moments[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get moment: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Moment), nil
+}
+
+// GetMany returns moments matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *momentClient) GetMany(ctx context.Context, input *GetMomentsInput, opts ...func(*CallOptions[MomentFieldOptions])) ([]*Moment, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetMomentsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("get many moments: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableMoments, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := momentAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "at")
+				}
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var moments []*Moment
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		moments, err = scanMoments(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, moments, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return moments, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many moments: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Moment), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the at column into a narrowed projection when one is:
+// loadRelationships maps every child back through m.At, which
+// an unselected column would leave at its zero value.
+func (fo *MomentFieldOptions) loadsRelationships() bool {
+	if fo.MomentTags != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache, SkipEvents, SkipTenancy and Tenant. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// A child that fell back to the ctx resolver instead of the parent's explicit
+// Tenant would read the two halves of one row set under two tenants, and on the
+// explicit-tenant bootstrap path, where ctx carries no tenant at all, fail with
+// tenancy.ErrMissing while the parent succeeded.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *momentClient) loadRelationships(ctx context.Context, conn database.Querier, moments []*Moment, options CallOptions[MomentFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.MomentTags != nil {
+		g.Go(func() error {
+			// Collect parent IDs
+			momentIDs := make([]types.DateTime, len(moments))
+			for idx, m := range moments {
+				momentIDs[idx] = m.At
+			}
+
+			sorts := fo.MomentTags.Sorts
+			if len(sorts) == 0 {
+				sorts = c.momentTagsDefaultSort
+			}
+
+			// The three steps run once per chunk of 16383 parent keys:
+			// half the dialect's bind-parameter limit, leaving the rest for the
+			// relationship's filters.
+			for start := 0; start < len(momentIDs); start += 16383 {
+				chunk := momentIDs[start:min(start+16383, len(momentIDs))]
+
+				// Step 1: Query junction table to get mapping. Each junction
+				// column scans into its own Go type, so both sides of the maps
+				// stringify keys the same way.
+				parentToTargetIDs := make(map[string][]string)
+				if err := func() error {
+					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "moment_tag_links"}, sql.SelectOptions{
+						Columns:    []string{"moment_at", "tag_id"},
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("moment_at")).In(toAnySlice(chunk)...)},
+					})
+
+					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
+					if err != nil {
+						return fmt.Errorf("load moment moment_tags junction: %w", err)
+					}
+					defer junctionRows.Close()
+
+					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					junctionCols, err := junctionRows.Columns()
+					if err != nil {
+						return fmt.Errorf("load moment moment_tags junction columns: %w", err)
+					}
+					localIdx, refIdx := 0, 1
+					for i, col := range junctionCols {
+						switch col {
+						case "moment_at":
+							localIdx = i
+						case "tag_id":
+							refIdx = i
+						}
+					}
+
+					for junctionRows.Next() {
+						var localKey types.DateTime
+						var refKey int64
+						ptrs := make([]any, len(junctionCols))
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						if err := junctionRows.Scan(ptrs...); err != nil {
+							return fmt.Errorf("scan moment moment_tags junction: %w", err)
+						}
+						parentID, targetID := localKey.String(), fmt.Sprint(refKey)
+						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
+					}
+					if err := junctionRows.Err(); err != nil {
+						return fmt.Errorf("iterate moment moment_tags junction: %w", err)
+					}
+					return nil
+				}(); err != nil {
+					return err
+				}
+
+				if len(parentToTargetIDs) == 0 {
+					continue
+				}
+
+				// Step 2: Fetch the actual entities. The target key is matched
+				// against this chunk's junction rows, not against a list of target
+				// keys, so the statement binds the chunk's parent keys however many
+				// targets they share, and each parent's targets come from one
+				// statement.
+				junctionWhere, junctionWhereArgs := sql.SubqueryWhere(c.dialect, "j", []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("moment_at")).In(toAnySlice(chunk)...),
+				})
+				conditions := []sql.Condition{
+					sql.Where(c.dialect.QuoteIdentifier("id")).In(sql.Subquery{
+						SQL: "SELECT j." + c.dialect.QuoteIdentifier("tag_id") +
+							" FROM " + c.dialect.FormatTable(sql.Table{Schema: "", Name: "moment_tag_links"}) + " j WHERE " + junctionWhere,
+						Args: junctionWhereArgs,
+					}),
+				}
+
+				// The consumer filter is ANDed in, as on the O2M fetch, so a
+				// soft-delete comparator in it narrows the target's default
+				// rather than replacing it.
+				filter := &MomentTagFilter{}
+				if fo.MomentTags.Filter != nil {
+					filter.And = append(filter.And, fo.MomentTags.Filter)
+				}
+
+				// Self-referential relationships share the parent's entity type, so
+				// the loaded targets must use a name distinct from the parent slice
+				// (moments) to avoid shadowing it and mis-mapping the results
+				// onto the targets instead of the parents.
+				relatedMomentTags, err := c.momentTagClient.GetMany(ctx, &GetMomentTagsInput{
+					Filter:     filter,
+					Sorts:      sorts,
+					Limit:      new(0),
+					conditions: conditions,
+					// Step 3 keys every loaded target on its own PK, so the fetch
+					// declares that column rather than mutating the caller's
+					// FieldOptions — a narrowed selection that omits it would
+					// otherwise map every target onto the zero value.
+					requiredColumns: []string{"id"},
+				}, func(co *CallOptions[MomentTagFieldOptions]) {
+					co.FieldOptions = fo.MomentTags.FieldOptions
+					co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+					co.SkipHooks = options.caller.skipHooks
+					co.SkipTenancy = options.SkipTenancy
+					co.Tenant = options.Tenant
+				})
+				if err != nil {
+					return fmt.Errorf("load moment moment_tags: %w", err)
+				}
+
+				// Step 3: Map back to this chunk's parents via junction mapping.
+				// The targets are walked in the order the fetch returned them, so
+				// the relationship's Sorts — the caller's, or the static `sort:` —
+				// order each parent's slice. Walking the
+				// junction rows instead would keep junction order and drop the sort.
+				parentsByTarget := make(map[string][]int, len(relatedMomentTags))
+				for i := start; i < start+len(chunk); i++ {
+					for _, tID := range parentToTargetIDs[moments[i].At.String()] {
+						parentsByTarget[tID] = append(parentsByTarget[tID], i)
+					}
+				}
+				for _, t := range relatedMomentTags {
+					for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {
+						moments[i].MomentTags = append(moments[i].MomentTags, t)
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new moment and returns the created entity.
+func (c *momentClient) Create(ctx context.Context, input *CreateMomentInput, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateMomentInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create moment: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableMoments, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"at", "label"}
+		args := []any{input.At, input.Label}
+
+		if v, ok := input.OwnerID.Get(); ok {
+			columns = append(columns, "owner_id")
+			args = append(args, v)
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[MomentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create moment: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Moment), nil
+}
+
+// CreateMany inserts multiple moments in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *momentClient) CreateMany(ctx context.Context, inputs []*CreateMomentInput, opts ...func(*CallOptions[MomentFieldOptions])) ([]*Moment, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many moments: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableMoments, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*Moment{}, nil
+		}
+		var allIDs []types.DateTime
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"at", "owner_id", "label"}
+			var valueRows [][]any
+			for _, input := range batch {
+				var ownerID any = sql.NewDefaultExpr("NULL")
+				if v, ok := input.OwnerID.Get(); ok {
+					ownerID = v
+				}
+
+				valueRows = append(valueRows, []any{
+					input.At,
+					ownerID,
+					input.Label,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetMomentsInput{
+			Filter: &MomentFilter{
+				At: &comparator.Time{In: dateTimeKeys(allIDs)},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[MomentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many moments: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Moment), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *momentClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (types.DateTime, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"at"},
+	})
+	var id types.DateTime
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return types.DateTime{}, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *momentClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]types.DateTime, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"at"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []types.DateTime
+	for rows.Next() {
+		var id types.DateTime
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan moment id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a moment by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *momentClient) Update(ctx context.Context, id types.DateTime, input *UpdateMomentInput, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update moment: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableMoments, Schema: "",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.OwnerID.Get(); ok {
+			setClauses["owner_id"] = v
+		}
+		if v, ok := input.Label.Get(); ok {
+			setClauses["label"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[MomentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("at")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[MomentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update moment: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Moment), nil
+}
+
+// UpdateMomentItem pairs a primary key with an update input for batch updates.
+type UpdateMomentItem struct {
+	At    types.DateTime     `json:"at"`
+	Input *UpdateMomentInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple moments and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On stdlib, each batch executes in an implicit transaction — if any row fails,
+// the entire batch rolls back but prior batches persist. Inside a caller's
+// transaction, each batch is a savepoint of it.
+func (c *momentClient) UpdateMany(ctx context.Context, items []UpdateMomentItem, opts ...func(*CallOptions[MomentFieldOptions])) ([]*Moment, error) {
+	// UpdateMomentItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many moments: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableMoments, Schema: "",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*Moment{}, nil
+		}
+		var allIDs []types.DateTime
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateMomentItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Each sub-batch runs in its own transaction — a savepoint when ctx
+			// already carries one — so a failing item rolls back the items of
+			// its sub-batch written before it. Sub-batches already committed
+			// stay applied.
+			if err := database.WithTransaction(ctx, c.querier, "update_many_moment", func(ctx context.Context) error {
+				conn := database.Conn(ctx, c.querier)
+
+				for _, item := range batch {
+					setClauses := make(map[string]any)
+					if v, ok := item.Input.OwnerID.Get(); ok {
+						setClauses["owner_id"] = v
+					}
+					if v, ok := item.Input.Label.Get(); ok {
+						setClauses["label"] = v
+					}
+
+					// Skip no-op updates
+					if len(setClauses) == 0 {
+						allIDs = append(allIDs, item.At)
+						continue
+					}
+
+					query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+						SetClauses: setClauses,
+						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("at")).Eq(item.At)},
+					})
+
+					execResult, err := conn.Exec(ctx, query, args...)
+					if err != nil {
+						return fmt.Errorf("item %v: %w", item.At, err)
+					}
+					matched, err := execResult.RowsAffected()
+					if err != nil {
+						return fmt.Errorf("item %v rows affected: %w", item.At, err)
+					}
+					if matched > 0 {
+						writtenItems = append(writtenItems, item)
+					}
+					allIDs = append(allIDs, item.At)
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.At
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetMomentsInput{
+			Filter: &MomentFilter{
+				At: &comparator.Time{In: dateTimeKeys(allIDs)},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[MomentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many moments: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Moment), nil
+}
+
+// UpdateWhere updates all moments matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *momentClient) UpdateWhere(ctx context.Context, filter *MomentFilter, input *UpdateMomentInput, opts ...func(*CallOptions[MomentFieldOptions])) ([]*Moment, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update moments where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableMoments, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.OwnerID.Get(); ok {
+			setClauses["owner_id"] = v
+		}
+		if v, ok := input.Label.Get(); ok {
+			setClauses["label"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetMomentsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[MomentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"at"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []types.DateTime
+		for rows.Next() {
+			var id types.DateTime
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated moment id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetMomentsInput{
+			Filter: &MomentFilter{
+				At: &comparator.Time{In: dateTimeKeys(ids)},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[MomentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update moments where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Moment), nil
+}
+
+// HardDelete permanently removes a moment from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *momentClient) HardDelete(ctx context.Context, id types.DateTime, opts ...func(*CallOptions[MomentFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableMoments, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("at")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete moment: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple moments from the database.
+func (c *momentClient) HardDeleteMany(ctx context.Context, ids []types.DateTime, opts ...func(*CallOptions[MomentFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableMoments, Schema: "",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[types.DateTime]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("at")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"at"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[types.DateTime]struct{}, end-start)
+			for rows.Next() {
+				var rowID types.DateTime
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted moment key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many moments: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all moments matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *momentClient) HardDeleteWhere(ctx context.Context, filter *MomentFilter, opts ...func(*CallOptions[MomentFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableMoments, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"at"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []types.DateTime
+		for rows.Next() {
+			var id types.DateTime
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted moment id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete moments where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *momentClient) recordWrittenKeys(written map[types.DateTime]struct{}, listed []types.DateTime, rowKeys map[types.DateTime]struct{}) {
+	found := make(map[types.DateTime]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// MomentConflictTarget identifies a unique constraint for upsert conflict detection.
+type MomentConflictTarget int
+
+const (
+	MomentConflictPK MomentConflictTarget = iota // PRIMARY KEY (at)
+)
+
+// momentConflictColumns maps each conflict target to its column set.
+var momentConflictColumns = map[MomentConflictTarget][]string{
+	MomentConflictPK: {"at"},
+}
+
+// Upsert inserts a moment or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *momentClient) Upsert(ctx context.Context, input *CreateMomentInput, target MomentConflictTarget, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateMomentInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert moment: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableMoments, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"at", "label"}
+		args := []any{input.At, input.Label}
+
+		if v, ok := input.OwnerID.Get(); ok {
+			columns = append(columns, "owner_id")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := momentConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "at"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[MomentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert moment: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*Moment), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *momentClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (types.DateTime, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "at",
+		ReturningColumns:      []string{"at"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return types.DateTime{}, err
+	}
+	var id types.DateTime
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return types.DateTime{}, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *momentClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (types.DateTime, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return types.DateTime{}, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"at"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return types.DateTime{}, err
+	}
+	defer rows.Close()
+
+	var id types.DateTime
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return types.DateTime{}, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return types.DateTime{}, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return types.DateTime{}, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple moments in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+func (c *momentClient) UpsertMany(ctx context.Context, inputs []*CreateMomentInput, target MomentConflictTarget, opts ...func(*CallOptions[MomentFieldOptions])) ([]*Moment, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many moments: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableMoments, Schema: "",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*Moment{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"at", "owner_id", "label"}
+		conflictColumns := momentConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "at"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateMomentInput, 0, len(inputs))
+		rowIDs := make([]types.DateTime, 0, len(inputs))
+		for _, input := range inputs {
+			var ownerID any = sql.NewDefaultExpr("NULL")
+			if v, ok := input.OwnerID.Get(); ok {
+				ownerID = v
+			}
+
+			valueRows = append(valueRows, []any{
+				input.At,
+				ownerID,
+				input.Label,
+			})
+			rowInputs = append(rowInputs, input)
+			rowIDs = append(rowIDs, input.At)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateMomentInput, 0, len(rowInputs))
+			dedupedIDs := make([]types.DateTime, 0, len(rowIDs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedIDs[j] = rowIDs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedIDs = append(dedupedIDs, rowIDs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowIDs = dedupedIDs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetMomentsInput{
+			Filter: &MomentFilter{
+				At: &comparator.Time{In: dateTimeKeys(rowIDs)},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[MomentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many moments: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*Moment), nil
+}
+
+// CreateMomentWithRelatedInput holds the fields for creating a moments record
+// together with rows on its nested relationships.
+//
+// The wrapper contains the flat input; it never restates its fields, so the
+// column-map overrides, the access projection and every future create-input
+// change are inherited rather than duplicated.
+type CreateMomentWithRelatedInput struct {
+	// Moment holds the parent's own columns — identical to the input Create accepts.
+	Moment CreateMomentInput `json:"moment"`
+
+	// MomentTags - many-to-many relationship with the moment_tags table.
+	MomentTags *MomentMomentTagsCreateNested `json:"moment_tags,omitempty"`
+}
+
+// UpdateMomentWithRelatedInput holds the fields for updating a moments record
+// together with rows on its nested relationships.
+//
+// Every member of the flat input is omittable, so an update that touches only
+// nested rows leaves the parent's own columns alone — the parent write issues
+// no UPDATE at all when nothing is set.
+type UpdateMomentWithRelatedInput struct {
+	// Moment holds the parent's own columns — identical to the input Update accepts.
+	Moment UpdateMomentInput `json:"moment"`
+
+	// MomentTags - many-to-many relationship with the moment_tags table.
+	MomentTags *MomentMomentTagsUpdateNested `json:"moment_tags,omitempty"`
+}
+
+// UpsertMomentWithRelatedInput holds the fields for upserting a moments record
+// together with rows on its nested relationships.
+//
+// The flat half is CreateMomentInput, the same input Upsert takes, and the
+// nested half is the **update-side** block verbatim — no insert-vs-update
+// branch detection. Each verb means the same thing on either branch: on
+// a freshly inserted parent, `create` and `connect` behave exactly as they do
+// on the create side, and `disconnect` / `clear` match zero rows and are
+// no-ops. `create` is not idempotent, so repeating an upsert that carries it
+// inserts again, or is refused on a has-one that already holds a child.
+type UpsertMomentWithRelatedInput struct {
+	// Moment holds the parent's own columns — identical to the input Upsert accepts.
+	Moment CreateMomentInput `json:"moment"`
+
+	// MomentTags - many-to-many relationship with the moment_tags table.
+	MomentTags *MomentMomentTagsUpdateNested `json:"moment_tags,omitempty"`
+}
+
+// MomentMomentTagsCreateNested is the create-side verb block for Moment.MomentTags.
+// `disconnect` and `clear` are meaningless on a row that does not exist yet, so
+// they are not expressible here rather than accepted and ignored.
+type MomentMomentTagsCreateNested struct {
+	Create  []*CreateMomentTagInput `json:"create,omitempty"`
+	Connect []int64                 `json:"connect,omitempty"`
+}
+
+// MomentMomentTagsUpdateNested is the update-side verb block for Moment.MomentTags,
+// carrying every verb the edge admits.
+//
+// It is also the executor's parameter type, so it is declared whether or not
+// `UpdateWithRelated` / `UpsertWithRelated` are emitted: one executor per edge
+// is what makes the three families structurally unable to drift,
+// and the widest block is the one they can all reach.
+type MomentMomentTagsUpdateNested struct {
+	// Clear unlinks every row currently on this edge and runs FIRST, before
+	// create and connect — running it after them would unlink what they had
+	// just linked. It takes no ids: `clear` plus `connect` is exactly
+	// "the set is now this", which is what makes a `set` verb unnecessary.
+	// With Clear set, Disconnect is ignored rather than
+	// rejected: every id it names is already unlinked.
+	Clear      bool                    `json:"clear,omitempty"`
+	Create     []*CreateMomentTagInput `json:"create,omitempty"`
+	Connect    []int64                 `json:"connect,omitempty"`
+	Disconnect []int64                 `json:"disconnect,omitempty"`
+}
+
+// momentMomentTagsNestedFromCreate lifts the create-side block into the update-side one the
+// executor takes.
+//
+// The widening is sound rather than merely convenient: `Disconnect` and
+// `Clear` are absent from the create-side type by construction, so there
+// is no verb it could smuggle in — the two it copies are the two that exist.
+func momentMomentTagsNestedFromCreate(n *MomentMomentTagsCreateNested) *MomentMomentTagsUpdateNested {
+	if n == nil {
+		return nil
+	}
+	return &MomentMomentTagsUpdateNested{
+		Create:  n.Create,
+		Connect: n.Connect,
+	}
+}
+
+// momentNestedParentFieldOptions projects the caller's selection onto the
+// parent write: relationship members are dropped, because loading them there
+// would run before the nested rows exist and return a stale set, and the primary
+// key is forced on because every nested write keys on it. A nil
+// selection passes through — the parent reads that as "every column".
+func momentNestedParentFieldOptions(fo *MomentFieldOptions) *MomentFieldOptions {
+	if fo == nil {
+		return nil
+	}
+	scalars := *fo
+	scalars.MomentTags = nil
+	scalars.At = true
+	return &scalars
+}
+
+// momentNestedSelectsRelationship reports whether the caller selected any
+// relationship, which is the only thing that earns the terminal re-read. A nil
+// FieldOptions selects none, so the parent comes back with its relationship
+// members unpopulated — on the edges the call just wrote as well as every other.
+func momentNestedSelectsRelationship(fo *MomentFieldOptions) bool {
+	if fo == nil {
+		return false
+	}
+	return fo.MomentTags != nil
+}
+
+// CreateWithRelated creates a moment together with rows on its nested
+// relationships, in a single transaction.
+//
+// Nested rows are written through the target table's own client, so their
+// hooks, events, cache invalidation and tenancy behave exactly as on a direct
+// call. When ctx already carries a transaction this becomes a savepoint
+// rather than a new transaction — so a consumer may call this
+// inside their own Begin / WithTx block, and a failure here rolls back only
+// the nested write.
+//
+// Edges are processed in byte-wise order of the relationship's Go field name, which is
+// contractual: it decides the order of error attribution and the order the
+// inner calls' events are enqueued.
+func (c *momentClient) CreateWithRelated(ctx context.Context, input *CreateMomentWithRelatedInput, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create moment with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Moment
+	// The transaction name doubles as the SAVEPOINT identifier when ctx already
+	// carries a transaction, so it must be a bare SQL identifier —
+	// database.Tx.Begin rejects anything else before issuing a statement. A
+	// prose name works at the top level, where it is only a label, and hard-errors
+	// on every nested call — exactly the case nested transactions exist for.
+	err := database.WithTransaction(ctx, c.querier, "create_moment_with_related", func(ctx context.Context) error {
+		// Parent first — v1 nests only where the parent's key flows down, so
+		// there is no topological sort and no cycle. Its own tenant check is
+		// what authorizes every nested write below: each one keys on this PK.
+		parent, err := c.Create(ctx, &input.Moment, func(o *CallOptions[MomentFieldOptions]) {
+			*o = options
+			o.FieldOptions = momentNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyMomentMomentTagsNested(ctx, parent, momentMomentTagsNestedFromCreate(input.MomentTags), options); err != nil {
+			return err
+		}
+
+		// Terminal read — only when the caller selected a relationship; the
+		// parent write above stripped them.
+		if momentNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.At, func(o *CallOptions[MomentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("create moment with related: %w", err)
+	}
+	// The parent write kept its key selected, because every nested write keys
+	// on it; a caller whose FieldOptions selects nothing gets nil, as from any
+	// other write.
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpdateWithRelated updates a moment together with rows on its nested
+// relationships, in a single transaction.
+//
+// It is CreateWithRelated with the parent write swapped and the nested blocks
+// widened: `disconnect` and `clear` become expressible, because the parent
+// already exists and there are rows to unlink. Everything else — the
+// transaction, the per-edge executors, the error attribution and the terminal
+// re-read — is shared, so the two cannot drift.
+func (c *momentClient) UpdateWithRelated(ctx context.Context, id types.DateTime, input *UpdateMomentWithRelatedInput, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update moment with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Moment
+	err := database.WithTransaction(ctx, c.querier, "update_moment_with_related", func(ctx context.Context) error {
+		// Parent first, and its own tenant check is what authorizes every
+		// nested write below. An input with no field set issues no UPDATE and
+		// returns the row unchanged, which is what makes a
+		// nested-only call cost nothing on the parent.
+		parent, err := c.Update(ctx, id, &input.Moment, func(o *CallOptions[MomentFieldOptions]) {
+			*o = options
+			o.FieldOptions = momentNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyMomentMomentTagsNested(ctx, parent, input.MomentTags, options); err != nil {
+			return err
+		}
+
+		if momentNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.At, func(o *CallOptions[MomentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("update moment with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// UpsertWithRelated inserts or updates a moment together with rows on
+// its nested relationships, in a single transaction.
+//
+// The nested half is the update-side block verbatim and there is no
+// insert-vs-update branch detection: each verb means the same thing on
+// either branch, so one block is correct on both. On a freshly inserted
+// parent, `disconnect` and `clear` match zero rows and are no-ops. `create`
+// is not idempotent, so repeating an upsert that carries it inserts again.
+func (c *momentClient) UpsertWithRelated(ctx context.Context, input *UpsertMomentWithRelatedInput, target MomentConflictTarget, opts ...func(*CallOptions[MomentFieldOptions])) (*Moment, error) {
+	if input == nil {
+		return nil, fmt.Errorf("upsert moment with related: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+
+	var result *Moment
+	err := database.WithTransaction(ctx, c.querier, "upsert_moment_with_related", func(ctx context.Context) error {
+		parent, err := c.Upsert(ctx, &input.Moment, target, func(o *CallOptions[MomentFieldOptions]) {
+			*o = options
+			o.FieldOptions = momentNestedParentFieldOptions(options.FieldOptions)
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return err
+		}
+		result = parent
+
+		if err := c.applyMomentMomentTagsNested(ctx, parent, input.MomentTags, options); err != nil {
+			return err
+		}
+
+		if momentNestedSelectsRelationship(options.FieldOptions) {
+			reloaded, err := c.Get(ctx, parent.At, func(o *CallOptions[MomentFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return err
+			}
+			result = reloaded
+		}
+		return nil
+	}, database.TxOptions{CallbackMode: c.callbackMode})
+	if err != nil {
+		return nil, fmt.Errorf("upsert moment with related: %w", err)
+	}
+	if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+		return nil, nil
+	}
+	return result, nil
+}
+
+// applyMomentMomentTagsNested applies the Moment.MomentTags block.
+//
+// One executor per edge, shared by every `…WithRelated` family: the per-edge
+// verb set is a property of this one function rather than a condition repeated
+// in three templates, so the families cannot drift.
+//
+// The verbs run in a fixed order — validate, clear, create, connect,
+// link, disconnect — and the ordering is load-bearing at both ends: `clear`
+// before the linking verbs, or it would unlink what they had just linked, and
+// the whole validation step before any statement, or a refusal would leave
+// half the block applied.
+func (c *momentClient) applyMomentMomentTagsNested(ctx context.Context, parent *Moment, nested *MomentMomentTagsUpdateNested, options CallOptions[MomentFieldOptions]) error {
+	if nested == nil {
+		return nil
+	}
+	connectIDs := nested.Connect
+	disconnectIDs := nested.Disconnect
+	if nested.Clear {
+		// Every id a disconnect names is already unlinked once clear has
+		// run, so the caller's requested end state holds. Dropped here rather
+		// than at the statement, so the verb-conflict check below cannot
+		// fire on a verb that will not run.
+		disconnectIDs = nil
+	}
+
+	// Naming one target under two verbs on one edge is a validation
+	// error returned before any statement runs: the order would decide the
+	// outcome and there is no defensible default. The conflict is attributed
+	// to `disconnect`, the verb that contradicts one running earlier in
+	// that order, so the message names the verb whose removal resolves it
+	// without changing what the others already state.
+	if len(disconnectIDs) > 0 {
+		named := make(map[int64]bool, len(disconnectIDs))
+		for _, v := range disconnectIDs {
+			named[v] = true
+		}
+		for _, v := range connectIDs {
+			if named[v] {
+				return nestedError("MomentTags", "disconnect", v, ErrNestedVerbConflict)
+			}
+		}
+	}
+
+	// The parent-scoped term every unlink carries. It is what makes a
+	// disconnect structurally incapable of touching another parent's rows, and
+	// on a clear it is the entire filter. An M2M disconnect
+	// needs no such term: the junction key it deletes by embeds the parent.
+	pid := parent.At.Time
+
+	// clear — FIRST, and the ordering is load-bearing: running it after create
+	// and connect would unlink the rows they had just linked. One write, no id
+	// list and no visibility read, parent-scoped by construction.
+	// On MySQL the *Where method's pre-SELECT precedes the write.
+	if nested.Clear {
+		if err := c.momentTagLinkClient.HardDeleteWhere(ctx, &MomentTagLinkFilter{
+			MomentAt: &comparator.Time{Eq: new(pid)},
+		}, func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			nestedChildOptions(o, options)
+		}); err != nil {
+			return nestedError("MomentTags", "clear", nil, err)
+		}
+	}
+
+	targetIDs := make([]int64, 0, len(nested.Create)+len(connectIDs))
+
+	if len(nested.Create) > 0 {
+		for _, n := range nested.Create {
+			if n == nil {
+				return nestedError("MomentTags", "create", nil, ErrNilInput)
+			}
+		}
+		// No traversed FK to elide on an M2M target — the parent's key goes
+		// into the junction row below — so this is the target's own create
+		// input verbatim. The PK-only selection is what the link step needs.
+		created, err := c.momentTagClient.CreateMany(ctx, nested.Create, func(o *CallOptions[MomentTagFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &MomentTagFieldOptions{ID: true}
+		})
+		if err != nil {
+			return nestedError("MomentTags", "create", nil, err)
+		}
+		for _, row := range created {
+			targetIDs = append(targetIDs, row.ID)
+		}
+	}
+
+	// The junction FK proves existence, not visibility. Reading through the
+	// target's OWN client applies its tenant filter, soft-delete default and
+	// access rules, so a target in another tenant is NOT_FOUND here rather
+	// than a junction row nobody can ever read.
+	if len(connectIDs) > 0 {
+		found := make(map[int64]bool, len(connectIDs))
+		// Chunked at c.batchSize. A single statement over the caller's
+		// whole list hits a bind-parameter ceiling that is dialect-dependent
+		// and lowest on SQLite (32766), and every dialect's error for it names
+		// no table, column, edge or verb, so it cannot be attributed to an edge.
+		for start := 0; start < len(connectIDs); start += c.batchSize {
+			end := min(start+c.batchSize, len(connectIDs))
+			ids := make([]int64, 0, end-start)
+			for _, v := range connectIDs[start:end] {
+				ids = append(ids, v)
+			}
+			// `Limit: new(0)` is normative: a *Limit of 0 means emit no LIMIT and
+			// skip the client's default query_limit, so a connect naming more
+			// targets than the page size cannot find the tail of its own list
+			// absent and report visible rows as NOT_FOUND.
+			visible, err := c.momentTagClient.GetMany(ctx, &GetMomentTagsInput{
+				Filter: &MomentTagFilter{
+					ID: &comparator.Number[int64]{In: ids},
+				},
+				Limit: new(0),
+			}, func(o *CallOptions[MomentTagFieldOptions]) {
+				nestedChildOptions(o, options)
+				o.FieldOptions = &MomentTagFieldOptions{ID: true}
+				// Deliberately unlocked: this validates caller input at call time,
+				// it does not promise the target is still visible at commit.
+				o.LockMode = sql.LockNone
+			})
+			if err != nil {
+				return nestedError("MomentTags", "connect", nil, err)
+			}
+			for _, row := range visible {
+				found[row.ID] = true
+			}
+		}
+		for _, tid := range connectIDs {
+			if !found[tid] {
+				return nestedError("MomentTags", "connect", tid, ErrNotFound)
+			}
+		}
+		targetIDs = append(targetIDs, connectIDs...)
+	}
+
+	// link — UpsertMany, not CreateMany: re-adding an existing link is a set
+	// operation whose answer is "linked", and CreateMany raises a primary-key
+	// violation on it. The junction is a pure link table, so this compiles to
+	// ON CONFLICT DO NOTHING on every dialect.
+	if len(targetIDs) > 0 {
+		links := make([]*CreateMomentTagLinkInput, 0, len(targetIDs))
+		seen := make(map[int64]bool, len(targetIDs))
+		for _, tid := range targetIDs {
+			if seen[tid] {
+				continue
+			}
+			seen[tid] = true
+			links = append(links, &CreateMomentTagLinkInput{
+				MomentAt: parent.At,
+				TagID:    tid,
+			})
+		}
+		if _, err := c.momentTagLinkClient.UpsertMany(ctx, links, MomentTagLinkConflictPK, func(o *CallOptions[MomentTagLinkFieldOptions]) {
+			nestedChildOptions(o, options)
+			o.FieldOptions = &MomentTagLinkFieldOptions{}
+		}); err != nil {
+			return nestedError("MomentTags", "link", nil, err)
+		}
+	}
+
+	// disconnect — no visibility read. The junction key embeds the
+	// parent, so a caller can only ever delete its own links, and a miss is a
+	// no-op. A hard delete is correct because the junction carries no
+	// soft-delete column; one that did would emit no unlink verb at all,
+	// since the read loader's junction query has no soft-delete predicate and
+	// would keep showing the link.
+	if len(disconnectIDs) > 0 {
+		pks := make([]MomentTagLinkPK, 0, len(disconnectIDs))
+		unlinking := make(map[int64]bool, len(disconnectIDs))
+		for _, tid := range disconnectIDs {
+			if unlinking[tid] {
+				continue
+			}
+			unlinking[tid] = true
+			pks = append(pks, MomentTagLinkPK{
+				MomentAt: parent.At,
+				TagID:    tid,
+			})
+		}
+		// Chunked at c.batchSize; a composite key binds two parameters
+		// per row, so the ceiling arrives at half the id count.
+		for start := 0; start < len(pks); start += c.batchSize {
+			end := min(start+c.batchSize, len(pks))
+			if err := c.momentTagLinkClient.HardDeleteMany(ctx, pks[start:end], func(o *CallOptions[MomentTagLinkFieldOptions]) {
+				nestedChildOptions(o, options)
+			}); err != nil {
+				return nestedError("MomentTags", "disconnect", nil, err)
+			}
+		}
+	}
+	return nil
+}
+
+// Exists returns true if a moment with the given primary key exists.
+func (c *momentClient) Exists(ctx context.Context, id types.DateTime, opts ...func(*CallOptions[MomentFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableMoments, Schema: "",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("at")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists moment: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any moment matches the given filter.
+func (c *momentClient) ExistsWhere(ctx context.Context, filter *MomentFilter, opts ...func(*CallOptions[MomentFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableMoments, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists moments where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of moments matching the given filter.
+// A nil filter counts all moments.
+func (c *momentClient) Count(ctx context.Context, filter *MomentFilter, opts ...func(*CallOptions[MomentFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableMoments, Schema: "",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count moments: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of moments with total count for offset-based pagination.
+// A nil filter paginates all moments.
+func (c *momentClient) Paginate(ctx context.Context, input PaginateInput[MomentFilter], opts ...func(*CallOptions[MomentFieldOptions])) (*PaginateResult[Moment], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("paginate moments: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableMoments, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[MomentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		moments, err := c.GetMany(ctx, &GetMomentsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[Moment]{
+			Items:      moments,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate moments: %w", err)
+	}
+	return result.(*PaginateResult[Moment]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of moments.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *momentClient) Connection(ctx context.Context, input ConnectionInput[MomentFilter], opts ...func(*CallOptions[MomentFieldOptions])) (*Connection[Moment], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		return nil, fmt.Errorf("connection moments: LockMode is unsupported on sqlite dialect")
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableMoments, Schema: "",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[MomentFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeMomentCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeMomentCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		moments, err := c.GetMany(ctx, &GetMomentsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(moments) > limit
+		if hasMore {
+			moments = moments[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(moments)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[Moment], len(moments))
+		for i, row := range moments {
+			cursor, err := encodeMomentCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[Moment]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[Moment]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection moments: %w", err)
+	}
+	return result.(*Connection[Moment]), nil
+}
+
+// encodeMomentCursor encodes cursor key values as a base64 JSON string.
+func encodeMomentCursor(keys []string, m *Moment) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "at":
+			out["at"] = m.At
+		case "owner_id":
+			out["owner_id"] = m.OwnerID
+		case "label":
+			out["label"] = m.Label
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode moment cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeMomentCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeMomentCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row Moment
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "at":
+			err = json.Unmarshal(raw[key], &row.At)
+			out[key] = row.At
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamMomentsInput holds query parameters for streaming moments records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamMomentsInput struct {
+	Filter *MomentFilter `json:"filter"`
+	Sorts  []sql.Sort    `json:"sorts"`
+}
+
+// StreamMomentFieldOptions controls scalar column selection for moments streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamMomentFieldOptions struct {
+	At      bool `json:"at"`
+	OwnerID bool `json:"owner_id"`
+	Label   bool `json:"label"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamMomentFieldOptions) Columns() []string {
+	var cols []string
+	if fo.At {
+		cols = append(cols, "at")
+	}
+	if fo.OwnerID {
+		cols = append(cols, "owner_id")
+	}
+	if fo.Label {
+		cols = append(cols, "label")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamMomentFieldOptions) HasSelectedColumns() bool {
+	if fo.At {
+		return true
+	}
+	if fo.OwnerID {
+		return true
+	}
+	if fo.Label {
+		return true
+	}
+	return false
+}
+
+// scanMomentRow scans a single row into a Moment entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanMomentRow(rows database.Rows, columns []string) (*Moment, error) {
+	m := &Moment{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "at":
+			targets[idx] = &m.At
+		case "owner_id":
+			targets[idx] = &m.OwnerID
+		case "label":
+			targets[idx] = &m.Label
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan moment: %w", err)
+	}
+
+	return m, nil
+}
+
+// Stream returns an iterator over moments matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *momentClient) Stream(ctx context.Context, input *StreamMomentsInput, opts ...func(*CallOptions[StreamMomentFieldOptions])) iter.Seq2[*Moment, error] {
+	return func(yield func(*Moment, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamMomentsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream moments: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *Moment, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream moments: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableMoments, Schema: "",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := momentAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				m, err := scanMomentRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(m, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate moment rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream moments: %w", err))
+		}
+	}
+}
+
+// MomentFilter provides type-safe filtering for the moments table.
+type MomentFilter struct {
+	At         *comparator.Time                  `json:"at"`
+	Label      *comparator.String                `json:"label"`
+	OwnerID    *comparator.NullableNumber[int64] `json:"owner_id"`
+	MomentTags *MomentTagFilter                  `json:"moment_tags"`
+	And        []*MomentFilter                   `json:"and"`
+	Or         []*MomentFilter                   `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *MomentFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.At != nil {
+		conds = append(conds, f.At.Parse(dialect.QuoteIdentifier("at"), dialect)...)
+	}
+
+	if f.Label != nil {
+		conds = append(conds, f.Label.Parse(dialect.QuoteIdentifier("label"), dialect)...)
+	}
+
+	if f.OwnerID != nil {
+		conds = append(conds, f.OwnerID.Parse(dialect.QuoteIdentifier("owner_id"), dialect)...)
+	}
+
+	if f.MomentTags != nil {
+		conds = append(conds, momentMomentTagsFilterExists(f.MomentTags, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// momentMomentTagsFilterExists compiles a MomentTagFilter set on the
+// MomentTags relationship into a correlated EXISTS over moment_tags, joined through the moment_tag_links junction.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func momentMomentTagsFilterExists(f *MomentTagFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	jn := filterSubqueryAlias("jn", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "", Name: "moment_tag_links"}) + " " + jn +
+		" JOIN " + dialect.FormatTable(sql.Table{Schema: "", Name: "moment_tags"}) + " " + tgt +
+		" ON " + tgt + "." + dialect.QuoteIdentifier("id") + " = " + jn + "." + dialect.QuoteIdentifier("tag_id") +
+		" WHERE " + jn + "." + dialect.QuoteIdentifier("moment_at") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("at", sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// MomentFieldOptions controls column selection and relationship loading for moments queries.
+type MomentFieldOptions struct {
+	At         bool                          `json:"at"`
+	OwnerID    bool                          `json:"owner_id"`
+	Label      bool                          `json:"label"`
+	MomentTags *MomentTagRelationshipOptions `json:"moment_tags"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *MomentFieldOptions) Columns() []string {
+	var cols []string
+	if fo.At {
+		cols = append(cols, "at")
+	}
+	if fo.OwnerID {
+		cols = append(cols, "owner_id")
+	}
+	if fo.Label {
+		cols = append(cols, "label")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *MomentFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"At":      "at",
+		"OwnerID": "owner_id",
+		"Label":   "label",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *MomentFieldOptions) HasSelectedColumns() bool {
+	if fo.At {
+		return true
+	}
+	if fo.OwnerID {
+		return true
+	}
+	if fo.Label {
+		return true
+	}
+	if fo.MomentTags != nil {
+		return true
+	}
+	return false
+}
+
+// MomentTagRelationshipOptions controls loading options for MomentTag relationships.
+type MomentTagRelationshipOptions struct {
+	FieldOptions *MomentTagFieldOptions `json:"field_options"`
+	Filter       *MomentTagFilter       `json:"filter"`
+	Sorts        []sql.Sort             `json:"sorts"`
+}
+
+// CreateMomentInput holds the fields for creating a moments record.
+type CreateMomentInput struct {
+	At      types.DateTime          `json:"at"`
+	OwnerID omittable.Value[*int64] `json:"owner_id,omitzero"`
+	Label   string                  `json:"label"`
+}
+
+// UpdateMomentInput holds the fields for updating a moments record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateMomentInput struct {
+	OwnerID omittable.Value[*int64] `json:"owner_id,omitzero"`
+	Label   omittable.Value[string] `json:"label,omitzero"`
+}
+
+// GetMomentsInput holds query parameters for retrieving moments records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetMomentsInput struct {
+	Filter *MomentFilter `json:"filter"`
+	Limit  *int          `json:"limit"`
+	Offset *int          `json:"offset"`
+	Sorts  []sql.Sort    `json:"sorts"`
 	// conditions holds additional SQL conditions injected by internal callers
 	// (e.g., Connection keyset conditions). Not part of the public API.
 	conditions []sql.Condition

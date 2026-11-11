@@ -135,6 +135,79 @@ func (s LineItemSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "workspace_id", Direction: direction}
 }
 
+// MomentSorter provides type-safe sort helpers for the Moment entity.
+// Each method returns a sql.Sort for the corresponding column.
+type MomentSorter struct{}
+
+// NewMomentSorter returns a new MomentSorter.
+func NewMomentSorter() MomentSorter { return MomentSorter{} }
+
+// At returns a sort for the at column in the given direction.
+func (s MomentSorter) At(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "at", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s MomentSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// OwnerID returns a sort for the owner_id column in the given direction.
+func (s MomentSorter) OwnerID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "owner_id", Direction: direction}
+}
+
+// MomentOwnerSorter provides type-safe sort helpers for the MomentOwner entity.
+// Each method returns a sql.Sort for the corresponding column.
+type MomentOwnerSorter struct{}
+
+// NewMomentOwnerSorter returns a new MomentOwnerSorter.
+func NewMomentOwnerSorter() MomentOwnerSorter { return MomentOwnerSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s MomentOwnerSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s MomentOwnerSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// MomentTagSorter provides type-safe sort helpers for the MomentTag entity.
+// Each method returns a sql.Sort for the corresponding column.
+type MomentTagSorter struct{}
+
+// NewMomentTagSorter returns a new MomentTagSorter.
+func NewMomentTagSorter() MomentTagSorter { return MomentTagSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s MomentTagSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s MomentTagSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// MomentTagLinkSorter provides type-safe sort helpers for the MomentTagLink entity.
+// Each method returns a sql.Sort for the corresponding column.
+type MomentTagLinkSorter struct{}
+
+// NewMomentTagLinkSorter returns a new MomentTagLinkSorter.
+func NewMomentTagLinkSorter() MomentTagLinkSorter { return MomentTagLinkSorter{} }
+
+// MomentAt returns a sort for the moment_at column in the given direction.
+func (s MomentTagLinkSorter) MomentAt(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "moment_at", Direction: direction}
+}
+
+// TagID returns a sort for the tag_id column in the given direction.
+func (s MomentTagLinkSorter) TagID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "tag_id", Direction: direction}
+}
+
 // StampSorter provides type-safe sort helpers for the Stamp entity.
 // Each method returns a sql.Sort for the corresponding column.
 type StampSorter struct{}

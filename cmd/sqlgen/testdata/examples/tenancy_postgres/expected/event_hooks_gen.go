@@ -850,6 +850,382 @@ func newMilestoneEventHook(publisher event.Publisher, onError func(ctx context.C
 	}
 }
 
+// newMomentEventHook creates a mutation hook that publishes events for Moment mutations.
+func newMomentEventHook(publisher event.Publisher, onError func(ctx context.Context, events []event.Event, err error), metaFunc func(ctx context.Context) map[string]string) hook.MutationHook {
+	return func(next hook.MutationHandler) hook.MutationHandler {
+		return func(ctx context.Context, mc *hook.MutationContext) (any, error) {
+			result, err := next(ctx, mc)
+			if err != nil {
+				return result, err
+			}
+
+			// Check SkipEvents via CallOptions
+			if skipper, ok := mc.CallOptions.(eventSkipper); ok && skipper.skipEvents() {
+				return result, nil
+			}
+
+			if len(mc.AffectedPKs) == 0 {
+				return result, nil
+			}
+
+			// MetadataFunc: resolve consumer metadata
+			// once here at hook entry, where the request ctx is still live —
+			// never from the deferred OnCommit callback, which runs on
+			// context.Background(). The result is merged into
+			// each fanned-out event below; the system tenant stamp is applied
+			// last so a consumer cannot override it.
+			var baseMeta map[string]string
+			if metaFunc != nil {
+				baseMeta = metaFunc(ctx)
+			}
+
+			events := make([]event.Event, len(mc.AffectedPKs))
+
+			// Per-entity Input fanout. For batch ops the i-th
+			// fanned-out event carries the i-th element of the published
+			// input slice — keeps wire cost O(N) on serialization and lets
+			// subscribers run one type-switch across single-op and batch
+			// shapes uniformly. UpsertMany publishes the *deduped* slice
+			// rather than the caller's, which is the one index-aligned with
+			// AffectedPKs. *Many delete/restore ops carry nil since
+			// the PK already travels via Event.PK; *Where ops and single-op
+			// mutations keep mc.Input unchanged.
+			var (
+				batchCreateInputs []*CreateMomentInput
+				batchUpdateItems  []UpdateMomentItem
+			)
+			switch mc.Op {
+			case hook.OpCreateMany, hook.OpUpsertMany:
+				batchCreateInputs, _ = mc.Input.([]*CreateMomentInput)
+			case hook.OpUpdateMany:
+				batchUpdateItems, _ = mc.Input.([]UpdateMomentItem)
+			}
+			for i, pk := range mc.AffectedPKs {
+				var inputVal any
+				switch mc.Op {
+				case hook.OpCreateMany, hook.OpUpsertMany:
+					if i < len(batchCreateInputs) {
+						inputVal = batchCreateInputs[i]
+					}
+				case hook.OpUpdateMany:
+					if i < len(batchUpdateItems) {
+						inputVal = batchUpdateItems[i]
+					}
+				case hook.OpHardDeleteMany, hook.OpSoftDeleteMany, hook.OpRestoreMany:
+					// Per-entity input is nil — the PK already travels via Event.PK.
+				default:
+					inputVal = mc.Input
+				}
+				events[i] = event.Event{
+					ID:        uuid.NewV4().String(),
+					Table:     "moments",
+					Schema:    mc.Schema,
+					Action:    mapOpToAction(mc.Op),
+					PK:        pk,
+					Input:     inputVal,
+					Timestamp: time.Now(),
+					Metadata:  mergeEventMetadata(baseMeta, nil),
+				}
+			}
+
+			publish := func(ctx context.Context) error {
+				publishEvents(ctx, publisher, onError, events)
+				return nil
+			}
+
+			if tx := database.FromContext(ctx); tx != nil {
+				tx.OnCommit(publish)
+			} else {
+				publish(ctx)
+			}
+
+			return result, nil
+		}
+	}
+}
+
+// newMomentOwnerEventHook creates a mutation hook that publishes events for MomentOwner mutations.
+func newMomentOwnerEventHook(publisher event.Publisher, onError func(ctx context.Context, events []event.Event, err error), metaFunc func(ctx context.Context) map[string]string) hook.MutationHook {
+	return func(next hook.MutationHandler) hook.MutationHandler {
+		return func(ctx context.Context, mc *hook.MutationContext) (any, error) {
+			result, err := next(ctx, mc)
+			if err != nil {
+				return result, err
+			}
+
+			// Check SkipEvents via CallOptions
+			if skipper, ok := mc.CallOptions.(eventSkipper); ok && skipper.skipEvents() {
+				return result, nil
+			}
+
+			if len(mc.AffectedPKs) == 0 {
+				return result, nil
+			}
+
+			// MetadataFunc: resolve consumer metadata
+			// once here at hook entry, where the request ctx is still live —
+			// never from the deferred OnCommit callback, which runs on
+			// context.Background(). The result is merged into
+			// each fanned-out event below; the system tenant stamp is applied
+			// last so a consumer cannot override it.
+			var baseMeta map[string]string
+			if metaFunc != nil {
+				baseMeta = metaFunc(ctx)
+			}
+
+			events := make([]event.Event, len(mc.AffectedPKs))
+
+			// Per-entity Input fanout. For batch ops the i-th
+			// fanned-out event carries the i-th element of the published
+			// input slice — keeps wire cost O(N) on serialization and lets
+			// subscribers run one type-switch across single-op and batch
+			// shapes uniformly. UpsertMany publishes the *deduped* slice
+			// rather than the caller's, which is the one index-aligned with
+			// AffectedPKs. *Many delete/restore ops carry nil since
+			// the PK already travels via Event.PK; *Where ops and single-op
+			// mutations keep mc.Input unchanged.
+			var (
+				batchCreateInputs []*CreateMomentOwnerInput
+				batchUpdateItems  []UpdateMomentOwnerItem
+			)
+			switch mc.Op {
+			case hook.OpCreateMany, hook.OpUpsertMany:
+				batchCreateInputs, _ = mc.Input.([]*CreateMomentOwnerInput)
+			case hook.OpUpdateMany:
+				batchUpdateItems, _ = mc.Input.([]UpdateMomentOwnerItem)
+			}
+			for i, pk := range mc.AffectedPKs {
+				var inputVal any
+				switch mc.Op {
+				case hook.OpCreateMany, hook.OpUpsertMany:
+					if i < len(batchCreateInputs) {
+						inputVal = batchCreateInputs[i]
+					}
+				case hook.OpUpdateMany:
+					if i < len(batchUpdateItems) {
+						inputVal = batchUpdateItems[i]
+					}
+				case hook.OpHardDeleteMany, hook.OpSoftDeleteMany, hook.OpRestoreMany:
+					// Per-entity input is nil — the PK already travels via Event.PK.
+				default:
+					inputVal = mc.Input
+				}
+				events[i] = event.Event{
+					ID:        uuid.NewV4().String(),
+					Table:     "moment_owners",
+					Schema:    mc.Schema,
+					Action:    mapOpToAction(mc.Op),
+					PK:        pk,
+					Input:     inputVal,
+					Timestamp: time.Now(),
+					Metadata:  mergeEventMetadata(baseMeta, nil),
+				}
+			}
+
+			publish := func(ctx context.Context) error {
+				publishEvents(ctx, publisher, onError, events)
+				return nil
+			}
+
+			if tx := database.FromContext(ctx); tx != nil {
+				tx.OnCommit(publish)
+			} else {
+				publish(ctx)
+			}
+
+			return result, nil
+		}
+	}
+}
+
+// newMomentTagEventHook creates a mutation hook that publishes events for MomentTag mutations.
+func newMomentTagEventHook(publisher event.Publisher, onError func(ctx context.Context, events []event.Event, err error), metaFunc func(ctx context.Context) map[string]string) hook.MutationHook {
+	return func(next hook.MutationHandler) hook.MutationHandler {
+		return func(ctx context.Context, mc *hook.MutationContext) (any, error) {
+			result, err := next(ctx, mc)
+			if err != nil {
+				return result, err
+			}
+
+			// Check SkipEvents via CallOptions
+			if skipper, ok := mc.CallOptions.(eventSkipper); ok && skipper.skipEvents() {
+				return result, nil
+			}
+
+			if len(mc.AffectedPKs) == 0 {
+				return result, nil
+			}
+
+			// MetadataFunc: resolve consumer metadata
+			// once here at hook entry, where the request ctx is still live —
+			// never from the deferred OnCommit callback, which runs on
+			// context.Background(). The result is merged into
+			// each fanned-out event below; the system tenant stamp is applied
+			// last so a consumer cannot override it.
+			var baseMeta map[string]string
+			if metaFunc != nil {
+				baseMeta = metaFunc(ctx)
+			}
+
+			events := make([]event.Event, len(mc.AffectedPKs))
+
+			// Per-entity Input fanout. For batch ops the i-th
+			// fanned-out event carries the i-th element of the published
+			// input slice — keeps wire cost O(N) on serialization and lets
+			// subscribers run one type-switch across single-op and batch
+			// shapes uniformly. UpsertMany publishes the *deduped* slice
+			// rather than the caller's, which is the one index-aligned with
+			// AffectedPKs. *Many delete/restore ops carry nil since
+			// the PK already travels via Event.PK; *Where ops and single-op
+			// mutations keep mc.Input unchanged.
+			var (
+				batchCreateInputs []*CreateMomentTagInput
+				batchUpdateItems  []UpdateMomentTagItem
+			)
+			switch mc.Op {
+			case hook.OpCreateMany, hook.OpUpsertMany:
+				batchCreateInputs, _ = mc.Input.([]*CreateMomentTagInput)
+			case hook.OpUpdateMany:
+				batchUpdateItems, _ = mc.Input.([]UpdateMomentTagItem)
+			}
+			for i, pk := range mc.AffectedPKs {
+				var inputVal any
+				switch mc.Op {
+				case hook.OpCreateMany, hook.OpUpsertMany:
+					if i < len(batchCreateInputs) {
+						inputVal = batchCreateInputs[i]
+					}
+				case hook.OpUpdateMany:
+					if i < len(batchUpdateItems) {
+						inputVal = batchUpdateItems[i]
+					}
+				case hook.OpHardDeleteMany, hook.OpSoftDeleteMany, hook.OpRestoreMany:
+					// Per-entity input is nil — the PK already travels via Event.PK.
+				default:
+					inputVal = mc.Input
+				}
+				events[i] = event.Event{
+					ID:        uuid.NewV4().String(),
+					Table:     "moment_tags",
+					Schema:    mc.Schema,
+					Action:    mapOpToAction(mc.Op),
+					PK:        pk,
+					Input:     inputVal,
+					Timestamp: time.Now(),
+					Metadata:  mergeEventMetadata(baseMeta, nil),
+				}
+			}
+
+			publish := func(ctx context.Context) error {
+				publishEvents(ctx, publisher, onError, events)
+				return nil
+			}
+
+			if tx := database.FromContext(ctx); tx != nil {
+				tx.OnCommit(publish)
+			} else {
+				publish(ctx)
+			}
+
+			return result, nil
+		}
+	}
+}
+
+// newMomentTagLinkEventHook creates a mutation hook that publishes events for MomentTagLink mutations.
+func newMomentTagLinkEventHook(publisher event.Publisher, onError func(ctx context.Context, events []event.Event, err error), metaFunc func(ctx context.Context) map[string]string) hook.MutationHook {
+	return func(next hook.MutationHandler) hook.MutationHandler {
+		return func(ctx context.Context, mc *hook.MutationContext) (any, error) {
+			result, err := next(ctx, mc)
+			if err != nil {
+				return result, err
+			}
+
+			// Check SkipEvents via CallOptions
+			if skipper, ok := mc.CallOptions.(eventSkipper); ok && skipper.skipEvents() {
+				return result, nil
+			}
+
+			if len(mc.AffectedPKs) == 0 {
+				return result, nil
+			}
+
+			// MetadataFunc: resolve consumer metadata
+			// once here at hook entry, where the request ctx is still live —
+			// never from the deferred OnCommit callback, which runs on
+			// context.Background(). The result is merged into
+			// each fanned-out event below; the system tenant stamp is applied
+			// last so a consumer cannot override it.
+			var baseMeta map[string]string
+			if metaFunc != nil {
+				baseMeta = metaFunc(ctx)
+			}
+
+			events := make([]event.Event, len(mc.AffectedPKs))
+
+			// Per-entity Input fanout. For batch ops the i-th
+			// fanned-out event carries the i-th element of the published
+			// input slice — keeps wire cost O(N) on serialization and lets
+			// subscribers run one type-switch across single-op and batch
+			// shapes uniformly. UpsertMany publishes the *deduped* slice
+			// rather than the caller's, which is the one index-aligned with
+			// AffectedPKs. *Many delete/restore ops carry nil since
+			// the PK already travels via Event.PK; *Where ops and single-op
+			// mutations keep mc.Input unchanged.
+			var (
+				batchCreateInputs []*CreateMomentTagLinkInput
+				batchUpdateItems  []UpdateMomentTagLinkItem
+			)
+			switch mc.Op {
+			case hook.OpCreateMany, hook.OpUpsertMany:
+				batchCreateInputs, _ = mc.Input.([]*CreateMomentTagLinkInput)
+			case hook.OpUpdateMany:
+				batchUpdateItems, _ = mc.Input.([]UpdateMomentTagLinkItem)
+			}
+			for i, pk := range mc.AffectedPKs {
+				var inputVal any
+				switch mc.Op {
+				case hook.OpCreateMany, hook.OpUpsertMany:
+					if i < len(batchCreateInputs) {
+						inputVal = batchCreateInputs[i]
+					}
+				case hook.OpUpdateMany:
+					if i < len(batchUpdateItems) {
+						inputVal = batchUpdateItems[i]
+					}
+				case hook.OpHardDeleteMany, hook.OpSoftDeleteMany, hook.OpRestoreMany:
+					// Per-entity input is nil — the PK already travels via Event.PK.
+				default:
+					inputVal = mc.Input
+				}
+				events[i] = event.Event{
+					ID:        uuid.NewV4().String(),
+					Table:     "moment_tag_links",
+					Schema:    mc.Schema,
+					Action:    mapOpToAction(mc.Op),
+					PK:        pk,
+					Input:     inputVal,
+					Timestamp: time.Now(),
+					Metadata:  mergeEventMetadata(baseMeta, nil),
+				}
+			}
+
+			publish := func(ctx context.Context) error {
+				publishEvents(ctx, publisher, onError, events)
+				return nil
+			}
+
+			if tx := database.FromContext(ctx); tx != nil {
+				tx.OnCommit(publish)
+			} else {
+				publish(ctx)
+			}
+
+			return result, nil
+		}
+	}
+}
+
 // newPlotEventHook creates a mutation hook that publishes events for Plot mutations.
 func newPlotEventHook(publisher event.Publisher, onError func(ctx context.Context, events []event.Event, err error), metaFunc func(ctx context.Context) map[string]string) hook.MutationHook {
 	return func(next hook.MutationHandler) hook.MutationHandler {
@@ -3083,6 +3459,10 @@ func buildEventHooks(publisher event.Publisher, cfg event.Config) []hook.Mutatio
 		hook.ForTable(newLabelEventHook(publisher, onError, metaFunc), TableLabels),
 		hook.ForTable(newLineItemEventHook(publisher, onError, metaFunc), TableLineItems),
 		hook.ForTable(newMilestoneEventHook(publisher, onError, metaFunc), TableMilestones),
+		hook.ForTable(newMomentEventHook(publisher, onError, metaFunc), TableMoments),
+		hook.ForTable(newMomentOwnerEventHook(publisher, onError, metaFunc), TableMomentOwners),
+		hook.ForTable(newMomentTagEventHook(publisher, onError, metaFunc), TableMomentTags),
+		hook.ForTable(newMomentTagLinkEventHook(publisher, onError, metaFunc), TableMomentTagLinks),
 		hook.ForTable(newPlotEventHook(publisher, onError, metaFunc), TablePlots),
 		hook.ForTable(newProjectEventHook(publisher, onError, metaFunc), TableProjects),
 		hook.ForTable(newReviewerEventHook(publisher, onError, metaFunc), TableReviewers),

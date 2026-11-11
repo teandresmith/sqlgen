@@ -244,3 +244,29 @@ CREATE TABLE shared_kids (
     FOREIGN KEY (org, parent_id) REFERENCES shared_parents (org, id),
     FOREIGN KEY (org, guardian_id) REFERENCES shared_guardians (org, id)
 );
+
+-- moments: a time-keyed nested target. The executor buckets the ids a
+-- connect or disconnect names by instant, so a key in another zone than the
+-- row the driver scans back still names that row. moment_owners carries O2M
+-- over the nullable owner_id, moment_tags M2M over moment_tag_links.
+CREATE TABLE moment_owners (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE moments (
+    at TIMESTAMPTZ PRIMARY KEY,
+    owner_id BIGINT REFERENCES moment_owners (id),
+    label TEXT NOT NULL
+);
+
+CREATE TABLE moment_tags (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE moment_tag_links (
+    tag_id BIGINT NOT NULL REFERENCES moment_tags (id),
+    moment_at TIMESTAMPTZ NOT NULL REFERENCES moments (at),
+    PRIMARY KEY (tag_id, moment_at)
+);

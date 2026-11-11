@@ -26,6 +26,10 @@ const fingerprintCycle = "d1b4c4d3"
 const fingerprintLabel = "958199e0"
 const fingerprintLineItem = "f12802fa"
 const fingerprintMilestone = "8b2d619d"
+const fingerprintMoment = "fe3db608"
+const fingerprintMomentOwner = "52a63b53"
+const fingerprintMomentTag = "84cd7193"
+const fingerprintMomentTagLink = "b3b96c4a"
 const fingerprintPlot = "3c5a254f"
 const fingerprintProject = "cce3e94c"
 const fingerprintReviewer = "6da96b4c"
@@ -2386,6 +2390,1029 @@ func (c *Cache) hydrateMilestone(tenant uuid.UUID, pk int64, next hook.QueryHand
 		if c.metrics != nil {
 			c.metrics.Set(schema, TableMilestones)
 			c.metrics.HydrationComplete(schema, TableMilestones, nil)
+		}
+	}()
+}
+
+// keyForMoment builds the cache key for Moment by PK.
+func (c *Cache) keyForMoment(pk time.Time) string {
+	return cache.BuildKey(c.prefix, "public", "moments", fingerprintMoment, pk)
+}
+
+// ttlForMoment returns the resolved TTL for Moment cache entries.
+func (c *Cache) ttlForMoment() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipMoment reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipMoment(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*MomentFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	if typed.MomentTags != nil {
+		return true
+	}
+	return false
+}
+
+// fullParentFieldOptionsMoment returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsMoment() *MomentFieldOptions {
+	return &MomentFieldOptions{
+		At:      true,
+		OwnerID: true,
+		Label:   true,
+	}
+}
+
+// readThroughMoment implements the cache read-through path for Moment:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughMoment(ctx context.Context, pk time.Time, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForMoment(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*Moment](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableMoments, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableMoments, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableMoments)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableMoments)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableMoments)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateMoment(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*Moment](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*Moment)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForMoment())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableMoments, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableMoments, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableMoments)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setMoment caches a full Moment entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setMoment(ctx context.Context, entity *Moment) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForMoment(entity.At)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForMoment())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableMoments, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableMoments, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableMoments)
+	}
+}
+
+// hydrateMoment launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateMoment(pk time.Time, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForMoment(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableMoments)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableMoments,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[MomentFieldOptions]{
+				FieldOptions: fullParentFieldOptionsMoment(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMoments, err)
+			}
+			return
+		}
+		entity, ok := result.(*Moment)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMoments, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMoments, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForMoment())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableMoments, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableMoments, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMoments, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableMoments)
+			c.metrics.HydrationComplete(schema, TableMoments, nil)
+		}
+	}()
+}
+
+// keyForMomentOwner builds the cache key for MomentOwner by PK.
+func (c *Cache) keyForMomentOwner(pk int64) string {
+	return cache.BuildKey(c.prefix, "public", "moment_owners", fingerprintMomentOwner, pk)
+}
+
+// ttlForMomentOwner returns the resolved TTL for MomentOwner cache entries.
+func (c *Cache) ttlForMomentOwner() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipMomentOwner reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipMomentOwner(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*MomentOwnerFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	if typed.Moments != nil {
+		return true
+	}
+	return false
+}
+
+// fullParentFieldOptionsMomentOwner returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsMomentOwner() *MomentOwnerFieldOptions {
+	return &MomentOwnerFieldOptions{
+		ID:   true,
+		Name: true,
+	}
+}
+
+// readThroughMomentOwner implements the cache read-through path for MomentOwner:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughMomentOwner(ctx context.Context, pk int64, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForMomentOwner(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*MomentOwner](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableMomentOwners, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableMomentOwners, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableMomentOwners)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableMomentOwners)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableMomentOwners)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateMomentOwner(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*MomentOwner](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*MomentOwner)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForMomentOwner())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableMomentOwners, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableMomentOwners, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableMomentOwners)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setMomentOwner caches a full MomentOwner entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setMomentOwner(ctx context.Context, entity *MomentOwner) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForMomentOwner(entity.ID)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForMomentOwner())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableMomentOwners, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableMomentOwners, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableMomentOwners)
+	}
+}
+
+// hydrateMomentOwner launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateMomentOwner(pk int64, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForMomentOwner(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableMomentOwners)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableMomentOwners,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[MomentOwnerFieldOptions]{
+				FieldOptions: fullParentFieldOptionsMomentOwner(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMomentOwners, err)
+			}
+			return
+		}
+		entity, ok := result.(*MomentOwner)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMomentOwners, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMomentOwners, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForMomentOwner())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableMomentOwners, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableMomentOwners, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMomentOwners, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableMomentOwners)
+			c.metrics.HydrationComplete(schema, TableMomentOwners, nil)
+		}
+	}()
+}
+
+// keyForMomentTag builds the cache key for MomentTag by PK.
+func (c *Cache) keyForMomentTag(pk int64) string {
+	return cache.BuildKey(c.prefix, "public", "moment_tags", fingerprintMomentTag, pk)
+}
+
+// ttlForMomentTag returns the resolved TTL for MomentTag cache entries.
+func (c *Cache) ttlForMomentTag() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipMomentTag reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipMomentTag(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*MomentTagFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	if typed.Moments != nil {
+		return true
+	}
+	return false
+}
+
+// fullParentFieldOptionsMomentTag returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsMomentTag() *MomentTagFieldOptions {
+	return &MomentTagFieldOptions{
+		ID:   true,
+		Name: true,
+	}
+}
+
+// readThroughMomentTag implements the cache read-through path for MomentTag:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughMomentTag(ctx context.Context, pk int64, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForMomentTag(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*MomentTag](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableMomentTags, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableMomentTags, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableMomentTags)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableMomentTags)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableMomentTags)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateMomentTag(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*MomentTag](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*MomentTag)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForMomentTag())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableMomentTags, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableMomentTags, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableMomentTags)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setMomentTag caches a full MomentTag entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setMomentTag(ctx context.Context, entity *MomentTag) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForMomentTag(entity.ID)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForMomentTag())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableMomentTags, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableMomentTags, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableMomentTags)
+	}
+}
+
+// hydrateMomentTag launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateMomentTag(pk int64, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForMomentTag(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableMomentTags)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableMomentTags,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[MomentTagFieldOptions]{
+				FieldOptions: fullParentFieldOptionsMomentTag(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMomentTags, err)
+			}
+			return
+		}
+		entity, ok := result.(*MomentTag)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMomentTags, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMomentTags, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForMomentTag())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableMomentTags, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableMomentTags, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMomentTags, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableMomentTags)
+			c.metrics.HydrationComplete(schema, TableMomentTags, nil)
+		}
+	}()
+}
+
+// keyForMomentTagLink builds the cache key for MomentTagLink with composite PK.
+// The []any is constructed in DDL PRIMARY KEY column order inside this one
+// function — call sites never reorder (key-order invariant).
+func (c *Cache) keyForMomentTagLink(pk MomentTagLinkPK) string {
+	return cache.BuildCompositeKey(c.prefix, "public", "moment_tag_links", fingerprintMomentTagLink, []any{
+		pk.TagID,
+		pk.MomentAt,
+	})
+}
+
+// ttlForMomentTagLink returns the resolved TTL for MomentTagLink cache entries.
+func (c *Cache) ttlForMomentTagLink() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipMomentTagLink reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipMomentTagLink(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*MomentTagLinkFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	_ = typed
+	return false
+}
+
+// fullParentFieldOptionsMomentTagLink returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsMomentTagLink() *MomentTagLinkFieldOptions {
+	return &MomentTagLinkFieldOptions{
+		TagID:    true,
+		MomentAt: true,
+	}
+}
+
+// readThroughMomentTagLink implements the cache read-through path for MomentTagLink:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughMomentTagLink(ctx context.Context, pk MomentTagLinkPK, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForMomentTagLink(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*MomentTagLink](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableMomentTagLinks, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableMomentTagLinks, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableMomentTagLinks)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableMomentTagLinks)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableMomentTagLinks)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateMomentTagLink(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*MomentTagLink](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*MomentTagLink)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForMomentTagLink())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableMomentTagLinks, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableMomentTagLinks, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableMomentTagLinks)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setMomentTagLink caches a full MomentTagLink entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setMomentTagLink(ctx context.Context, entity *MomentTagLink) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForMomentTagLink(MomentTagLinkPK{
+		TagID:    entity.TagID,
+		MomentAt: entity.MomentAt,
+	})
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForMomentTagLink())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableMomentTagLinks, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableMomentTagLinks, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableMomentTagLinks)
+	}
+}
+
+// hydrateMomentTagLink launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateMomentTagLink(pk MomentTagLinkPK, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForMomentTagLink(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableMomentTagLinks)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableMomentTagLinks,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[MomentTagLinkFieldOptions]{
+				FieldOptions: fullParentFieldOptionsMomentTagLink(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMomentTagLinks, err)
+			}
+			return
+		}
+		entity, ok := result.(*MomentTagLink)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMomentTagLinks, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMomentTagLinks, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForMomentTagLink())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableMomentTagLinks, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableMomentTagLinks, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableMomentTagLinks, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableMomentTagLinks)
+			c.metrics.HydrationComplete(schema, TableMomentTagLinks, nil)
 		}
 	}()
 }
@@ -8042,6 +9069,30 @@ func (c *Cache) InvalidateMany(ctx context.Context, table hook.TableName, pks []
 // touches no backend, so its errors are the caller's to report.
 func (c *Cache) keysFor(table hook.TableName, pks []any) ([]string, error) {
 	switch table {
+	case TableMoments:
+		keys, err := cache.KeysFromAny(pks, c.keyForMoment)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableMomentOwners:
+		keys, err := cache.KeysFromAny(pks, c.keyForMomentOwner)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableMomentTags:
+		keys, err := cache.KeysFromAny(pks, c.keyForMomentTag)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableMomentTagLinks:
+		keys, err := cache.KeysFromAny(pks, c.keyForMomentTagLink)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
 	case TableStamps:
 		keys, err := cache.KeysFromAny(pks, c.keyForStamp)
 		if err != nil {
@@ -8484,6 +9535,14 @@ func cacheRelationFor(table hook.TableName) (schema, name string, ok bool) {
 		return "public", "line_items", true
 	case TableMilestones:
 		return "public", "milestones", true
+	case TableMoments:
+		return "public", "moments", true
+	case TableMomentOwners:
+		return "public", "moment_owners", true
+	case TableMomentTags:
+		return "public", "moment_tags", true
+	case TableMomentTagLinks:
+		return "public", "moment_tag_links", true
 	case TablePlots:
 		return "public", "plots", true
 	case TableProjects:
@@ -8742,6 +9801,30 @@ func (c *Cache) QueryHook() hook.QueryHook {
 					return next(ctx, q)
 				}
 				return c.readThroughMilestone(ctx, tenant, pk, q, next)
+			case TableMoments:
+				pk, ok := q.PK.(time.Time)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughMoment(ctx, pk, q, next)
+			case TableMomentOwners:
+				pk, ok := q.PK.(int64)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughMomentOwner(ctx, pk, q, next)
+			case TableMomentTags:
+				pk, ok := q.PK.(int64)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughMomentTag(ctx, pk, q, next)
+			case TableMomentTagLinks:
+				pk, ok := q.PK.(MomentTagLinkPK)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughMomentTagLink(ctx, pk, q, next)
 			case TablePlots:
 				pk, ok := q.PK.(int64)
 				if !ok {
@@ -9170,6 +10253,22 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 						}
 					}
 				}
+			case TableMoments:
+				if entity, ok := result.(*Moment); ok {
+					c.setMoment(ctx, entity)
+				}
+			case TableMomentOwners:
+				if entity, ok := result.(*MomentOwner); ok {
+					c.setMomentOwner(ctx, entity)
+				}
+			case TableMomentTags:
+				if entity, ok := result.(*MomentTag); ok {
+					c.setMomentTag(ctx, entity)
+				}
+			case TableMomentTagLinks:
+				if entity, ok := result.(*MomentTagLink); ok {
+					c.setMomentTagLink(ctx, entity)
+				}
 			case TablePlots:
 				if entity, ok := result.(*Plot); ok {
 					// Tenant sourced from the structural capture —
@@ -9548,6 +10647,30 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 						if tenant, ok := tenantByPK[entity.ID].(uuid.UUID); ok {
 							c.setMilestone(ctx, tenant, entity)
 						}
+					}
+				}
+			case TableMoments:
+				if entities, ok := result.([]*Moment); ok {
+					for _, entity := range entities {
+						c.setMoment(ctx, entity)
+					}
+				}
+			case TableMomentOwners:
+				if entities, ok := result.([]*MomentOwner); ok {
+					for _, entity := range entities {
+						c.setMomentOwner(ctx, entity)
+					}
+				}
+			case TableMomentTags:
+				if entities, ok := result.([]*MomentTag); ok {
+					for _, entity := range entities {
+						c.setMomentTag(ctx, entity)
+					}
+				}
+			case TableMomentTagLinks:
+				if entities, ok := result.([]*MomentTagLink); ok {
+					for _, entity := range entities {
+						c.setMomentTagLink(ctx, entity)
 					}
 				}
 			case TablePlots:
@@ -10114,6 +11237,14 @@ func hasAnyRelationshipFieldOptions(table hook.TableName, callOpts any) bool {
 		return hasAnyRelationshipLineItem(fo)
 	case TableMilestones:
 		return hasAnyRelationshipMilestone(fo)
+	case TableMoments:
+		return hasAnyRelationshipMoment(fo)
+	case TableMomentOwners:
+		return hasAnyRelationshipMomentOwner(fo)
+	case TableMomentTags:
+		return hasAnyRelationshipMomentTag(fo)
+	case TableMomentTagLinks:
+		return hasAnyRelationshipMomentTagLink(fo)
 	case TablePlots:
 		return hasAnyRelationshipPlot(fo)
 	case TableProjects:

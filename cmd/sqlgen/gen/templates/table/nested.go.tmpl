@@ -513,14 +513,14 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 	// under connect's own rule. Refused before any statement runs.
 {{- if .HasConnect }}
 	for _, v := range connectIDs {
-		if v == parent.{{ $pk }} {
+		if {{ nestedBucketKey $edge.ConnectIDGoType "v" }} == {{ nestedBucketKey $edge.ConnectIDGoType (printf "parent.%s" $pk) }} {
 			return nestedError({{ printf "%q" .FieldName }}, "connect", v, ErrNestedVerbConflict)
 		}
 	}
 {{- end }}
 {{- if .HasDisconnect }}
 	for _, v := range disconnectIDs {
-		if v == parent.{{ $pk }} {
+		if {{ nestedBucketKey $edge.ConnectIDGoType "v" }} == {{ nestedBucketKey $edge.ConnectIDGoType (printf "parent.%s" $pk) }} {
 			return nestedError({{ printf "%q" .FieldName }}, "disconnect", v, ErrNestedVerbConflict)
 		}
 	}
@@ -536,13 +536,13 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 	// that order, so the message names the verb whose removal resolves it
 	// without changing what the others already state.
 	if len(disconnectIDs) > 0 {
-		named := make(map[{{ .ConnectIDGoType }}]bool, len(disconnectIDs))
+		named := make(map[{{ .ConnectBucketGoType }}]bool, len(disconnectIDs))
 		for _, v := range disconnectIDs {
-			named[v] = true
+			named[{{ nestedBucketKey $edge.ConnectIDGoType "v" }}] = true
 		}
 {{- if .HasConnect }}
 		for _, v := range connectIDs {
-			if named[v] {
+			if named[{{ nestedBucketKey $edge.ConnectIDGoType "v" }}] {
 				return nestedError({{ printf "%q" .FieldName }}, "disconnect", v, ErrNestedVerbConflict)
 			}
 		}
@@ -554,7 +554,7 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 		// case that usually fires.
 {{- if eq .Shape "has_one" }}
 		if n := nested.Create; n != nil {
-			if v{{ if .ChildCreatePKOmittable }}, ok{{ end }} := n.{{ .ChildCreatePKField }}{{ if .ChildCreatePKOmittable }}.Get(){{ end }}; {{ if .ChildCreatePKOmittable }}ok && {{ end }}named[v] {
+			if v{{ if .ChildCreatePKOmittable }}, ok{{ end }} := n.{{ .ChildCreatePKField }}{{ if .ChildCreatePKOmittable }}.Get(){{ end }}; {{ if .ChildCreatePKOmittable }}ok && {{ end }}named[{{ nestedBucketKey $edge.ConnectIDGoType "v" }}] {
 				return nestedError({{ printf "%q" .FieldName }}, "disconnect", v, ErrNestedVerbConflict)
 			}
 		}
@@ -563,7 +563,7 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 			if n == nil {
 				continue
 			}
-			if v{{ if .ChildCreatePKOmittable }}, ok{{ end }} := n.{{ .ChildCreatePKField }}{{ if .ChildCreatePKOmittable }}.Get(){{ end }}; {{ if .ChildCreatePKOmittable }}ok && {{ end }}named[v] {
+			if v{{ if .ChildCreatePKOmittable }}, ok{{ end }} := n.{{ .ChildCreatePKField }}{{ if .ChildCreatePKOmittable }}.Get(){{ end }}; {{ if .ChildCreatePKOmittable }}ok && {{ end }}named[{{ nestedBucketKey $edge.ConnectIDGoType "v" }}] {
 				return nestedError({{ printf "%q" .FieldName }}, "disconnect", v, ErrNestedVerbConflict)
 			}
 		}
@@ -669,7 +669,7 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 	targetIDs := make([]{{ .ConnectIDGoType }}, 0, {{ if .HasCreate }}len(nested.Create){{ else }}0{{ end }}{{ if .HasConnect }}+len(connectIDs){{ end }})
 {{- if .TargetReadFields }}
 	// The link rows take these targets' referenced columns.
-	targetRows := make(map[{{ .ConnectIDGoType }}]*{{ .TargetStructName }}, cap(targetIDs))
+	targetRows := make(map[{{ .ConnectBucketGoType }}]*{{ .TargetStructName }}, cap(targetIDs))
 {{- end }}
 {{- if .HasCreate }}
 
@@ -704,7 +704,7 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 {{- end }}
 			targetIDs = append(targetIDs, row.{{ .TargetPKFieldName }})
 {{- if .TargetReadFields }}
-			targetRows[row.{{ .TargetPKFieldName }}] = row
+			targetRows[{{ nestedBucketKey $edge.ConnectIDGoType (printf "row.%s" .TargetPKFieldName) }}] = row
 {{- end }}
 		}
 	}
@@ -716,9 +716,9 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 	// access rules, so a target in another tenant is NOT_FOUND here rather
 	// than a junction row nobody can ever read.
 	if len(connectIDs) > 0 {
-		found := make(map[{{ .ConnectIDGoType }}]bool, len(connectIDs))
+		found := make(map[{{ .ConnectBucketGoType }}]bool, len(connectIDs))
 {{- if .JunctionSharedAgrees }}
-		agrees := make(map[{{ .ConnectIDGoType }}]bool, len(connectIDs))
+		agrees := make(map[{{ .ConnectBucketGoType }}]bool, len(connectIDs))
 {{- end }}
 		// Chunked at c.batchSize. A single statement over the caller's
 		// whole list hits a bind-parameter ceiling that is dialect-dependent
@@ -764,21 +764,21 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 				return nestedError({{ printf "%q" .FieldName }}, "connect", nil, err)
 			}
 			for _, row := range visible {
-				found[row.{{ .TargetPKFieldName }}] = true
+				found[{{ nestedBucketKey $edge.ConnectIDGoType (printf "row.%s" .TargetPKFieldName) }}] = true
 {{- if .JunctionSharedAgrees }}
-				agrees[row.{{ .TargetPKFieldName }}] = {{ .JunctionSharedAgrees }}
+				agrees[{{ nestedBucketKey $edge.ConnectIDGoType (printf "row.%s" .TargetPKFieldName) }}] = {{ .JunctionSharedAgrees }}
 {{- end }}
 {{- if .TargetReadFields }}
-				targetRows[row.{{ .TargetPKFieldName }}] = row
+				targetRows[{{ nestedBucketKey $edge.ConnectIDGoType (printf "row.%s" .TargetPKFieldName) }}] = row
 {{- end }}
 			}
 		}
 		for _, tid := range connectIDs {
-			if !found[tid] {
+			if !found[{{ nestedBucketKey $edge.ConnectIDGoType "tid" }}] {
 				return nestedError({{ printf "%q" .FieldName }}, "connect", tid, ErrNotFound)
 			}
 {{- if .JunctionSharedAgrees }}
-			if !agrees[tid] {
+			if !agrees[{{ nestedBucketKey $edge.ConnectIDGoType "tid" }}] {
 				// Both junction keys hold this column and the link row takes it
 				// from the parent, so this target is bound to another key.
 				return nestedError({{ printf "%q" .FieldName }}, "connect", tid, ErrAlreadyRelated)
@@ -795,14 +795,14 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 	// ON CONFLICT DO NOTHING on every dialect.
 	if len(targetIDs) > 0 {
 		links := make([]*Create{{ .JunctionStructName }}Input, 0, len(targetIDs))
-		seen := make(map[{{ .ConnectIDGoType }}]bool, len(targetIDs))
+		seen := make(map[{{ .ConnectBucketGoType }}]bool, len(targetIDs))
 		for _, tid := range targetIDs {
-			if seen[tid] {
+			if seen[{{ nestedBucketKey $edge.ConnectIDGoType "tid" }}] {
 				continue
 			}
-			seen[tid] = true
+			seen[{{ nestedBucketKey $edge.ConnectIDGoType "tid" }}] = true
 {{- if .TargetReadFields }}
-			row := targetRows[tid]
+			row := targetRows[{{ nestedBucketKey $edge.ConnectIDGoType "tid" }}]
 {{- end }}
 			links = append(links, &Create{{ .JunctionStructName }}Input{
 {{- range .JunctionLinkFields }}
@@ -834,12 +834,12 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 	// would keep showing the link.
 	if len(disconnectIDs) > 0 {
 		pks := make([]{{ .JunctionPKStructName }}, 0, len(disconnectIDs))
-		unlinking := make(map[{{ .ConnectIDGoType }}]bool, len(disconnectIDs))
+		unlinking := make(map[{{ .ConnectBucketGoType }}]bool, len(disconnectIDs))
 		for _, tid := range disconnectIDs {
-			if unlinking[tid] {
+			if unlinking[{{ nestedBucketKey $edge.ConnectIDGoType "tid" }}] {
 				continue
 			}
-			unlinking[tid] = true
+			unlinking[{{ nestedBucketKey $edge.ConnectIDGoType "tid" }}] = true
 			pks = append(pks, {{ .JunctionPKStructName }}{
 {{- range .JunctionPKFields }}
 				{{ .FieldName }}: {{ .AssignExpr }},
@@ -911,7 +911,7 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 		}
 		for _, row := range occupied {
 {{- if .HasConnect }}
-			if nested.Connect != nil && row.{{ .TargetPKFieldName }} == *nested.Connect {
+			if nested.Connect != nil && {{ nestedBucketKey $edge.ConnectIDGoType (printf "row.%s" .TargetPKFieldName) }} == {{ nestedBucketKey $edge.ConnectIDGoType "*nested.Connect" }} {
 				// Already ours — connect's own no-op below.
 				continue
 			}
@@ -998,10 +998,10 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 {{- if .CompositeKey }}
 		// Each target's key, as a tuple of strings, which compares every key
 		// type. NULL is held apart: it stringifies like an empty string.
-		owner := make(map[{{ .ConnectIDGoType }}][{{ len .KeyMembers }}]string, len(connectIDs))
-		nulls := make(map[{{ .ConnectIDGoType }}][{{ len .KeyMembers }}]bool, len(connectIDs))
+		owner := make(map[{{ .ConnectBucketGoType }}][{{ len .KeyMembers }}]string, len(connectIDs))
+		nulls := make(map[{{ .ConnectBucketGoType }}][{{ len .KeyMembers }}]bool, len(connectIDs))
 {{- else }}
-		owner := make(map[{{ .ConnectIDGoType }}]{{ .FKOwnerGoType }}, len(connectIDs))
+		owner := make(map[{{ .ConnectBucketGoType }}]{{ .FKOwnerGoType }}, len(connectIDs))
 {{- end }}
 		// Chunked at c.batchSize, for the reason the disconnect below is:
 		// a single `IN` over the caller's whole list hits a dialect-dependent
@@ -1053,9 +1053,9 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 				key[{{ .Index }}] = {{ .Key }}
 {{- end }}
 {{- end }}
-				owner[row.{{ .TargetPKFieldName }}], nulls[row.{{ .TargetPKFieldName }}] = key, null
+				owner[{{ nestedBucketKey $edge.ConnectIDGoType (printf "row.%s" .TargetPKFieldName) }}], nulls[{{ nestedBucketKey $edge.ConnectIDGoType (printf "row.%s" .TargetPKFieldName) }}] = key, null
 {{- else }}
-				owner[row.{{ .TargetPKFieldName }}] = row.{{ (index .KeyMembers 0).FieldName }}
+				owner[{{ nestedBucketKey $edge.ConnectIDGoType (printf "row.%s" .TargetPKFieldName) }}] = row.{{ (index .KeyMembers 0).FieldName }}
 {{- end }}
 			}
 		}
@@ -1065,14 +1065,14 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 		// UPDATE matches the row once however many times the caller named it.
 		// Queueing it twice would trip the shortfall check below and report a
 		// conflict that did not happen.
-		queued := make(map[{{ .ConnectIDGoType }}]bool, len(connectIDs))
+		queued := make(map[{{ .ConnectBucketGoType }}]bool, len(connectIDs))
 {{- if .CompositeKey }}
 		want := {{ keyTuple .LoadKey "referenced" "parent" }}
 {{- end }}
 		for _, v := range connectIDs {
-			cur, ok := owner[v]
+			cur, ok := owner[{{ nestedBucketKey $edge.ConnectIDGoType "v" }}]
 {{- if .CompositeKey }}
-			null := nulls[v]
+			null := nulls[{{ nestedBucketKey $edge.ConnectIDGoType "v" }}]
 {{- end }}
 			switch {
 			case !ok:
@@ -1099,10 +1099,10 @@ func (c *{{ $client }}) {{ .ExecutorName }}(ctx context.Context, parent *{{ $par
 				return nestedError({{ printf "%q" .FieldName }}, "connect", v, ErrAlreadyRelated)
 {{- end }}
 			}
-			if queued[v] {
+			if queued[{{ nestedBucketKey $edge.ConnectIDGoType "v" }}] {
 				continue
 			}
-			queued[v] = true
+			queued[{{ nestedBucketKey $edge.ConnectIDGoType "v" }}] = true
 			adopt = append(adopt, {{ .ConnectKeyExpr }})
 		}
 
