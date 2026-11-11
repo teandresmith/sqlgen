@@ -50,6 +50,14 @@ type BinaryKeyEventConnection = Connection[BinaryKeyEvent]
 type BinaryKeyEventEdge = Edge[BinaryKeyEvent]
 type BinaryKeyEventListResult = PaginateResult[BinaryKeyEvent]
 
+type BoolKeyedConnection = Connection[BoolKeyed]
+type BoolKeyedEdge = Edge[BoolKeyed]
+type BoolKeyedListResult = PaginateResult[BoolKeyed]
+
+type BoolKeyedNoteConnection = Connection[BoolKeyedNote]
+type BoolKeyedNoteEdge = Edge[BoolKeyedNote]
+type BoolKeyedNoteListResult = PaginateResult[BoolKeyedNote]
+
 type CategoryConnection = Connection[Category]
 type CategoryEdge = Edge[Category]
 type CategoryListResult = PaginateResult[Category]

@@ -209,6 +209,9 @@ func {{ $tr.FuncName }}(in *{{ $gqlPrefix }}{{ $tr.InputTypeName }}) {{ $tr.GoRe
 	if in.Neq != nil {
 		out.Neq = in.Neq
 	}
+	if len(in.In) > 0 {
+		out.In = append([]bool(nil), in.In...)
+	}
 {{- else if eq $tr.Family "Decimal" }}
 	if in.Eq != nil {
 		v := in.Eq.String()

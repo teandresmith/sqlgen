@@ -1267,6 +1267,372 @@ func (m *M) DeleteBinaryKeyEvent(ctx context.Context, id int) (bool, error) {
 	return true, nil
 }
 
+// BoolKeyed resolves the single-by-PK query for bool_keyed.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) BoolKeyed(ctx context.Context, k bool) (*models.BoolKeyed, error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	res, err := q.Client.BoolKeyeds().Get(ctx, k, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BoolKeyeds resolves the cursor-paginated Connection query for bool_keyed.
+func (q *Q) BoolKeyeds(ctx context.Context, filter *models.BoolKeyedFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BoolKeyed], error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	res, err := q.Client.BoolKeyeds().Connection(ctx, models.ConnectionInput[models.BoolKeyedFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BoolKeyedList resolves the offset-paginated ListResult query for bool_keyed.
+func (q *Q) BoolKeyedList(ctx context.Context, filter *models.BoolKeyedFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.BoolKeyed], error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.BoolKeyedFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.BoolKeyeds().Paginate(ctx, in, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBoolKeyed resolves the single-row create mutation for bool_keyed.
+func (m *M) CreateBoolKeyed(ctx context.Context, input *models.CreateBoolKeyedInput) (*models.BoolKeyed, error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyeds().Create(ctx, input, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBoolKeyeds resolves the bulk create mutation for bool_keyed.
+func (m *M) CreateBoolKeyeds(ctx context.Context, inputs []*models.CreateBoolKeyedInput) ([]*models.BoolKeyed, error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyeds().CreateMany(ctx, inputs, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBoolKeyedRequest is one updateBoolKeyed /
+// updateBoolKeyeds input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBoolKeyedRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBoolKeyedInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateBoolKeyed resolves the single-row update mutation for bool_keyed.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBoolKeyed(ctx context.Context, k bool, input UpdateBoolKeyedRequest) (*models.BoolKeyed, error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.BoolKeyeds().Update(ctx, k, input.Set, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.BoolKeyeds().Get(ctx, k, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBoolKeyeds resolves the bulk update-where mutation for bool_keyed.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBoolKeyeds(ctx context.Context, filter *models.BoolKeyedFilter, input UpdateBoolKeyedRequest) ([]*models.BoolKeyed, error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyeds().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertBoolKeyed resolves the single-row upsert mutation for bool_keyed.
+func (m *M) UpsertBoolKeyed(ctx context.Context, input *models.CreateBoolKeyedInput) (*models.BoolKeyed, error) {
+	fo := boolKeyedFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyeds().Upsert(ctx, input, models.BoolKeyedConflictPK, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteBoolKeyed resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteBoolKeyed(ctx context.Context, k bool) (bool, error) {
+	if err := m.Client.BoolKeyeds().HardDelete(ctx, k, func(o *models.CallOptions[models.BoolKeyedFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// BoolKeyedNote resolves the single-by-PK query for bool_keyed_notes.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) BoolKeyedNote(ctx context.Context, id int) (*models.BoolKeyedNote, error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := q.Client.BoolKeyedNotes().Get(ctx, int64(id), func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BoolKeyedNotes resolves the cursor-paginated Connection query for bool_keyed_notes.
+func (q *Q) BoolKeyedNotes(ctx context.Context, filter *models.BoolKeyedNoteFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BoolKeyedNote], error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := q.Client.BoolKeyedNotes().Connection(ctx, models.ConnectionInput[models.BoolKeyedNoteFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BoolKeyedNoteList resolves the offset-paginated ListResult query for bool_keyed_notes.
+func (q *Q) BoolKeyedNoteList(ctx context.Context, filter *models.BoolKeyedNoteFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.BoolKeyedNote], error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.BoolKeyedNoteFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.BoolKeyedNotes().Paginate(ctx, in, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBoolKeyedNote resolves the single-row create mutation for bool_keyed_notes.
+func (m *M) CreateBoolKeyedNote(ctx context.Context, input *models.CreateBoolKeyedNoteInput) (*models.BoolKeyedNote, error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyedNotes().Create(ctx, input, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBoolKeyedNotes resolves the bulk create mutation for bool_keyed_notes.
+func (m *M) CreateBoolKeyedNotes(ctx context.Context, inputs []*models.CreateBoolKeyedNoteInput) ([]*models.BoolKeyedNote, error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyedNotes().CreateMany(ctx, inputs, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBoolKeyedNoteRequest is one updateBoolKeyedNote /
+// updateBoolKeyedNotes input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBoolKeyedNoteRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBoolKeyedNoteInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateBoolKeyedNote resolves the single-row update mutation for bool_keyed_notes.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBoolKeyedNote(ctx context.Context, id int, input UpdateBoolKeyedNoteRequest) (*models.BoolKeyedNote, error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.BoolKeyedNotes().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.BoolKeyedNotes().Get(ctx, int64(id), func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBoolKeyedNotes resolves the bulk update-where mutation for bool_keyed_notes.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBoolKeyedNotes(ctx context.Context, filter *models.BoolKeyedNoteFilter, input UpdateBoolKeyedNoteRequest) ([]*models.BoolKeyedNote, error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyedNotes().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertBoolKeyedNote resolves the single-row upsert mutation for bool_keyed_notes.
+func (m *M) UpsertBoolKeyedNote(ctx context.Context, input *models.CreateBoolKeyedNoteInput) (*models.BoolKeyedNote, error) {
+	fo := boolKeyedNoteFieldOptionsFromContext(ctx)
+	res, err := m.Client.BoolKeyedNotes().Upsert(ctx, input, models.BoolKeyedNoteConflictPK, func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteBoolKeyedNote resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteBoolKeyedNote(ctx context.Context, id int) (bool, error) {
+	if err := m.Client.BoolKeyedNotes().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.BoolKeyedNoteFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.BoolKeyedNoteFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
 // Category resolves the single-by-PK query for categories.
 // <table>(id) returns null when missing — no separate exists query is
 // needed. ErrNotFound is collapsed to (nil, nil) so the nullable

@@ -127,6 +127,8 @@ type Client struct {
 	article           *articleClient
 	asset             *assetClient
 	assetDocumentLink *assetDocumentLinkClient
+	boolKeyed         *boolKeyedClient
+	boolKeyedNote     *boolKeyedNoteClient
 	category          *categoryClient
 	categoryStat      *categoryStatClient
 	defaultOnlyRow    *defaultOnlyRowClient
@@ -166,6 +168,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		article:           newArticleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		asset:             newAssetClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		assetDocumentLink: newAssetDocumentLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		boolKeyed:         newBoolKeyedClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		boolKeyedNote:     newBoolKeyedNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		category:          newCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		categoryStat:      newCategoryStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		defaultOnlyRow:    newDefaultOnlyRowClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
@@ -193,6 +197,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// deferred events and cache invalidation flush the way the client was
 	// configured rather than on NewTransaction's default.
 	c.asset.callbackMode = options.callbackMode
+	c.boolKeyed.callbackMode = options.callbackMode
 	c.category.callbackMode = options.callbackMode
 	c.document.callbackMode = options.callbackMode
 	c.order.callbackMode = options.callbackMode
@@ -204,6 +209,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// the nested-mutation executors write through
 	c.asset.documentClient = c.document
 	c.asset.assetDocumentLinkClient = c.assetDocumentLink
+	c.boolKeyed.boolKeyedNoteClient = c.boolKeyedNote
 	c.category.productClient = c.product
 	c.category.userClient = c.user
 	c.category.userCategoryClient = c.userCategory
@@ -235,6 +241,16 @@ func (c *Client) Assets() AssetClient {
 // AssetDocumentLinks returns the AssetDocumentLinkClient for AssetDocumentLink operations.
 func (c *Client) AssetDocumentLinks() AssetDocumentLinkClient {
 	return c.assetDocumentLink
+}
+
+// BoolKeyeds returns the BoolKeyedClient for BoolKeyed operations.
+func (c *Client) BoolKeyeds() BoolKeyedClient {
+	return c.boolKeyed
+}
+
+// BoolKeyedNotes returns the BoolKeyedNoteClient for BoolKeyedNote operations.
+func (c *Client) BoolKeyedNotes() BoolKeyedNoteClient {
+	return c.boolKeyedNote
 }
 
 // Categories returns the CategoryClient for Category operations.

@@ -95,6 +95,7 @@ input NullableNumericComparator {
 input NullableBooleanComparator {
   eq:     Boolean
   neq:    Boolean
+  in:     [Boolean!]
   isNull: Boolean
 }
 

@@ -5339,7 +5339,7 @@ func (ec *executionContext) unmarshalInputNullableBooleanComparator(ctx context.
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"eq", "neq", "isNull"}
+	fieldsInOrder := [...]string{"eq", "neq", "in", "isNull"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -5360,6 +5360,13 @@ func (ec *executionContext) unmarshalInputNullableBooleanComparator(ctx context.
 				return it, err
 			}
 			it.Neq = data
+		case "in":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("in"))
+			data, err := ec.unmarshalOBoolean2ᚕboolᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.In = data
 		case "isNull":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("isNull"))
 			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
@@ -8415,6 +8422,41 @@ func (ec *executionContext) marshalOBoolean2bool(ctx context.Context, sel ast.Se
 	_ = ctx
 	res := graphql.MarshalBoolean(v)
 	return res
+}
+
+func (ec *executionContext) unmarshalOBoolean2ᚕboolᚄ(ctx context.Context, v any) ([]bool, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]bool, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBoolean2bool(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalOBoolean2ᚕboolᚄ(ctx context.Context, sel ast.SelectionSet, v []bool) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalNBoolean2bool(ctx, sel, v[i])
+	}
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
 }
 
 func (ec *executionContext) unmarshalOBoolean2ᚖbool(ctx context.Context, v any) (*bool, error) {

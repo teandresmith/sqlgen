@@ -516,6 +516,7 @@ var shippedComparatorFamilies = []APIComparatorFamily{
 		Operators: []APIComparatorOperator{
 			{Name: "eq", Type: "Boolean"},
 			{Name: "neq", Type: "Boolean"},
+			{Name: "in", Type: "[Boolean!]"},
 		},
 	},
 	{

@@ -741,6 +741,7 @@ func funcFKStringExpr(col ColumnContext) string {
 // For binary / network PKs: &comparator.Opaque[[]byte]{Eq: new(id)}
 // For enum PKs: &comparator.Enum[Kind]{Eq: new(id)}
 // For time PKs: &comparator.Time{Eq: new(id)}, or new(id.Time) for types.DateTime
+// For boolean PKs: &comparator.Bool{Eq: new(id)}
 //
 // The family is resolved by pkComparatorFamily, which mirrors
 // resolveGenericComparator — the expression has to match the type of the
@@ -750,6 +751,8 @@ func funcPKFilterExpr(col ColumnContext, varExpr string) string {
 	case "Time":
 		// comparator.Time is not generic, and its operand is a time.Time.
 		return fmt.Sprintf("&comparator.Time{Eq: new(%s)}", nestedKeyValueExpr(strings.TrimPrefix(col.GoType, "*"), varExpr))
+	case "Bool":
+		return fmt.Sprintf("&comparator.Bool{Eq: new(%s)}", varExpr)
 	case "Enum", "Number":
 		return fmt.Sprintf("&comparator.%s[%s]{Eq: new(%s)}", family, typeParam, varExpr)
 	case "Opaque":
@@ -775,6 +778,7 @@ func funcPKFilterExpr(col ColumnContext, varExpr string) string {
 // For nullable numeric FKs: &comparator.NullableNumber[int64]{Number: comparator.Number[int64]{In: ids}}
 // For enum keys: &comparator.Enum[Kind]{In: ids}, wrapped as a numeric FK is when nullable
 // For time keys: &comparator.Time{In: ids}, through dateTimeKeys for types.DateTime
+// For boolean keys: &comparator.Bool{In: ids}
 func funcPKFilterInExpr(col ColumnContext, varExpr string, nullable bool) string {
 	baseGoType := strings.TrimPrefix(col.GoType, "*")
 	return pkFilterInExpr(baseGoType, varExpr, nullable)
@@ -793,6 +797,12 @@ func pkFilterInExpr(baseGoType, varExpr string, nullable bool) string {
 		}
 		return fmt.Sprintf("&comparator.Time{In: %s}", varExpr)
 	}
+	if family == "Bool" {
+		if nullable {
+			return fmt.Sprintf("&comparator.NullableBool{Bool: comparator.Bool{In: %s}}", varExpr)
+		}
+		return fmt.Sprintf("&comparator.Bool{In: %s}", varExpr)
+	}
 	if family != "ID" {
 		if nullable {
 			return fmt.Sprintf("&comparator.Nullable%[1]s[%[2]s]{%[1]s: comparator.%[1]s[%[2]s]{In: %[3]s}}", family, typeParam, varExpr)
@@ -809,8 +819,9 @@ func pkFilterInExpr(baseGoType, varExpr string, nullable bool) string {
 // (comparator.ID), and therefore whether the templates collect its keys as
 // []string via fmt.Sprint / .String(). Numeric PKs use comparator.Number[T],
 // binary / network PKs use comparator.Opaque[T], enum PKs use
-// comparator.Enum[T] and time PKs use comparator.Time; each takes the key's
-// value, so none needs — or tolerates — the string conversion.
+// comparator.Enum[T], time PKs use comparator.Time and boolean PKs use
+// comparator.Bool; each takes the key's value, so none needs — or tolerates —
+// the string conversion.
 // Accepts either a ColumnContext or a string Go type.
 func funcPKIsStringType(v any) bool {
 	var goType string

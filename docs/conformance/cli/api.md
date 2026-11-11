@@ -6,7 +6,7 @@
 API generation (§26) is emitted by `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. Its rows claim `gen`, `cli`, golden and example tests. It holds the `api-generation` matrix and §26.5–§26.12; the schema sections (§26–§26.4.1 and §16.4's GraphQL rows) are in [`api-schema.md`](api-schema.md).
 
 ## §26.4 GraphQL Schema Generation
-<!-- prd: 26.4 sha256: 45c59c494b3a2b7b -->
+<!-- prd: 26.4 sha256: b4434ea5c04a9a47 -->
 
 The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.md`](api-schema.md).
 

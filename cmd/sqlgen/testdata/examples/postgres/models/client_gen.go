@@ -78,6 +78,8 @@ type Client struct {
 	assetDocumentLink *assetDocumentLinkClient
 	auditNote         *auditNoteClient
 	auditUser         *auditUserClient
+	boolKeyed         *boolKeyedClient
+	boolKeyedNote     *boolKeyedNoteClient
 	category          *categoryClient
 	categoryStat      *categoryStatClient
 	counter           *counterClient
@@ -145,6 +147,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		assetDocumentLink: newAssetDocumentLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		auditNote:         newAuditNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		auditUser:         newAuditUserClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		boolKeyed:         newBoolKeyedClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		boolKeyedNote:     newBoolKeyedNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		category:          newCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		categoryStat:      newCategoryStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		counter:           newCounterClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -187,6 +191,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// deferred events and cache invalidation flush the way the client was
 	// configured rather than on NewTransaction's default.
 	c.asset.callbackMode = options.callbackMode
+	c.boolKeyed.callbackMode = options.callbackMode
 	c.category.callbackMode = options.callbackMode
 	c.document.callbackMode = options.callbackMode
 	c.event.callbackMode = options.callbackMode
@@ -204,6 +209,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// the nested-mutation executors write through
 	c.asset.documentClient = c.document
 	c.asset.assetDocumentLinkClient = c.assetDocumentLink
+	c.boolKeyed.boolKeyedNoteClient = c.boolKeyedNote
 	c.category.productClient = c.product
 	c.category.publicUserClient = c.publicUser
 	c.category.userCategoryClient = c.userCategory
@@ -261,6 +267,16 @@ func (c *Client) AuditNotes() AuditNoteClient {
 // AuditUsers returns the AuditUserClient for AuditUser operations.
 func (c *Client) AuditUsers() AuditUserClient {
 	return c.auditUser
+}
+
+// BoolKeyeds returns the BoolKeyedClient for BoolKeyed operations.
+func (c *Client) BoolKeyeds() BoolKeyedClient {
+	return c.boolKeyed
+}
+
+// BoolKeyedNotes returns the BoolKeyedNoteClient for BoolKeyedNote operations.
+func (c *Client) BoolKeyedNotes() BoolKeyedNoteClient {
+	return c.boolKeyedNote
 }
 
 // Categories returns the CategoryClient for Category operations.

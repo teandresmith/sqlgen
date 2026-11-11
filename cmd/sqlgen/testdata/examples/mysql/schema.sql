@@ -214,3 +214,17 @@ CREATE TABLE time_keyed_notes (
     note VARCHAR(50) NOT NULL,
     FOREIGN KEY (keyed_at) REFERENCES time_keyed (at)
 );
+
+-- bool_keyed / bool_keyed_notes: a BOOLEAN primary key and foreign key bind as
+-- bools; MySQL stores them as integers, so the text "true" matches no row.
+CREATE TABLE bool_keyed (
+    k BOOLEAN PRIMARY KEY,
+    label VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE bool_keyed_notes (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    keyed_k BOOLEAN,
+    note VARCHAR(50) NOT NULL,
+    FOREIGN KEY (keyed_k) REFERENCES bool_keyed (k)
+);

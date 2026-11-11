@@ -252,6 +252,12 @@ func TestSetOperators_RenderPerDialect(t *testing.T) {
 			wherePgx: pgAll, whereStd: pgNotIn, whereMy: myNotIn, whereLite: ltNotIn,
 		},
 		{
+			name: "Bool.In", parse: comparator.Bool{In: []bool{true, false}}.Parse,
+			array: []bool{true, false}, elems: []any{true, false},
+			expanded: " IN $", pgx: " = ANY($)",
+			wherePgx: pgAny, whereStd: pgIn, whereMy: myIn, whereLite: ltIn,
+		},
+		{
 			name: "Enum.In", parse: comparator.Enum[orderStatus]{In: []orderStatus{"paid", "void"}}.Parse,
 			elems:    []any{orderStatus("paid"), orderStatus("void")},
 			expanded: " IN $", pgxExpands: true,

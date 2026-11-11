@@ -109,9 +109,50 @@ type AssetSort struct {
 	Direction SortDirection  `json:"direction"`
 }
 
+type BoolKeyedBoolKeyedNotesCreateInput struct {
+	Note string `json:"note"`
+}
+
+type BoolKeyedBoolKeyedNotesCreateNested struct {
+	Create  []*BoolKeyedBoolKeyedNotesCreateInput `json:"create,omitempty"`
+	Connect []int                                 `json:"connect,omitempty"`
+}
+
+type BoolKeyedBoolKeyedNotesUpdateNested struct {
+	Clear      *bool                                 `json:"clear,omitempty"`
+	Create     []*BoolKeyedBoolKeyedNotesCreateInput `json:"create,omitempty"`
+	Connect    []int                                 `json:"connect,omitempty"`
+	Disconnect []int                                 `json:"disconnect,omitempty"`
+}
+
+type BoolKeyedFilter struct {
+	Label          *StringComparator    `json:"label,omitempty"`
+	BoolKeyedNotes *BoolKeyedNoteFilter `json:"boolKeyedNotes,omitempty"`
+	And            []*BoolKeyedFilter   `json:"and,omitempty"`
+	Or             []*BoolKeyedFilter   `json:"or,omitempty"`
+}
+
+type BoolKeyedNoteFilter struct {
+	KeyedK *NullableBooleanComparator `json:"keyedK,omitempty"`
+	Note   *StringComparator          `json:"note,omitempty"`
+	And    []*BoolKeyedNoteFilter     `json:"and,omitempty"`
+	Or     []*BoolKeyedNoteFilter     `json:"or,omitempty"`
+}
+
+type BoolKeyedNoteSort struct {
+	Field     BoolKeyedNoteSortField `json:"field"`
+	Direction SortDirection          `json:"direction"`
+}
+
+type BoolKeyedSort struct {
+	Field     BoolKeyedSortField `json:"field"`
+	Direction SortDirection      `json:"direction"`
+}
+
 type BooleanComparator struct {
-	Eq  *bool `json:"eq,omitempty"`
-	Neq *bool `json:"neq,omitempty"`
+	Eq  *bool  `json:"eq,omitempty"`
+	Neq *bool  `json:"neq,omitempty"`
+	In  []bool `json:"in,omitempty"`
 }
 
 type CategoryFilter struct {
@@ -188,6 +229,21 @@ type CreateAssetWithRelatedInput struct {
 	Documents       *AssetDocumentsCreateNested       `json:"documents,omitempty"`
 	Invoices        *AssetInvoicesCreateNested        `json:"invoices,omitempty"`
 	PrimaryDocument *AssetPrimaryDocumentCreateNested `json:"primaryDocument,omitempty"`
+}
+
+type CreateBoolKeyedInput struct {
+	K     bool   `json:"k"`
+	Label string `json:"label"`
+}
+
+type CreateBoolKeyedNoteInput struct {
+	KeyedK *bool  `json:"keyedK,omitempty"`
+	Note   string `json:"note"`
+}
+
+type CreateBoolKeyedWithRelatedInput struct {
+	BoolKeyed      *CreateBoolKeyedInput                `json:"boolKeyed"`
+	BoolKeyedNotes *BoolKeyedBoolKeyedNotesCreateNested `json:"boolKeyedNotes,omitempty"`
 }
 
 type CreateCategoryInput struct {
@@ -417,6 +473,13 @@ type KeyOnlyRowSort struct {
 }
 
 type Mutation struct {
+}
+
+type NullableBooleanComparator struct {
+	Eq     *bool  `json:"eq,omitempty"`
+	Neq    *bool  `json:"neq,omitempty"`
+	In     []bool `json:"in,omitempty"`
+	IsNull *bool  `json:"isNull,omitempty"`
 }
 
 type NullableBytesComparator struct {
@@ -759,6 +822,20 @@ type UpdateAssetWithRelatedInput struct {
 	PrimaryDocument *AssetPrimaryDocumentUpdateNested `json:"primaryDocument,omitempty"`
 }
 
+type UpdateBoolKeyedInput struct {
+	Label *string `json:"label,omitempty"`
+}
+
+type UpdateBoolKeyedNoteInput struct {
+	KeyedK graphql.Omittable[*bool] `json:"keyedK,omitempty"`
+	Note   *string                  `json:"note,omitempty"`
+}
+
+type UpdateBoolKeyedWithRelatedInput struct {
+	BoolKeyed      *UpdateBoolKeyedInput                `json:"boolKeyed,omitempty"`
+	BoolKeyedNotes *BoolKeyedBoolKeyedNotesUpdateNested `json:"boolKeyedNotes,omitempty"`
+}
+
 type UpdateCategoryInput struct {
 	Name        *string                    `json:"name,omitempty"`
 	Description graphql.Omittable[*string] `json:"description,omitempty"`
@@ -946,6 +1023,11 @@ type UpsertAssetWithRelatedInput struct {
 	Documents       *AssetDocumentsUpdateNested       `json:"documents,omitempty"`
 	Invoices        *AssetInvoicesUpdateNested        `json:"invoices,omitempty"`
 	PrimaryDocument *AssetPrimaryDocumentUpdateNested `json:"primaryDocument,omitempty"`
+}
+
+type UpsertBoolKeyedWithRelatedInput struct {
+	BoolKeyed      *CreateBoolKeyedInput                `json:"boolKeyed"`
+	BoolKeyedNotes *BoolKeyedBoolKeyedNotesUpdateNested `json:"boolKeyedNotes,omitempty"`
 }
 
 type UpsertCategoryWithRelatedInput struct {
@@ -1328,6 +1410,171 @@ func (e *AssetSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e AssetSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type BoolKeyedConflictTarget string
+
+const (
+	BoolKeyedConflictTargetPk BoolKeyedConflictTarget = "PK"
+)
+
+var AllBoolKeyedConflictTarget = []BoolKeyedConflictTarget{
+	BoolKeyedConflictTargetPk,
+}
+
+func (e BoolKeyedConflictTarget) IsValid() bool {
+	switch e {
+	case BoolKeyedConflictTargetPk:
+		return true
+	}
+	return false
+}
+
+func (e BoolKeyedConflictTarget) String() string {
+	return string(e)
+}
+
+func (e *BoolKeyedConflictTarget) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = BoolKeyedConflictTarget(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid BoolKeyedConflictTarget", str)
+	}
+	return nil
+}
+
+func (e BoolKeyedConflictTarget) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *BoolKeyedConflictTarget) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e BoolKeyedConflictTarget) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type BoolKeyedNoteSortField string
+
+const (
+	BoolKeyedNoteSortFieldID     BoolKeyedNoteSortField = "ID"
+	BoolKeyedNoteSortFieldKeyedK BoolKeyedNoteSortField = "KEYED_K"
+	BoolKeyedNoteSortFieldNote   BoolKeyedNoteSortField = "NOTE"
+)
+
+var AllBoolKeyedNoteSortField = []BoolKeyedNoteSortField{
+	BoolKeyedNoteSortFieldID,
+	BoolKeyedNoteSortFieldKeyedK,
+	BoolKeyedNoteSortFieldNote,
+}
+
+func (e BoolKeyedNoteSortField) IsValid() bool {
+	switch e {
+	case BoolKeyedNoteSortFieldID, BoolKeyedNoteSortFieldKeyedK, BoolKeyedNoteSortFieldNote:
+		return true
+	}
+	return false
+}
+
+func (e BoolKeyedNoteSortField) String() string {
+	return string(e)
+}
+
+func (e *BoolKeyedNoteSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = BoolKeyedNoteSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid BoolKeyedNoteSortField", str)
+	}
+	return nil
+}
+
+func (e BoolKeyedNoteSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *BoolKeyedNoteSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e BoolKeyedNoteSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type BoolKeyedSortField string
+
+const (
+	BoolKeyedSortFieldK     BoolKeyedSortField = "K"
+	BoolKeyedSortFieldLabel BoolKeyedSortField = "LABEL"
+)
+
+var AllBoolKeyedSortField = []BoolKeyedSortField{
+	BoolKeyedSortFieldK,
+	BoolKeyedSortFieldLabel,
+}
+
+func (e BoolKeyedSortField) IsValid() bool {
+	switch e {
+	case BoolKeyedSortFieldK, BoolKeyedSortFieldLabel:
+		return true
+	}
+	return false
+}
+
+func (e BoolKeyedSortField) String() string {
+	return string(e)
+}
+
+func (e *BoolKeyedSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = BoolKeyedSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid BoolKeyedSortField", str)
+	}
+	return nil
+}
+
+func (e BoolKeyedSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *BoolKeyedSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e BoolKeyedSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

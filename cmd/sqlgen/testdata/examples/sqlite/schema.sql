@@ -276,6 +276,19 @@ CREATE TABLE time_keyed_notes (
     note TEXT NOT NULL
 );
 
+-- bool_keyed / bool_keyed_notes: a boolean primary key and foreign key bind as
+-- bools; SQLite stores them as integers, so the text "true" matches no row.
+CREATE TABLE bool_keyed (
+    k BOOLEAN PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE bool_keyed_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    keyed_k BOOLEAN REFERENCES bool_keyed (k),
+    note TEXT NOT NULL
+);
+
 -- SQLite maps every integer type to int64, so a key of another width cannot
 -- arise here. A foreign key of another storage class can: it filters through
 -- another comparator than the column it references, and affinity still joins it.

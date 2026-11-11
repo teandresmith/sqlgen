@@ -408,6 +408,137 @@ func translateUpdateBinaryKeyEventRequest(in gqlmodel.UpdateBinaryKeyEventInput)
 	return out
 }
 
+// translateCreateBoolKeyedInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBoolKeyedInput(in gqlmodel.CreateBoolKeyedInput) *models.CreateBoolKeyedInput {
+	out := &models.CreateBoolKeyedInput{}
+	out.K = in.K
+	out.Label = in.Label
+
+	return out
+}
+
+// translateUpdateBoolKeyedInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateBoolKeyedRequest
+// carries them to the resolver.
+func translateUpdateBoolKeyedInput(in gqlmodel.UpdateBoolKeyedInput) *models.UpdateBoolKeyedInput {
+	out := &models.UpdateBoolKeyedInput{}
+	if in.Label != nil {
+		out.Label = omittable.Set(*in.Label)
+	}
+	return out
+}
+
+// hasUpdateBoolKeyedSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateBoolKeyedSetFields(in gqlmodel.UpdateBoolKeyedInput) bool {
+	if in.Label != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateBoolKeyedRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateBoolKeyedInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateBoolKeyedRequest(in gqlmodel.UpdateBoolKeyedInput) sqlgenresolver.UpdateBoolKeyedRequest {
+	out := sqlgenresolver.UpdateBoolKeyedRequest{
+		Set:    translateUpdateBoolKeyedInput(in),
+		HasSet: hasUpdateBoolKeyedSetFields(in),
+	}
+	return out
+}
+
+// translateCreateBoolKeyedNoteInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBoolKeyedNoteInput(in gqlmodel.CreateBoolKeyedNoteInput) *models.CreateBoolKeyedNoteInput {
+	out := &models.CreateBoolKeyedNoteInput{}
+	if in.KeyedK != nil {
+		out.KeyedK = omittable.Set(in.KeyedK)
+	}
+	out.Note = in.Note
+
+	return out
+}
+
+// translateUpdateBoolKeyedNoteInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateBoolKeyedNoteRequest
+// carries them to the resolver.
+func translateUpdateBoolKeyedNoteInput(in gqlmodel.UpdateBoolKeyedNoteInput) *models.UpdateBoolKeyedNoteInput {
+	out := &models.UpdateBoolKeyedNoteInput{}
+	if val, ok := in.KeyedK.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.KeyedK.Get()
+			out.KeyedK = omittable.Set(zero)
+		} else {
+			out.KeyedK = omittable.Set(val)
+		}
+	}
+	if in.Note != nil {
+		out.Note = omittable.Set(*in.Note)
+	}
+	return out
+}
+
+// hasUpdateBoolKeyedNoteSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateBoolKeyedNoteSetFields(in gqlmodel.UpdateBoolKeyedNoteInput) bool {
+	if in.KeyedK.IsSet() {
+		return true
+	}
+	if in.Note != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateBoolKeyedNoteRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateBoolKeyedNoteInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateBoolKeyedNoteRequest(in gqlmodel.UpdateBoolKeyedNoteInput) sqlgenresolver.UpdateBoolKeyedNoteRequest {
+	out := sqlgenresolver.UpdateBoolKeyedNoteRequest{
+		Set:    translateUpdateBoolKeyedNoteInput(in),
+		HasSet: hasUpdateBoolKeyedNoteSetFields(in),
+	}
+	return out
+}
+
 // translateCreateCategoryInput maps a gqlgen-generated input value
 // onto the consumer model's Create<Table>Input. The body shape per field
 // depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×

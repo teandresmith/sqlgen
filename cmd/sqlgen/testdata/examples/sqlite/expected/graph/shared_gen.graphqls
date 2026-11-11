@@ -89,6 +89,14 @@ input NullableNumericComparator {
 input BooleanComparator {
   eq:  Boolean
   neq: Boolean
+  in:  [Boolean!]
+}
+
+input NullableBooleanComparator {
+  eq:     Boolean
+  neq:    Boolean
+  in:     [Boolean!]
+  isNull: Boolean
 }
 
 input TimeComparator {

@@ -13,6 +13,8 @@ const (
 	TableBinaryKeyBadges      hook.TableName = "binary_key_badges"
 	TableBinaryKeyEvents      hook.TableName = "binary_key_events"
 	TableBinaryKeys           hook.TableName = "binary_keys"
+	TableBoolKeyeds           hook.TableName = "bool_keyed"
+	TableBoolKeyedNotes       hook.TableName = "bool_keyed_notes"
 	TableCategories           hook.TableName = "categories"
 	TableDigitLeadingColumns  hook.TableName = "digit_leading_columns"
 	TableDocuments            hook.TableName = "documents"

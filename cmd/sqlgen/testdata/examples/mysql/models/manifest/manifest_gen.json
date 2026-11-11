@@ -1775,6 +1775,927 @@
     },
     {
       "kind": "table",
+      "name": "BoolKeyed",
+      "table": "bool_keyed",
+      "file_prefix": "bool_keyed",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "k"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "k",
+            "go_field": "K",
+            "go_type": "bool"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "k",
+          "go_field": "K",
+          "go_type": "bool",
+          "db_type": "tinyint(1)",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Bool",
+          "comment": ""
+        },
+        {
+          "name": "label",
+          "go_field": "Label",
+          "go_type": "string",
+          "db_type": "varchar(50)",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [
+        {
+          "name": "bool_keyed_notes",
+          "kind": "o2m",
+          "target_entity": "BoolKeyedNote",
+          "fk": {
+            "table": "bool_keyed_notes",
+            "columns": [
+              "keyed_k"
+            ],
+            "references": [
+              "k"
+            ],
+            "constraint": "bool_keyed_notes_ibfk_1"
+          }
+        }
+      ],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "bool"
+              }
+            ],
+            "returns": "*BoolKeyed",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "mysql": "SELECT `k`, `label` FROM `bool_keyed` WHERE `k` = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetBoolKeyedsInput"
+              }
+            ],
+            "returns": "[]*BoolKeyed",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT `k`, `label` FROM `bool_keyed` WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "bool"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT EXISTS(SELECT 1 FROM `bool_keyed` WHERE `k` = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BoolKeyedFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT EXISTS(SELECT 1 FROM `bool_keyed` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BoolKeyedFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `bool_keyed` WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[BoolKeyedFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[BoolKeyed]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[BoolKeyedFilter]"
+              }
+            ],
+            "returns": "*Connection[BoolKeyed]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamBoolKeyedsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*BoolKeyed, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "mysql": "SELECT `k`, `label` FROM `bool_keyed` WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBoolKeyedInput"
+              }
+            ],
+            "returns": "*BoolKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bool_keyed` (<columns>) VALUES (<values>)"
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBoolKeyedInput"
+              }
+            ],
+            "returns": "[]*BoolKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bool_keyed` (<columns>) VALUES <values>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "bool"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateBoolKeyedInput"
+              }
+            ],
+            "returns": "*BoolKeyed",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "mysql": "UPDATE `bool_keyed` SET <set> WHERE `k` = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateBoolKeyedItem"
+              }
+            ],
+            "returns": "[]*BoolKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "mysql": "UPDATE `bool_keyed` SET <set> WHERE `k` = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BoolKeyedFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateBoolKeyedInput"
+              }
+            ],
+            "returns": "[]*BoolKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "mysql": "UPDATE `bool_keyed` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBoolKeyedInput"
+              },
+              {
+                "name": "target",
+                "type": "BoolKeyedConflictTarget"
+              }
+            ],
+            "returns": "*BoolKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated BoolKeyedConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bool_keyed` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBoolKeyedInput"
+              },
+              {
+                "name": "target",
+                "type": "BoolKeyedConflictTarget"
+              }
+            ],
+            "returns": "[]*BoolKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same BoolKeyedConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bool_keyed` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "CreateWithRelated",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBoolKeyedWithRelatedInput"
+              }
+            ],
+            "returns": "*BoolKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrNotFound",
+              "ErrAlreadyRelated",
+              "ErrNestedVerbConflict",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Create and, per eligible relationship (BoolKeyedNotes), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+          },
+          {
+            "name": "UpdateWithRelated",
+            "params": [
+              {
+                "name": "id",
+                "type": "bool"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateBoolKeyedWithRelatedInput"
+              }
+            ],
+            "returns": "*BoolKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrNotFound",
+              "ErrAlreadyRelated",
+              "ErrNestedVerbConflict",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Update and, per eligible relationship (BoolKeyedNotes), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+          },
+          {
+            "name": "UpsertWithRelated",
+            "params": [
+              {
+                "name": "input",
+                "type": "*UpsertBoolKeyedWithRelatedInput"
+              },
+              {
+                "name": "target",
+                "type": "BoolKeyedConflictTarget"
+              }
+            ],
+            "returns": "*BoolKeyed",
+            "errors": [
+              "ErrNilInput",
+              "ErrNotFound",
+              "ErrAlreadyRelated",
+              "ErrNestedVerbConflict",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Writes the parent and its nested rows in one transaction — a SAVEPOINT when ctx already holds one. Issues no statement of its own: it composes Upsert and, per eligible relationship (BoolKeyedNotes), the target's and junction's own client methods, so no sql_bodies entry. Each inner call fires its own hooks, events and cache invalidation under its own op; the nested method has none."
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "bool"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `bool_keyed` WHERE `k` = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]bool"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `bool_keyed` WHERE `k` IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BoolKeyedFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `bool_keyed` WHERE <filter>"
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "BoolKeyedFilter",
+        "fields": [
+          {
+            "name": "K",
+            "type": "*comparator.Bool"
+          },
+          {
+            "name": "Label",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "And",
+            "type": "[]*BoolKeyedFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*BoolKeyedFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "BoolKeyedSort",
+        "fields": [
+          "K",
+          "Label"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.BoolKeyeds().Get(ctx, true)",
+          "rows, err := client.BoolKeyeds().GetMany(ctx, &models.GetBoolKeyedsInput{Filter: &models.BoolKeyedFilter{Label: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.BoolKeyeds().Create(ctx, &models.CreateBoolKeyedInput{K: true, Label: \"example\"})",
+          "updated, err := client.BoolKeyeds().Update(ctx, true, &models.UpdateBoolKeyedInput{Label: omittable.Set(\"example\")})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
+      "name": "BoolKeyedNote",
+      "table": "bool_keyed_notes",
+      "file_prefix": "bool_keyed_note",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        },
+        {
+          "name": "keyed_k",
+          "columns": [
+            "keyed_k"
+          ],
+          "unique": false,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "bigint",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "keyed_k",
+          "go_field": "KeyedK",
+          "go_type": "*bool",
+          "db_type": "tinyint(1)",
+          "nullable": true,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.NullableBool",
+          "comment": ""
+        },
+        {
+          "name": "note",
+          "go_field": "Note",
+          "go_type": "string",
+          "db_type": "varchar(50)",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*BoolKeyedNote",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "mysql": "SELECT `id`, `keyed_k`, `note` FROM `bool_keyed_notes` WHERE `id` = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetBoolKeyedNotesInput"
+              }
+            ],
+            "returns": "[]*BoolKeyedNote",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT `id`, `keyed_k`, `note` FROM `bool_keyed_notes` WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT EXISTS(SELECT 1 FROM `bool_keyed_notes` WHERE `id` = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BoolKeyedNoteFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT EXISTS(SELECT 1 FROM `bool_keyed_notes` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BoolKeyedNoteFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `bool_keyed_notes` WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[BoolKeyedNoteFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[BoolKeyedNote]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[BoolKeyedNoteFilter]"
+              }
+            ],
+            "returns": "*Connection[BoolKeyedNote]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamBoolKeyedNotesInput"
+              }
+            ],
+            "returns": "iter.Seq2[*BoolKeyedNote, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "mysql": "SELECT `id`, `keyed_k`, `note` FROM `bool_keyed_notes` WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBoolKeyedNoteInput"
+              }
+            ],
+            "returns": "*BoolKeyedNote",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bool_keyed_notes` (<columns>) VALUES (<values>)"
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBoolKeyedNoteInput"
+              }
+            ],
+            "returns": "[]*BoolKeyedNote",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bool_keyed_notes` (<columns>) VALUES <values>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateBoolKeyedNoteInput"
+              }
+            ],
+            "returns": "*BoolKeyedNote",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "mysql": "UPDATE `bool_keyed_notes` SET <set> WHERE `id` = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateBoolKeyedNoteItem"
+              }
+            ],
+            "returns": "[]*BoolKeyedNote",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "mysql": "UPDATE `bool_keyed_notes` SET <set> WHERE `id` = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BoolKeyedNoteFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateBoolKeyedNoteInput"
+              }
+            ],
+            "returns": "[]*BoolKeyedNote",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "mysql": "UPDATE `bool_keyed_notes` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBoolKeyedNoteInput"
+              },
+              {
+                "name": "target",
+                "type": "BoolKeyedNoteConflictTarget"
+              }
+            ],
+            "returns": "*BoolKeyedNote",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated BoolKeyedNoteConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bool_keyed_notes` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBoolKeyedNoteInput"
+              },
+              {
+                "name": "target",
+                "type": "BoolKeyedNoteConflictTarget"
+              }
+            ],
+            "returns": "[]*BoolKeyedNote",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same BoolKeyedNoteConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bool_keyed_notes` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `bool_keyed_notes` WHERE `id` = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `bool_keyed_notes` WHERE `id` IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BoolKeyedNoteFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `bool_keyed_notes` WHERE <filter>"
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "BoolKeyedNoteFilter",
+        "fields": [
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "KeyedK",
+            "type": "*comparator.NullableBool"
+          },
+          {
+            "name": "Note",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "And",
+            "type": "[]*BoolKeyedNoteFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*BoolKeyedNoteFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "BoolKeyedNoteSort",
+        "fields": [
+          "ID",
+          "KeyedK",
+          "Note"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.BoolKeyedNotes().Get(ctx, 1)",
+          "rows, err := client.BoolKeyedNotes().GetMany(ctx, &models.GetBoolKeyedNotesInput{Filter: &models.BoolKeyedNoteFilter{Note: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.BoolKeyedNotes().Create(ctx, &models.CreateBoolKeyedNoteInput{Note: \"example\"})",
+          "updated, err := client.BoolKeyedNotes().Update(ctx, 1, &models.UpdateBoolKeyedNoteInput{KeyedK: omittable.Set(new(true))})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
       "name": "Category",
       "table": "categories",
       "file_prefix": "category",

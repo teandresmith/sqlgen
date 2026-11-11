@@ -159,6 +159,45 @@ func (s BinaryKeyEventSorter) Label(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "label", Direction: direction}
 }
 
+// BoolKeyedSorter provides type-safe sort helpers for the BoolKeyed entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BoolKeyedSorter struct{}
+
+// NewBoolKeyedSorter returns a new BoolKeyedSorter.
+func NewBoolKeyedSorter() BoolKeyedSorter { return BoolKeyedSorter{} }
+
+// K returns a sort for the k column in the given direction.
+func (s BoolKeyedSorter) K(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "k", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s BoolKeyedSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// BoolKeyedNoteSorter provides type-safe sort helpers for the BoolKeyedNote entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BoolKeyedNoteSorter struct{}
+
+// NewBoolKeyedNoteSorter returns a new BoolKeyedNoteSorter.
+func NewBoolKeyedNoteSorter() BoolKeyedNoteSorter { return BoolKeyedNoteSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s BoolKeyedNoteSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// KeyedK returns a sort for the keyed_k column in the given direction.
+func (s BoolKeyedNoteSorter) KeyedK(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "keyed_k", Direction: direction}
+}
+
+// Note returns a sort for the note column in the given direction.
+func (s BoolKeyedNoteSorter) Note(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "note", Direction: direction}
+}
+
 // CategorySorter provides type-safe sort helpers for the Category entity.
 // Each method returns a sql.Sort for the corresponding column.
 type CategorySorter struct{}

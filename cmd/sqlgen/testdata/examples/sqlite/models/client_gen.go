@@ -69,6 +69,8 @@ type Client struct {
 	binaryKey          *binaryKeyClient
 	binaryKeyBadge     *binaryKeyBadgeClient
 	binaryKeyEvent     *binaryKeyEventClient
+	boolKeyed          *boolKeyedClient
+	boolKeyedNote      *boolKeyedNoteClient
 	category           *categoryClient
 	categoryStat       *categoryStatClient
 	digitLeadingColumn *digitLeadingColumnClient
@@ -116,6 +118,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		binaryKey:          newBinaryKeyClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		binaryKeyBadge:     newBinaryKeyBadgeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		binaryKeyEvent:     newBinaryKeyEventClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		boolKeyed:          newBoolKeyedClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		boolKeyedNote:      newBoolKeyedNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		category:           newCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		categoryStat:       newCategoryStatClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		digitLeadingColumn: newDigitLeadingColumnClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -151,6 +155,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.asset.callbackMode = options.callbackMode
 	c.badge.callbackMode = options.callbackMode
 	c.binaryKey.callbackMode = options.callbackMode
+	c.boolKeyed.callbackMode = options.callbackMode
 	c.category.callbackMode = options.callbackMode
 	c.document.callbackMode = options.callbackMode
 	c.keyClassParent.callbackMode = options.callbackMode
@@ -171,6 +176,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.binaryKey.binaryKeyEventClient = c.binaryKeyEvent
 	c.binaryKey.badgeClient = c.badge
 	c.binaryKey.binaryKeyBadgeClient = c.binaryKeyBadge
+	c.boolKeyed.boolKeyedNoteClient = c.boolKeyedNote
 	c.category.productClient = c.product
 	c.category.userClient = c.user
 	c.category.userCategoryClient = c.userCategory
@@ -226,6 +232,16 @@ func (c *Client) BinaryKeyBadges() BinaryKeyBadgeClient {
 // BinaryKeyEvents returns the BinaryKeyEventClient for BinaryKeyEvent operations.
 func (c *Client) BinaryKeyEvents() BinaryKeyEventClient {
 	return c.binaryKeyEvent
+}
+
+// BoolKeyeds returns the BoolKeyedClient for BoolKeyed operations.
+func (c *Client) BoolKeyeds() BoolKeyedClient {
+	return c.boolKeyed
+}
+
+// BoolKeyedNotes returns the BoolKeyedNoteClient for BoolKeyedNote operations.
+func (c *Client) BoolKeyedNotes() BoolKeyedNoteClient {
+	return c.boolKeyedNote
 }
 
 // Categories returns the CategoryClient for Category operations.

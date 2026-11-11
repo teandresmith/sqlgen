@@ -127,6 +127,7 @@ func isRelationshipField(typeName, field string) bool {
 		"BinaryKey.badges",
 		"BinaryKey.binaryKeyEvents",
 		"BinaryKey.events",
+		"BoolKeyed.boolKeyedNotes",
 		"Category.products",
 		"Category.users",
 		"Document.assets",

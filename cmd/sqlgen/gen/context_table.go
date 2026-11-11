@@ -2480,8 +2480,8 @@ func resolveGenericComparator(col ColumnContext, baseGoType string) string {
 // still had `&comparator.ID{…}` assigned into its `*comparator.Opaque[[]byte]`
 // field and the generated package stopped compiling. The arms below mirror
 // resolveGenericComparator's order exactly; the two must move together. The
-// last arm mirrors resolveSimpleComparator's time arm, which sits ahead of its
-// key arm for the same reason.
+// last two arms mirror resolveSimpleComparator's time and bool arms, which sit
+// ahead of its key arm for the same reason.
 //
 // IsSet and IsSlice columns are not modelled: the Go type alone does not
 // identify them, and neither compiles as a key.
@@ -2501,6 +2501,8 @@ func pkComparatorFamily(goType string) (family, typeParam string) {
 		return "Opaque", base
 	case isTimeKeyGoType(base):
 		return "Time", "time.Time"
+	case base == "bool":
+		return "Bool", ""
 	}
 	return "ID", ""
 }
@@ -2606,6 +2608,10 @@ func resolveSimpleComparator(col ColumnContext, baseGoType string, dialect confi
 	case baseGoType == "time.Time", baseGoType == dateTimeGoType, baseGoType == "types.NullDateTime":
 		// Ahead of the key arm: a time key binds as a time, not as text (§11.2).
 		return "Time"
+	case baseGoType == "bool":
+		// Ahead of the key arm for the same reason: MySQL and SQLite cannot
+		// compare a boolean column with the text "true".
+		return "Bool"
 	case (col.PrimaryKey || col.FKReference != nil) && (baseGoType == "string" || col.FKConvert != gotype.FKStringNone):
 		return "ID"
 	case strings.EqualFold(col.SQLType, "uuid"):
@@ -2622,8 +2628,6 @@ func resolveSimpleComparator(col ColumnContext, baseGoType string, dialect confi
 		return "ID"
 	case baseGoType == "string":
 		return "String"
-	case baseGoType == "bool":
-		return "Bool"
 	case baseGoType == "map[string]any", baseGoType == "types.JSON":
 		// json/jsonb columns resolve to types.JSON via gotype (PRD §7.6); the original map[string]any arm stays for overrides or
 		// direct configs that map a column to the bare Go type.

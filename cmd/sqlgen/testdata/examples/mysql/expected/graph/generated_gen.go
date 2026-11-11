@@ -127,6 +127,56 @@ type ComplexityRoot struct {
 		TotalCount func(childComplexity int) int
 	}
 
+	BoolKeyed struct {
+		BoolKeyedNotes func(childComplexity int) int
+		K              func(childComplexity int) int
+		Label          func(childComplexity int) int
+	}
+
+	BoolKeyedConnection struct {
+		Edges      func(childComplexity int) int
+		PageInfo   func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	BoolKeyedEdge struct {
+		Cursor func(childComplexity int) int
+		Node   func(childComplexity int) int
+	}
+
+	BoolKeyedListResult struct {
+		HasMore    func(childComplexity int) int
+		Items      func(childComplexity int) int
+		Limit      func(childComplexity int) int
+		Offset     func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	BoolKeyedNote struct {
+		ID     func(childComplexity int) int
+		KeyedK func(childComplexity int) int
+		Note   func(childComplexity int) int
+	}
+
+	BoolKeyedNoteConnection struct {
+		Edges      func(childComplexity int) int
+		PageInfo   func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	BoolKeyedNoteEdge struct {
+		Cursor func(childComplexity int) int
+		Node   func(childComplexity int) int
+	}
+
+	BoolKeyedNoteListResult struct {
+		HasMore    func(childComplexity int) int
+		Items      func(childComplexity int) int
+		Limit      func(childComplexity int) int
+		Offset     func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
 	Category struct {
 		Description func(childComplexity int) int
 		ID          func(childComplexity int) int
@@ -269,6 +319,11 @@ type ComplexityRoot struct {
 		CreateAssetDocumentLinks   func(childComplexity int, inputs []*model.CreateAssetDocumentLinkInput) int
 		CreateAssetWithRelated     func(childComplexity int, input model.CreateAssetWithRelatedInput) int
 		CreateAssets               func(childComplexity int, inputs []*model.CreateAssetInput) int
+		CreateBoolKeyed            func(childComplexity int, input model.CreateBoolKeyedInput) int
+		CreateBoolKeyedNote        func(childComplexity int, input model.CreateBoolKeyedNoteInput) int
+		CreateBoolKeyedNotes       func(childComplexity int, inputs []*model.CreateBoolKeyedNoteInput) int
+		CreateBoolKeyedWithRelated func(childComplexity int, input model.CreateBoolKeyedWithRelatedInput) int
+		CreateBoolKeyeds           func(childComplexity int, inputs []*model.CreateBoolKeyedInput) int
 		CreateCategories           func(childComplexity int, inputs []*model.CreateCategoryInput) int
 		CreateCategory             func(childComplexity int, input model.CreateCategoryInput) int
 		CreateCategoryWithRelated  func(childComplexity int, input model.CreateCategoryWithRelatedInput) int
@@ -309,6 +364,8 @@ type ComplexityRoot struct {
 		CreateWarehouses           func(childComplexity int, inputs []*model.CreateWarehouseInput) int
 		DeleteAsset                func(childComplexity int, id int) int
 		DeleteAssetDocumentLink    func(childComplexity int, assetID int, documentID int) int
+		DeleteBoolKeyed            func(childComplexity int, k bool) int
+		DeleteBoolKeyedNote        func(childComplexity int, id int) int
 		DeleteCategory             func(childComplexity int, id int) int
 		DeleteDefaultOnlyRow       func(childComplexity int, id int) int
 		DeleteDocument             func(childComplexity int, id int) int
@@ -336,6 +393,11 @@ type ComplexityRoot struct {
 		UpdateAsset                func(childComplexity int, id int, input model.UpdateAssetInput) int
 		UpdateAssetWithRelated     func(childComplexity int, id int, input model.UpdateAssetWithRelatedInput) int
 		UpdateAssets               func(childComplexity int, filter model.AssetFilter, input model.UpdateAssetInput) int
+		UpdateBoolKeyed            func(childComplexity int, k bool, input model.UpdateBoolKeyedInput) int
+		UpdateBoolKeyedNote        func(childComplexity int, id int, input model.UpdateBoolKeyedNoteInput) int
+		UpdateBoolKeyedNotes       func(childComplexity int, filter model.BoolKeyedNoteFilter, input model.UpdateBoolKeyedNoteInput) int
+		UpdateBoolKeyedWithRelated func(childComplexity int, k bool, input model.UpdateBoolKeyedWithRelatedInput) int
+		UpdateBoolKeyeds           func(childComplexity int, filter model.BoolKeyedFilter, input model.UpdateBoolKeyedInput) int
 		UpdateCategories           func(childComplexity int, filter model.CategoryFilter, input model.UpdateCategoryInput) int
 		UpdateCategory             func(childComplexity int, id int, input model.UpdateCategoryInput) int
 		UpdateCategoryWithRelated  func(childComplexity int, id int, input model.UpdateCategoryWithRelatedInput) int
@@ -378,6 +440,9 @@ type ComplexityRoot struct {
 		UpsertAsset                func(childComplexity int, input model.CreateAssetInput) int
 		UpsertAssetDocumentLink    func(childComplexity int, input model.CreateAssetDocumentLinkInput) int
 		UpsertAssetWithRelated     func(childComplexity int, input model.UpsertAssetWithRelatedInput, conflictTarget model.AssetConflictTarget) int
+		UpsertBoolKeyed            func(childComplexity int, input model.CreateBoolKeyedInput) int
+		UpsertBoolKeyedNote        func(childComplexity int, input model.CreateBoolKeyedNoteInput) int
+		UpsertBoolKeyedWithRelated func(childComplexity int, input model.UpsertBoolKeyedWithRelatedInput, conflictTarget model.BoolKeyedConflictTarget) int
 		UpsertCategory             func(childComplexity int, input model.CreateCategoryInput) int
 		UpsertCategoryWithRelated  func(childComplexity int, input model.UpsertCategoryWithRelatedInput, conflictTarget model.CategoryConflictTarget) int
 		UpsertDefaultOnlyRow       func(childComplexity int, input model.CreateDefaultOnlyRowInput) int
@@ -590,6 +655,12 @@ type ComplexityRoot struct {
 		AssetDocumentLinks    func(childComplexity int, filter *model.AssetDocumentLinkFilter, first *int, after *string, last *int, before *string) int
 		AssetList             func(childComplexity int, filter *model.AssetFilter, sort []*model.AssetSort, limit *int, offset *int) int
 		Assets                func(childComplexity int, filter *model.AssetFilter, first *int, after *string, last *int, before *string) int
+		BoolKeyed             func(childComplexity int, k bool) int
+		BoolKeyedList         func(childComplexity int, filter *model.BoolKeyedFilter, sort []*model.BoolKeyedSort, limit *int, offset *int) int
+		BoolKeyedNote         func(childComplexity int, id int) int
+		BoolKeyedNoteList     func(childComplexity int, filter *model.BoolKeyedNoteFilter, sort []*model.BoolKeyedNoteSort, limit *int, offset *int) int
+		BoolKeyedNotes        func(childComplexity int, filter *model.BoolKeyedNoteFilter, first *int, after *string, last *int, before *string) int
+		BoolKeyeds            func(childComplexity int, filter *model.BoolKeyedFilter, first *int, after *string, last *int, before *string) int
 		Categories            func(childComplexity int, filter *model.CategoryFilter, first *int, after *string, last *int, before *string) int
 		Category              func(childComplexity int, id int) int
 		CategoryList          func(childComplexity int, filter *model.CategoryFilter, sort []*model.CategorySort, limit *int, offset *int) int
@@ -900,6 +971,21 @@ type MutationResolver interface {
 	CreateAssetWithRelated(ctx context.Context, input model.CreateAssetWithRelatedInput) (*models.Asset, error)
 	UpdateAssetWithRelated(ctx context.Context, id int, input model.UpdateAssetWithRelatedInput) (*models.Asset, error)
 	UpsertAssetWithRelated(ctx context.Context, input model.UpsertAssetWithRelatedInput, conflictTarget model.AssetConflictTarget) (*models.Asset, error)
+	CreateBoolKeyed(ctx context.Context, input model.CreateBoolKeyedInput) (*models.BoolKeyed, error)
+	CreateBoolKeyeds(ctx context.Context, inputs []*model.CreateBoolKeyedInput) ([]*models.BoolKeyed, error)
+	UpdateBoolKeyed(ctx context.Context, k bool, input model.UpdateBoolKeyedInput) (*models.BoolKeyed, error)
+	UpdateBoolKeyeds(ctx context.Context, filter model.BoolKeyedFilter, input model.UpdateBoolKeyedInput) ([]*models.BoolKeyed, error)
+	UpsertBoolKeyed(ctx context.Context, input model.CreateBoolKeyedInput) (*models.BoolKeyed, error)
+	DeleteBoolKeyed(ctx context.Context, k bool) (bool, error)
+	CreateBoolKeyedWithRelated(ctx context.Context, input model.CreateBoolKeyedWithRelatedInput) (*models.BoolKeyed, error)
+	UpdateBoolKeyedWithRelated(ctx context.Context, k bool, input model.UpdateBoolKeyedWithRelatedInput) (*models.BoolKeyed, error)
+	UpsertBoolKeyedWithRelated(ctx context.Context, input model.UpsertBoolKeyedWithRelatedInput, conflictTarget model.BoolKeyedConflictTarget) (*models.BoolKeyed, error)
+	CreateBoolKeyedNote(ctx context.Context, input model.CreateBoolKeyedNoteInput) (*models.BoolKeyedNote, error)
+	CreateBoolKeyedNotes(ctx context.Context, inputs []*model.CreateBoolKeyedNoteInput) ([]*models.BoolKeyedNote, error)
+	UpdateBoolKeyedNote(ctx context.Context, id int, input model.UpdateBoolKeyedNoteInput) (*models.BoolKeyedNote, error)
+	UpdateBoolKeyedNotes(ctx context.Context, filter model.BoolKeyedNoteFilter, input model.UpdateBoolKeyedNoteInput) ([]*models.BoolKeyedNote, error)
+	UpsertBoolKeyedNote(ctx context.Context, input model.CreateBoolKeyedNoteInput) (*models.BoolKeyedNote, error)
+	DeleteBoolKeyedNote(ctx context.Context, id int) (bool, error)
 	CreateCategory(ctx context.Context, input model.CreateCategoryInput) (*models.Category, error)
 	CreateCategories(ctx context.Context, inputs []*model.CreateCategoryInput) ([]*models.Category, error)
 	UpdateCategory(ctx context.Context, id int, input model.UpdateCategoryInput) (*models.Category, error)
@@ -1028,6 +1114,12 @@ type QueryResolver interface {
 	Asset(ctx context.Context, id int) (*models.Asset, error)
 	Assets(ctx context.Context, filter *model.AssetFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Asset], error)
 	AssetList(ctx context.Context, filter *model.AssetFilter, sort []*model.AssetSort, limit *int, offset *int) (*models.PaginateResult[models.Asset], error)
+	BoolKeyed(ctx context.Context, k bool) (*models.BoolKeyed, error)
+	BoolKeyeds(ctx context.Context, filter *model.BoolKeyedFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BoolKeyed], error)
+	BoolKeyedList(ctx context.Context, filter *model.BoolKeyedFilter, sort []*model.BoolKeyedSort, limit *int, offset *int) (*models.PaginateResult[models.BoolKeyed], error)
+	BoolKeyedNote(ctx context.Context, id int) (*models.BoolKeyedNote, error)
+	BoolKeyedNotes(ctx context.Context, filter *model.BoolKeyedNoteFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BoolKeyedNote], error)
+	BoolKeyedNoteList(ctx context.Context, filter *model.BoolKeyedNoteFilter, sort []*model.BoolKeyedNoteSort, limit *int, offset *int) (*models.PaginateResult[models.BoolKeyedNote], error)
 	Category(ctx context.Context, id int) (*models.Category, error)
 	Categories(ctx context.Context, filter *model.CategoryFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Category], error)
 	CategoryList(ctx context.Context, filter *model.CategoryFilter, sort []*model.CategorySort, limit *int, offset *int) (*models.PaginateResult[models.Category], error)
@@ -1402,6 +1494,170 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.AssetListResult.TotalCount(childComplexity), true
+
+	case "BoolKeyed.boolKeyedNotes":
+		if e.ComplexityRoot.BoolKeyed.BoolKeyedNotes == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyed.BoolKeyedNotes(childComplexity), true
+	case "BoolKeyed.k":
+		if e.ComplexityRoot.BoolKeyed.K == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyed.K(childComplexity), true
+	case "BoolKeyed.label":
+		if e.ComplexityRoot.BoolKeyed.Label == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyed.Label(childComplexity), true
+
+	case "BoolKeyedConnection.edges":
+		if e.ComplexityRoot.BoolKeyedConnection.Edges == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedConnection.Edges(childComplexity), true
+	case "BoolKeyedConnection.pageInfo":
+		if e.ComplexityRoot.BoolKeyedConnection.PageInfo == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedConnection.PageInfo(childComplexity), true
+	case "BoolKeyedConnection.totalCount":
+		if e.ComplexityRoot.BoolKeyedConnection.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedConnection.TotalCount(childComplexity), true
+
+	case "BoolKeyedEdge.cursor":
+		if e.ComplexityRoot.BoolKeyedEdge.Cursor == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedEdge.Cursor(childComplexity), true
+	case "BoolKeyedEdge.node":
+		if e.ComplexityRoot.BoolKeyedEdge.Node == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedEdge.Node(childComplexity), true
+
+	case "BoolKeyedListResult.hasMore":
+		if e.ComplexityRoot.BoolKeyedListResult.HasMore == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedListResult.HasMore(childComplexity), true
+	case "BoolKeyedListResult.items":
+		if e.ComplexityRoot.BoolKeyedListResult.Items == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedListResult.Items(childComplexity), true
+	case "BoolKeyedListResult.limit":
+		if e.ComplexityRoot.BoolKeyedListResult.Limit == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedListResult.Limit(childComplexity), true
+	case "BoolKeyedListResult.offset":
+		if e.ComplexityRoot.BoolKeyedListResult.Offset == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedListResult.Offset(childComplexity), true
+	case "BoolKeyedListResult.totalCount":
+		if e.ComplexityRoot.BoolKeyedListResult.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedListResult.TotalCount(childComplexity), true
+
+	case "BoolKeyedNote.id":
+		if e.ComplexityRoot.BoolKeyedNote.ID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNote.ID(childComplexity), true
+	case "BoolKeyedNote.keyedK":
+		if e.ComplexityRoot.BoolKeyedNote.KeyedK == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNote.KeyedK(childComplexity), true
+	case "BoolKeyedNote.note":
+		if e.ComplexityRoot.BoolKeyedNote.Note == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNote.Note(childComplexity), true
+
+	case "BoolKeyedNoteConnection.edges":
+		if e.ComplexityRoot.BoolKeyedNoteConnection.Edges == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNoteConnection.Edges(childComplexity), true
+	case "BoolKeyedNoteConnection.pageInfo":
+		if e.ComplexityRoot.BoolKeyedNoteConnection.PageInfo == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNoteConnection.PageInfo(childComplexity), true
+	case "BoolKeyedNoteConnection.totalCount":
+		if e.ComplexityRoot.BoolKeyedNoteConnection.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNoteConnection.TotalCount(childComplexity), true
+
+	case "BoolKeyedNoteEdge.cursor":
+		if e.ComplexityRoot.BoolKeyedNoteEdge.Cursor == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNoteEdge.Cursor(childComplexity), true
+	case "BoolKeyedNoteEdge.node":
+		if e.ComplexityRoot.BoolKeyedNoteEdge.Node == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNoteEdge.Node(childComplexity), true
+
+	case "BoolKeyedNoteListResult.hasMore":
+		if e.ComplexityRoot.BoolKeyedNoteListResult.HasMore == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNoteListResult.HasMore(childComplexity), true
+	case "BoolKeyedNoteListResult.items":
+		if e.ComplexityRoot.BoolKeyedNoteListResult.Items == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNoteListResult.Items(childComplexity), true
+	case "BoolKeyedNoteListResult.limit":
+		if e.ComplexityRoot.BoolKeyedNoteListResult.Limit == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNoteListResult.Limit(childComplexity), true
+	case "BoolKeyedNoteListResult.offset":
+		if e.ComplexityRoot.BoolKeyedNoteListResult.Offset == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNoteListResult.Offset(childComplexity), true
+	case "BoolKeyedNoteListResult.totalCount":
+		if e.ComplexityRoot.BoolKeyedNoteListResult.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BoolKeyedNoteListResult.TotalCount(childComplexity), true
 
 	case "Category.description":
 		if e.ComplexityRoot.Category.Description == nil {
@@ -1944,6 +2200,61 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.CreateAssets(childComplexity, args["inputs"].([]*model.CreateAssetInput)), true
+	case "Mutation.createBoolKeyed":
+		if e.ComplexityRoot.Mutation.CreateBoolKeyed == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createBoolKeyed_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateBoolKeyed(childComplexity, args["input"].(model.CreateBoolKeyedInput)), true
+	case "Mutation.createBoolKeyedNote":
+		if e.ComplexityRoot.Mutation.CreateBoolKeyedNote == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createBoolKeyedNote_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateBoolKeyedNote(childComplexity, args["input"].(model.CreateBoolKeyedNoteInput)), true
+	case "Mutation.createBoolKeyedNotes":
+		if e.ComplexityRoot.Mutation.CreateBoolKeyedNotes == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createBoolKeyedNotes_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateBoolKeyedNotes(childComplexity, args["inputs"].([]*model.CreateBoolKeyedNoteInput)), true
+	case "Mutation.createBoolKeyedWithRelated":
+		if e.ComplexityRoot.Mutation.CreateBoolKeyedWithRelated == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createBoolKeyedWithRelated_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateBoolKeyedWithRelated(childComplexity, args["input"].(model.CreateBoolKeyedWithRelatedInput)), true
+	case "Mutation.createBoolKeyeds":
+		if e.ComplexityRoot.Mutation.CreateBoolKeyeds == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createBoolKeyeds_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateBoolKeyeds(childComplexity, args["inputs"].([]*model.CreateBoolKeyedInput)), true
 	case "Mutation.createCategories":
 		if e.ComplexityRoot.Mutation.CreateCategories == nil {
 			break
@@ -2384,6 +2695,28 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.DeleteAssetDocumentLink(childComplexity, args["assetID"].(int), args["documentID"].(int)), true
+	case "Mutation.deleteBoolKeyed":
+		if e.ComplexityRoot.Mutation.DeleteBoolKeyed == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_deleteBoolKeyed_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.DeleteBoolKeyed(childComplexity, args["k"].(bool)), true
+	case "Mutation.deleteBoolKeyedNote":
+		if e.ComplexityRoot.Mutation.DeleteBoolKeyedNote == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_deleteBoolKeyedNote_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.DeleteBoolKeyedNote(childComplexity, args["id"].(int)), true
 	case "Mutation.deleteCategory":
 		if e.ComplexityRoot.Mutation.DeleteCategory == nil {
 			break
@@ -2681,6 +3014,61 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.UpdateAssets(childComplexity, args["filter"].(model.AssetFilter), args["input"].(model.UpdateAssetInput)), true
+	case "Mutation.updateBoolKeyed":
+		if e.ComplexityRoot.Mutation.UpdateBoolKeyed == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateBoolKeyed_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateBoolKeyed(childComplexity, args["k"].(bool), args["input"].(model.UpdateBoolKeyedInput)), true
+	case "Mutation.updateBoolKeyedNote":
+		if e.ComplexityRoot.Mutation.UpdateBoolKeyedNote == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateBoolKeyedNote_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateBoolKeyedNote(childComplexity, args["id"].(int), args["input"].(model.UpdateBoolKeyedNoteInput)), true
+	case "Mutation.updateBoolKeyedNotes":
+		if e.ComplexityRoot.Mutation.UpdateBoolKeyedNotes == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateBoolKeyedNotes_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateBoolKeyedNotes(childComplexity, args["filter"].(model.BoolKeyedNoteFilter), args["input"].(model.UpdateBoolKeyedNoteInput)), true
+	case "Mutation.updateBoolKeyedWithRelated":
+		if e.ComplexityRoot.Mutation.UpdateBoolKeyedWithRelated == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateBoolKeyedWithRelated_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateBoolKeyedWithRelated(childComplexity, args["k"].(bool), args["input"].(model.UpdateBoolKeyedWithRelatedInput)), true
+	case "Mutation.updateBoolKeyeds":
+		if e.ComplexityRoot.Mutation.UpdateBoolKeyeds == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateBoolKeyeds_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateBoolKeyeds(childComplexity, args["filter"].(model.BoolKeyedFilter), args["input"].(model.UpdateBoolKeyedInput)), true
 	case "Mutation.updateCategories":
 		if e.ComplexityRoot.Mutation.UpdateCategories == nil {
 			break
@@ -3143,6 +3531,39 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.UpsertAssetWithRelated(childComplexity, args["input"].(model.UpsertAssetWithRelatedInput), args["conflictTarget"].(model.AssetConflictTarget)), true
+	case "Mutation.upsertBoolKeyed":
+		if e.ComplexityRoot.Mutation.UpsertBoolKeyed == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_upsertBoolKeyed_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpsertBoolKeyed(childComplexity, args["input"].(model.CreateBoolKeyedInput)), true
+	case "Mutation.upsertBoolKeyedNote":
+		if e.ComplexityRoot.Mutation.UpsertBoolKeyedNote == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_upsertBoolKeyedNote_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpsertBoolKeyedNote(childComplexity, args["input"].(model.CreateBoolKeyedNoteInput)), true
+	case "Mutation.upsertBoolKeyedWithRelated":
+		if e.ComplexityRoot.Mutation.UpsertBoolKeyedWithRelated == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_upsertBoolKeyedWithRelated_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpsertBoolKeyedWithRelated(childComplexity, args["input"].(model.UpsertBoolKeyedWithRelatedInput), args["conflictTarget"].(model.BoolKeyedConflictTarget)), true
 	case "Mutation.upsertCategory":
 		if e.ComplexityRoot.Mutation.UpsertCategory == nil {
 			break
@@ -4128,6 +4549,72 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.Assets(childComplexity, args["filter"].(*model.AssetFilter), args["first"].(*int), args["after"].(*string), args["last"].(*int), args["before"].(*string)), true
+	case "Query.boolKeyed":
+		if e.ComplexityRoot.Query.BoolKeyed == nil {
+			break
+		}
+
+		args, err := ec.field_Query_boolKeyed_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BoolKeyed(childComplexity, args["k"].(bool)), true
+	case "Query.boolKeyedList":
+		if e.ComplexityRoot.Query.BoolKeyedList == nil {
+			break
+		}
+
+		args, err := ec.field_Query_boolKeyedList_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BoolKeyedList(childComplexity, args["filter"].(*model.BoolKeyedFilter), args["sort"].([]*model.BoolKeyedSort), args["limit"].(*int), args["offset"].(*int)), true
+	case "Query.boolKeyedNote":
+		if e.ComplexityRoot.Query.BoolKeyedNote == nil {
+			break
+		}
+
+		args, err := ec.field_Query_boolKeyedNote_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BoolKeyedNote(childComplexity, args["id"].(int)), true
+	case "Query.boolKeyedNoteList":
+		if e.ComplexityRoot.Query.BoolKeyedNoteList == nil {
+			break
+		}
+
+		args, err := ec.field_Query_boolKeyedNoteList_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BoolKeyedNoteList(childComplexity, args["filter"].(*model.BoolKeyedNoteFilter), args["sort"].([]*model.BoolKeyedNoteSort), args["limit"].(*int), args["offset"].(*int)), true
+	case "Query.boolKeyedNotes":
+		if e.ComplexityRoot.Query.BoolKeyedNotes == nil {
+			break
+		}
+
+		args, err := ec.field_Query_boolKeyedNotes_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BoolKeyedNotes(childComplexity, args["filter"].(*model.BoolKeyedNoteFilter), args["first"].(*int), args["after"].(*string), args["last"].(*int), args["before"].(*string)), true
+	case "Query.boolKeyeds":
+		if e.ComplexityRoot.Query.BoolKeyeds == nil {
+			break
+		}
+
+		args, err := ec.field_Query_boolKeyeds_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BoolKeyeds(childComplexity, args["filter"].(*model.BoolKeyedFilter), args["first"].(*int), args["after"].(*string), args["last"].(*int), args["before"].(*string)), true
 	case "Query.categories":
 		if e.ComplexityRoot.Query.Categories == nil {
 			break
@@ -5572,6 +6059,13 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputAssetPrimaryDocumentCreateNested,
 		ec.unmarshalInputAssetPrimaryDocumentUpdateNested,
 		ec.unmarshalInputAssetSort,
+		ec.unmarshalInputBoolKeyedBoolKeyedNotesCreateInput,
+		ec.unmarshalInputBoolKeyedBoolKeyedNotesCreateNested,
+		ec.unmarshalInputBoolKeyedBoolKeyedNotesUpdateNested,
+		ec.unmarshalInputBoolKeyedFilter,
+		ec.unmarshalInputBoolKeyedNoteFilter,
+		ec.unmarshalInputBoolKeyedNoteSort,
+		ec.unmarshalInputBoolKeyedSort,
 		ec.unmarshalInputBooleanComparator,
 		ec.unmarshalInputCategoryFilter,
 		ec.unmarshalInputCategoryProductsCreateInput,
@@ -5584,6 +6078,9 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputCreateAssetDocumentLinkInput,
 		ec.unmarshalInputCreateAssetInput,
 		ec.unmarshalInputCreateAssetWithRelatedInput,
+		ec.unmarshalInputCreateBoolKeyedInput,
+		ec.unmarshalInputCreateBoolKeyedNoteInput,
+		ec.unmarshalInputCreateBoolKeyedWithRelatedInput,
 		ec.unmarshalInputCreateCategoryInput,
 		ec.unmarshalInputCreateCategoryWithRelatedInput,
 		ec.unmarshalInputCreateDefaultOnlyRowInput,
@@ -5617,6 +6114,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputJSONComparator,
 		ec.unmarshalInputKeyOnlyRowFilter,
 		ec.unmarshalInputKeyOnlyRowSort,
+		ec.unmarshalInputNullableBooleanComparator,
 		ec.unmarshalInputNullableBytesComparator,
 		ec.unmarshalInputNullableDecimalComparator,
 		ec.unmarshalInputNullableJSONComparator,
@@ -5661,6 +6159,9 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputUpdateArticleInput,
 		ec.unmarshalInputUpdateAssetInput,
 		ec.unmarshalInputUpdateAssetWithRelatedInput,
+		ec.unmarshalInputUpdateBoolKeyedInput,
+		ec.unmarshalInputUpdateBoolKeyedNoteInput,
+		ec.unmarshalInputUpdateBoolKeyedWithRelatedInput,
 		ec.unmarshalInputUpdateCategoryInput,
 		ec.unmarshalInputUpdateCategoryWithRelatedInput,
 		ec.unmarshalInputUpdateDefaultOnlyRowInput,
@@ -5684,6 +6185,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputUpdateUserWithRelatedInput,
 		ec.unmarshalInputUpdateWarehouseInput,
 		ec.unmarshalInputUpsertAssetWithRelatedInput,
+		ec.unmarshalInputUpsertBoolKeyedWithRelatedInput,
 		ec.unmarshalInputUpsertCategoryWithRelatedInput,
 		ec.unmarshalInputUpsertDocumentWithRelatedInput,
 		ec.unmarshalInputUpsertOrderWithRelatedInput,
@@ -5782,7 +6284,7 @@ func newExecutionContext(
 	}
 }
 
-//go:embed "article_gen.graphqls" "asset_document_link_gen.graphqls" "asset_gen.graphqls" "category_gen.graphqls" "category_stat_gen.graphqls" "default_only_row_gen.graphqls" "document_gen.graphqls" "key_only_row_gen.graphqls" "order_gen.graphqls" "order_item_gen.graphqls" "product_gen.graphqls" "product_summary_gen.graphqls" "product_tag_label_gen.graphqls" "profile_gen.graphqls" "shared_gen.graphqls" "slugged_row_gen.graphqls" "tag_gen.graphqls" "time_keyed_gen.graphqls" "time_keyed_note_gen.graphqls" "user_category_gen.graphqls" "user_event_gen.graphqls" "user_gen.graphqls" "warehouse_gen.graphqls"
+//go:embed "article_gen.graphqls" "asset_document_link_gen.graphqls" "asset_gen.graphqls" "bool_keyed_gen.graphqls" "bool_keyed_note_gen.graphqls" "category_gen.graphqls" "category_stat_gen.graphqls" "default_only_row_gen.graphqls" "document_gen.graphqls" "key_only_row_gen.graphqls" "order_gen.graphqls" "order_item_gen.graphqls" "product_gen.graphqls" "product_summary_gen.graphqls" "product_tag_label_gen.graphqls" "profile_gen.graphqls" "shared_gen.graphqls" "slugged_row_gen.graphqls" "tag_gen.graphqls" "time_keyed_gen.graphqls" "time_keyed_note_gen.graphqls" "user_category_gen.graphqls" "user_event_gen.graphqls" "user_gen.graphqls" "warehouse_gen.graphqls"
 var sourcesFS embed.FS
 
 func sourceData(filename string) string {
@@ -5797,6 +6299,8 @@ var sources = []*ast.Source{
 	{Name: "article_gen.graphqls", Input: sourceData("article_gen.graphqls"), BuiltIn: false},
 	{Name: "asset_document_link_gen.graphqls", Input: sourceData("asset_document_link_gen.graphqls"), BuiltIn: false},
 	{Name: "asset_gen.graphqls", Input: sourceData("asset_gen.graphqls"), BuiltIn: false},
+	{Name: "bool_keyed_gen.graphqls", Input: sourceData("bool_keyed_gen.graphqls"), BuiltIn: false},
+	{Name: "bool_keyed_note_gen.graphqls", Input: sourceData("bool_keyed_note_gen.graphqls"), BuiltIn: false},
 	{Name: "category_gen.graphqls", Input: sourceData("category_gen.graphqls"), BuiltIn: false},
 	{Name: "category_stat_gen.graphqls", Input: sourceData("category_stat_gen.graphqls"), BuiltIn: false},
 	{Name: "default_only_row_gen.graphqls", Input: sourceData("default_only_row_gen.graphqls"), BuiltIn: false},
@@ -5990,6 +6494,106 @@ func (ec *executionContext) childFields_AssetListResult(ctx context.Context, fie
 		return ec.fieldContext_AssetListResult_hasMore(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type AssetListResult", field.Name)
+}
+
+func (ec *executionContext) childFields_BoolKeyed(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "k":
+		return ec.fieldContext_BoolKeyed_k(ctx, field)
+	case "label":
+		return ec.fieldContext_BoolKeyed_label(ctx, field)
+	case "boolKeyedNotes":
+		return ec.fieldContext_BoolKeyed_boolKeyedNotes(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BoolKeyed", field.Name)
+}
+
+func (ec *executionContext) childFields_BoolKeyedConnection(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "edges":
+		return ec.fieldContext_BoolKeyedConnection_edges(ctx, field)
+	case "pageInfo":
+		return ec.fieldContext_BoolKeyedConnection_pageInfo(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_BoolKeyedConnection_totalCount(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BoolKeyedConnection", field.Name)
+}
+
+func (ec *executionContext) childFields_BoolKeyedEdge(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "node":
+		return ec.fieldContext_BoolKeyedEdge_node(ctx, field)
+	case "cursor":
+		return ec.fieldContext_BoolKeyedEdge_cursor(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BoolKeyedEdge", field.Name)
+}
+
+func (ec *executionContext) childFields_BoolKeyedListResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "items":
+		return ec.fieldContext_BoolKeyedListResult_items(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_BoolKeyedListResult_totalCount(ctx, field)
+	case "offset":
+		return ec.fieldContext_BoolKeyedListResult_offset(ctx, field)
+	case "limit":
+		return ec.fieldContext_BoolKeyedListResult_limit(ctx, field)
+	case "hasMore":
+		return ec.fieldContext_BoolKeyedListResult_hasMore(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BoolKeyedListResult", field.Name)
+}
+
+func (ec *executionContext) childFields_BoolKeyedNote(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "id":
+		return ec.fieldContext_BoolKeyedNote_id(ctx, field)
+	case "keyedK":
+		return ec.fieldContext_BoolKeyedNote_keyedK(ctx, field)
+	case "note":
+		return ec.fieldContext_BoolKeyedNote_note(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BoolKeyedNote", field.Name)
+}
+
+func (ec *executionContext) childFields_BoolKeyedNoteConnection(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "edges":
+		return ec.fieldContext_BoolKeyedNoteConnection_edges(ctx, field)
+	case "pageInfo":
+		return ec.fieldContext_BoolKeyedNoteConnection_pageInfo(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_BoolKeyedNoteConnection_totalCount(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BoolKeyedNoteConnection", field.Name)
+}
+
+func (ec *executionContext) childFields_BoolKeyedNoteEdge(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "node":
+		return ec.fieldContext_BoolKeyedNoteEdge_node(ctx, field)
+	case "cursor":
+		return ec.fieldContext_BoolKeyedNoteEdge_cursor(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BoolKeyedNoteEdge", field.Name)
+}
+
+func (ec *executionContext) childFields_BoolKeyedNoteListResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "items":
+		return ec.fieldContext_BoolKeyedNoteListResult_items(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_BoolKeyedNoteListResult_totalCount(ctx, field)
+	case "offset":
+		return ec.fieldContext_BoolKeyedNoteListResult_offset(ctx, field)
+	case "limit":
+		return ec.fieldContext_BoolKeyedNoteListResult_limit(ctx, field)
+	case "hasMore":
+		return ec.fieldContext_BoolKeyedNoteListResult_hasMore(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BoolKeyedNoteListResult", field.Name)
 }
 
 func (ec *executionContext) childFields_Category(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -7270,6 +7874,76 @@ func (ec *executionContext) field_Mutation_createAssets_args(ctx context.Context
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_createBoolKeyedNote_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateBoolKeyedNoteInput, error) {
+			return ec.unmarshalNCreateBoolKeyedNoteInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedNoteInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createBoolKeyedNotes_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "inputs",
+		func(ctx context.Context, v any) ([]*model.CreateBoolKeyedNoteInput, error) {
+			return ec.unmarshalNCreateBoolKeyedNoteInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedNoteInputᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["inputs"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createBoolKeyedWithRelated_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateBoolKeyedWithRelatedInput, error) {
+			return ec.unmarshalNCreateBoolKeyedWithRelatedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedWithRelatedInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createBoolKeyed_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateBoolKeyedInput, error) {
+			return ec.unmarshalNCreateBoolKeyedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createBoolKeyeds_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "inputs",
+		func(ctx context.Context, v any) ([]*model.CreateBoolKeyedInput, error) {
+			return ec.unmarshalNCreateBoolKeyedInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedInputᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["inputs"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_createCategories_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -7838,6 +8512,34 @@ func (ec *executionContext) field_Mutation_deleteAsset_args(ctx context.Context,
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_deleteBoolKeyedNote_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_deleteBoolKeyed_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "k",
+		func(ctx context.Context, v any) (bool, error) {
+			return ec.unmarshalNBoolean2bool(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["k"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_deleteCategory_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -8272,6 +8974,116 @@ func (ec *executionContext) field_Mutation_updateAssets_args(ctx context.Context
 	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (model.UpdateAssetInput, error) {
 			return ec.unmarshalNUpdateAssetInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateAssetInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateBoolKeyedNote_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateBoolKeyedNoteInput, error) {
+			return ec.unmarshalNUpdateBoolKeyedNoteInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBoolKeyedNoteInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateBoolKeyedNotes_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (model.BoolKeyedNoteFilter, error) {
+			return ec.unmarshalNBoolKeyedNoteFilter2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateBoolKeyedNoteInput, error) {
+			return ec.unmarshalNUpdateBoolKeyedNoteInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBoolKeyedNoteInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateBoolKeyedWithRelated_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "k",
+		func(ctx context.Context, v any) (bool, error) {
+			return ec.unmarshalNBoolean2bool(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["k"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateBoolKeyedWithRelatedInput, error) {
+			return ec.unmarshalNUpdateBoolKeyedWithRelatedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBoolKeyedWithRelatedInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateBoolKeyed_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "k",
+		func(ctx context.Context, v any) (bool, error) {
+			return ec.unmarshalNBoolean2bool(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["k"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateBoolKeyedInput, error) {
+			return ec.unmarshalNUpdateBoolKeyedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBoolKeyedInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateBoolKeyeds_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (model.BoolKeyedFilter, error) {
+			return ec.unmarshalNBoolKeyedFilter2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateBoolKeyedInput, error) {
+			return ec.unmarshalNUpdateBoolKeyedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBoolKeyedInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -9204,6 +10016,56 @@ func (ec *executionContext) field_Mutation_upsertAsset_args(ctx context.Context,
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_upsertBoolKeyedNote_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateBoolKeyedNoteInput, error) {
+			return ec.unmarshalNCreateBoolKeyedNoteInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedNoteInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_upsertBoolKeyedWithRelated_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpsertBoolKeyedWithRelatedInput, error) {
+			return ec.unmarshalNUpsertBoolKeyedWithRelatedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpsertBoolKeyedWithRelatedInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "conflictTarget",
+		func(ctx context.Context, v any) (model.BoolKeyedConflictTarget, error) {
+			return ec.unmarshalNBoolKeyedConflictTarget2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedConflictTarget(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["conflictTarget"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_upsertBoolKeyed_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateBoolKeyedInput, error) {
+			return ec.unmarshalNCreateBoolKeyedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_upsertCategoryWithRelated_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -9836,6 +10698,202 @@ func (ec *executionContext) field_Query_assets_args(ctx context.Context, rawArgs
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
 		func(ctx context.Context, v any) (*model.AssetFilter, error) {
 			return ec.unmarshalOAssetFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐAssetFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "first",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["first"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "after",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["after"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "last",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["last"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "before",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["before"] = arg4
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_boolKeyedList_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.BoolKeyedFilter, error) {
+			return ec.unmarshalOBoolKeyedFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort",
+		func(ctx context.Context, v any) ([]*model.BoolKeyedSort, error) {
+			return ec.unmarshalOBoolKeyedSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedSortᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["limit"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "offset",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["offset"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_boolKeyedNoteList_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.BoolKeyedNoteFilter, error) {
+			return ec.unmarshalOBoolKeyedNoteFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort",
+		func(ctx context.Context, v any) ([]*model.BoolKeyedNoteSort, error) {
+			return ec.unmarshalOBoolKeyedNoteSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteSortᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["limit"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "offset",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["offset"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_boolKeyedNote_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_boolKeyedNotes_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.BoolKeyedNoteFilter, error) {
+			return ec.unmarshalOBoolKeyedNoteFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "first",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["first"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "after",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["after"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "last",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["last"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "before",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["before"] = arg4
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_boolKeyed_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "k",
+		func(ctx context.Context, v any) (bool, error) {
+			return ec.unmarshalNBoolean2bool(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["k"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_boolKeyeds_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.BoolKeyedFilter, error) {
+			return ec.unmarshalOBoolKeyedFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedFilter(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -13037,6 +14095,685 @@ func (ec *executionContext) fieldContext_AssetListResult_hasMore(_ context.Conte
 	return graphql.NewScalarFieldContext("AssetListResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
 }
 
+func (ec *executionContext) _BoolKeyed_k(ctx context.Context, field graphql.CollectedField, obj *models.BoolKeyed) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyed_k(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.K, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyed_k(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyed", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyed_label(ctx context.Context, field graphql.CollectedField, obj *models.BoolKeyed) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyed_label(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Label, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyed_label(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyed", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyed_boolKeyedNotes(ctx context.Context, field graphql.CollectedField, obj *models.BoolKeyed) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyed_boolKeyedNotes(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BoolKeyedNotes, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BoolKeyedNote) graphql.Marshaler {
+			return ec.marshalNBoolKeyedNote2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedNoteᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyed_boolKeyedNotes(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BoolKeyed",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedNote(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BoolKeyedConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BoolKeyed]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedConnection_edges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Edges, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []models.Edge[models.BoolKeyed]) graphql.Marshaler {
+			return ec.marshalNBoolKeyedEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedConnection_edges(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BoolKeyedConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedEdge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BoolKeyedConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BoolKeyed]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedConnection_pageInfo(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PageInfo, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v models.PageInfo) graphql.Marshaler {
+			return ec.marshalNPageInfo2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐPageInfo(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedConnection_pageInfo(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BoolKeyedConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_PageInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BoolKeyedConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BoolKeyed]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedConnection_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedConnection_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedConnection", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedEdge_node(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.BoolKeyed]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedEdge_node(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Node, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyed) graphql.Marshaler {
+			return ec.marshalNBoolKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyed(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedEdge_node(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BoolKeyedEdge",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyed(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BoolKeyedEdge_cursor(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.BoolKeyed]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedEdge_cursor(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Cursor, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedEdge_cursor(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedEdge", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedListResult_items(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BoolKeyed]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedListResult_items(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Items, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BoolKeyed) graphql.Marshaler {
+			return ec.marshalNBoolKeyed2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedListResult_items(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BoolKeyedListResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyed(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BoolKeyedListResult_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BoolKeyed]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedListResult_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedListResult_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedListResult_offset(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BoolKeyed]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedListResult_offset(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Offset, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedListResult_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedListResult_limit(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BoolKeyed]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedListResult_limit(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Limit, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedListResult_limit(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedListResult_hasMore(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BoolKeyed]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedListResult_hasMore(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.HasMore, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedListResult_hasMore(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedListResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedNote_id(ctx context.Context, field graphql.CollectedField, obj *models.BoolKeyedNote) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNote_id(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNote_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedNote", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedNote_keyedK(ctx context.Context, field graphql.CollectedField, obj *models.BoolKeyedNote) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNote_keyedK(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.KeyedK, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *bool) graphql.Marshaler {
+			return ec.marshalOBoolean2ᚖbool(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNote_keyedK(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedNote", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedNote_note(ctx context.Context, field graphql.CollectedField, obj *models.BoolKeyedNote) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNote_note(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Note, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNote_note(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedNote", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedNoteConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BoolKeyedNote]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNoteConnection_edges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Edges, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []models.Edge[models.BoolKeyedNote]) graphql.Marshaler {
+			return ec.marshalNBoolKeyedNoteEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNoteConnection_edges(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BoolKeyedNoteConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedNoteEdge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BoolKeyedNoteConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BoolKeyedNote]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNoteConnection_pageInfo(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PageInfo, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v models.PageInfo) graphql.Marshaler {
+			return ec.marshalNPageInfo2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐPageInfo(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNoteConnection_pageInfo(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BoolKeyedNoteConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_PageInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BoolKeyedNoteConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BoolKeyedNote]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNoteConnection_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNoteConnection_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedNoteConnection", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedNoteEdge_node(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.BoolKeyedNote]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNoteEdge_node(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Node, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyedNote) graphql.Marshaler {
+			return ec.marshalNBoolKeyedNote2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedNote(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNoteEdge_node(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BoolKeyedNoteEdge",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedNote(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BoolKeyedNoteEdge_cursor(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.BoolKeyedNote]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNoteEdge_cursor(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Cursor, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNoteEdge_cursor(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedNoteEdge", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedNoteListResult_items(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BoolKeyedNote]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNoteListResult_items(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Items, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BoolKeyedNote) graphql.Marshaler {
+			return ec.marshalNBoolKeyedNote2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedNoteᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNoteListResult_items(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BoolKeyedNoteListResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedNote(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BoolKeyedNoteListResult_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BoolKeyedNote]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNoteListResult_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNoteListResult_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedNoteListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedNoteListResult_offset(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BoolKeyedNote]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNoteListResult_offset(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Offset, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNoteListResult_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedNoteListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedNoteListResult_limit(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BoolKeyedNote]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNoteListResult_limit(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Limit, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNoteListResult_limit(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedNoteListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BoolKeyedNoteListResult_hasMore(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BoolKeyedNote]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BoolKeyedNoteListResult_hasMore(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.HasMore, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BoolKeyedNoteListResult_hasMore(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BoolKeyedNoteListResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
 func (ec *executionContext) _Category_id(ctx context.Context, field graphql.CollectedField, obj *models.Category) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -15864,6 +17601,666 @@ func (ec *executionContext) fieldContext_Mutation_upsertAssetWithRelated(ctx con
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_upsertAssetWithRelated_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createBoolKeyed(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createBoolKeyed(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateBoolKeyed(ctx, fc.Args["input"].(model.CreateBoolKeyedInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyed) graphql.Marshaler {
+			return ec.marshalNBoolKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyed(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createBoolKeyed(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyed(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createBoolKeyed_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createBoolKeyeds(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createBoolKeyeds(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateBoolKeyeds(ctx, fc.Args["inputs"].([]*model.CreateBoolKeyedInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BoolKeyed) graphql.Marshaler {
+			return ec.marshalNBoolKeyed2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createBoolKeyeds(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyed(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createBoolKeyeds_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateBoolKeyed(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateBoolKeyed(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateBoolKeyed(ctx, fc.Args["k"].(bool), fc.Args["input"].(model.UpdateBoolKeyedInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyed) graphql.Marshaler {
+			return ec.marshalNBoolKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyed(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateBoolKeyed(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyed(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateBoolKeyed_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateBoolKeyeds(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateBoolKeyeds(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateBoolKeyeds(ctx, fc.Args["filter"].(model.BoolKeyedFilter), fc.Args["input"].(model.UpdateBoolKeyedInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BoolKeyed) graphql.Marshaler {
+			return ec.marshalNBoolKeyed2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateBoolKeyeds(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyed(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateBoolKeyeds_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_upsertBoolKeyed(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_upsertBoolKeyed(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpsertBoolKeyed(ctx, fc.Args["input"].(model.CreateBoolKeyedInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyed) graphql.Marshaler {
+			return ec.marshalNBoolKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyed(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_upsertBoolKeyed(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyed(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_upsertBoolKeyed_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_deleteBoolKeyed(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_deleteBoolKeyed(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().DeleteBoolKeyed(ctx, fc.Args["k"].(bool))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_deleteBoolKeyed(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_deleteBoolKeyed_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createBoolKeyedWithRelated(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createBoolKeyedWithRelated(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateBoolKeyedWithRelated(ctx, fc.Args["input"].(model.CreateBoolKeyedWithRelatedInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyed) graphql.Marshaler {
+			return ec.marshalNBoolKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyed(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createBoolKeyedWithRelated(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyed(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createBoolKeyedWithRelated_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateBoolKeyedWithRelated(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateBoolKeyedWithRelated(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateBoolKeyedWithRelated(ctx, fc.Args["k"].(bool), fc.Args["input"].(model.UpdateBoolKeyedWithRelatedInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyed) graphql.Marshaler {
+			return ec.marshalNBoolKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyed(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateBoolKeyedWithRelated(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyed(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateBoolKeyedWithRelated_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_upsertBoolKeyedWithRelated(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_upsertBoolKeyedWithRelated(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpsertBoolKeyedWithRelated(ctx, fc.Args["input"].(model.UpsertBoolKeyedWithRelatedInput), fc.Args["conflictTarget"].(model.BoolKeyedConflictTarget))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyed) graphql.Marshaler {
+			return ec.marshalNBoolKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyed(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_upsertBoolKeyedWithRelated(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyed(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_upsertBoolKeyedWithRelated_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createBoolKeyedNote(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createBoolKeyedNote(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateBoolKeyedNote(ctx, fc.Args["input"].(model.CreateBoolKeyedNoteInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyedNote) graphql.Marshaler {
+			return ec.marshalNBoolKeyedNote2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedNote(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createBoolKeyedNote(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedNote(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createBoolKeyedNote_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createBoolKeyedNotes(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createBoolKeyedNotes(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateBoolKeyedNotes(ctx, fc.Args["inputs"].([]*model.CreateBoolKeyedNoteInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BoolKeyedNote) graphql.Marshaler {
+			return ec.marshalNBoolKeyedNote2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedNoteᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createBoolKeyedNotes(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedNote(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createBoolKeyedNotes_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateBoolKeyedNote(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateBoolKeyedNote(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateBoolKeyedNote(ctx, fc.Args["id"].(int), fc.Args["input"].(model.UpdateBoolKeyedNoteInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyedNote) graphql.Marshaler {
+			return ec.marshalNBoolKeyedNote2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedNote(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateBoolKeyedNote(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedNote(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateBoolKeyedNote_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateBoolKeyedNotes(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateBoolKeyedNotes(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateBoolKeyedNotes(ctx, fc.Args["filter"].(model.BoolKeyedNoteFilter), fc.Args["input"].(model.UpdateBoolKeyedNoteInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BoolKeyedNote) graphql.Marshaler {
+			return ec.marshalNBoolKeyedNote2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedNoteᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateBoolKeyedNotes(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedNote(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateBoolKeyedNotes_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_upsertBoolKeyedNote(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_upsertBoolKeyedNote(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpsertBoolKeyedNote(ctx, fc.Args["input"].(model.CreateBoolKeyedNoteInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyedNote) graphql.Marshaler {
+			return ec.marshalNBoolKeyedNote2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedNote(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_upsertBoolKeyedNote(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedNote(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_upsertBoolKeyedNote_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_deleteBoolKeyedNote(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_deleteBoolKeyedNote(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().DeleteBoolKeyedNote(ctx, fc.Args["id"].(int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_deleteBoolKeyedNote(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_deleteBoolKeyedNote_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -24035,6 +26432,270 @@ func (ec *executionContext) fieldContext_Query_assetList(ctx context.Context, fi
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_boolKeyed(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_boolKeyed(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BoolKeyed(ctx, fc.Args["k"].(bool))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyed) graphql.Marshaler {
+			return ec.marshalOBoolKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyed(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Query_boolKeyed(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyed(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_boolKeyed_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_boolKeyeds(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_boolKeyeds(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BoolKeyeds(ctx, fc.Args["filter"].(*model.BoolKeyedFilter), fc.Args["first"].(*int), fc.Args["after"].(*string), fc.Args["last"].(*int), fc.Args["before"].(*string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Connection[models.BoolKeyed]) graphql.Marshaler {
+			return ec.marshalNBoolKeyedConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐConnection(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_boolKeyeds(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedConnection(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_boolKeyeds_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_boolKeyedList(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_boolKeyedList(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BoolKeyedList(ctx, fc.Args["filter"].(*model.BoolKeyedFilter), fc.Args["sort"].([]*model.BoolKeyedSort), fc.Args["limit"].(*int), fc.Args["offset"].(*int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.PaginateResult[models.BoolKeyed]) graphql.Marshaler {
+			return ec.marshalNBoolKeyedListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐPaginateResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_boolKeyedList(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedListResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_boolKeyedList_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_boolKeyedNote(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_boolKeyedNote(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BoolKeyedNote(ctx, fc.Args["id"].(int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BoolKeyedNote) graphql.Marshaler {
+			return ec.marshalOBoolKeyedNote2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedNote(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Query_boolKeyedNote(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedNote(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_boolKeyedNote_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_boolKeyedNotes(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_boolKeyedNotes(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BoolKeyedNotes(ctx, fc.Args["filter"].(*model.BoolKeyedNoteFilter), fc.Args["first"].(*int), fc.Args["after"].(*string), fc.Args["last"].(*int), fc.Args["before"].(*string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Connection[models.BoolKeyedNote]) graphql.Marshaler {
+			return ec.marshalNBoolKeyedNoteConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐConnection(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_boolKeyedNotes(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedNoteConnection(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_boolKeyedNotes_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_boolKeyedNoteList(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_boolKeyedNoteList(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BoolKeyedNoteList(ctx, fc.Args["filter"].(*model.BoolKeyedNoteFilter), fc.Args["sort"].([]*model.BoolKeyedNoteSort), fc.Args["limit"].(*int), fc.Args["offset"].(*int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.PaginateResult[models.BoolKeyedNote]) graphql.Marshaler {
+			return ec.marshalNBoolKeyedNoteListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐPaginateResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_boolKeyedNoteList(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BoolKeyedNoteListResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_boolKeyedNoteList_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_category(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -31598,6 +34259,300 @@ func (ec *executionContext) unmarshalInputAssetSort(ctx context.Context, obj any
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputBoolKeyedBoolKeyedNotesCreateInput(ctx context.Context, obj any) (model.BoolKeyedBoolKeyedNotesCreateInput, error) {
+	var it model.BoolKeyedBoolKeyedNotesCreateInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"note"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "note":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("note"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Note = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputBoolKeyedBoolKeyedNotesCreateNested(ctx context.Context, obj any) (model.BoolKeyedBoolKeyedNotesCreateNested, error) {
+	var it model.BoolKeyedBoolKeyedNotesCreateNested
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"create", "connect"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "create":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("create"))
+			data, err := ec.unmarshalOBoolKeyedBoolKeyedNotesCreateInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedBoolKeyedNotesCreateInputᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Create = data
+		case "connect":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("connect"))
+			data, err := ec.unmarshalOInt2ᚕintᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Connect = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputBoolKeyedBoolKeyedNotesUpdateNested(ctx context.Context, obj any) (model.BoolKeyedBoolKeyedNotesUpdateNested, error) {
+	var it model.BoolKeyedBoolKeyedNotesUpdateNested
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"clear", "create", "connect", "disconnect"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "clear":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("clear"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Clear = data
+		case "create":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("create"))
+			data, err := ec.unmarshalOBoolKeyedBoolKeyedNotesCreateInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedBoolKeyedNotesCreateInputᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Create = data
+		case "connect":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("connect"))
+			data, err := ec.unmarshalOInt2ᚕintᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Connect = data
+		case "disconnect":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("disconnect"))
+			data, err := ec.unmarshalOInt2ᚕintᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Disconnect = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputBoolKeyedFilter(ctx context.Context, obj any) (model.BoolKeyedFilter, error) {
+	var it model.BoolKeyedFilter
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"label", "boolKeyedNotes", "and", "or"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "label":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("label"))
+			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Label = data
+		case "boolKeyedNotes":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("boolKeyedNotes"))
+			data, err := ec.unmarshalOBoolKeyedNoteFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteFilter(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BoolKeyedNotes = data
+		case "and":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("and"))
+			data, err := ec.unmarshalOBoolKeyedFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.And = data
+		case "or":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("or"))
+			data, err := ec.unmarshalOBoolKeyedFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Or = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputBoolKeyedNoteFilter(ctx context.Context, obj any) (model.BoolKeyedNoteFilter, error) {
+	var it model.BoolKeyedNoteFilter
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"keyedK", "note", "and", "or"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "keyedK":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyedK"))
+			data, err := ec.unmarshalONullableBooleanComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐNullableBooleanComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyedK = data
+		case "note":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("note"))
+			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Note = data
+		case "and":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("and"))
+			data, err := ec.unmarshalOBoolKeyedNoteFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.And = data
+		case "or":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("or"))
+			data, err := ec.unmarshalOBoolKeyedNoteFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Or = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputBoolKeyedNoteSort(ctx context.Context, obj any) (model.BoolKeyedNoteSort, error) {
+	var it model.BoolKeyedNoteSort
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"field", "direction"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "field":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("field"))
+			data, err := ec.unmarshalNBoolKeyedNoteSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteSortField(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Field = data
+		case "direction":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("direction"))
+			data, err := ec.unmarshalNSortDirection2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐSortDirection(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Direction = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputBoolKeyedSort(ctx context.Context, obj any) (model.BoolKeyedSort, error) {
+	var it model.BoolKeyedSort
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"field", "direction"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "field":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("field"))
+			data, err := ec.unmarshalNBoolKeyedSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedSortField(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Field = data
+		case "direction":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("direction"))
+			data, err := ec.unmarshalNSortDirection2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐSortDirection(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Direction = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputBooleanComparator(ctx context.Context, obj any) (model.BooleanComparator, error) {
 	var it model.BooleanComparator
 	if obj == nil {
@@ -31609,7 +34564,7 @@ func (ec *executionContext) unmarshalInputBooleanComparator(ctx context.Context,
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"eq", "neq"}
+	fieldsInOrder := [...]string{"eq", "neq", "in"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -31630,6 +34585,13 @@ func (ec *executionContext) unmarshalInputBooleanComparator(ctx context.Context,
 				return it, err
 			}
 			it.Neq = data
+		case "in":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("in"))
+			data, err := ec.unmarshalOBoolean2ᚕboolᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.In = data
 		}
 	}
 	return it, nil
@@ -32184,6 +35146,117 @@ func (ec *executionContext) unmarshalInputCreateAssetWithRelatedInput(ctx contex
 				return it, err
 			}
 			it.PrimaryDocument = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputCreateBoolKeyedInput(ctx context.Context, obj any) (model.CreateBoolKeyedInput, error) {
+	var it model.CreateBoolKeyedInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"k", "label"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "k":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("k"))
+			data, err := ec.unmarshalNBoolean2bool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.K = data
+		case "label":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("label"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Label = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputCreateBoolKeyedNoteInput(ctx context.Context, obj any) (model.CreateBoolKeyedNoteInput, error) {
+	var it model.CreateBoolKeyedNoteInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"keyedK", "note"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "keyedK":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyedK"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyedK = data
+		case "note":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("note"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Note = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputCreateBoolKeyedWithRelatedInput(ctx context.Context, obj any) (model.CreateBoolKeyedWithRelatedInput, error) {
+	var it model.CreateBoolKeyedWithRelatedInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"boolKeyed", "boolKeyedNotes"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "boolKeyed":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("boolKeyed"))
+			data, err := ec.unmarshalNCreateBoolKeyedInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BoolKeyed = data
+		case "boolKeyedNotes":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("boolKeyedNotes"))
+			data, err := ec.unmarshalOBoolKeyedBoolKeyedNotesCreateNested2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedBoolKeyedNotesCreateNested(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BoolKeyedNotes = data
 		}
 	}
 	return it, nil
@@ -33832,6 +36905,57 @@ func (ec *executionContext) unmarshalInputKeyOnlyRowSort(ctx context.Context, ob
 				return it, err
 			}
 			it.Direction = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputNullableBooleanComparator(ctx context.Context, obj any) (model.NullableBooleanComparator, error) {
+	var it model.NullableBooleanComparator
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"eq", "neq", "in", "isNull"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "eq":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("eq"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Eq = data
+		case "neq":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("neq"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Neq = data
+		case "in":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("in"))
+			data, err := ec.unmarshalOBoolean2ᚕboolᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.In = data
+		case "isNull":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("isNull"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.IsNull = data
 		}
 	}
 	return it, nil
@@ -36284,6 +39408,110 @@ func (ec *executionContext) unmarshalInputUpdateAssetWithRelatedInput(ctx contex
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputUpdateBoolKeyedInput(ctx context.Context, obj any) (model.UpdateBoolKeyedInput, error) {
+	var it model.UpdateBoolKeyedInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"label"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "label":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("label"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Label = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputUpdateBoolKeyedNoteInput(ctx context.Context, obj any) (model.UpdateBoolKeyedNoteInput, error) {
+	var it model.UpdateBoolKeyedNoteInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"keyedK", "note"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "keyedK":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("keyedK"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.KeyedK = graphql.OmittableOf(data)
+		case "note":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("note"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Note = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputUpdateBoolKeyedWithRelatedInput(ctx context.Context, obj any) (model.UpdateBoolKeyedWithRelatedInput, error) {
+	var it model.UpdateBoolKeyedWithRelatedInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"boolKeyed", "boolKeyedNotes"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "boolKeyed":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("boolKeyed"))
+			data, err := ec.unmarshalOUpdateBoolKeyedInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBoolKeyedInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BoolKeyed = data
+		case "boolKeyedNotes":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("boolKeyedNotes"))
+			data, err := ec.unmarshalOBoolKeyedBoolKeyedNotesUpdateNested2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedBoolKeyedNotesUpdateNested(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BoolKeyedNotes = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputUpdateCategoryInput(ctx context.Context, obj any) (model.UpdateCategoryInput, error) {
 	var it model.UpdateCategoryInput
 	if obj == nil {
@@ -37648,6 +40876,43 @@ func (ec *executionContext) unmarshalInputUpsertAssetWithRelatedInput(ctx contex
 				return it, err
 			}
 			it.PrimaryDocument = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputUpsertBoolKeyedWithRelatedInput(ctx context.Context, obj any) (model.UpsertBoolKeyedWithRelatedInput, error) {
+	var it model.UpsertBoolKeyedWithRelatedInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"boolKeyed", "boolKeyedNotes"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "boolKeyed":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("boolKeyed"))
+			data, err := ec.unmarshalNCreateBoolKeyedInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BoolKeyed = data
+		case "boolKeyedNotes":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("boolKeyedNotes"))
+			data, err := ec.unmarshalOBoolKeyedBoolKeyedNotesUpdateNested2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedBoolKeyedNotesUpdateNested(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BoolKeyedNotes = data
 		}
 	}
 	return it, nil
@@ -39444,6 +42709,400 @@ func (ec *executionContext) _AssetListResult(ctx context.Context, sel ast.Select
 	return out
 }
 
+var boolKeyedImplementors = []string{"BoolKeyed"}
+
+func (ec *executionContext) _BoolKeyed(ctx context.Context, sel ast.SelectionSet, obj *models.BoolKeyed) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, boolKeyedImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BoolKeyed")
+		case "k":
+			out.Values[i] = ec._BoolKeyed_k(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "label":
+			out.Values[i] = ec._BoolKeyed_label(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "boolKeyedNotes":
+			out.Values[i] = ec._BoolKeyed_boolKeyedNotes(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var boolKeyedConnectionImplementors = []string{"BoolKeyedConnection"}
+
+func (ec *executionContext) _BoolKeyedConnection(ctx context.Context, sel ast.SelectionSet, obj *models.Connection[models.BoolKeyed]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, boolKeyedConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BoolKeyedConnection")
+		case "edges":
+			out.Values[i] = ec._BoolKeyedConnection_edges(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "pageInfo":
+			out.Values[i] = ec._BoolKeyedConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._BoolKeyedConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var boolKeyedEdgeImplementors = []string{"BoolKeyedEdge"}
+
+func (ec *executionContext) _BoolKeyedEdge(ctx context.Context, sel ast.SelectionSet, obj *models.Edge[models.BoolKeyed]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, boolKeyedEdgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BoolKeyedEdge")
+		case "node":
+			out.Values[i] = ec._BoolKeyedEdge_node(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "cursor":
+			out.Values[i] = ec._BoolKeyedEdge_cursor(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var boolKeyedListResultImplementors = []string{"BoolKeyedListResult"}
+
+func (ec *executionContext) _BoolKeyedListResult(ctx context.Context, sel ast.SelectionSet, obj *models.PaginateResult[models.BoolKeyed]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, boolKeyedListResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BoolKeyedListResult")
+		case "items":
+			out.Values[i] = ec._BoolKeyedListResult_items(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._BoolKeyedListResult_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "offset":
+			out.Values[i] = ec._BoolKeyedListResult_offset(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "limit":
+			out.Values[i] = ec._BoolKeyedListResult_limit(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "hasMore":
+			out.Values[i] = ec._BoolKeyedListResult_hasMore(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var boolKeyedNoteImplementors = []string{"BoolKeyedNote"}
+
+func (ec *executionContext) _BoolKeyedNote(ctx context.Context, sel ast.SelectionSet, obj *models.BoolKeyedNote) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, boolKeyedNoteImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BoolKeyedNote")
+		case "id":
+			out.Values[i] = ec._BoolKeyedNote_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "keyedK":
+			out.Values[i] = ec._BoolKeyedNote_keyedK(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "note":
+			out.Values[i] = ec._BoolKeyedNote_note(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var boolKeyedNoteConnectionImplementors = []string{"BoolKeyedNoteConnection"}
+
+func (ec *executionContext) _BoolKeyedNoteConnection(ctx context.Context, sel ast.SelectionSet, obj *models.Connection[models.BoolKeyedNote]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, boolKeyedNoteConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BoolKeyedNoteConnection")
+		case "edges":
+			out.Values[i] = ec._BoolKeyedNoteConnection_edges(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "pageInfo":
+			out.Values[i] = ec._BoolKeyedNoteConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._BoolKeyedNoteConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var boolKeyedNoteEdgeImplementors = []string{"BoolKeyedNoteEdge"}
+
+func (ec *executionContext) _BoolKeyedNoteEdge(ctx context.Context, sel ast.SelectionSet, obj *models.Edge[models.BoolKeyedNote]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, boolKeyedNoteEdgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BoolKeyedNoteEdge")
+		case "node":
+			out.Values[i] = ec._BoolKeyedNoteEdge_node(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "cursor":
+			out.Values[i] = ec._BoolKeyedNoteEdge_cursor(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var boolKeyedNoteListResultImplementors = []string{"BoolKeyedNoteListResult"}
+
+func (ec *executionContext) _BoolKeyedNoteListResult(ctx context.Context, sel ast.SelectionSet, obj *models.PaginateResult[models.BoolKeyedNote]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, boolKeyedNoteListResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BoolKeyedNoteListResult")
+		case "items":
+			out.Values[i] = ec._BoolKeyedNoteListResult_items(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._BoolKeyedNoteListResult_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "offset":
+			out.Values[i] = ec._BoolKeyedNoteListResult_offset(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "limit":
+			out.Values[i] = ec._BoolKeyedNoteListResult_limit(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "hasMore":
+			out.Values[i] = ec._BoolKeyedNoteListResult_hasMore(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
 var categoryImplementors = []string{"Category"}
 
 func (ec *executionContext) _Category(ctx context.Context, sel ast.SelectionSet, obj *models.Category) graphql.Marshaler {
@@ -40637,6 +44296,111 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "upsertAssetWithRelated":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_upsertAssetWithRelated(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createBoolKeyed":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createBoolKeyed(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createBoolKeyeds":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createBoolKeyeds(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateBoolKeyed":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateBoolKeyed(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateBoolKeyeds":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateBoolKeyeds(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "upsertBoolKeyed":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_upsertBoolKeyed(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "deleteBoolKeyed":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_deleteBoolKeyed(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createBoolKeyedWithRelated":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createBoolKeyedWithRelated(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateBoolKeyedWithRelated":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateBoolKeyedWithRelated(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "upsertBoolKeyedWithRelated":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_upsertBoolKeyedWithRelated(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createBoolKeyedNote":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createBoolKeyedNote(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createBoolKeyedNotes":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createBoolKeyedNotes(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateBoolKeyedNote":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateBoolKeyedNote(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateBoolKeyedNotes":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateBoolKeyedNotes(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "upsertBoolKeyedNote":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_upsertBoolKeyedNote(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "deleteBoolKeyedNote":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_deleteBoolKeyedNote(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
@@ -43027,6 +46791,138 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_assetList(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "boolKeyed":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_boolKeyed(ctx, field)
+				if res == graphql.RequiredNull {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "boolKeyeds":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_boolKeyeds(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "boolKeyedList":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_boolKeyedList(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "boolKeyedNote":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_boolKeyedNote(ctx, field)
+				if res == graphql.RequiredNull {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "boolKeyedNotes":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_boolKeyedNotes(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "boolKeyedNoteList":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_boolKeyedNoteList(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -46670,6 +50566,203 @@ func (ec *executionContext) marshalNAssetSortField2githubᚗcomᚋteandresmith�
 	return v
 }
 
+func (ec *executionContext) marshalNBoolKeyed2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedᚄ(ctx context.Context, sel ast.SelectionSet, v []*models.BoolKeyed) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNBoolKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyed(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNBoolKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyed(ctx context.Context, sel ast.SelectionSet, v *models.BoolKeyed) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BoolKeyed(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNBoolKeyedBoolKeyedNotesCreateInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedBoolKeyedNotesCreateInput(ctx context.Context, v any) (*model.BoolKeyedBoolKeyedNotesCreateInput, error) {
+	res, err := ec.unmarshalInputBoolKeyedBoolKeyedNotesCreateInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNBoolKeyedConflictTarget2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedConflictTarget(ctx context.Context, v any) (model.BoolKeyedConflictTarget, error) {
+	var res model.BoolKeyedConflictTarget
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNBoolKeyedConflictTarget2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedConflictTarget(ctx context.Context, sel ast.SelectionSet, v model.BoolKeyedConflictTarget) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) marshalNBoolKeyedConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐConnection(ctx context.Context, sel ast.SelectionSet, v *models.Connection[models.BoolKeyed]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BoolKeyedConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNBoolKeyedEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdge(ctx context.Context, sel ast.SelectionSet, v models.Edge[models.BoolKeyed]) graphql.Marshaler {
+	return ec._BoolKeyedEdge(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNBoolKeyedEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdgeᚄ(ctx context.Context, sel ast.SelectionSet, v []models.Edge[models.BoolKeyed]) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNBoolKeyedEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdge(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) unmarshalNBoolKeyedFilter2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedFilter(ctx context.Context, v any) (model.BoolKeyedFilter, error) {
+	res, err := ec.unmarshalInputBoolKeyedFilter(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNBoolKeyedFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedFilter(ctx context.Context, v any) (*model.BoolKeyedFilter, error) {
+	res, err := ec.unmarshalInputBoolKeyedFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNBoolKeyedListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐPaginateResult(ctx context.Context, sel ast.SelectionSet, v *models.PaginateResult[models.BoolKeyed]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BoolKeyedListResult(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNBoolKeyedNote2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedNoteᚄ(ctx context.Context, sel ast.SelectionSet, v []*models.BoolKeyedNote) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNBoolKeyedNote2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedNote(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNBoolKeyedNote2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedNote(ctx context.Context, sel ast.SelectionSet, v *models.BoolKeyedNote) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BoolKeyedNote(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNBoolKeyedNoteConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐConnection(ctx context.Context, sel ast.SelectionSet, v *models.Connection[models.BoolKeyedNote]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BoolKeyedNoteConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNBoolKeyedNoteEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdge(ctx context.Context, sel ast.SelectionSet, v models.Edge[models.BoolKeyedNote]) graphql.Marshaler {
+	return ec._BoolKeyedNoteEdge(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNBoolKeyedNoteEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdgeᚄ(ctx context.Context, sel ast.SelectionSet, v []models.Edge[models.BoolKeyedNote]) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNBoolKeyedNoteEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdge(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) unmarshalNBoolKeyedNoteFilter2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteFilter(ctx context.Context, v any) (model.BoolKeyedNoteFilter, error) {
+	res, err := ec.unmarshalInputBoolKeyedNoteFilter(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNBoolKeyedNoteFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteFilter(ctx context.Context, v any) (*model.BoolKeyedNoteFilter, error) {
+	res, err := ec.unmarshalInputBoolKeyedNoteFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNBoolKeyedNoteListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐPaginateResult(ctx context.Context, sel ast.SelectionSet, v *models.PaginateResult[models.BoolKeyedNote]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BoolKeyedNoteListResult(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNBoolKeyedNoteSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteSort(ctx context.Context, v any) (*model.BoolKeyedNoteSort, error) {
+	res, err := ec.unmarshalInputBoolKeyedNoteSort(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNBoolKeyedNoteSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteSortField(ctx context.Context, v any) (model.BoolKeyedNoteSortField, error) {
+	var res model.BoolKeyedNoteSortField
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNBoolKeyedNoteSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteSortField(ctx context.Context, sel ast.SelectionSet, v model.BoolKeyedNoteSortField) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) unmarshalNBoolKeyedSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedSort(ctx context.Context, v any) (*model.BoolKeyedSort, error) {
+	res, err := ec.unmarshalInputBoolKeyedSort(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNBoolKeyedSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedSortField(ctx context.Context, v any) (model.BoolKeyedSortField, error) {
+	var res model.BoolKeyedSortField
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNBoolKeyedSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedSortField(ctx context.Context, sel ast.SelectionSet, v model.BoolKeyedSortField) graphql.Marshaler {
+	return v
+}
+
 func (ec *executionContext) unmarshalNBoolean2bool(ctx context.Context, v any) (bool, error) {
 	res, err := graphql.UnmarshalBoolean(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -46964,6 +51057,59 @@ func (ec *executionContext) unmarshalNCreateAssetInput2ᚖgithubᚗcomᚋteandre
 
 func (ec *executionContext) unmarshalNCreateAssetWithRelatedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateAssetWithRelatedInput(ctx context.Context, v any) (model.CreateAssetWithRelatedInput, error) {
 	res, err := ec.unmarshalInputCreateAssetWithRelatedInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateBoolKeyedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedInput(ctx context.Context, v any) (model.CreateBoolKeyedInput, error) {
+	res, err := ec.unmarshalInputCreateBoolKeyedInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateBoolKeyedInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedInputᚄ(ctx context.Context, v any) ([]*model.CreateBoolKeyedInput, error) {
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.CreateBoolKeyedInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNCreateBoolKeyedInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNCreateBoolKeyedInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedInput(ctx context.Context, v any) (*model.CreateBoolKeyedInput, error) {
+	res, err := ec.unmarshalInputCreateBoolKeyedInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateBoolKeyedNoteInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedNoteInput(ctx context.Context, v any) (model.CreateBoolKeyedNoteInput, error) {
+	res, err := ec.unmarshalInputCreateBoolKeyedNoteInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateBoolKeyedNoteInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedNoteInputᚄ(ctx context.Context, v any) ([]*model.CreateBoolKeyedNoteInput, error) {
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.CreateBoolKeyedNoteInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNCreateBoolKeyedNoteInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedNoteInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNCreateBoolKeyedNoteInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedNoteInput(ctx context.Context, v any) (*model.CreateBoolKeyedNoteInput, error) {
+	res, err := ec.unmarshalInputCreateBoolKeyedNoteInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateBoolKeyedWithRelatedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedWithRelatedInput(ctx context.Context, v any) (model.CreateBoolKeyedWithRelatedInput, error) {
+	res, err := ec.unmarshalInputCreateBoolKeyedWithRelatedInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
@@ -48872,6 +53018,21 @@ func (ec *executionContext) unmarshalNUpdateAssetWithRelatedInput2githubᚗcom�
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) unmarshalNUpdateBoolKeyedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBoolKeyedInput(ctx context.Context, v any) (model.UpdateBoolKeyedInput, error) {
+	res, err := ec.unmarshalInputUpdateBoolKeyedInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNUpdateBoolKeyedNoteInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBoolKeyedNoteInput(ctx context.Context, v any) (model.UpdateBoolKeyedNoteInput, error) {
+	res, err := ec.unmarshalInputUpdateBoolKeyedNoteInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNUpdateBoolKeyedWithRelatedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBoolKeyedWithRelatedInput(ctx context.Context, v any) (model.UpdateBoolKeyedWithRelatedInput, error) {
+	res, err := ec.unmarshalInputUpdateBoolKeyedWithRelatedInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) unmarshalNUpdateCategoryInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateCategoryInput(ctx context.Context, v any) (model.UpdateCategoryInput, error) {
 	res, err := ec.unmarshalInputUpdateCategoryInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -48984,6 +53145,11 @@ func (ec *executionContext) unmarshalNUpdateWarehouseInput2githubᚗcomᚋteandr
 
 func (ec *executionContext) unmarshalNUpsertAssetWithRelatedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpsertAssetWithRelatedInput(ctx context.Context, v any) (model.UpsertAssetWithRelatedInput, error) {
 	res, err := ec.unmarshalInputUpsertAssetWithRelatedInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNUpsertBoolKeyedWithRelatedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpsertBoolKeyedWithRelatedInput(ctx context.Context, v any) (model.UpsertBoolKeyedWithRelatedInput, error) {
+	res, err := ec.unmarshalInputUpsertBoolKeyedWithRelatedInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
@@ -49830,6 +53996,137 @@ func (ec *executionContext) unmarshalOAssetSort2ᚕᚖgithubᚗcomᚋteandresmit
 	return res, nil
 }
 
+func (ec *executionContext) marshalOBoolKeyed2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyed(ctx context.Context, sel ast.SelectionSet, v *models.BoolKeyed) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._BoolKeyed(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOBoolKeyedBoolKeyedNotesCreateInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedBoolKeyedNotesCreateInputᚄ(ctx context.Context, v any) ([]*model.BoolKeyedBoolKeyedNotesCreateInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.BoolKeyedBoolKeyedNotesCreateInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBoolKeyedBoolKeyedNotesCreateInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedBoolKeyedNotesCreateInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalOBoolKeyedBoolKeyedNotesCreateNested2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedBoolKeyedNotesCreateNested(ctx context.Context, v any) (*model.BoolKeyedBoolKeyedNotesCreateNested, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputBoolKeyedBoolKeyedNotesCreateNested(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalOBoolKeyedBoolKeyedNotesUpdateNested2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedBoolKeyedNotesUpdateNested(ctx context.Context, v any) (*model.BoolKeyedBoolKeyedNotesUpdateNested, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputBoolKeyedBoolKeyedNotesUpdateNested(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalOBoolKeyedFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedFilterᚄ(ctx context.Context, v any) ([]*model.BoolKeyedFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.BoolKeyedFilter, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBoolKeyedFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedFilter(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalOBoolKeyedFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedFilter(ctx context.Context, v any) (*model.BoolKeyedFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputBoolKeyedFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOBoolKeyedNote2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedNote(ctx context.Context, sel ast.SelectionSet, v *models.BoolKeyedNote) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._BoolKeyedNote(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOBoolKeyedNoteFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteFilterᚄ(ctx context.Context, v any) ([]*model.BoolKeyedNoteFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.BoolKeyedNoteFilter, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBoolKeyedNoteFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteFilter(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalOBoolKeyedNoteFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteFilter(ctx context.Context, v any) (*model.BoolKeyedNoteFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputBoolKeyedNoteFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalOBoolKeyedNoteSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteSortᚄ(ctx context.Context, v any) ([]*model.BoolKeyedNoteSort, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.BoolKeyedNoteSort, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBoolKeyedNoteSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedNoteSort(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalOBoolKeyedSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedSortᚄ(ctx context.Context, v any) ([]*model.BoolKeyedSort, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.BoolKeyedSort, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBoolKeyedSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBoolKeyedSort(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
 func (ec *executionContext) unmarshalOBoolean2bool(ctx context.Context, v any) (bool, error) {
 	res, err := graphql.UnmarshalBoolean(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -49840,6 +54137,41 @@ func (ec *executionContext) marshalOBoolean2bool(ctx context.Context, sel ast.Se
 	_ = ctx
 	res := graphql.MarshalBoolean(v)
 	return res
+}
+
+func (ec *executionContext) unmarshalOBoolean2ᚕboolᚄ(ctx context.Context, v any) ([]bool, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]bool, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBoolean2bool(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalOBoolean2ᚕboolᚄ(ctx context.Context, sel ast.SelectionSet, v []bool) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalNBoolean2bool(ctx, sel, v[i])
+	}
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
 }
 
 func (ec *executionContext) unmarshalOBoolean2ᚖbool(ctx context.Context, v any) (*bool, error) {
@@ -50690,6 +55022,14 @@ func (ec *executionContext) marshalONullDecimal2ᚖgithubᚗcomᚋshopspringᚋd
 	return res
 }
 
+func (ec *executionContext) unmarshalONullableBooleanComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐNullableBooleanComparator(ctx context.Context, v any) (*model.NullableBooleanComparator, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputNullableBooleanComparator(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) unmarshalONullableBytesComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐNullableBytesComparator(ctx context.Context, v any) (*model.NullableBytesComparator, error) {
 	if v == nil {
 		return nil, nil
@@ -51538,6 +55878,14 @@ func (ec *executionContext) unmarshalOUpdateAssetInput2ᚖgithubᚗcomᚋteandre
 		return nil, nil
 	}
 	res, err := ec.unmarshalInputUpdateAssetInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalOUpdateBoolKeyedInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBoolKeyedInput(ctx context.Context, v any) (*model.UpdateBoolKeyedInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputUpdateBoolKeyedInput(ctx, v)
 	return &res, graphql.ErrorOnPath(ctx, err)
 }
 

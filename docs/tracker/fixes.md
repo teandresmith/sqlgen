@@ -23,35 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-376
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, cmd/sqlgen/gen
-- **Surfaced by:** FIX-371 vet (2026-11-06), filed on the user's yes
-- **Vetted:** ready at `22de66f0` (2026-11-11)
-
-**Issue.** **A boolean key on `comparator.ID` fails on MySQL and SQLite.** MySQL, k=true: `create flag: get flag: sqlgen: resource not found`, and the loader returns `kids=0` silently. MySQL, k=false: reads pass, but nested disconnect and clear give `Error 1292 (22007): Truncated incorrect INTEGER value: 'false'`. SQLite, both values: `resource not found`, loader `kids=0`. PostgreSQL passes. Re-measured at `22de66f0` with a 24-step probe (12 steps × both values): postgres 24 ok / 0 ERR, mysql 15 ok / 9 ERR, sqlite 10 ok / 14 ERR (the entry's original step counts came from a 20-step probe). Composite PKs with a bool member fail too: `FlagPairs().Get` emits `Active: &comparator.ID{Eq: new(fmt.Sprint(pk.Active))}`, and SQLite gives `create flag_pair: get flag_pair: sqlgen: resource not found` for both values.
-
-**Root cause.** `resolveSimpleComparator`'s key arm (`cmd/sqlgen/gen/context_table.go:2608`, `(PrimaryKey||FKReference) && FKConvert != FKStringNone`) catches `bool`, whose FKConvert is FKStringSprint (`gotype/gotype.go:79`), ahead of the `bool → Bool` arm. `pkComparatorFamily` (`:2488`) then returns "ID", so `funcFKToString` (`funcmap.go:831`) and the ID fallback in `funcPKFilterExpr` (`:761`) bind `fmt.Sprint`, as text. This deviates from the PRD §11.2 selection-table row "`bool` → `Bool`", as FIX-371's time case did, but `comparator.Bool` has no `In` (PRD §11.2), so it cannot simply follow FIX-371's routing. Unchanged by FIX-371/372, which added only a Time arm.
-
-**Suggested fix.**
-- Decide how a boolean key binds, given `comparator.Bool` has no `In`. Adding `In` changes public surface and needs a ruling.
-- Add a live test on all three dialects.
-- Pending the user's ruling:
-  - How should a boolean key bind?
-    - (A, recommended, prototyped) Route bool keys to `comparator.Bool` and add `Bool.In` (`= ANY($)` on pgx, expanded elsewhere; `NullableBool` inherits it). Fixes all three dialects and composite members, and matches §11.2's `bool → Bool` row, mirroring FIX-371. Public changes: runtime `comparator.Bool.In`. Generated filters change from `*comparator.ID` / `*comparator.NullableID` to `*comparator.Bool` / `*comparator.NullableBool` on bool keys. GraphQL `BooleanComparator` gains `in: [Boolean!]` in every schema, because §26.4 parity forces the projection: 4 graph files churn per tree in graphql, graphql_null_wrappers, mysql and sqlite even without a bool key. PRD §11.2 amended. Sub-question: add `Nin` too? The fix does not need it, and it would add `nin` to GraphQL.
-    - (B) No new runtime surface: render the bool as `"1"`/`"0"` on `comparator.ID` (sqlite3 CLI: `k='1'` matches 1 row, `k='true'` matches 0). Keeps the §11.2 deviation, user filters still need "1"/"0", and MySQL `BIT(1)` keys are unmeasured. Not prototyped.
-    - (B') `Bool` for Eq, with In through `Custom` conditions or a generated helper: `pkFilterInExpr` has no column name and `Custom` gets no `QuoteIdentifier`. Fragile. Not prototyped.
-    - (C) Refuse bool keys at generation: regresses PostgreSQL, which passes today, and must also refuse composite PKs with a bool member and FKs into UNIQUE bool columns.
-- The user ruled on 2026-11-11: option (A), `In` only (no `Nin`). Route bool keys to `comparator.Bool`, add `Bool.In`, project `in` on GraphQL `BooleanComparator`, and amend PRD §11.2, as prototyped. No re-vet needed: the prototype already implements the ruled option with green gates and fail-first shown.
-- Prototype results, run at `22de66f0` on 2026-11-10, option (A): reproduction with sibling copies of the mysql, sqlite and postgres examples (nested on, `flags (k BOOLEAN PRIMARY KEY)` + `flag_kids (flag_k BOOLEAN FK)`), `GOWORK=off go test -count=1 -run TestZZProbeBoolKey ./tests/` → the counts above; generated filter at base `K *comparator.ID`, `FlagK *comparator.NullableID`. Prototype: `comparator/bool.go` `In []bool`; a `bool` arm ahead of the key arm in `resolveSimpleComparator` and a `Bool` family in `pkComparatorFamily`; `Bool` cases in `funcPKFilterExpr` and `pkFilterInExpr`; GraphQL `BooleanComparator.in` plus an `out.In` copy in `comparator_translate.go.tmpl`; PRD §11.2 Bool row and "A boolean key takes `Bool`, not `ID`."; conformance row `comparator.bool-key.binds-as-bool`; tests `gen/bool_key_internal_test.go`, `gen/bool_key_bind_test.go` (`TestGenerate_BoolKeyBindsAsBool`, 3 dialects), `Bool.In` rows in `comparator/bool_test.go` and `operators_per_dialect_test.go`, and a live `bool_keyed` fixture with `tests/bool_key_test.go` in the postgres, mysql and sqlite examples. Gates: `go test -race ./comparator/... ./sql/...` ok; `go test -race ./gen/... ./cli/...` ok; `make update-golden` no unit-golden churn; `make update-golden-e2e` PASS; `make req-rehash SECTIONS=11.2`, `make refs-check req-check` ok; sqlite, graphql, graphql_null_wrappers, mysql and postgres `go test -race ./...` ok and golangci-lint 0 issues; probe rerun → 24 ok, 0 ERR on all three. Fail-first: bool arm off → `resolveComparatorType(mysql) = "*comparator.ID", want "*comparator.Bool"`; `pkComparatorFamily` Bool arm off → `funcPKFilterExpr() = "&comparator.ID{Eq: new(fmt.Sprint(id))}", want "&comparator.Bool{Eq: new(id)}"`; `funcPKFilterExpr` Bool case off → also `TestGenerate_BoolKeyBindsAsBool/postgres` "[build failed]"; `pkFilterInExpr` Bool case off → `"&comparator.Bool[]{In: ids}", want "&comparator.Bool{In: ids}"`; `Bool.Parse` In branch off → `TestBool_Parse/In: Bool.Parse() mismatch`; GraphQL `in` off → "BooleanComparator does not project comparator.Bool.In as \"in\""; translator copy off → "BooleanComparator declares \"in\" but translateBooleanComparator never assigns out.In". The existing suite without the fix passes. Golden churn: fix alone graphql, graphql_null_wrappers, mysql and sqlite ~8 each, postgres none; with the fixture mysql +13/~39, postgres +5/~21, sqlite +17/~37. Patch: `.claude/prototypes/FIX-376.patch` (160 files, +64512/-5129; 12 files, +185/-9 for the fix and its tests).
-
-**References.**
-- PRD §11.2. FIX-371.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-377
 
 - **Status:** Open
@@ -293,6 +264,35 @@ landed), it compiles but loads no children in either direction: `parent 2024-01-
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-376
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-371 vet (2026-11-06), filed on the user's yes
+- **Vetted:** ready at `22de66f0` (2026-11-11)
+
+**Issue.** **A boolean key on `comparator.ID` fails on MySQL and SQLite.** MySQL, k=true: `create flag: get flag: sqlgen: resource not found`, and the loader returns `kids=0` silently. MySQL, k=false: reads pass, but nested disconnect and clear give `Error 1292 (22007): Truncated incorrect INTEGER value: 'false'`. SQLite, both values: `resource not found`, loader `kids=0`. PostgreSQL passes. Re-measured at `22de66f0` with a 24-step probe (12 steps × both values): postgres 24 ok / 0 ERR, mysql 15 ok / 9 ERR, sqlite 10 ok / 14 ERR (the entry's original step counts came from a 20-step probe). Composite PKs with a bool member fail too: `FlagPairs().Get` emits `Active: &comparator.ID{Eq: new(fmt.Sprint(pk.Active))}`, and SQLite gives `create flag_pair: get flag_pair: sqlgen: resource not found` for both values.
+
+**Root cause.** `resolveSimpleComparator`'s key arm (`cmd/sqlgen/gen/context_table.go:2615`, `(PrimaryKey||FKReference) && FKConvert != FKStringNone`) catches `bool`, whose FKConvert is FKStringSprint (`gotype/gotype.go:79`), ahead of the `bool → Bool` arm. `pkComparatorFamily` (`:2488`) then returns "ID", so `funcFKToString` (`funcmap.go:843`) and the ID fallback in `funcPKFilterExpr` (`:765`) bind `fmt.Sprint`, as text. This deviates from the PRD §11.2 selection-table row "`bool` → `Bool`", as FIX-371's time case did, but `comparator.Bool` has no `In` (PRD §11.2), so it cannot simply follow FIX-371's routing. Unchanged by FIX-371/372, which added only a Time arm.
+
+**Suggested fix.**
+- Decide how a boolean key binds, given `comparator.Bool` has no `In`. Adding `In` changes public surface and needs a ruling.
+- Add a live test on all three dialects.
+- Pending the user's ruling:
+  - How should a boolean key bind?
+    - (A, recommended, prototyped) Route bool keys to `comparator.Bool` and add `Bool.In` (`= ANY($)` on pgx, expanded elsewhere; `NullableBool` inherits it). Fixes all three dialects and composite members, and matches §11.2's `bool → Bool` row, mirroring FIX-371. Public changes: runtime `comparator.Bool.In`. Generated filters change from `*comparator.ID` / `*comparator.NullableID` to `*comparator.Bool` / `*comparator.NullableBool` on bool keys. GraphQL `BooleanComparator` gains `in: [Boolean!]` in every schema, because §26.4 parity forces the projection: 4 graph files churn per tree in graphql, graphql_null_wrappers, mysql and sqlite even without a bool key. PRD §11.2 amended. Sub-question: add `Nin` too? The fix does not need it, and it would add `nin` to GraphQL.
+    - (B) No new runtime surface: render the bool as `"1"`/`"0"` on `comparator.ID` (sqlite3 CLI: `k='1'` matches 1 row, `k='true'` matches 0). Keeps the §11.2 deviation, user filters still need "1"/"0", and MySQL `BIT(1)` keys are unmeasured. Not prototyped.
+    - (B') `Bool` for Eq, with In through `Custom` conditions or a generated helper: `pkFilterInExpr` has no column name and `Custom` gets no `QuoteIdentifier`. Fragile. Not prototyped.
+    - (C) Refuse bool keys at generation: regresses PostgreSQL, which passes today, and must also refuse composite PKs with a bool member and FKs into UNIQUE bool columns.
+- The user ruled on 2026-11-11: option (A), `In` only (no `Nin`). Route bool keys to `comparator.Bool`, add `Bool.In`, project `in` on GraphQL `BooleanComparator`, and amend PRD §11.2, as prototyped. No re-vet needed: the prototype already implements the ruled option with green gates and fail-first shown.
+- Prototype results, run at `22de66f0` on 2026-11-10, option (A): reproduction with sibling copies of the mysql, sqlite and postgres examples (nested on, `flags (k BOOLEAN PRIMARY KEY)` + `flag_kids (flag_k BOOLEAN FK)`), `GOWORK=off go test -count=1 -run TestZZProbeBoolKey ./tests/` → the counts above; generated filter at base `K *comparator.ID`, `FlagK *comparator.NullableID`. Prototype: `comparator/bool.go` `In []bool`; a `bool` arm ahead of the key arm in `resolveSimpleComparator` and a `Bool` family in `pkComparatorFamily`; `Bool` cases in `funcPKFilterExpr` and `pkFilterInExpr`; GraphQL `BooleanComparator.in` plus an `out.In` copy in `comparator_translate.go.tmpl`; PRD §11.2 Bool row and "A boolean key takes `Bool`, not `ID`."; conformance row `comparator.bool-key.binds-as-bool`; tests `gen/bool_key_internal_test.go`, `gen/bool_key_bind_test.go` (`TestGenerate_BoolKeyBindsAsBool`, 3 dialects), `Bool.In` rows in `comparator/bool_test.go` and `operators_per_dialect_test.go`, and a live `bool_keyed` fixture with `tests/bool_key_test.go` in the postgres, mysql and sqlite examples. Gates: `go test -race ./comparator/... ./sql/...` ok; `go test -race ./gen/... ./cli/...` ok; `make update-golden` no unit-golden churn; `make update-golden-e2e` PASS; `make req-rehash SECTIONS=11.2`, `make refs-check req-check` ok; sqlite, graphql, graphql_null_wrappers, mysql and postgres `go test -race ./...` ok and golangci-lint 0 issues; probe rerun → 24 ok, 0 ERR on all three. Fail-first: bool arm off → `resolveComparatorType(mysql) = "*comparator.ID", want "*comparator.Bool"`; `pkComparatorFamily` Bool arm off → `funcPKFilterExpr() = "&comparator.ID{Eq: new(fmt.Sprint(id))}", want "&comparator.Bool{Eq: new(id)}"`; `funcPKFilterExpr` Bool case off → also `TestGenerate_BoolKeyBindsAsBool/postgres` "[build failed]"; `pkFilterInExpr` Bool case off → `"&comparator.Bool[]{In: ids}", want "&comparator.Bool{In: ids}"`; `Bool.Parse` In branch off → `TestBool_Parse/In: Bool.Parse() mismatch`; GraphQL `in` off → "BooleanComparator does not project comparator.Bool.In as \"in\""; translator copy off → "BooleanComparator declares \"in\" but translateBooleanComparator never assigns out.In". The existing suite without the fix passes. Golden churn: fix alone graphql, graphql_null_wrappers, mysql and sqlite ~8 each, postgres none; with the fixture mysql +13/~39, postgres +5/~21, sqlite +17/~37. Patch: `.claude/prototypes/FIX-376.patch` (160 files, +64512/-5129; 12 files, +185/-9 for the fix and its tests).
+
+**References.**
+- PRD §11.2. FIX-371.
+
+**Resolution notes.** Option (A), as ruled: bool keys route to `comparator.Bool`. `resolveSimpleComparator` gains a `bool` arm ahead of its key arm, `pkComparatorFamily` a `Bool` family, and `funcPKFilterExpr` / `pkFilterInExpr` `Bool` cases, so the generated client binds the key's bool value instead of `fmt.Sprint` text; composite members follow. Runtime `comparator.Bool` gains `In` (`NullableBool` inherits it); GraphQL `BooleanComparator` projects `in: [Boolean!]` and `comparator_translate.go.tmpl` copies it. PRD §11.2 Bool row amended and "A boolean key takes `Bool`, not `ID`." added; conformance row `comparator.bool-key.binds-as-bool`. Tests: `gen/bool_key_internal_test.go`, `gen/bool_key_bind_test.go` (3 dialects), `Bool.In` rows in `comparator/bool_test.go` and `operators_per_dialect_test.go`, and a live `bool_keyed` fixture with `tests/bool_key_test.go` in the postgres, mysql and sqlite examples. Prototype from `22de66f0` applied with `--3way` (context_api.go, funcmap.go and PRD.md had moved under FIX-374/375/379; no conflicts); goldens regenerated, churn matches the vet. `make check` and `make check-examples` green. `/verify` doc corrections: PRD §26.4 `BooleanComparator` row and conformance `api.cmp.bool-operators` now list `in`; `comparator.bool-key.binds-as-bool` cites `TestBool_Parse/In` and `TestSetOperators_RenderPerDialect/Bool.In`; Root cause line refs moved to HEAD; mysql bool-key test comments trimmed.
+
 ### FIX-375
 
 - **Status:** Resolved

@@ -34266,7 +34266,7 @@ func (ec *executionContext) unmarshalInputBooleanComparator(ctx context.Context,
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"eq", "neq"}
+	fieldsInOrder := [...]string{"eq", "neq", "in"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -34287,6 +34287,13 @@ func (ec *executionContext) unmarshalInputBooleanComparator(ctx context.Context,
 				return it, err
 			}
 			it.Neq = data
+		case "in":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("in"))
+			data, err := ec.unmarshalOBoolean2ᚕboolᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.In = data
 		}
 	}
 	return it, nil
@@ -38196,7 +38203,7 @@ func (ec *executionContext) unmarshalInputNullableBooleanComparator(ctx context.
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"eq", "neq", "isNull"}
+	fieldsInOrder := [...]string{"eq", "neq", "in", "isNull"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -38217,6 +38224,13 @@ func (ec *executionContext) unmarshalInputNullableBooleanComparator(ctx context.
 				return it, err
 			}
 			it.Neq = data
+		case "in":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("in"))
+			data, err := ec.unmarshalOBoolean2ᚕboolᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.In = data
 		case "isNull":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("isNull"))
 			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)

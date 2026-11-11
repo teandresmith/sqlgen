@@ -96,9 +96,10 @@ type Mutation struct {
 }
 
 type NullableBooleanComparator struct {
-	Eq     *bool `json:"eq,omitempty"`
-	Neq    *bool `json:"neq,omitempty"`
-	IsNull *bool `json:"isNull,omitempty"`
+	Eq     *bool  `json:"eq,omitempty"`
+	Neq    *bool  `json:"neq,omitempty"`
+	In     []bool `json:"in,omitempty"`
+	IsNull *bool  `json:"isNull,omitempty"`
 }
 
 type NullableDecimalComparator struct {

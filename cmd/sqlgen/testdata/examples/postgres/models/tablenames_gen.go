@@ -13,6 +13,8 @@ const (
 	TableArticles            hook.TableName = "public.articles"
 	TableAssetDocumentLinks  hook.TableName = "public.asset_document_links"
 	TableAssets              hook.TableName = "public.assets"
+	TableBoolKeyeds          hook.TableName = "public.bool_keyed"
+	TableBoolKeyedNotes      hook.TableName = "public.bool_keyed_notes"
 	TableCategories          hook.TableName = "public.categories"
 	TableCounters            hook.TableName = "public.counters"
 	TableDefaultOnlyRows     hook.TableName = "public.default_only_rows"

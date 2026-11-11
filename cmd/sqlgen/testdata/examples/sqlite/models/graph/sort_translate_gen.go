@@ -281,6 +281,76 @@ func binaryKeyEventSortFieldToColumn(f gqlmodel.BinaryKeyEventSortField) string 
 	return ""
 }
 
+// translateBoolKeyedSort converts a gqlgen-generated
+// []*BoolKeyedSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateBoolKeyedSort(in []*gqlmodel.BoolKeyedSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    boolKeyedSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// boolKeyedSortFieldToColumn resolves a gqlgen
+// BoolKeyedSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func boolKeyedSortFieldToColumn(f gqlmodel.BoolKeyedSortField) string {
+	switch string(f) {
+	case "K":
+		return "k"
+	case "LABEL":
+		return "label"
+	}
+	return ""
+}
+
+// translateBoolKeyedNoteSort converts a gqlgen-generated
+// []*BoolKeyedNoteSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateBoolKeyedNoteSort(in []*gqlmodel.BoolKeyedNoteSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    boolKeyedNoteSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// boolKeyedNoteSortFieldToColumn resolves a gqlgen
+// BoolKeyedNoteSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func boolKeyedNoteSortFieldToColumn(f gqlmodel.BoolKeyedNoteSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	case "KEYED_K":
+		return "keyed_k"
+	case "NOTE":
+		return "note"
+	}
+	return ""
+}
+
 // translateCategorySort converts a gqlgen-generated
 // []*CategorySort into a []sql.Sort. nil / empty input returns nil
 // so the caller's "no sort" path is preserved.

@@ -1,0 +1,70 @@
+"""
+BoolKeyed corresponds to the bool_keyed table.
+"""
+type BoolKeyed {
+  "k"
+  k: Boolean!
+  "label"
+  label: String!
+  "one-to-many relationship with the bool_keyed_notes table."
+  boolKeyedNotes: [BoolKeyedNote!]!
+}
+
+type BoolKeyedConnection {
+  edges:      [BoolKeyedEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type BoolKeyedEdge {
+  node:   BoolKeyed!
+  cursor: String!
+}
+
+type BoolKeyedListResult {
+  items:      [BoolKeyed!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input BoolKeyedFilter {
+  label: StringComparator
+  boolKeyedNotes: BoolKeyedNoteFilter
+  and: [BoolKeyedFilter!]
+  or:  [BoolKeyedFilter!]
+}
+
+enum BoolKeyedSortField {
+  K
+  LABEL
+}
+
+input BoolKeyedSort {
+  field:     BoolKeyedSortField!
+  direction: SortDirection!
+}
+input CreateBoolKeyedInput {
+  k: Boolean!
+  label: String!
+}
+input UpdateBoolKeyedInput {
+  label: String
+}
+
+extend type Query {
+  boolKeyed(k: Boolean!): BoolKeyed
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to boolKeyedList instead."
+  boolKeyeds(filter: BoolKeyedFilter, first: Int, after: String, last: Int, before: String): BoolKeyedConnection!
+  boolKeyedList(filter: BoolKeyedFilter, sort: [BoolKeyedSort!], limit: Int, offset: Int): BoolKeyedListResult!
+}
+
+extend type Mutation {
+  createBoolKeyed(input: CreateBoolKeyedInput!): BoolKeyed!
+  createBoolKeyeds(inputs: [CreateBoolKeyedInput!]!): [BoolKeyed!]!
+  updateBoolKeyed(k: Boolean!, input: UpdateBoolKeyedInput!): BoolKeyed!
+  updateBoolKeyeds(filter: BoolKeyedFilter!, input: UpdateBoolKeyedInput!): [BoolKeyed!]!
+  upsertBoolKeyed(input: CreateBoolKeyedInput!): BoolKeyed!
+  deleteBoolKeyed(k: Boolean!): Boolean!
+}

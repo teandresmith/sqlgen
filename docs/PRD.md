@@ -8326,7 +8326,7 @@ Two things travel in the option set, and both must reach an arbitrarily nested m
 | `NullableString` | nullable strings | All of String + `Null` |
 | `Number[T]` | any numeric `T` | `Eq`, `Neq`, `In`, `Nin`, `Gt`, `Gte`, `Lt`, `Lte`, `Between`, `NBetween`, `Custom` |
 | `NullableNumber[T]` | nullable numeric | All of Number + `Null` |
-| `Bool` | boolean columns | `Eq`, `Neq`, `Custom` |
+| `Bool` | boolean columns | `Eq`, `Neq`, `In`, `Custom` |
 | `NullableBool` | nullable booleans | All of Bool + `Null` |
 | `Time` | `time.Time` | `Eq`, `Neq`, `In`, `Nin`, `Gt`, `Gte`, `Lt`, `Lte`, `Between`, `NBetween`, `Custom` |
 | `NullableTime` | nullable time | All of Time + `Null` |
@@ -8432,6 +8432,8 @@ The code generator selects the comparator based on the resolved Go type and dial
 Nullable variants are selected automatically when the column is nullable.
 
 **A time key takes `Time`, not `ID`.** The `ID` row is for text keys. A primary or foreign key bound to `time.Time` or `types.DateTime` filters through `Time` / `NullableTime`, and the generated client binds the value rather than a rendering of it: PostgreSQL rejects `time.Time.String()`, SQLite compares the text the SQL builder writes, and MySQL compares wall time in the driver's `loc`, so no single text form reads back on all three.
+
+**A boolean key takes `Bool`, not `ID`.** A primary or foreign key bound to `bool` filters through `Bool` / `NullableBool`, composite members included, and the generated client binds the value: MySQL and SQLite store a boolean as an integer, so the text `true` matches no row there. `Bool.In` exists for these keys, since the client filters a list of them when it loads or writes rows by key.
 
 **`uuid` columns select `ID` / `NullableID`, keyed on the SQL type.** Every UUID
 binding filters as an identifier — the default `uuid.UUID` / `*uuid.UUID`, the
@@ -12642,7 +12644,7 @@ The `Custom` field every comparator carries ([§11.4](#114-custom-conditions)) i
 | `String` / `NullableString` | `StringComparator` | `String` | `eq neq gt gte lt lte contains startsWith endsWith like nlike in nin` |
 | `ID` / `NullableID` | `IDComparator` | `ID` | `eq neq gt gte lt lte in nin` |
 | `Number[T]` / `NullableNumber[T]` | `NumericComparator` | `Float` | `eq neq gt gte lt lte in nin between nbetween` |
-| `Bool` / `NullableBool` | `BooleanComparator` | `Boolean` | `eq neq` |
+| `Bool` / `NullableBool` | `BooleanComparator` | `Boolean` | `eq neq in` |
 | `Time` / `NullableTime` | `TimeComparator` | `Time` | `eq neq gt gte lt lte in nin between nbetween` |
 | `String` / `NullableString` on a **decimal** column | `DecimalComparator` | `Decimal` | `eq neq gt gte lt lte in nin` |
 | `Enum[T]` / `NullableEnum[T]` | `<EnumName>Comparator` (`<EnumName>EnumComparator` on collision — see below) | the bound GraphQL enum | `eq neq in nin` |

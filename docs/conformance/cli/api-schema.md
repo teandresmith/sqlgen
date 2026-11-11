@@ -5,7 +5,7 @@
 The GraphQL schema sections of API generation (§26–§26.4.1, and §16.4's GraphQL rows), emitted by `cmd/sqlgen/gen`, whose orphan check stays with [`gen.md`](gen.md), so this file lists no package of its own. The `api-generation` matrix and its rows for these sections are in [`api.md`](api.md).
 
 ## §26 API Generation
-<!-- prd: 26 sha256: 11cf7d9293d9a740 -->
+<!-- prd: 26 sha256: b1d71a18235487bb -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -74,7 +74,7 @@ The GraphQL schema sections of API generation (§26–§26.4.1, and §16.4's Gra
 | api.casing.walker-matches | The generated `fieldOptionsFromCollected` walkers match the configured casing | `unit: cmd/sqlgen/gen: TestGraphQLCasing_perElementConventions/camel_case/walker cases match the casing`; `unit: cmd/sqlgen/gen: TestGraphQLCasing_perElementConventions/snake_case/walker cases match the casing` | all | |
 
 ## §26.4 GraphQL Schema Generation
-<!-- prd: 26.4 sha256: 45c59c494b3a2b7b -->
+<!-- prd: 26.4 sha256: b4434ea5c04a9a47 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -184,7 +184,7 @@ The GraphQL schema sections of API generation (§26–§26.4.1, and §16.4's Gra
 | api.cmp.duration-interval-native | Duration filtering compares intervals, not text or nanosecond counts | `example: graphql: TestScalarProbeFilters/Duration/ordered_compares_as_interval`; `example: graphql: TestScalarProbeFilters/Duration/eq_is_not_string_equality` | postgres | |
 | api.cmp.string-operators | `StringComparator` carries `eq neq gt gte lt lte contains startsWith endsWith like nlike in nin` | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/String` | all | |
 | api.cmp.id-operators | `IDComparator` carries `eq neq gt gte lt lte in nin` | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/ID` | all | |
-| api.cmp.bool-operators | `BooleanComparator` carries `eq neq` | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Bool` | all | |
+| api.cmp.bool-operators | `BooleanComparator` carries `eq neq in` | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Bool` | all | |
 | api.cmp.time-operators | `TimeComparator` carries `eq neq gt gte lt lte in nin between nbetween` with `Time` operands | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/Time` | all | |
 | api.cmp.json-operators | `JSONComparator` carries `contains hasKey`, `contains` typed `JSON` | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/JSON`; `unit: cmd/sqlgen/gen: TestJSONComparator_documentOperandsUseTheJSONScalar`; `example: graphql: TestJSONComparator_NarrowsOverHTTP` | postgres, mysql | |
 | api.cmp.jsonb-operators | `JSONBComparator` carries `hasKey hasAnyKey hasAllKeys contains containedBy pathExists` | `unit: cmd/sqlgen/gen: TestComparatorFamilies_projectEveryGoOperator/JSONB`; `example: graphql: TestJSONBComparator_NarrowsOverHTTP` | postgres | |

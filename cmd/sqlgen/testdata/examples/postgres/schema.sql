@@ -481,6 +481,19 @@ CREATE TABLE time_keyed_notes (
     note TEXT NOT NULL
 );
 
+-- bool_keyed / bool_keyed_notes: a boolean primary key and foreign key bind as
+-- bools, as on the dialects that store them as integers.
+CREATE TABLE bool_keyed (
+    k BOOLEAN PRIMARY KEY,
+    label TEXT NOT NULL
+);
+
+CREATE TABLE bool_keyed_notes (
+    id BIGSERIAL PRIMARY KEY,
+    keyed_k BOOLEAN REFERENCES bool_keyed (k),
+    note TEXT NOT NULL
+);
+
 -- Foreign keys of another width than the column they reference. PostgreSQL
 -- accepts them, so each loader has to bind a parent key into a column of
 -- another Go type, and a parent too wide for the column has no children.

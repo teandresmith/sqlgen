@@ -457,6 +457,249 @@ func translateCreateAssetDocumentLinkInput(in gqlmodel.CreateAssetDocumentLinkIn
 	return out
 }
 
+// translateCreateBoolKeyedInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBoolKeyedInput(in gqlmodel.CreateBoolKeyedInput) *models.CreateBoolKeyedInput {
+	out := &models.CreateBoolKeyedInput{}
+	out.K = in.K
+	out.Label = in.Label
+
+	return out
+}
+
+// translateUpdateBoolKeyedInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateBoolKeyedRequest
+// carries them to the resolver.
+func translateUpdateBoolKeyedInput(in gqlmodel.UpdateBoolKeyedInput) *models.UpdateBoolKeyedInput {
+	out := &models.UpdateBoolKeyedInput{}
+	if in.Label != nil {
+		out.Label = omittable.Set(*in.Label)
+	}
+	return out
+}
+
+// hasUpdateBoolKeyedSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateBoolKeyedSetFields(in gqlmodel.UpdateBoolKeyedInput) bool {
+	if in.Label != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateBoolKeyedRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateBoolKeyedInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateBoolKeyedRequest(in gqlmodel.UpdateBoolKeyedInput) sqlgenresolver.UpdateBoolKeyedRequest {
+	out := sqlgenresolver.UpdateBoolKeyedRequest{
+		Set:    translateUpdateBoolKeyedInput(in),
+		HasSet: hasUpdateBoolKeyedSetFields(in),
+	}
+	return out
+}
+
+// translateCreateBoolKeyedWithRelatedInput maps the gqlgen-generated nested create
+// input onto the model's. The flat half goes through the ordinary
+// create translator, so the wrapper cannot drift from the input it contains.
+func translateCreateBoolKeyedWithRelatedInput(in gqlmodel.CreateBoolKeyedWithRelatedInput) *models.CreateBoolKeyedWithRelatedInput {
+	out := &models.CreateBoolKeyedWithRelatedInput{}
+	if in.BoolKeyed != nil {
+		out.BoolKeyed = *translateCreateBoolKeyedInput(*in.BoolKeyed)
+	}
+	out.BoolKeyedNotes = translateBoolKeyedBoolKeyedNotesCreateNested(in.BoolKeyedNotes)
+	return out
+}
+
+// translateUpdateBoolKeyedWithRelatedInput maps the gqlgen-generated nested update
+// input onto the model's. An omitted flat half leaves every parent
+// column alone, and the parent write then issues no UPDATE at all.
+// The flat half's `_inc` / `_dec` operators have no place on the Go input;
+// this table has no incrementable column, so the input carries none.
+func translateUpdateBoolKeyedWithRelatedInput(in gqlmodel.UpdateBoolKeyedWithRelatedInput) *models.UpdateBoolKeyedWithRelatedInput {
+	out := &models.UpdateBoolKeyedWithRelatedInput{}
+	if in.BoolKeyed != nil {
+		out.BoolKeyed = *translateUpdateBoolKeyedInput(*in.BoolKeyed)
+	}
+	out.BoolKeyedNotes = translateBoolKeyedBoolKeyedNotesUpdateNested(in.BoolKeyedNotes)
+	return out
+}
+
+// translateUpsertBoolKeyedWithRelatedInput maps the gqlgen-generated nested upsert
+// input onto the model's. Its nested half is the update-side block verbatim.
+func translateUpsertBoolKeyedWithRelatedInput(in gqlmodel.UpsertBoolKeyedWithRelatedInput) *models.UpsertBoolKeyedWithRelatedInput {
+	out := &models.UpsertBoolKeyedWithRelatedInput{}
+	if in.BoolKeyed != nil {
+		out.BoolKeyed = *translateCreateBoolKeyedInput(*in.BoolKeyed)
+	}
+	out.BoolKeyedNotes = translateBoolKeyedBoolKeyedNotesUpdateNested(in.BoolKeyedNotes)
+	return out
+}
+
+// translateBoolKeyedConflictTarget maps the GraphQL conflict-target enum onto
+// the model's constant. Cases compare on the raw enum value, as
+// the sort translators do, so the mapping does not depend on how gqlgen spells
+// the enum's Go constants. gqlgen rejects an undeclared value before the
+// resolver runs; the error is for a schema and a translator that disagree,
+// which must fail loudly rather than fall back to some other target.
+func translateBoolKeyedConflictTarget(v gqlmodel.BoolKeyedConflictTarget) (models.BoolKeyedConflictTarget, error) {
+	switch string(v) {
+	case "PK":
+		return models.BoolKeyedConflictPK, nil
+	}
+	var none models.BoolKeyedConflictTarget
+	return none, sqlgenresolver.InvalidInputError("upsert bool_keyed with related: unknown conflict target \"" + string(v) + "\"")
+}
+
+// translateBoolKeyedBoolKeyedNotesCreateNested maps the create-side verb block for
+// BoolKeyed.BoolKeyedNotes.
+//
+// A nil block is an edge the caller did not touch.
+func translateBoolKeyedBoolKeyedNotesCreateNested(in *gqlmodel.BoolKeyedBoolKeyedNotesCreateNested) *models.BoolKeyedBoolKeyedNotesCreateNested {
+	if in == nil {
+		return nil
+	}
+	out := &models.BoolKeyedBoolKeyedNotesCreateNested{}
+	for _, c := range in.Create {
+		if c == nil {
+			continue
+		}
+		out.Create = append(out.Create, translateBoolKeyedBoolKeyedNotesCreateInput(*c))
+	}
+	for _, v := range in.Connect {
+		out.Connect = append(out.Connect, int64(v))
+	}
+	return out
+}
+
+// translateBoolKeyedBoolKeyedNotesUpdateNested maps the update-side verb block for
+// BoolKeyed.BoolKeyedNotes.
+//
+// A nil block is an edge the caller did not touch.
+func translateBoolKeyedBoolKeyedNotesUpdateNested(in *gqlmodel.BoolKeyedBoolKeyedNotesUpdateNested) *models.BoolKeyedBoolKeyedNotesUpdateNested {
+	if in == nil {
+		return nil
+	}
+	out := &models.BoolKeyedBoolKeyedNotesUpdateNested{}
+	if in.Clear != nil {
+		out.Clear = *in.Clear
+	}
+	for _, c := range in.Create {
+		if c == nil {
+			continue
+		}
+		out.Create = append(out.Create, translateBoolKeyedBoolKeyedNotesCreateInput(*c))
+	}
+	for _, v := range in.Connect {
+		out.Connect = append(out.Connect, int64(v))
+	}
+	for _, v := range in.Disconnect {
+		out.Disconnect = append(out.Disconnect, int64(v))
+	}
+	return out
+}
+
+// translateBoolKeyedBoolKeyedNotesCreateInput maps one element of the `create` verb for
+// BoolKeyed.BoolKeyedNotes.
+//
+// It is the target's create input without the columns the edge sets itself
+// from the parent's key.
+func translateBoolKeyedBoolKeyedNotesCreateInput(in gqlmodel.BoolKeyedBoolKeyedNotesCreateInput) *models.BoolKeyedBoolKeyedNotesCreateInput {
+	out := &models.BoolKeyedBoolKeyedNotesCreateInput{}
+	out.Note = in.Note
+
+	return out
+}
+
+// translateCreateBoolKeyedNoteInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBoolKeyedNoteInput(in gqlmodel.CreateBoolKeyedNoteInput) *models.CreateBoolKeyedNoteInput {
+	out := &models.CreateBoolKeyedNoteInput{}
+	if in.KeyedK != nil {
+		out.KeyedK = omittable.Set(in.KeyedK)
+	}
+	out.Note = in.Note
+
+	return out
+}
+
+// translateUpdateBoolKeyedNoteInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateBoolKeyedNoteRequest
+// carries them to the resolver.
+func translateUpdateBoolKeyedNoteInput(in gqlmodel.UpdateBoolKeyedNoteInput) *models.UpdateBoolKeyedNoteInput {
+	out := &models.UpdateBoolKeyedNoteInput{}
+	if val, ok := in.KeyedK.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.KeyedK.Get()
+			out.KeyedK = omittable.Set(zero)
+		} else {
+			out.KeyedK = omittable.Set(val)
+		}
+	}
+	if in.Note != nil {
+		out.Note = omittable.Set(*in.Note)
+	}
+	return out
+}
+
+// hasUpdateBoolKeyedNoteSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateBoolKeyedNoteSetFields(in gqlmodel.UpdateBoolKeyedNoteInput) bool {
+	if in.KeyedK.IsSet() {
+		return true
+	}
+	if in.Note != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateBoolKeyedNoteRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateBoolKeyedNoteInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateBoolKeyedNoteRequest(in gqlmodel.UpdateBoolKeyedNoteInput) sqlgenresolver.UpdateBoolKeyedNoteRequest {
+	out := sqlgenresolver.UpdateBoolKeyedNoteRequest{
+		Set:    translateUpdateBoolKeyedNoteInput(in),
+		HasSet: hasUpdateBoolKeyedNoteSetFields(in),
+	}
+	return out
+}
+
 // translateCreateCategoryInput maps a gqlgen-generated input value
 // onto the consumer model's Create<Table>Input. The body shape per field
 // depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×

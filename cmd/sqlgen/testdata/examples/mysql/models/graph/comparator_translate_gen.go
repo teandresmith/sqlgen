@@ -49,6 +49,9 @@ func translateBooleanComparator(in *gqlmodel.BooleanComparator) *comparator.Bool
 	if in.Neq != nil {
 		out.Neq = in.Neq
 	}
+	if len(in.In) > 0 {
+		out.In = append([]bool(nil), in.In...)
+	}
 	return out
 }
 
@@ -163,6 +166,28 @@ func translateJSONComparator(in *gqlmodel.JSONComparator) *comparator.JSON {
 	}
 	if in.HasKey != nil {
 		out.HasKey = in.HasKey
+	}
+	return out
+}
+
+// translateNullableBooleanComparator translates a GraphQL NullableBooleanComparator into a
+// *comparator.NullableBool for the model layer's filter struct.
+func translateNullableBooleanComparator(in *gqlmodel.NullableBooleanComparator) *comparator.NullableBool {
+	if in == nil {
+		return nil
+	}
+	out := &comparator.NullableBool{}
+	if in.Eq != nil {
+		out.Eq = in.Eq
+	}
+	if in.Neq != nil {
+		out.Neq = in.Neq
+	}
+	if len(in.In) > 0 {
+		out.In = append([]bool(nil), in.In...)
+	}
+	if in.IsNull != nil {
+		out.Null = in.IsNull
 	}
 	return out
 }

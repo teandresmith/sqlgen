@@ -301,6 +301,78 @@ func translateBinaryKeyEventFilter(in *gqlmodel.BinaryKeyEventFilter) *models.Bi
 	return out
 }
 
+// translateBoolKeyedFilter converts the gqlgen-generated
+// BoolKeyedFilter into a *models.BoolKeyedFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateBoolKeyedFilter(in *gqlmodel.BoolKeyedFilter) *models.BoolKeyedFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.BoolKeyedFilter{}
+	if in.Label != nil {
+		out.Label = translateStringComparator(in.Label)
+	}
+	if in.BoolKeyedNotes != nil {
+		out.BoolKeyedNotes = translateBoolKeyedNoteFilter(in.BoolKeyedNotes)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.BoolKeyedFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateBoolKeyedFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.BoolKeyedFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateBoolKeyedFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateBoolKeyedNoteFilter converts the gqlgen-generated
+// BoolKeyedNoteFilter into a *models.BoolKeyedNoteFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateBoolKeyedNoteFilter(in *gqlmodel.BoolKeyedNoteFilter) *models.BoolKeyedNoteFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.BoolKeyedNoteFilter{}
+	if in.KeyedK != nil {
+		out.KeyedK = translateNullableBooleanComparator(in.KeyedK)
+	}
+	if in.Note != nil {
+		out.Note = translateStringComparator(in.Note)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.BoolKeyedNoteFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateBoolKeyedNoteFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.BoolKeyedNoteFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateBoolKeyedNoteFilter(sub))
+		}
+	}
+	return out
+}
+
 // translateCategoryFilter converts the gqlgen-generated
 // CategoryFilter into a *models.CategoryFilter.
 // Returns nil when the input is nil so the model layer's "nil filter ⇒ no

@@ -25,6 +25,8 @@ const fingerprintAsset = "b55db1f1"
 const fingerprintAssetDocumentLink = "0f03d00a"
 const fingerprintAuditNote = "50a29df8"
 const fingerprintAuditUser = "72775f68"
+const fingerprintBoolKeyed = "6b2a7f0a"
+const fingerprintBoolKeyedNote = "bd72246c"
 const fingerprintCategory = "719c4683"
 const fingerprintCounter = "bc302378"
 const fingerprintDefaultOnlyRow = "349b9fd8"
@@ -1477,6 +1479,513 @@ func (c *Cache) hydrateAuditUser(pk uuid.UUID, next hook.QueryHandler) {
 		if c.metrics != nil {
 			c.metrics.Set(schema, TableAuditUsers)
 			c.metrics.HydrationComplete(schema, TableAuditUsers, nil)
+		}
+	}()
+}
+
+// keyForBoolKeyed builds the cache key for BoolKeyed by PK.
+func (c *Cache) keyForBoolKeyed(pk bool) string {
+	return cache.BuildKey(c.prefix, "public", "bool_keyed", fingerprintBoolKeyed, pk)
+}
+
+// ttlForBoolKeyed returns the resolved TTL for BoolKeyed cache entries.
+func (c *Cache) ttlForBoolKeyed() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipBoolKeyed reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipBoolKeyed(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*BoolKeyedFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	if typed.BoolKeyedNotes != nil {
+		return true
+	}
+	return false
+}
+
+// fullParentFieldOptionsBoolKeyed returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsBoolKeyed() *BoolKeyedFieldOptions {
+	return &BoolKeyedFieldOptions{
+		K:     true,
+		Label: true,
+	}
+}
+
+// readThroughBoolKeyed implements the cache read-through path for BoolKeyed:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughBoolKeyed(ctx context.Context, pk bool, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForBoolKeyed(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*BoolKeyed](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableBoolKeyeds, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableBoolKeyeds, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableBoolKeyeds)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableBoolKeyeds)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableBoolKeyeds)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateBoolKeyed(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*BoolKeyed](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*BoolKeyed)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForBoolKeyed())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableBoolKeyeds, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableBoolKeyeds, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableBoolKeyeds)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setBoolKeyed caches a full BoolKeyed entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setBoolKeyed(ctx context.Context, entity *BoolKeyed) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForBoolKeyed(entity.K)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForBoolKeyed())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableBoolKeyeds, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableBoolKeyeds, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableBoolKeyeds)
+	}
+}
+
+// hydrateBoolKeyed launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateBoolKeyed(pk bool, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForBoolKeyed(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableBoolKeyeds)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableBoolKeyeds,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[BoolKeyedFieldOptions]{
+				FieldOptions: fullParentFieldOptionsBoolKeyed(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableBoolKeyeds, err)
+			}
+			return
+		}
+		entity, ok := result.(*BoolKeyed)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableBoolKeyeds, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableBoolKeyeds, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForBoolKeyed())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableBoolKeyeds, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableBoolKeyeds, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableBoolKeyeds, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableBoolKeyeds)
+			c.metrics.HydrationComplete(schema, TableBoolKeyeds, nil)
+		}
+	}()
+}
+
+// keyForBoolKeyedNote builds the cache key for BoolKeyedNote by PK.
+func (c *Cache) keyForBoolKeyedNote(pk int64) string {
+	return cache.BuildKey(c.prefix, "public", "bool_keyed_notes", fingerprintBoolKeyedNote, pk)
+}
+
+// ttlForBoolKeyedNote returns the resolved TTL for BoolKeyedNote cache entries.
+func (c *Cache) ttlForBoolKeyedNote() time.Duration {
+	return time.Duration(3600000000000)
+}
+
+// hasAnyRelationshipBoolKeyedNote reports whether fo has any relationship-typed
+// flag set. Returns false when fo is nil or when only column flags are set.
+func hasAnyRelationshipBoolKeyedNote(fo any) bool {
+	if fo == nil {
+		return false
+	}
+	typed, ok := fo.(*BoolKeyedNoteFieldOptions)
+	if !ok || typed == nil {
+		return false
+	}
+	_ = typed
+	return false
+}
+
+// fullParentFieldOptionsBoolKeyedNote returns a FieldOptions with every column
+// flag set to true and every relationship flag nil — used by hydration to
+// guarantee parent-only results regardless of nil-FieldOptions semantics
+// elsewhere.
+func fullParentFieldOptionsBoolKeyedNote() *BoolKeyedNoteFieldOptions {
+	return &BoolKeyedNoteFieldOptions{
+		ID:     true,
+		KeyedK: true,
+		Note:   true,
+	}
+}
+
+// readThroughBoolKeyedNote implements the cache read-through path for BoolKeyedNote:
+// probe cache → hit returns decoded entity, miss runs the DB query under
+// singleflight dedup and populates cache. Every backend call is breaker-gated;
+// errors are routed through cache.RouteError and fall through to the DB so
+// a cache outage never breaks the caller.
+func (c *Cache) readThroughBoolKeyedNote(ctx context.Context, pk int64, q *hook.QueryContext, next hook.QueryHandler) (any, error) {
+	key := c.keyForBoolKeyedNote(pk)
+	schema := "public"
+
+	if c.breaker == nil || c.breaker.Allow() {
+		getStart := time.Now()
+		entity, hit, err := cache.GetAs[*BoolKeyedNote](ctx, c.backend, c.serializer, key)
+		if c.metrics != nil {
+			c.metrics.GetLatency(schema, TableBoolKeyedNotes, time.Since(getStart))
+		}
+		if err != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "get", schema, TableBoolKeyedNotes, err)
+		} else if hit {
+			if c.metrics != nil {
+				c.metrics.Hit(schema, TableBoolKeyedNotes)
+			}
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+			return entity, nil
+		} else {
+			if c.metrics != nil {
+				c.metrics.Miss(schema, TableBoolKeyedNotes)
+			}
+			// A clean miss is a successful backend round-trip — it resets
+			// the consecutive-failure counter and closes a HalfOpen probe.
+			if c.breaker != nil {
+				c.breaker.RecordSuccess()
+			}
+		}
+	} else if c.metrics != nil {
+		c.metrics.Miss(schema, TableBoolKeyedNotes)
+	}
+
+	// Partial fetches must not write back to cache (invariant:
+	// only full entities). On miss, run the DB through `next` with the
+	// caller's partial FieldOptions, kick off fire-and-forget hydration to
+	// refill the cache with the full entity, and return the
+	// partial result directly. The partial + hydration-disabled case is
+	// filtered out earlier in QueryHook.
+	if extractFieldOptions(q.CallOptions) != nil {
+		result, err := next(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		c.hydrateBoolKeyedNote(pk, next)
+		return result, nil
+	}
+
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// In-flight cache re-check: a sibling flight may have populated the
+		// cache between this caller's outer Get-miss and entering the flight.
+		// Without this, late stragglers that arrive after the sibling flight
+		// completed would register a new flight and run a duplicate DB query.
+		// The outer probe already recorded the Miss / breaker success; this
+		// inner re-check is dedup machinery, not an observable cache event, so
+		// it emits no metrics. It runs only while the breaker is Closed and
+		// never calls Allow: a HalfOpen probe it took would record no outcome
+		// and hold the probe slot forever.
+		if c.breaker == nil || c.breaker.State() == cache.StateClosed {
+			if entity, hit, err := cache.GetAs[*BoolKeyedNote](ctx, c.backend, c.serializer, key); err == nil && hit {
+				return entity, nil
+			}
+		}
+		result, fetchErr := next(ctx, q)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		entity, ok := result.(*BoolKeyedNote)
+		if !ok || entity == nil {
+			return result, nil
+		}
+		if c.breaker != nil && !c.breaker.Allow() {
+			return result, nil
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForBoolKeyedNote())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableBoolKeyedNotes, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableBoolKeyedNotes, setErr)
+			return result, nil
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableBoolKeyedNotes)
+		}
+		return result, nil
+	})
+
+	select {
+	case res := <-ch:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// setBoolKeyedNote caches a full BoolKeyedNote entity. Called by the mutation hook
+// after a successful Create / CreateMany to populate the cache with the new
+// entity. The PK is read from the entity itself so this never
+// depends on parallel ordering with m.AffectedPKs (GetMany does not guarantee
+// result order). Failures route through cache.RouteError and never surface to
+// the caller path; a cache outage can delay the next Get but never breaks a
+// mutation.
+func (c *Cache) setBoolKeyedNote(ctx context.Context, entity *BoolKeyedNote) {
+	if entity == nil {
+		return
+	}
+	if c.breaker != nil && !c.breaker.Allow() {
+		return
+	}
+	key := c.keyForBoolKeyedNote(entity.ID)
+	schema := "public"
+	setStart := time.Now()
+	err := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForBoolKeyedNote())
+	if c.metrics != nil {
+		c.metrics.SetLatency(schema, TableBoolKeyedNotes, time.Since(setStart))
+	}
+	if err != nil {
+		cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableBoolKeyedNotes, err)
+		return
+	}
+	if c.breaker != nil {
+		c.breaker.RecordSuccess()
+	}
+	if c.metrics != nil {
+		c.metrics.Set(schema, TableBoolKeyedNotes)
+	}
+}
+
+// hydrateBoolKeyedNote launches at most one background hydration per (table, pk).
+// Runs with a fresh context.Background() timeout — does NOT inherit the
+// caller's ctx. Re-runs the Get through the
+// downstream chain with full-parent FieldOptions (every column true, every
+// relationship nil) and SkipHooks: true so the refill pulls a full entity,
+// then serializes and populates the cache under the full-entity key. Errors
+// surface via metrics.HydrationComplete + cache.RouteError; the caller path
+// is never affected.
+func (c *Cache) hydrateBoolKeyedNote(pk int64, next hook.QueryHandler) {
+	if !c.hydrationEnabled {
+		return
+	}
+	key := c.keyForBoolKeyedNote(pk)
+	if _, loaded := c.hydrating.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer c.hydrating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), c.hydrationTimeout)
+		defer cancel()
+		schema := "public"
+		if c.metrics != nil {
+			c.metrics.HydrationStart(schema, TableBoolKeyedNotes)
+		}
+
+		q := &hook.QueryContext{
+			Op:     hook.OpGet,
+			Table:  TableBoolKeyedNotes,
+			Schema: schema,
+			PK:     pk,
+			CallOptions: CallOptions[BoolKeyedNoteFieldOptions]{
+				FieldOptions: fullParentFieldOptionsBoolKeyedNote(),
+				SkipHooks:    true,
+			},
+		}
+		result, err := next(ctx, q)
+		if err != nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableBoolKeyedNotes, err)
+			}
+			return
+		}
+		entity, ok := result.(*BoolKeyedNote)
+		if !ok || entity == nil {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableBoolKeyedNotes, nil)
+			}
+			return
+		}
+
+		if c.breaker != nil && !c.breaker.Allow() {
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableBoolKeyedNotes, nil)
+			}
+			return
+		}
+		setStart := time.Now()
+		setErr := cache.SetAs(ctx, c.backend, c.serializer, key, entity, c.ttlForBoolKeyedNote())
+		if c.metrics != nil {
+			c.metrics.SetLatency(schema, TableBoolKeyedNotes, time.Since(setStart))
+		}
+		if setErr != nil {
+			cache.RouteError(ctx, c.metrics, c.onError, c.breaker, "set", schema, TableBoolKeyedNotes, setErr)
+			if c.metrics != nil {
+				c.metrics.HydrationComplete(schema, TableBoolKeyedNotes, setErr)
+			}
+			return
+		}
+		if c.breaker != nil {
+			c.breaker.RecordSuccess()
+		}
+		if c.metrics != nil {
+			c.metrics.Set(schema, TableBoolKeyedNotes)
+			c.metrics.HydrationComplete(schema, TableBoolKeyedNotes, nil)
 		}
 	}()
 }
@@ -9528,6 +10037,18 @@ func (c *Cache) keysFor(table hook.TableName, pks []any) ([]string, error) {
 			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
 		}
 		return keys, nil
+	case TableBoolKeyeds:
+		keys, err := cache.KeysFromAny(pks, c.keyForBoolKeyed)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
+	case TableBoolKeyedNotes:
+		keys, err := cache.KeysFromAny(pks, c.keyForBoolKeyedNote)
+		if err != nil {
+			return nil, fmt.Errorf("cache: InvalidateMany(%q): %w", table, err)
+		}
+		return keys, nil
 	case TableCategories:
 		keys, err := cache.KeysFromAny(pks, c.keyForCategory)
 		if err != nil {
@@ -9748,6 +10269,10 @@ func cacheRelationFor(table hook.TableName) (schema, name string, ok bool) {
 		return "audit", "notes", true
 	case TableAuditUsers:
 		return "audit", "users", true
+	case TableBoolKeyeds:
+		return "public", "bool_keyed", true
+	case TableBoolKeyedNotes:
+		return "public", "bool_keyed_notes", true
 	case TableCategories:
 		return "public", "categories", true
 	case TableCounters:
@@ -9949,6 +10474,18 @@ func (c *Cache) QueryHook() hook.QueryHook {
 					return next(ctx, q)
 				}
 				return c.readThroughAuditUser(ctx, pk, q, next)
+			case TableBoolKeyeds:
+				pk, ok := q.PK.(bool)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughBoolKeyed(ctx, pk, q, next)
+			case TableBoolKeyedNotes:
+				pk, ok := q.PK.(int64)
+				if !ok {
+					return next(ctx, q)
+				}
+				return c.readThroughBoolKeyedNote(ctx, pk, q, next)
 			case TableCategories:
 				pk, ok := q.PK.(uuid.UUID)
 				if !ok {
@@ -10202,6 +10739,14 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 				if entity, ok := result.(*AuditUser); ok {
 					c.setAuditUser(ctx, entity)
 				}
+			case TableBoolKeyeds:
+				if entity, ok := result.(*BoolKeyed); ok {
+					c.setBoolKeyed(ctx, entity)
+				}
+			case TableBoolKeyedNotes:
+				if entity, ok := result.(*BoolKeyedNote); ok {
+					c.setBoolKeyedNote(ctx, entity)
+				}
 			case TableCategories:
 				if entity, ok := result.(*Category); ok {
 					c.setCategory(ctx, entity)
@@ -10361,6 +10906,18 @@ func (c *Cache) dispatchMutation(ctx context.Context, m *hook.MutationContext, r
 				if entities, ok := result.([]*AuditUser); ok {
 					for _, entity := range entities {
 						c.setAuditUser(ctx, entity)
+					}
+				}
+			case TableBoolKeyeds:
+				if entities, ok := result.([]*BoolKeyed); ok {
+					for _, entity := range entities {
+						c.setBoolKeyed(ctx, entity)
+					}
+				}
+			case TableBoolKeyedNotes:
+				if entities, ok := result.([]*BoolKeyedNote); ok {
+					for _, entity := range entities {
+						c.setBoolKeyedNote(ctx, entity)
 					}
 				}
 			case TableCategories:
@@ -10678,6 +11235,10 @@ func hasAnyRelationshipFieldOptions(table hook.TableName, callOpts any) bool {
 		return hasAnyRelationshipAuditNote(fo)
 	case TableAuditUsers:
 		return hasAnyRelationshipAuditUser(fo)
+	case TableBoolKeyeds:
+		return hasAnyRelationshipBoolKeyed(fo)
+	case TableBoolKeyedNotes:
+		return hasAnyRelationshipBoolKeyedNote(fo)
 	case TableCategories:
 		return hasAnyRelationshipCategory(fo)
 	case TableCounters:

@@ -19,6 +19,8 @@ sqlgen manifest. Start here: [./manifest/_index.md](./manifest/_index.md).
 - **BinaryKey** (`binary_keys`, table) — [./manifest/binary_key.md](./manifest/binary_key.md)
 - **BinaryKeyBadge** (`binary_key_badges`, table) — [./manifest/binary_key_badge.md](./manifest/binary_key_badge.md)
 - **BinaryKeyEvent** (`binary_key_events`, table) — [./manifest/binary_key_event.md](./manifest/binary_key_event.md)
+- **BoolKeyed** (`bool_keyed`, table) — [./manifest/bool_keyed.md](./manifest/bool_keyed.md)
+- **BoolKeyedNote** (`bool_keyed_notes`, table) — [./manifest/bool_keyed_note.md](./manifest/bool_keyed_note.md)
 - **Category** (`categories`, table) — [./manifest/category.md](./manifest/category.md)
 - **CategoryStat** (`category_stats`, view) — [./manifest/category_stat.md](./manifest/category_stat.md)
 - **DigitLeadingColumn** (`digit_leading_columns`, table) — [./manifest/digit_leading_column.md](./manifest/digit_leading_column.md)

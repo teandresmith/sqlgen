@@ -15,6 +15,8 @@ Features: audit_columns, cache, events, soft_delete, views
 | AssetDocumentLink | `asset_document_links` | table | [asset_document_link.md](asset_document_link.md) | Junction table for m2m sub-categorized polymorphism |
 | AuditNote | `notes` | table | [audit_note.md](audit_note.md) |  |
 | AuditUser | `users` | table | [audit_user.md](audit_user.md) | Audit log of user account changes |
+| BoolKeyed | `bool_keyed` | table | [bool_keyed.md](bool_keyed.md) |  |
+| BoolKeyedNote | `bool_keyed_notes` | table | [bool_keyed_note.md](bool_keyed_note.md) |  |
 | Category | `categories` | table | [category.md](category.md) | Product classification categories |
 | CategoryStat | `category_stats` | view | [category_stat.md](category_stat.md) |  |
 | Counter | `counters` | table | [counter.md](counter.md) | Counter rows keyed via primary_key.columns override (single-column PK) |

@@ -16965,6 +16965,4205 @@ func scanAssetsWithOneToOneJoins(rows database.Rows, columns []string) ([]*Asset
 	return result, nil
 }
 
+type BoolKeyed struct {
+	K     bool   `db:"k" json:"k"`
+	Label string `db:"label" json:"label"`
+
+	// BoolKeyedNotes - one-to-many relationship with the bool_keyed_notes table.
+	BoolKeyedNotes []*BoolKeyedNote `db:"-" json:"bool_keyed_notes"`
+}
+
+// BoolKeyedClient provides type-safe operations for the bool_keyed table.
+type BoolKeyedClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single boolKeyed by primary key.
+	Get(ctx context.Context, id bool, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (*BoolKeyed, error)
+
+	// GetMany returns bool_keyed matching the given filter, field selection, and sort criteria.
+	// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+	// errgroup fan-out — in parallel over the pool, and serialized by the
+	// transaction's connection reservation when ctx carries one.
+	GetMany(ctx context.Context, input *GetBoolKeyedsInput, opts ...func(*CallOptions[BoolKeyedFieldOptions])) ([]*BoolKeyed, error)
+
+	// Exists returns true if a boolKeyed with the given primary key exists.
+	Exists(ctx context.Context, id bool, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any boolKeyed matches the given filter.
+	ExistsWhere(ctx context.Context, filter *BoolKeyedFilter, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (bool, error)
+
+	// Count returns the number of bool_keyed matching the given filter.
+	Count(ctx context.Context, filter *BoolKeyedFilter, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new boolKeyed and returns the created entity.
+	Create(ctx context.Context, input *CreateBoolKeyedInput, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (*BoolKeyed, error)
+
+	// CreateMany inserts multiple bool_keyed in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateBoolKeyedInput, opts ...func(*CallOptions[BoolKeyedFieldOptions])) ([]*BoolKeyed, error)
+
+	// Update partially updates a boolKeyed by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id bool, input *UpdateBoolKeyedInput, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (*BoolKeyed, error)
+
+	// UpdateMany updates multiple bool_keyed and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateBoolKeyedItem, opts ...func(*CallOptions[BoolKeyedFieldOptions])) ([]*BoolKeyed, error)
+
+	// UpdateWhere updates all bool_keyed matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *BoolKeyedFilter, input *UpdateBoolKeyedInput, opts ...func(*CallOptions[BoolKeyedFieldOptions])) ([]*BoolKeyed, error)
+
+	// Upsert inserts a boolKeyed or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateBoolKeyedInput, target BoolKeyedConflictTarget, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (*BoolKeyed, error)
+
+	// UpsertMany inserts or updates multiple bool_keyed in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateBoolKeyedInput, target BoolKeyedConflictTarget, opts ...func(*CallOptions[BoolKeyedFieldOptions])) ([]*BoolKeyed, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a boolKeyed from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id bool, opts ...func(*CallOptions[BoolKeyedFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple bool_keyed from the database.
+	HardDeleteMany(ctx context.Context, ids []bool, opts ...func(*CallOptions[BoolKeyedFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all bool_keyed matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *BoolKeyedFilter, opts ...func(*CallOptions[BoolKeyedFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of bool_keyed with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[BoolKeyedFilter], opts ...func(*CallOptions[BoolKeyedFieldOptions])) (*PaginateResult[BoolKeyed], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of bool_keyed.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[BoolKeyedFilter], opts ...func(*CallOptions[BoolKeyedFieldOptions])) (*Connection[BoolKeyed], error)
+
+	// Stream returns an iterator over bool_keyed matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamBoolKeyedsInput, opts ...func(*CallOptions[StreamBoolKeyedFieldOptions])) iter.Seq2[*BoolKeyed, error]
+}
+
+// boolKeyedClient implements the BoolKeyedClient interface.
+type boolKeyedClient struct {
+	querier                   database.Querier
+	dialect                   sql.Dialect
+	table                     sql.Table
+	batchSize                 int
+	queryLimit                int
+	pageSize                  int
+	cursorKeys                []string
+	strictUpdates             bool
+	mutationHooks             []hook.MutationHook
+	queryHooks                []hook.QueryHook
+	panicHandler              hook.PanicHandler
+	callbackMode              database.CallbackMode
+	boolKeyedNotesDefaultSort []sql.Sort
+	boolKeyedNoteClient       *boolKeyedNoteClient
+}
+
+// newBoolKeyedClient creates a new boolKeyedClient.
+func newBoolKeyedClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *boolKeyedClient {
+	return &boolKeyedClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "bool_keyed"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"k"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *boolKeyedClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *boolKeyedClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// boolKeyedAllColumns is the column list for full-entity reads, sorted for determinism.
+var boolKeyedAllColumns = []string{"k", "label"}
+
+// scanBoolKeyeds scans rows into BoolKeyed entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanBoolKeyeds(rows database.Rows, columns []string) ([]*BoolKeyed, error) {
+	var result []*BoolKeyed
+	for rows.Next() {
+		b := &BoolKeyed{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "k":
+				targets[idx] = &b.K
+			case "label":
+				targets[idx] = &b.Label
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan bool_keyed: %w", err)
+		}
+
+		result = append(result, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bool_keyed rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single bool_keyed by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *boolKeyedClient) Get(ctx context.Context, id bool, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (*BoolKeyed, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get bool_keyed: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableBoolKeyeds, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[BoolKeyedFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[BoolKeyedFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		boolKeyeds, err := c.GetMany(ctx, &GetBoolKeyedsInput{
+			Filter: &BoolKeyedFilter{
+				K: &comparator.Bool{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(boolKeyeds) == 0 {
+			return nil, ErrNotFound
+		}
+		return boolKeyeds[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get bool_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*BoolKeyed), nil
+}
+
+// GetMany returns bool_keyed matching the given filter, field selection, and sort criteria.
+// When FieldOptions includes O2M or M2M relationships, they are loaded via an
+// errgroup fan-out — in parallel over the pool, and serialized by the
+// transaction's connection reservation when ctx carries one.
+func (c *boolKeyedClient) GetMany(ctx context.Context, input *GetBoolKeyedsInput, opts ...func(*CallOptions[BoolKeyedFieldOptions])) ([]*BoolKeyed, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetBoolKeyedsInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get many bool_keyed: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableBoolKeyeds, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares, and the key relationship
+		// mapping reads off each row. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := boolKeyedAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+				if fieldOptions.loadsRelationships() {
+					columns = unionColumns(columns, "k")
+				}
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var boolKeyeds []*BoolKeyed
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		boolKeyeds, err = scanBoolKeyeds(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load O2M/M2M relationships via errgroup — in parallel over the pool,
+		// serialized by the transaction's connection reservation inside one
+		if fieldOptions != nil {
+			if err := c.loadRelationships(ctx, conn, boolKeyeds, options); err != nil {
+				return nil, err
+			}
+		}
+
+		return boolKeyeds, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many bool_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*BoolKeyed), nil
+}
+
+// loadsRelationships reports whether any O2M or M2M relationship is selected.
+// GetMany unions the k column into a narrowed projection when one is:
+// loadRelationships maps every child back through b.K, which
+// an unselected column would leave at its zero value.
+func (fo *BoolKeyedFieldOptions) loadsRelationships() bool {
+	if fo.BoolKeyedNotes != nil {
+		return true
+	}
+	return false
+}
+
+// loadRelationships fetches every selected O2M / M2M member through the
+// target's own client, so each child read carries that table's own filters,
+// soft-delete default and access rules rather than this one's.
+//
+// options is the parent call's resolved CallOptions, and each child read
+// inherits its per-operation fields, so one call reads its whole row set under
+// one set of options: a hook or cache the caller turned off for the
+// parent stays off for its children. The inherited fields are SkipHooks,
+// SkipCache and SkipEvents. Two fields are exceptions:
+// FieldOptions is taken per relationship from the parent's selection, and
+// LockMode is not inherited, so the child and junction reads take no row lock.
+//
+// The hook toggles come from options.caller, not options itself: when this
+// GetMany is the inner read of a Get, a Connection or a write's trailing read,
+// its own SkipHooks only stops the outer method's hook chain firing twice, and
+// says nothing about the child tables.
+//
+// The fan-out is unbounded, inside a transaction and out. Outside one each
+// edge draws its own pooled connection and the parallelism is real. Inside one
+// they share the transaction's single connection — database.Conn hands every
+// nested read the same *database.Tx — and the Tx's connection reservation
+// serializes them, so the statement count is identical either way and only the
+// concurrency differs. The loader needs no transaction-aware bound of its own.
+func (c *boolKeyedClient) loadRelationships(ctx context.Context, conn database.Querier, boolKeyeds []*BoolKeyed, options CallOptions[BoolKeyedFieldOptions]) error {
+	fo := options.FieldOptions
+	g, ctx := errgroup.WithContext(ctx)
+
+	if fo.BoolKeyedNotes != nil {
+		g.Go(func() error {
+			// Collect parent FK values
+			boolKeyedIDs := make([]bool, len(boolKeyeds))
+			for idx, b := range boolKeyeds {
+				boolKeyedIDs[idx] = b.K
+			}
+
+			sorts := fo.BoolKeyedNotes.Sorts
+			if len(sorts) == 0 {
+				sorts = c.boolKeyedNotesDefaultSort
+			}
+
+			// Load via related entity client in one statement: with pgx the FK
+			// filter binds every parent key as one array parameter (= ANY($1)),
+			// so no parent count reaches the bind-parameter limit, and the sorts
+			// order every parent's slice.
+			//
+			// Self-referential relationships share the parent's entity type, so
+			// the loaded children must use a name distinct from the parent slice
+			// (boolKeyeds) to avoid shadowing it and mis-mapping the results
+			// onto the children instead of the parents.
+
+			// Build FK-based filter, merged with consumer filter
+			filter := &BoolKeyedNoteFilter{
+				KeyedK: &comparator.NullableBool{Bool: comparator.Bool{In: boolKeyedIDs}},
+			}
+			if fo.BoolKeyedNotes.Filter != nil {
+				filter.And = append(filter.And, fo.BoolKeyedNotes.Filter)
+			}
+
+			relatedBoolKeyedNotes, err := c.boolKeyedNoteClient.GetMany(ctx, &GetBoolKeyedNotesInput{
+				Filter: filter,
+				Sorts:  sorts,
+				Limit:  new(0),
+				// The mapping below keys every child on its FK, so the fetch
+				// declares that column rather than mutating the caller's
+				// FieldOptions — a narrowed selection that omits it would
+				// otherwise map every child onto the zero value.
+				requiredColumns: []string{"keyed_k"},
+			}, func(co *CallOptions[BoolKeyedNoteFieldOptions]) {
+				co.FieldOptions = fo.BoolKeyedNotes.FieldOptions
+				co.SkipCache, co.SkipEvents = options.caller.skipCache, options.caller.skipEvents
+				co.SkipHooks = options.caller.skipHooks
+			})
+			if err != nil {
+				return fmt.Errorf("load bool_keyed bool_keyed_notes: %w", err)
+			}
+
+			// Map results back to parent entities by FK. The FK column on the
+			// child table may be nullable and resolved to a Null-wrapper struct
+			// (e.g., uuid.NullUUID) — fkLoadGuard skips invalid rows and
+			// fkLoadKey unwraps the underlying scalar before stringifying.
+			byFK := make(map[string][]*BoolKeyedNote)
+			for _, r := range relatedBoolKeyedNotes {
+				if !(r.KeyedK != nil) {
+					continue
+				}
+				key := fmt.Sprint((*r.KeyedK))
+				byFK[key] = append(byFK[key], r)
+			}
+			for i := range boolKeyeds {
+				boolKeyeds[i].BoolKeyedNotes = byFK[fmt.Sprint(boolKeyeds[i].K)]
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// Create inserts a new bool_keyed and returns the created entity.
+func (c *boolKeyedClient) Create(ctx context.Context, input *CreateBoolKeyedInput, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (*BoolKeyed, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateBoolKeyedInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create bool_keyed: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableBoolKeyeds, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"k", "label"}
+		args := []any{input.K, input.Label}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[BoolKeyedFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create bool_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*BoolKeyed), nil
+}
+
+// CreateMany inserts multiple bool_keyed in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *boolKeyedClient) CreateMany(ctx context.Context, inputs []*CreateBoolKeyedInput, opts ...func(*CallOptions[BoolKeyedFieldOptions])) ([]*BoolKeyed, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many bool_keyed: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableBoolKeyeds, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*BoolKeyed{}, nil
+		}
+		var allIDs []bool
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"k", "label"}
+			var valueRows [][]any
+			for _, input := range batch {
+
+				valueRows = append(valueRows, []any{
+					input.K,
+					input.Label,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetBoolKeyedsInput{
+			Filter: &BoolKeyedFilter{
+				K: &comparator.Bool{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[BoolKeyedFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many bool_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*BoolKeyed), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *boolKeyedClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (bool, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"k"},
+	})
+	var id bool
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return false, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *boolKeyedClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]bool, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"k"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []bool
+	for rows.Next() {
+		var id bool
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan bool_keyed id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a bool_keyed by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *boolKeyedClient) Update(ctx context.Context, id bool, input *UpdateBoolKeyedInput, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (*BoolKeyed, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update bool_keyed: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableBoolKeyeds, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.Label.Get(); ok {
+			setClauses["label"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[BoolKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("k")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[BoolKeyedFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update bool_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*BoolKeyed), nil
+}
+
+// UpdateBoolKeyedItem pairs a primary key with an update input for batch updates.
+type UpdateBoolKeyedItem struct {
+	K     bool                  `json:"k"`
+	Input *UpdateBoolKeyedInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple bool_keyed and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
+func (c *boolKeyedClient) UpdateMany(ctx context.Context, items []UpdateBoolKeyedItem, opts ...func(*CallOptions[BoolKeyedFieldOptions])) ([]*BoolKeyed, error) {
+	// UpdateBoolKeyedItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many bool_keyed: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableBoolKeyeds, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*BoolKeyed{}, nil
+		}
+		var allIDs []bool
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateBoolKeyedItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			var queuedItems []UpdateBoolKeyedItem
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if v, ok := item.Input.Label.Get(); ok {
+					setClauses["label"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.K)
+					continue
+				}
+
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("k")).Eq(item.K)},
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
+				allIDs = append(allIDs, item.K)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].K, err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close batch: %w", err)
+					}
+				} else {
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_bool_keyed", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("item %v: %w", queuedItems[i].K, err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("item %v rows affected: %w", queuedItems[i].K, err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
+						}
+						return nil
+					}); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.K
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetBoolKeyedsInput{
+			Filter: &BoolKeyedFilter{
+				K: &comparator.Bool{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[BoolKeyedFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many bool_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*BoolKeyed), nil
+}
+
+// UpdateWhere updates all bool_keyed matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *boolKeyedClient) UpdateWhere(ctx context.Context, filter *BoolKeyedFilter, input *UpdateBoolKeyedInput, opts ...func(*CallOptions[BoolKeyedFieldOptions])) ([]*BoolKeyed, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update bool_keyed where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableBoolKeyeds, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.Label.Get(); ok {
+			setClauses["label"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetBoolKeyedsInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[BoolKeyedFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"k"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []bool
+		for rows.Next() {
+			var id bool
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated bool_keyed id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetBoolKeyedsInput{
+			Filter: &BoolKeyedFilter{
+				K: &comparator.Bool{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[BoolKeyedFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update bool_keyed where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*BoolKeyed), nil
+}
+
+// HardDelete permanently removes a bool_keyed from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *boolKeyedClient) HardDelete(ctx context.Context, id bool, opts ...func(*CallOptions[BoolKeyedFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableBoolKeyeds, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("k")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete bool_keyed: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple bool_keyed from the database.
+func (c *boolKeyedClient) HardDeleteMany(ctx context.Context, ids []bool, opts ...func(*CallOptions[BoolKeyedFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableBoolKeyeds, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[bool]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("k")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"k"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[bool]struct{}, end-start)
+			for rows.Next() {
+				var rowID bool
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted bool_keyed key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many bool_keyed: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all bool_keyed matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *boolKeyedClient) HardDeleteWhere(ctx context.Context, filter *BoolKeyedFilter, opts ...func(*CallOptions[BoolKeyedFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableBoolKeyeds, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"k"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []bool
+		for rows.Next() {
+			var id bool
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted bool_keyed id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete bool_keyed where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *boolKeyedClient) recordWrittenKeys(written map[bool]struct{}, listed []bool, rowKeys map[bool]struct{}) {
+	found := make(map[bool]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// BoolKeyedConflictTarget identifies a unique constraint for upsert conflict detection.
+type BoolKeyedConflictTarget int
+
+const (
+	BoolKeyedConflictPK BoolKeyedConflictTarget = iota // PRIMARY KEY (k)
+)
+
+// boolKeyedConflictColumns maps each conflict target to its column set.
+var boolKeyedConflictColumns = map[BoolKeyedConflictTarget][]string{
+	BoolKeyedConflictPK: {"k"},
+}
+
+// Upsert inserts a bool_keyed or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *boolKeyedClient) Upsert(ctx context.Context, input *CreateBoolKeyedInput, target BoolKeyedConflictTarget, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (*BoolKeyed, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateBoolKeyedInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert bool_keyed: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableBoolKeyeds, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"k", "label"}
+		args := []any{input.K, input.Label}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := boolKeyedConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "k"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[BoolKeyedFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert bool_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*BoolKeyed), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *boolKeyedClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (bool, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "k",
+		ReturningColumns:      []string{"k"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return false, err
+	}
+	var id bool
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return false, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *boolKeyedClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (bool, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return false, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"k"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	var id bool
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return false, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return false, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return false, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple bool_keyed in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+func (c *boolKeyedClient) UpsertMany(ctx context.Context, inputs []*CreateBoolKeyedInput, target BoolKeyedConflictTarget, opts ...func(*CallOptions[BoolKeyedFieldOptions])) ([]*BoolKeyed, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many bool_keyed: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableBoolKeyeds, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*BoolKeyed{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"k", "label"}
+		conflictColumns := boolKeyedConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "k"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateBoolKeyedInput, 0, len(inputs))
+		rowIDs := make([]bool, 0, len(inputs))
+		for _, input := range inputs {
+
+			valueRows = append(valueRows, []any{
+				input.K,
+				input.Label,
+			})
+			rowInputs = append(rowInputs, input)
+			rowIDs = append(rowIDs, input.K)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateBoolKeyedInput, 0, len(rowInputs))
+			dedupedIDs := make([]bool, 0, len(rowIDs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						dedupedIDs[j] = rowIDs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+				dedupedIDs = append(dedupedIDs, rowIDs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+			rowIDs = dedupedIDs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetBoolKeyedsInput{
+			Filter: &BoolKeyedFilter{
+				K: &comparator.Bool{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[BoolKeyedFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many bool_keyed: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*BoolKeyed), nil
+}
+
+// Exists returns true if a bool_keyed with the given primary key exists.
+func (c *boolKeyedClient) Exists(ctx context.Context, id bool, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableBoolKeyeds, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("k")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists bool_keyed: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any bool_keyed matches the given filter.
+func (c *boolKeyedClient) ExistsWhere(ctx context.Context, filter *BoolKeyedFilter, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableBoolKeyeds, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists bool_keyed where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of bool_keyed matching the given filter.
+// A nil filter counts all bool_keyed.
+func (c *boolKeyedClient) Count(ctx context.Context, filter *BoolKeyedFilter, opts ...func(*CallOptions[BoolKeyedFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableBoolKeyeds, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count bool_keyed: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of bool_keyed with total count for offset-based pagination.
+// A nil filter paginates all bool_keyed.
+func (c *boolKeyedClient) Paginate(ctx context.Context, input PaginateInput[BoolKeyedFilter], opts ...func(*CallOptions[BoolKeyedFieldOptions])) (*PaginateResult[BoolKeyed], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate bool_keyed: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableBoolKeyeds, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[BoolKeyedFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		boolKeyeds, err := c.GetMany(ctx, &GetBoolKeyedsInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[BoolKeyed]{
+			Items:      boolKeyeds,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate bool_keyed: %w", err)
+	}
+	return result.(*PaginateResult[BoolKeyed]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of bool_keyed.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *boolKeyedClient) Connection(ctx context.Context, input ConnectionInput[BoolKeyedFilter], opts ...func(*CallOptions[BoolKeyedFieldOptions])) (*Connection[BoolKeyed], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection bool_keyed: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableBoolKeyeds, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[BoolKeyedFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeBoolKeyedCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeBoolKeyedCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		boolKeyeds, err := c.GetMany(ctx, &GetBoolKeyedsInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(boolKeyeds) > limit
+		if hasMore {
+			boolKeyeds = boolKeyeds[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(boolKeyeds)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[BoolKeyed], len(boolKeyeds))
+		for i, row := range boolKeyeds {
+			cursor, err := encodeBoolKeyedCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[BoolKeyed]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[BoolKeyed]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection bool_keyed: %w", err)
+	}
+	return result.(*Connection[BoolKeyed]), nil
+}
+
+// encodeBoolKeyedCursor encodes cursor key values as a base64 JSON string.
+func encodeBoolKeyedCursor(keys []string, b *BoolKeyed) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "k":
+			out["k"] = b.K
+		case "label":
+			out["label"] = b.Label
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode bool_keyed cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeBoolKeyedCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeBoolKeyedCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row BoolKeyed
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "k":
+			err = json.Unmarshal(raw[key], &row.K)
+			out[key] = row.K
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamBoolKeyedsInput holds query parameters for streaming bool_keyed records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamBoolKeyedsInput struct {
+	Filter *BoolKeyedFilter `json:"filter"`
+	Sorts  []sql.Sort       `json:"sorts"`
+}
+
+// StreamBoolKeyedFieldOptions controls scalar column selection for bool_keyed streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamBoolKeyedFieldOptions struct {
+	K     bool `json:"k"`
+	Label bool `json:"label"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamBoolKeyedFieldOptions) Columns() []string {
+	var cols []string
+	if fo.K {
+		cols = append(cols, "k")
+	}
+	if fo.Label {
+		cols = append(cols, "label")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamBoolKeyedFieldOptions) HasSelectedColumns() bool {
+	if fo.K {
+		return true
+	}
+	if fo.Label {
+		return true
+	}
+	return false
+}
+
+// scanBoolKeyedRow scans a single row into a BoolKeyed entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanBoolKeyedRow(rows database.Rows, columns []string) (*BoolKeyed, error) {
+	b := &BoolKeyed{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "k":
+			targets[idx] = &b.K
+		case "label":
+			targets[idx] = &b.Label
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan bool_keyed: %w", err)
+	}
+
+	return b, nil
+}
+
+// Stream returns an iterator over bool_keyed matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *boolKeyedClient) Stream(ctx context.Context, input *StreamBoolKeyedsInput, opts ...func(*CallOptions[StreamBoolKeyedFieldOptions])) iter.Seq2[*BoolKeyed, error] {
+	return func(yield func(*BoolKeyed, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamBoolKeyedsInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream bool_keyed: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *BoolKeyed, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream bool_keyed: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableBoolKeyeds, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := boolKeyedAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				b, err := scanBoolKeyedRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(b, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate bool_keyed rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream bool_keyed: %w", err))
+		}
+	}
+}
+
+// BoolKeyedFilter provides type-safe filtering for the bool_keyed table.
+type BoolKeyedFilter struct {
+	K              *comparator.Bool     `json:"k"`
+	Label          *comparator.String   `json:"label"`
+	BoolKeyedNotes *BoolKeyedNoteFilter `json:"bool_keyed_notes"`
+	And            []*BoolKeyedFilter   `json:"and"`
+	Or             []*BoolKeyedFilter   `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *BoolKeyedFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.K != nil {
+		conds = append(conds, f.K.Parse(dialect.QuoteIdentifier("k"), dialect)...)
+	}
+
+	if f.Label != nil {
+		conds = append(conds, f.Label.Parse(dialect.QuoteIdentifier("label"), dialect)...)
+	}
+
+	if f.BoolKeyedNotes != nil {
+		conds = append(conds, boolKeyedBoolKeyedNotesFilterExists(f.BoolKeyedNotes, dialect, opts))
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// boolKeyedBoolKeyedNotesFilterExists compiles a BoolKeyedNoteFilter set on the
+// BoolKeyedNotes relationship into a correlated EXISTS over bool_keyed_notes.
+//
+// The parent-side reference carries no qualifier: sql.CorrelationToken is
+// resolved by the builder against whichever FROM clause encloses the predicate,
+// so one emitted value is correct on both the plain read path and the aliased
+// O2O-join path.
+//
+// The subquery alias is keyed on nesting depth. A relationship filter nested
+// inside itself — legal for a self-referential relationship — would
+// otherwise reuse the alias and let the inner subquery shadow the reference its
+// own correlation resolves against.
+//
+// MySQL rejects an EXISTS naming the table an UPDATE or DELETE is mutating
+// (error 1093). A relationship filter whose target is the mutated table is
+// therefore a read-path predicate on MySQL, not one to pass to UpdateWhere /
+// SoftDeleteWhere / HardDeleteWhere / Increment.
+func boolKeyedBoolKeyedNotesFilterExists(f *BoolKeyedNoteFilter, dialect sql.Dialect, opts []FilterOption) sql.Condition {
+	scope := resolveFilterScope(opts)
+	tgt := filterSubqueryAlias("tgt", scope.depth)
+	subSQL := "SELECT 1 FROM " + dialect.FormatTable(sql.Table{Schema: "public", Name: "bool_keyed_notes"}) + " " + tgt +
+		" WHERE " + tgt + "." + dialect.QuoteIdentifier("keyed_k") + " = " + sql.CorrelationToken
+	var subArgs []any
+
+	// The target's own ToConditions supplies the inner WHERE, so nesting and
+	// and/or compose recursively. Every reference is qualified with the target
+	// alias: unqualified names inside a correlated subquery bind to the
+	// enclosing statement whenever the target lacks the column.
+	if where, whereArgs := sql.SubqueryWhere(dialect, tgt, f.ToConditions(dialect, nestFilterScope(opts, scope.depth+1)...)); where != "" {
+		subSQL += " AND " + where
+		subArgs = append(subArgs, whereArgs...)
+	}
+
+	return sql.Exists("k", sql.Subquery{SQL: subSQL, Args: subArgs})
+}
+
+// BoolKeyedFieldOptions controls column selection and relationship loading for bool_keyed queries.
+type BoolKeyedFieldOptions struct {
+	K              bool                              `json:"k"`
+	Label          bool                              `json:"label"`
+	BoolKeyedNotes *BoolKeyedNoteRelationshipOptions `json:"bool_keyed_notes"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *BoolKeyedFieldOptions) Columns() []string {
+	var cols []string
+	if fo.K {
+		cols = append(cols, "k")
+	}
+	if fo.Label {
+		cols = append(cols, "label")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *BoolKeyedFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"K":     "k",
+		"Label": "label",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *BoolKeyedFieldOptions) HasSelectedColumns() bool {
+	if fo.K {
+		return true
+	}
+	if fo.Label {
+		return true
+	}
+	if fo.BoolKeyedNotes != nil {
+		return true
+	}
+	return false
+}
+
+// BoolKeyedNoteRelationshipOptions controls loading options for BoolKeyedNote relationships.
+type BoolKeyedNoteRelationshipOptions struct {
+	FieldOptions *BoolKeyedNoteFieldOptions `json:"field_options"`
+	Filter       *BoolKeyedNoteFilter       `json:"filter"`
+	Sorts        []sql.Sort                 `json:"sorts"`
+}
+
+// CreateBoolKeyedInput holds the fields for creating a bool_keyed record.
+type CreateBoolKeyedInput struct {
+	K     bool   `json:"k"`
+	Label string `json:"label"`
+}
+
+// UpdateBoolKeyedInput holds the fields for updating a bool_keyed record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateBoolKeyedInput struct {
+	Label omittable.Value[string] `json:"label,omitzero"`
+}
+
+// GetBoolKeyedsInput holds query parameters for retrieving bool_keyed records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetBoolKeyedsInput struct {
+	Filter *BoolKeyedFilter `json:"filter"`
+	Limit  *int             `json:"limit"`
+	Offset *int             `json:"offset"`
+	Sorts  []sql.Sort       `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
+type BoolKeyedNote struct {
+	ID     int64  `db:"id" json:"id"`
+	KeyedK *bool  `db:"keyed_k" json:"keyed_k"`
+	Note   string `db:"note" json:"note"`
+}
+
+// BoolKeyedNoteClient provides type-safe operations for the bool_keyed_notes table.
+type BoolKeyedNoteClient interface {
+	// --- Read Operations ---
+
+	// Get returns a single boolKeyedNote by primary key.
+	Get(ctx context.Context, id int64, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (*BoolKeyedNote, error)
+
+	// GetMany returns bool_keyed_notes matching the given filter, field selection, and sort criteria.
+	GetMany(ctx context.Context, input *GetBoolKeyedNotesInput, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) ([]*BoolKeyedNote, error)
+
+	// Exists returns true if a boolKeyedNote with the given primary key exists.
+	Exists(ctx context.Context, id int64, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (bool, error)
+
+	// ExistsWhere returns true if any boolKeyedNote matches the given filter.
+	ExistsWhere(ctx context.Context, filter *BoolKeyedNoteFilter, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (bool, error)
+
+	// Count returns the number of bool_keyed_notes matching the given filter.
+	Count(ctx context.Context, filter *BoolKeyedNoteFilter, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (int64, error)
+
+	// --- Write Operations ---
+
+	// Create inserts a new boolKeyedNote and returns the created entity.
+	Create(ctx context.Context, input *CreateBoolKeyedNoteInput, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (*BoolKeyedNote, error)
+
+	// CreateMany inserts multiple bool_keyed_notes in batches and returns all created entities.
+	// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+	CreateMany(ctx context.Context, inputs []*CreateBoolKeyedNoteInput, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) ([]*BoolKeyedNote, error)
+
+	// Update partially updates a boolKeyedNote by primary key and returns the updated entity.
+	// Only fields where IsSet() is true are included in the SET clause.
+	// Returns ErrNotFound if the primary key does not exist.
+	Update(ctx context.Context, id int64, input *UpdateBoolKeyedNoteInput, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (*BoolKeyedNote, error)
+
+	// UpdateMany updates multiple bool_keyed_notes and returns the updated entities.
+	UpdateMany(ctx context.Context, items []UpdateBoolKeyedNoteItem, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) ([]*BoolKeyedNote, error)
+
+	// UpdateWhere updates all bool_keyed_notes matching the filter and returns the updated entities.
+	// Idempotent — returns empty slice when no rows match.
+	UpdateWhere(ctx context.Context, filter *BoolKeyedNoteFilter, input *UpdateBoolKeyedNoteInput, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) ([]*BoolKeyedNote, error)
+
+	// Upsert inserts a boolKeyedNote or updates it on conflict and returns the resulting entity.
+	Upsert(ctx context.Context, input *CreateBoolKeyedNoteInput, target BoolKeyedNoteConflictTarget, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (*BoolKeyedNote, error)
+
+	// UpsertMany inserts or updates multiple bool_keyed_notes in batches and returns all resulting entities.
+	// Inputs resolving to the same conflict target are deduped, last occurrence wins.
+	UpsertMany(ctx context.Context, inputs []*CreateBoolKeyedNoteInput, target BoolKeyedNoteConflictTarget, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) ([]*BoolKeyedNote, error)
+
+	// --- Hard Delete Operations ---
+
+	// HardDelete permanently removes a boolKeyedNote from the database.
+	// Idempotent — returns nil if the primary key does not exist.
+	HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) error
+
+	// HardDeleteMany permanently removes multiple bool_keyed_notes from the database.
+	HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) error
+
+	// HardDeleteWhere permanently removes all bool_keyed_notes matching the filter.
+	// Idempotent — returns nil when no rows match.
+	HardDeleteWhere(ctx context.Context, filter *BoolKeyedNoteFilter, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) error
+
+	// --- Pagination Operations ---
+
+	// Paginate returns a page of bool_keyed_notes with total count for offset-based pagination.
+	Paginate(ctx context.Context, input PaginateInput[BoolKeyedNoteFilter], opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (*PaginateResult[BoolKeyedNote], error)
+
+	// Connection returns a Relay-style cursor-paginated connection of bool_keyed_notes.
+	// Sort order is determined by cursor_keys — custom sorts are not supported.
+	// Use Paginate for custom sort orders.
+	Connection(ctx context.Context, input ConnectionInput[BoolKeyedNoteFilter], opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (*Connection[BoolKeyedNote], error)
+
+	// Stream returns an iterator over bool_keyed_notes matching the filter and sort criteria.
+	// Rows are yielded as the driver returns them; cache is bypassed.
+	// Stream cannot load relationships.
+	//
+	// Stream refuses an active transaction unless CallOptions.AllowInTransaction
+	// is set, and the opt-in commits the caller to issuing nothing else on that
+	// txCtx: the one rule that remains the caller's — drain or close a result set
+	// before issuing the next statement on that txCtx — applied to a loop whose
+	// body is caller code.
+	Stream(ctx context.Context, input *StreamBoolKeyedNotesInput, opts ...func(*CallOptions[StreamBoolKeyedNoteFieldOptions])) iter.Seq2[*BoolKeyedNote, error]
+}
+
+// boolKeyedNoteClient implements the BoolKeyedNoteClient interface.
+type boolKeyedNoteClient struct {
+	querier       database.Querier
+	dialect       sql.Dialect
+	table         sql.Table
+	batchSize     int
+	queryLimit    int
+	pageSize      int
+	cursorKeys    []string
+	strictUpdates bool
+	mutationHooks []hook.MutationHook
+	queryHooks    []hook.QueryHook
+	panicHandler  hook.PanicHandler
+}
+
+// newBoolKeyedNoteClient creates a new boolKeyedNoteClient.
+func newBoolKeyedNoteClient(querier database.Querier, mutationHooks []hook.MutationHook, queryHooks []hook.QueryHook, panicHandler hook.PanicHandler) *boolKeyedNoteClient {
+	return &boolKeyedNoteClient{
+		querier:       querier,
+		dialect:       sql.NewPostgresDialect(),
+		table:         sql.Table{Schema: "public", Name: "bool_keyed_notes"},
+		batchSize:     200,
+		queryLimit:    1000,
+		pageSize:      100,
+		cursorKeys:    []string{"id"},
+		strictUpdates: true,
+		mutationHooks: mutationHooks,
+		queryHooks:    queryHooks,
+		panicHandler:  panicHandler,
+	}
+}
+
+// executeMutation runs fn through the mutation hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *boolKeyedNoteClient) executeMutation(ctx context.Context, skipHooks bool, mc *hook.MutationContext, fn hook.MutationHandler) (any, error) {
+	var hooks []hook.MutationHook
+	if !skipHooks {
+		hooks = c.mutationHooks
+	}
+	return hook.BuildMutationChain(c.panicHandler, hooks, fn)(ctx, mc)
+}
+
+// executeQuery runs fn through the query hook chain.
+// When skipHooks is true, only panic recovery wraps the call.
+func (c *boolKeyedNoteClient) executeQuery(ctx context.Context, skipHooks bool, qc *hook.QueryContext, fn hook.QueryHandler) (any, error) {
+	var hooks []hook.QueryHook
+	if !skipHooks {
+		hooks = c.queryHooks
+	}
+	return hook.BuildQueryChain(c.panicHandler, hooks, fn)(ctx, qc)
+}
+
+// boolKeyedNoteAllColumns is the column list for full-entity reads, sorted for determinism.
+var boolKeyedNoteAllColumns = []string{"id", "keyed_k", "note"}
+
+// scanBoolKeyedNotes scans rows into BoolKeyedNote entities using a column-name switch.
+// Handles both scan target shapes (direct, wrapped) without reflection.
+func scanBoolKeyedNotes(rows database.Rows, columns []string) ([]*BoolKeyedNote, error) {
+	var result []*BoolKeyedNote
+	for rows.Next() {
+		b := &BoolKeyedNote{}
+
+		targets := make([]any, len(columns))
+		for idx, col := range columns {
+			switch col {
+			case "id":
+				targets[idx] = &b.ID
+			case "keyed_k":
+				targets[idx] = &b.KeyedK
+			case "note":
+				targets[idx] = &b.Note
+			}
+		}
+
+		if err := rows.Scan(targets...); err != nil {
+			return nil, fmt.Errorf("scan bool_keyed_note: %w", err)
+		}
+
+		result = append(result, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bool_keyed_note rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns a single bool_keyed_note by primary key with optional field selection.
+// If fieldOptions is provided, only the selected columns are returned and
+// relationships with non-nil FieldOptions are loaded.
+func (c *boolKeyedNoteClient) Get(ctx context.Context, id int64, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (*BoolKeyedNote, error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get bool_keyed_note: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	qctx := &hook.QueryContext{
+		Op: hook.OpGet, Table: TableBoolKeyedNotes, Schema: "public",
+		PK: id, CallOptions: options,
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, qctx, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Hooks may mutate q.CallOptions (e.g. the cache hook's hydration
+		// path overrides FieldOptions for a full-entity refill). Prefer
+		// those overrides when present; otherwise fall back to the
+		// caller-supplied options captured at Get() time.
+		effectiveOpts := options
+		if qOpts, ok := q.CallOptions.(CallOptions[BoolKeyedNoteFieldOptions]); ok {
+			// A hook outside this package cannot set the caller record, so a
+			// replacement value keeps the caller's toggles from Get().
+			if !qOpts.caller.set {
+				qOpts.caller = options.caller
+			}
+			effectiveOpts = qOpts
+		}
+		// Internal GetMany call with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[BoolKeyedNoteFieldOptions]) {
+			*o = effectiveOpts
+			o.SkipHooks = true
+		}
+		boolKeyedNotes, err := c.GetMany(ctx, &GetBoolKeyedNotesInput{
+			Filter: &BoolKeyedNoteFilter{
+				ID: &comparator.Number[int64]{Eq: new(id)},
+			},
+			Limit: new(1),
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+		if len(boolKeyedNotes) == 0 {
+			return nil, ErrNotFound
+		}
+		return boolKeyedNotes[0], nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get bool_keyed_note: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*BoolKeyedNote), nil
+}
+
+// GetMany returns bool_keyed_notes matching the given filter, field selection, and sort criteria.
+func (c *boolKeyedNoteClient) GetMany(ctx context.Context, input *GetBoolKeyedNotesInput, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) ([]*BoolKeyedNote, error) {
+	// A nil input is the zero-value input — no filter, no sorts, no
+	// limit. Normalized before the hook context is built, so a hook never sees
+	// a nil Input either.
+	if input == nil {
+		input = &GetBoolKeyedNotesInput{}
+	}
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("get many bool_keyed_notes: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpGetMany, Table: TableBoolKeyedNotes, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// FieldOptions from CallOptions — nil means all columns
+		fieldOptions := options.FieldOptions
+
+		// Nothing selected — return early
+		if fieldOptions != nil && !fieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Determine columns from FieldOptions. A narrowed projection still
+		// carries the columns this call structurally requires — the cursor keys
+		// an internal caller declares. An all-false FieldOptions is
+		// untouched: it short-circuits above.
+		columns := boolKeyedNoteAllColumns
+		if fieldOptions != nil {
+			if selected := fieldOptions.Columns(); len(selected) > 0 {
+				columns = unionColumns(selected, input.requiredColumns...)
+			}
+		}
+
+		// Build conditions from filter
+		var conds []sql.Condition
+		if input.Filter != nil {
+			conds = input.Filter.ToConditions(c.dialect)
+		}
+
+		// Append internal conditions (e.g., keyset conditions from Connection)
+		conds = append(conds, input.conditions...)
+
+		// Resolve limit/offset to pointers for the builder.
+		// nil → no clause, *0 (via new(0)) → no clause, *N → LIMIT/OFFSET N.
+		var limitPtr *int
+		if input.Limit != nil {
+			if v := *input.Limit; v > 0 {
+				limitPtr = new(v)
+			}
+		} else if c.queryLimit > 0 {
+			limitPtr = new(c.queryLimit)
+		}
+		var offsetPtr *int
+		if input.Offset != nil {
+			if v := *input.Offset; v > 0 {
+				offsetPtr = new(v)
+			}
+		}
+
+		var boolKeyedNotes []*BoolKeyedNote
+		query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+			Columns:    columns,
+			Conditions: conds,
+			OrderBy:    input.Sorts,
+			Limit:      limitPtr,
+			Offset:     offsetPtr,
+			LockMode:   options.LockMode,
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		boolKeyedNotes, err = scanBoolKeyedNotes(rows, columns)
+		if err != nil {
+			return nil, err
+		}
+
+		return boolKeyedNotes, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get many bool_keyed_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*BoolKeyedNote), nil
+}
+
+// Create inserts a new bool_keyed_note and returns the created entity.
+func (c *boolKeyedNoteClient) Create(ctx context.Context, input *CreateBoolKeyedNoteInput, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (*BoolKeyedNote, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateBoolKeyedNoteInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default), so
+	// that would turn a caller's mistake into a silently written one. Guarded
+	// before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("create bool_keyed_note: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreate, Table: TableBoolKeyedNotes, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"note"}
+		args := []any{input.Note}
+
+		if v, ok := input.KeyedK.Get(); ok {
+			columns = append(columns, "keyed_k")
+			args = append(args, v)
+		}
+
+		id, err := c.insertAndResolveID(ctx, conn, columns, args)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[BoolKeyedNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create bool_keyed_note: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*BoolKeyedNote), nil
+}
+
+// CreateMany inserts multiple bool_keyed_notes in batches and returns all created entities.
+// Sub-batches are not automatically rolled back on failure — wrap in a transaction for atomicity.
+func (c *boolKeyedNoteClient) CreateMany(ctx context.Context, inputs []*CreateBoolKeyedNoteInput, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) ([]*BoolKeyedNote, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Create argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("create many bool_keyed_notes: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpCreateMany, Table: TableBoolKeyedNotes, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(inputs) == 0 {
+			return []*BoolKeyedNote{}, nil
+		}
+		var allIDs []int64
+		for start := 0; start < len(inputs); start += c.batchSize {
+			end := min(start+c.batchSize, len(inputs))
+			batch := inputs[start:end]
+
+			columns := []string{"keyed_k", "note"}
+			var valueRows [][]any
+			for _, input := range batch {
+				var keyedK any = sql.Default
+				if v, ok := input.KeyedK.Get(); ok {
+					keyedK = v
+				}
+
+				valueRows = append(valueRows, []any{
+					keyedK,
+					input.Note,
+				})
+			}
+
+			ids, err := c.multiInsertAndResolveIDs(ctx, conn, columns, valueRows)
+			if err != nil {
+				return nil, err
+			}
+			allIDs = append(allIDs, ids...)
+		}
+
+		m.AffectedPKs = toAnySlice(allIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetBoolKeyedNotesInput{
+			Filter: &BoolKeyedNoteFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[BoolKeyedNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create many bool_keyed_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*BoolKeyedNote), nil
+}
+
+// insertAndResolveID performs the INSERT and resolves the generated primary key.
+func (c *boolKeyedNoteClient) insertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:          columns,
+		Values:           args,
+		ReturningColumns: []string{"id"},
+	})
+	var id int64
+	if err := conn.QueryRow(ctx, query, queryArgs...).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// multiInsertAndResolveIDs performs a multi-row INSERT and resolves all generated primary keys.
+func (c *boolKeyedNoteClient) multiInsertAndResolveIDs(ctx context.Context, conn database.Querier, columns []string, valueRows [][]any) ([]int64, error) {
+	query, args := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+		Columns:          columns,
+		ValueRows:        valueRows,
+		ReturningColumns: []string{"id"},
+	})
+
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan bool_keyed_note id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update partially updates a bool_keyed_note by primary key and returns the updated entity.
+// Only fields where IsSet() is true are included in the SET clause. If no fields are
+// set, no UPDATE is executed and the current entity is returned unchanged.
+// Returns ErrNotFound if the primary key does not exist (strict_updates is enabled).
+func (c *boolKeyedNoteClient) Update(ctx context.Context, id int64, input *UpdateBoolKeyedNoteInput, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (*BoolKeyedNote, error) {
+	// Nil is a caller error, distinct from an empty-but-non-nil
+	// input — that one is the documented no-op returning the entity unchanged.
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	if input == nil {
+		return nil, fmt.Errorf("update bool_keyed_note: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdate, Table: TableBoolKeyedNotes, Schema: "public",
+		PK: id, Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// Build SET clause from omittable fields — explicit per-field checks, no reflection
+		setClauses := make(map[string]any)
+		if v, ok := input.KeyedK.Get(); ok {
+			setClauses["keyed_k"] = v
+		}
+		if v, ok := input.Note.Get(); ok {
+			setClauses["note"] = v
+		}
+
+		// Empty update — no fields set, return current entity unchanged
+		if len(setClauses) == 0 {
+			// Empty FieldOptions — caller doesn't need the result
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+
+			return c.Get(ctx, id, func(o *CallOptions[BoolKeyedNoteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses: setClauses,
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		if matched == 0 {
+			return nil, ErrNotFound
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[BoolKeyedNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update bool_keyed_note: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*BoolKeyedNote), nil
+}
+
+// UpdateBoolKeyedNoteItem pairs a primary key with an update input for batch updates.
+type UpdateBoolKeyedNoteItem struct {
+	ID    int64                     `json:"id"`
+	Input *UpdateBoolKeyedNoteInput `json:"input"`
+}
+
+// UpdateMany partially updates multiple bool_keyed_notes and returns the updated entities.
+// Each item is a (PK, UpdateInput) pair. Splits into batches of batchSize.
+// On pgx, each batch is pipelined through SendBatch when the querier supports
+// it, and otherwise runs statement by statement in a transaction — a savepoint
+// of the caller's transaction when there is one. Either way a failing row rolls
+// back its batch, and prior batches persist.
+func (c *boolKeyedNoteClient) UpdateMany(ctx context.Context, items []UpdateBoolKeyedNoteItem, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) ([]*BoolKeyedNote, error) {
+	// UpdateBoolKeyedNoteItem.Input is a pointer, so a zero-valued item
+	// carries a nil one — a shape that compiles naturally. Rejected before the
+	// executor, like every other nil write input.
+	for _, item := range items {
+		if item.Input == nil {
+			return nil, fmt.Errorf("update many bool_keyed_notes: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateMany, Table: TableBoolKeyedNotes, Schema: "public",
+		Input: items, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		// An empty batch writes nothing and must read nothing. The trailing
+		// re-fetch below filters on the keys this call touched, and every
+		// generated key filter treats an empty set as *no condition* — so
+		// without this guard the re-fetch degrades to an unfiltered SELECT and
+		// returns the whole table as if this call had produced it.
+		if len(items) == 0 {
+			return []*BoolKeyedNote{}, nil
+		}
+		var allIDs []int64
+		// The items whose UPDATE matched a row. Only these record an affected
+		// key: an item whose key matches no row, or that sets no field, wrote
+		// nothing, so no cache entry is invalidated and no event is published
+		// for it.
+		var writtenItems []UpdateBoolKeyedNoteItem
+		for start := 0; start < len(items); start += c.batchSize {
+			end := min(start+c.batchSize, len(items))
+			batch := items[start:end]
+
+			// Build all UPDATE statements for this batch
+			pgxBatch := &pgx.Batch{}
+			var batchQueries []string
+			var batchArgs [][]any
+			var queuedItems []UpdateBoolKeyedNoteItem
+			for _, item := range batch {
+				setClauses := make(map[string]any)
+				if v, ok := item.Input.KeyedK.Get(); ok {
+					setClauses["keyed_k"] = v
+				}
+				if v, ok := item.Input.Note.Get(); ok {
+					setClauses["note"] = v
+				}
+
+				// Skip no-op updates
+				if len(setClauses) == 0 {
+					allIDs = append(allIDs, item.ID)
+					continue
+				}
+
+				query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+					SetClauses: setClauses,
+					Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(item.ID)},
+				})
+				pgxBatch.Queue(query, args...)
+				batchQueries = append(batchQueries, query)
+				batchArgs = append(batchArgs, args)
+				queuedItems = append(queuedItems, item)
+				allIDs = append(allIDs, item.ID)
+			}
+
+			// Send all UPDATEs — pipelined if supported, sequential otherwise
+			if pgxBatch.Len() > 0 {
+				if batcher, ok := conn.(interface {
+					SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+				}); ok {
+					br := batcher.SendBatch(ctx, pgxBatch)
+					for i := range pgxBatch.Len() {
+						tag, err := br.Exec()
+						if err != nil {
+							br.Close()
+							return nil, fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+						}
+						matched := tag.RowsAffected()
+						if matched > 0 {
+							writtenItems = append(writtenItems, queuedItems[i])
+						}
+					}
+					if err := br.Close(); err != nil {
+						return nil, fmt.Errorf("close batch: %w", err)
+					}
+				} else {
+					// No SendBatch — a wrapping querier, or a caller's
+					// transaction. The statements run one by one in a
+					// transaction of their own, or a savepoint when ctx already
+					// carries one, so a failing item rolls back the items of
+					// its sub-batch written before it, as SendBatch's implicit
+					// transaction does. Sub-batches already committed stay
+					// applied.
+					if err := database.WithTransaction(ctx, c.querier, "update_many_bool_keyed_note", func(ctx context.Context) error {
+						conn := database.Conn(ctx, c.querier)
+						for i, q := range batchQueries {
+							execResult, err := conn.Exec(ctx, q, batchArgs[i]...)
+							if err != nil {
+								return fmt.Errorf("item %v: %w", queuedItems[i].ID, err)
+							}
+							matched, err := execResult.RowsAffected()
+							if err != nil {
+								return fmt.Errorf("item %v rows affected: %w", queuedItems[i].ID, err)
+							}
+							if matched > 0 {
+								writtenItems = append(writtenItems, queuedItems[i])
+							}
+						}
+						return nil
+					}); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+
+		affectedPKs := make([]any, len(writtenItems))
+		for i, item := range writtenItems {
+			affectedPKs[i] = item.ID
+		}
+		m.AffectedPKs = affectedPKs
+		// The published input is narrowed to the written items, so it stays
+		// index-aligned with m.AffectedPKs: each event carries the input that
+		// wrote its row.
+		m.Input = writtenItems
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+		return c.GetMany(ctx, &GetBoolKeyedNotesInput{
+			Filter: &BoolKeyedNoteFilter{
+				ID: &comparator.Number[int64]{In: allIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[BoolKeyedNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update many bool_keyed_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*BoolKeyedNote), nil
+}
+
+// UpdateWhere updates all bool_keyed_notes matching the filter and returns the updated entities.
+// Idempotent — returns empty slice when no rows match.
+// Returns ErrNilInput when input is nil, checked before the filter.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *boolKeyedNoteClient) UpdateWhere(ctx context.Context, filter *BoolKeyedNoteFilter, input *UpdateBoolKeyedNoteInput, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) ([]*BoolKeyedNote, error) {
+	// Argument validity is checked before the filter's bulk-op
+	// safety guard, and before the executor, so a nil input fires no hook and
+	// publishes no event. ErrEmptyFilter still covers a non-nil input with an
+	// empty filter.
+	if input == nil {
+		return nil, fmt.Errorf("update bool_keyed_notes where: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpdateWhere, Table: TableBoolKeyedNotes, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// Build SET clause (same per-field checks as Update)
+		setClauses := make(map[string]any)
+		if v, ok := input.KeyedK.Get(); ok {
+			setClauses["keyed_k"] = v
+		}
+		if v, ok := input.Note.Get(); ok {
+			setClauses["note"] = v
+		}
+
+		// No fields set — return matching entities unchanged
+		if len(setClauses) == 0 {
+			if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+				return nil, nil
+			}
+			return c.GetMany(ctx, &GetBoolKeyedNotesInput{
+				Filter: filter,
+				Limit:  new(0),
+			}, func(o *CallOptions[BoolKeyedNoteFieldOptions]) {
+				*o = options
+				o.SkipHooks = true
+				o.LockMode = sql.LockNone
+			})
+		}
+
+		// UPDATE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildUpdate(c.dialect, c.table, sql.UpdateOptions{
+			SetClauses:       setClauses,
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan updated bool_keyed_note id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		m.AffectedPKs = toAnySlice(ids)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		// Fetch affected entities with FieldOptions
+		return c.GetMany(ctx, &GetBoolKeyedNotesInput{
+			Filter: &BoolKeyedNoteFilter{
+				ID: &comparator.Number[int64]{In: ids},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[BoolKeyedNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update bool_keyed_notes where: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*BoolKeyedNote), nil
+}
+
+// HardDelete permanently removes a bool_keyed_note from the database.
+// Idempotent — returns nil if the primary key does not exist.
+func (c *boolKeyedNoteClient) HardDelete(ctx context.Context, id int64, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDelete, Table: TableBoolKeyedNotes, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)},
+		})
+
+		execResult, err := conn.Exec(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		matched, err := execResult.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+		// A key that matched no row wrote nothing: it records no affected
+		// key, so no cache entry is invalidated and no event is published.
+		if matched > 0 {
+			m.AffectedPKs = []any{id}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete bool_keyed_note: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteMany permanently removes multiple bool_keyed_notes from the database.
+func (c *boolKeyedNoteClient) HardDeleteMany(ctx context.Context, ids []int64, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteMany, Table: TableBoolKeyedNotes, Schema: "public",
+		Input: ids, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		// The keys the sub-batches below write. A listed key that matches no
+		// row stays out of it, so it records no affected key.
+		written := make(map[int64]struct{}, len(ids))
+
+		// One statement per sub-batch of c.batchSize keys. A failing sub-batch
+		// returns at once, and the sub-batches before it stay applied.
+		for start := 0; start < len(ids); start += c.batchSize {
+			end := min(start+c.batchSize, len(ids))
+			hardConds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).In(toAnySlice(ids[start:end])...)}
+
+			// RETURNING the key columns names the rows this sub-batch wrote.
+			query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+				Conditions:       hardConds,
+				ReturningColumns: []string{"id"},
+			})
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				return nil, err
+			}
+			batchKeys := make(map[int64]struct{}, end-start)
+			for rows.Next() {
+				var rowID int64
+				if err := rows.Scan(&rowID); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan deleted bool_keyed_note key: %w", err)
+				}
+				batchKeys[rowID] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rows.Close()
+			c.recordWrittenKeys(written, ids[start:end], batchKeys)
+		}
+
+		// A listed key whose row this call did not write records no affected
+		// key, so no cache entry is invalidated and no event is published for it.
+		affectedPKs := make([]any, 0, len(ids))
+		for _, key := range ids {
+			if _, ok := written[key]; ok {
+				affectedPKs = append(affectedPKs, key)
+			}
+		}
+		m.AffectedPKs = affectedPKs
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete many bool_keyed_notes: %w", err)
+	}
+	return nil
+}
+
+// HardDeleteWhere permanently removes all bool_keyed_notes matching the filter.
+// Idempotent — returns nil when no rows match.
+// Returns ErrEmptyFilter when the filter is nil or produces no conditions.
+func (c *boolKeyedNoteClient) HardDeleteWhere(ctx context.Context, filter *BoolKeyedNoteFilter, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) error {
+	options := resolveCallOptions(opts)
+	_, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpHardDeleteWhere, Table: TableBoolKeyedNotes, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		conds := filter.ToConditions(c.dialect)
+		if len(conds) == 0 {
+			return nil, ErrEmptyFilter
+		}
+
+		// DELETE with RETURNING "id" — get affected IDs in one round-trip
+		query, args := sql.BuildHardDelete(c.dialect, c.table, sql.HardDeleteOptions{
+			Conditions:       conds,
+			ReturningColumns: []string{"id"},
+		})
+
+		rows, err := conn.Query(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan deleted bool_keyed_note id: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = toAnySlice(ids)
+		return nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("hard delete bool_keyed_notes where: %w", err)
+	}
+	return nil
+}
+
+// recordWrittenKeys adds to written the keys of listed, one sub-batch, that
+// its statement wrote; rowKeys holds the keys of the rows the statement
+// matched. The database matches keys under its own equality — a
+// case-insensitive collation, blank-padded CHAR, a timestamp's stored
+// precision — so a row it matched can carry a key that differs under Go ==
+// from every listed key. When it matched more rows than listed keys were
+// found among rowKeys, every key of listed is recorded: a superset, so no
+// written row goes without its cache invalidation and event.
+func (c *boolKeyedNoteClient) recordWrittenKeys(written map[int64]struct{}, listed []int64, rowKeys map[int64]struct{}) {
+	found := make(map[int64]struct{}, len(rowKeys))
+	for _, key := range listed {
+		if _, ok := rowKeys[key]; ok {
+			found[key] = struct{}{}
+		}
+	}
+	if len(found) < len(rowKeys) {
+		for _, key := range listed {
+			written[key] = struct{}{}
+		}
+		return
+	}
+	for key := range found {
+		written[key] = struct{}{}
+	}
+}
+
+// BoolKeyedNoteConflictTarget identifies a unique constraint for upsert conflict detection.
+type BoolKeyedNoteConflictTarget int
+
+const (
+	BoolKeyedNoteConflictPK BoolKeyedNoteConflictTarget = iota // PRIMARY KEY (id)
+)
+
+// boolKeyedNoteConflictColumns maps each conflict target to its column set.
+var boolKeyedNoteConflictColumns = map[BoolKeyedNoteConflictTarget][]string{
+	BoolKeyedNoteConflictPK: {"id"},
+}
+
+// Upsert inserts a bool_keyed_note or updates it if a row matching the conflict target already
+// exists. Returns the resulting entity with optional field selection and relationship loading.
+// The conflict target determines which unique constraint triggers an update
+// instead of an insert. Non-PK, non-conflict columns are included in the SET clause.
+func (c *boolKeyedNoteClient) Upsert(ctx context.Context, input *CreateBoolKeyedNoteInput, target BoolKeyedNoteConflictTarget, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (*BoolKeyedNote, error) {
+	// A write cannot normalize nil to the zero value the way a read
+	// does — a zero CreateBoolKeyedNoteInput legally writes a row (each required
+	// field's zero value, or with no required field, every column's default).
+	// Guarded before the executor, so nil fires no hook and publishes no event.
+	// An input that supplies no column gets no conflict clause on any dialect:
+	// it is a plain insert, so a conflict on a UNIQUE column with a
+	// DEFAULT is a unique violation, including on MySQL, where ON DUPLICATE KEY
+	// UPDATE would have returned the existing row.
+	if input == nil {
+		return nil, fmt.Errorf("upsert bool_keyed_note: %w", ErrNilInput)
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsert, Table: TableBoolKeyedNotes, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		columns := []string{"note"}
+		args := []any{input.Note}
+
+		if v, ok := input.KeyedK.Get(); ok {
+			columns = append(columns, "keyed_k")
+			args = append(args, v)
+		}
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		conflictColumns := boolKeyedNoteConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+
+		id, err := c.insertUpsertAndResolveID(ctx, conn, columns, args, conflictColumns, updateColumns)
+		if err != nil {
+			return nil, err
+		}
+		m.AffectedPKs = []any{id}
+
+		// Empty FieldOptions — caller doesn't need the result
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		return c.Get(ctx, id, func(o *CallOptions[BoolKeyedNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert bool_keyed_note: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*BoolKeyedNote), nil
+}
+
+// insertUpsertAndResolveID performs the INSERT with upsert clause and resolves the generated primary key.
+func (c *boolKeyedNoteClient) insertUpsertAndResolveID(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns, updateColumns []string) (int64, error) {
+	query, queryArgs := sql.BuildInsert(c.dialect, c.table, sql.InsertOptions{
+		Columns:               columns,
+		Values:                args,
+		UpsertConflictKeys:    conflictColumns,
+		UpsertUpdateColumns:   updateColumns,
+		UpsertResolvePKColumn: "id",
+		ReturningColumns:      []string{"id"},
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	found := rows.Next()
+	if found {
+		err = rows.Scan(&id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	// Closed before the fallback below issues its own statement: conn may be a
+	// transaction, where an open result set blocks the next statement on the
+	// same connection.
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return id, nil
+	}
+	return c.resolveUpsertConflictRow(ctx, conn, columns, args, conflictColumns)
+}
+
+// resolveUpsertConflictRow resolves the row an upsert conflicted with, for the
+// case where the statement returned nothing.
+//
+// A conflict target that covers every inserted column leaves no column to
+// assign, so the dialect emits DO NOTHING — and DO NOTHING returns
+// no row, which leaves the RETURNING branch above with no PK for a write that
+// did resolve to a row. The conflicting row is looked up by the same conflict
+// columns the statement targeted; unlike MySQL's ON DUPLICATE KEY UPDATE, an
+// explicit ON CONFLICT target can only have fired on those columns, so the
+// lookup identifies the same row the statement did.
+//
+// The lookup does not exclude soft-deleted rows: the unique index matched
+// regardless of the soft-delete column, so a soft-deleted row is still the row
+// that conflicted and still the row whose PK this resolves. (The terminal read
+// applies no soft-delete filter either, on this branch or on the DO UPDATE SET
+// branch.)
+//
+// This is a second statement, so a concurrent delete between the insert and
+// this lookup surfaces as ErrNotFound. Run the upsert inside a transaction
+// where the pair has to be atomic.
+func (c *boolKeyedNoteClient) resolveUpsertConflictRow(ctx context.Context, conn database.Querier, columns []string, args []any, conflictColumns []string) (int64, error) {
+	conds := make([]sql.Condition, 0, len(conflictColumns))
+	for _, col := range conflictColumns {
+		i := slices.Index(columns, col)
+		if i < 0 {
+			// A conflict column the statement never supplied cannot have
+			// produced the conflict, so there is no row to look up.
+			return 0, ErrNotFound
+		}
+		conds = append(conds, sql.Where(c.dialect.QuoteIdentifier(col)).Eq(args[i]))
+	}
+
+	query, queryArgs := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    []string{"id"},
+		Conditions: conds,
+		Limit:      new(1),
+	})
+	rows, err := conn.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var id int64
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		// The conflicting row is gone — deleted between the two statements.
+		return 0, ErrNotFound
+	}
+	if err := rows.Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, rows.Err()
+}
+
+// UpsertMany inserts or updates multiple bool_keyed_notes in batches and returns all
+// resulting entities. One conflict target applies to the whole batch, drawn from
+// the same enum Upsert takes. Sub-batches are not automatically rolled back on
+// failure — wrap in a transaction for atomicity.
+//
+// Inputs resolving to the same conflict target are deduped before the statement
+// is built, last occurrence wins. PostgreSQL rejects an
+// ON CONFLICT ... DO UPDATE that would affect one row twice; MySQL and SQLite
+// accept it and keep the last row. The dedupe is what makes one spelling behave
+// identically on all three. A row carrying no definite, non-NULL value for every
+// conflict column is exempt: a NULL never matches under a unique index on any of
+// the three dialects, so two such rows are two rows, not a duplicate.
+//
+// The returned slice carries one entity per deduped input on every dialect,
+// including the DO NOTHING branch a conflict target covering every inserted
+// column produces. The entities come from a re-fetch by primary key, never from
+// RETURNING — RETURNING yields only the rows actually inserted, so a batch that
+// conflicted would come back short. Row order is GetMany's, as with
+// CreateMany.
+//
+// bool_keyed_notes.id is database-generated, so the rows written by each
+// sub-batch are read back by the conflict target they targeted — two statements
+// per sub-batch rather than one. No dialect can report them from the
+// statement itself: MySQL's LAST_INSERT_ID() after a mixed batch names the first
+// *newly inserted* row, not the batch's first row, so fabricating ids from it is
+// unsound, and RETURNING drops every row that took the DO NOTHING branch. The
+// conflict target must therefore name columns the input carries; one that does
+// not is an error before anything is written.
+func (c *boolKeyedNoteClient) UpsertMany(ctx context.Context, inputs []*CreateBoolKeyedNoteInput, target BoolKeyedNoteConflictTarget, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) ([]*BoolKeyedNote, error) {
+	// A nil *slice* is simply no rows, but a nil *element* is the
+	// same caller error a nil Upsert argument is — and skipping it silently
+	// would drop a row the caller asked for. Rejected before the executor.
+	for _, in := range inputs {
+		if in == nil {
+			return nil, fmt.Errorf("upsert many bool_keyed_notes: %w", ErrNilInput)
+		}
+	}
+	options := resolveCallOptions(opts)
+	result, err := c.executeMutation(ctx, options.SkipHooks, &hook.MutationContext{
+		Op: hook.OpUpsertMany, Table: TableBoolKeyedNotes, Schema: "public",
+		Input: inputs, CallOptions: options,
+	}, func(ctx context.Context, m *hook.MutationContext) (any, error) {
+		// No rows means no statement and nothing affected. Guarded here because
+		// the terminal GetMany filters on the written keys, and a key filter
+		// built from an empty set contributes no condition — an unguarded empty
+		// call would read the whole table back.
+		if len(inputs) == 0 {
+			return []*BoolKeyedNote{}, nil
+		}
+		conn := database.Conn(ctx, c.querier)
+
+		// Resolve conflict target and update columns. Tenant column is excluded
+		// from the UPDATE-set half of the conflict clause — a
+		// row's tenant is not a mutable attribute under normal operation.
+		//
+		// UpsertResolvePKColumn is deliberately not set: it exists so a
+		// single-row MySQL upsert can republish the conflicting row's id into
+		// the OK packet, and after a batch that packet names at most one row.
+		// Nothing here reads LastInsertId, so requesting it would
+		// only add a misleading assignment to the SET list.
+		columns := []string{"keyed_k", "note"}
+		conflictColumns := boolKeyedNoteConflictColumns[target]
+		updateColumns := excludeColumns(columns, append(conflictColumns, "id"))
+		conflictPositions, haveConflictKey := upsertConflictPositions(columns, conflictColumns)
+		if !haveConflictKey {
+			return nil, fmt.Errorf("conflict target names a column the input does not supply, so the written rows cannot be identified")
+		}
+
+		// One value row per input, built before any statement runs: the dedupe
+		// spans the whole call, not a sub-batch (ceil(M/batch_size)
+		// statements for M inputs, *after* the dedupe).
+		valueRows := make([][]any, 0, len(inputs))
+		rowInputs := make([]*CreateBoolKeyedNoteInput, 0, len(inputs))
+		var rowIDs []int64
+		for _, input := range inputs {
+			var keyedK any = sql.Default
+			if v, ok := input.KeyedK.Get(); ok {
+				keyedK = v
+			}
+
+			valueRows = append(valueRows, []any{
+				keyedK,
+				input.Note,
+			})
+			rowInputs = append(rowInputs, input)
+		}
+
+		// Dedupe by conflict target, last occurrence wins, first-appearance
+		// order preserved.
+		if haveConflictKey {
+			seen := make(map[string]int, len(valueRows))
+			dedupedRows := make([][]any, 0, len(valueRows))
+			dedupedInputs := make([]*CreateBoolKeyedNoteInput, 0, len(rowInputs))
+			for i, row := range valueRows {
+				key, keyed := upsertDedupeKey(row, conflictPositions)
+				if !keyed {
+					// The row cannot be read back by the conflict target, so
+					// its database-generated primary key would be unknowable.
+					// Refused before anything is written rather than returned
+					// short.
+					return nil, fmt.Errorf("input %d supplies no definite value for every conflict column, so its generated id cannot be resolved", i)
+				}
+				if keyed {
+					if j, ok := seen[key]; ok {
+						dedupedRows[j] = row
+						dedupedInputs[j] = rowInputs[i]
+						continue
+					}
+					seen[key] = len(dedupedRows)
+				}
+				dedupedRows = append(dedupedRows, row)
+				dedupedInputs = append(dedupedInputs, rowInputs[i])
+			}
+			valueRows = dedupedRows
+			rowInputs = dedupedInputs
+		}
+		// The published input is the deduped slice, so it stays index-aligned
+		// with m.AffectedPKs: an event fanned out per affected row carries the
+		// input that actually wrote that row.
+		m.Input = rowInputs
+
+		for start := 0; start < len(valueRows); start += c.batchSize {
+			end := min(start+c.batchSize, len(valueRows))
+			batch := valueRows[start:end]
+
+			query, queryArgs := sql.BuildMultiInsert(c.dialect, c.table, sql.MultiInsertOptions{
+				Columns:             columns,
+				ValueRows:           batch,
+				UpsertConflictKeys:  conflictColumns,
+				UpsertUpdateColumns: updateColumns,
+			})
+			if _, err := conn.Exec(ctx, query, queryArgs...); err != nil {
+				return nil, err
+			}
+
+			batchIDs, err := c.resolveUpsertManyRows(ctx, conn, conflictColumns, conflictPositions, batch)
+			if err != nil {
+				return nil, err
+			}
+			rowIDs = append(rowIDs, batchIDs...)
+		}
+
+		m.AffectedPKs = toAnySlice(rowIDs)
+
+		// Empty FieldOptions — skip fetch
+		if options.FieldOptions != nil && !options.FieldOptions.HasSelectedColumns() {
+			return nil, nil
+		}
+
+		written, err := c.GetMany(ctx, &GetBoolKeyedNotesInput{
+			Filter: &BoolKeyedNoteFilter{
+				ID: &comparator.Number[int64]{In: rowIDs},
+			},
+			Limit: new(0),
+		}, func(o *CallOptions[BoolKeyedNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+			o.LockMode = sql.LockNone
+		})
+		if err != nil {
+			return nil, err
+		}
+		// One entity per deduped input: a read-back with fewer rows means the
+		// database matched inputs the dedupe kept apart as one key (a
+		// case-insensitive collation, say), or a written row is not visible
+		// to this call, so the call fails rather than return short.
+		if want := len(rowIDs); len(written) != want {
+			return nil, fmt.Errorf("%d deduped inputs read back as %d rows: the database matched inputs with different conflict values as one key, or a written row is not visible to this call (another tenant's, or removed after the write)", want, len(written))
+		}
+		return written, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert many bool_keyed_notes: %w", err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.([]*BoolKeyedNote), nil
+}
+
+// resolveUpsertManyRows reads back the rows one UpsertMany sub-batch wrote,
+// keyed on the conflict target the statement used, and returns each row's
+// primary key in the batch's own order.
+//
+// It exists because no dialect reports a batch's keys: MySQL's LAST_INSERT_ID()
+// names the first *newly inserted* row after a mixed batch — not the batch's
+// first row, so fabricating ids as firstID+i is unsound — and RETURNING omits
+// every row that took the DO NOTHING branch. Reading back by
+// the conflict columns is unambiguous for the same reason
+// resolveUpsertConflictRow's lookup is: an explicit conflict target can only
+// have fired on those columns.
+//
+// bool_keyed_notes.id is database-generated, so every call takes this path.
+//
+// The lookup applies neither the soft-delete filter nor a tenant predicate. The
+// unique index matched regardless of either, so a soft-deleted or other-tenant
+// row is still the row that conflicted and still the row whose key this
+// resolves; the terminal GetMany applies the tenant filter but no soft-delete
+// filter, exactly as on the DO UPDATE SET branch.
+//
+// It is a second statement, so a concurrent delete between the two leaves a row
+// unmatched. That is reported rather than silently returned short.
+func (c *boolKeyedNoteClient) resolveUpsertManyRows(ctx context.Context, conn database.Querier, conflictColumns []string, positions []int, rows [][]any) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	keySets := make([][]any, len(rows))
+	for i, row := range rows {
+		vals := make([]any, len(positions))
+		for j, pos := range positions {
+			vals[j] = row[pos]
+		}
+		keySets[i] = vals
+	}
+
+	// Copied rather than sorted in place: conflictColumns aliases the
+	// package-level boolKeyedNoteConflictColumns entry, and BuildSelect
+	// emits its column list sorted, so scanBoolKeyedNotes
+	// must be handed the same sorted list to bind targets against.
+	lookupColumns := make([]string, 0, len(conflictColumns)+2)
+	lookupColumns = append(lookupColumns, conflictColumns...)
+	for _, required := range []string{"id"} {
+		if !slices.Contains(lookupColumns, required) {
+			lookupColumns = append(lookupColumns, required)
+		}
+	}
+	slices.Sort(lookupColumns)
+
+	query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+		Columns:    lookupColumns,
+		Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, conflictColumns, keySets)},
+	})
+	queried, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	found, err := scanBoolKeyedNotes(queried, lookupColumns)
+	if cerr := queried.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// The read-back row is keyed by the same function the value rows are, over
+	// the conflict columns in their own order — so keyPositions is the identity.
+	keyPositions := make([]int, len(conflictColumns))
+	for i := range keyPositions {
+		keyPositions[i] = i
+	}
+	type resolvedRow struct {
+		pk int64
+	}
+	byKey := make(map[string]resolvedRow, len(found))
+	for _, entity := range found {
+		keyRow := make([]any, len(conflictColumns))
+		for i, col := range conflictColumns {
+			keyRow[i] = boolKeyedNoteColumnValue(entity, col)
+		}
+		key, ok := upsertDedupeKey(keyRow, keyPositions)
+		if !ok {
+			continue
+		}
+		byKey[key] = resolvedRow{pk: entity.ID}
+	}
+
+	pks := make([]int64, len(rows))
+	for i, row := range rows {
+		key, ok := upsertDedupeKey(row, positions)
+		if !ok {
+			return nil, fmt.Errorf("row %d carries no definite conflict-target value", i)
+		}
+		resolved, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("row %d was written but could not be read back by conflict target %v: the stored value differs from the one supplied (a case-insensitive collation, CHAR padding or a timestamp precision the column truncates), or the row was deleted concurrently", i, conflictColumns)
+		}
+		pks[i] = resolved.pk
+	}
+	return pks, nil
+}
+
+// boolKeyedNoteColumnValue returns one column's value off a scanned
+// BoolKeyedNote, so a row read back by resolveUpsertManyRows can be keyed
+// against the value row that wrote it. The conflict target is a runtime
+// argument, so the column cannot be selected at generation time — but its Go
+// type can, which is what keeps this switch free of reflection, like
+// scanBoolKeyedNotes.
+func boolKeyedNoteColumnValue(b *BoolKeyedNote, column string) any {
+	switch column {
+	case "id":
+		return b.ID
+	case "keyed_k":
+		return b.KeyedK
+	case "note":
+		return b.Note
+	}
+	return nil
+}
+
+// Exists returns true if a bool_keyed_note with the given primary key exists.
+func (c *boolKeyedNoteClient) Exists(ctx context.Context, id int64, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableBoolKeyedNotes, Schema: "public",
+		PK: id, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+		conds := []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("id")).Eq(id)}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists bool_keyed_note: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// ExistsWhere returns true if any bool_keyed_note matches the given filter.
+func (c *boolKeyedNoteClient) ExistsWhere(ctx context.Context, filter *BoolKeyedNoteFilter, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (bool, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpExists, Table: TableBoolKeyedNotes, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildExists(c.dialect, c.table, conds)
+
+		var exists bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+			return false, err
+		}
+		return exists, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("exists bool_keyed_notes where: %w", err)
+	}
+	return result.(bool), nil
+}
+
+// Count returns the number of bool_keyed_notes matching the given filter.
+// A nil filter counts all bool_keyed_notes.
+func (c *boolKeyedNoteClient) Count(ctx context.Context, filter *BoolKeyedNoteFilter, opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (int64, error) {
+	options := resolveCallOptions(opts)
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpCount, Table: TableBoolKeyedNotes, Schema: "public",
+		Input: filter, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		conn := database.Conn(ctx, c.querier)
+
+		var conds []sql.Condition
+		if filter != nil {
+			conds = filter.ToConditions(c.dialect)
+		}
+
+		query, args := sql.BuildCount(c.dialect, c.table, conds)
+
+		var count int64
+		if err := conn.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+			return int64(0), err
+		}
+		return count, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count bool_keyed_notes: %w", err)
+	}
+	return result.(int64), nil
+}
+
+// Paginate returns a page of bool_keyed_notes with total count for offset-based pagination.
+// A nil filter paginates all bool_keyed_notes.
+func (c *boolKeyedNoteClient) Paginate(ctx context.Context, input PaginateInput[BoolKeyedNoteFilter], opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (*PaginateResult[BoolKeyedNote], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("paginate bool_keyed_notes: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpPaginate, Table: TableBoolKeyedNotes, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[BoolKeyedNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Total count (delegates to Count — both are always generated)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Page data via GetMany (handles FieldOptions and relationships)
+		boolKeyedNotes, err := c.GetMany(ctx, &GetBoolKeyedNotesInput{
+			Filter: input.Filter,
+			Sorts:  input.Sort,
+			Limit:  &input.Limit,
+			Offset: &input.Offset,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		return &PaginateResult[BoolKeyedNote]{
+			Items:      boolKeyedNotes,
+			TotalCount: totalCount,
+			Offset:     input.Offset,
+			Limit:      input.Limit,
+			HasMore:    input.Limit > 0 && int64(input.Offset+input.Limit) < totalCount,
+		}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("paginate bool_keyed_notes: %w", err)
+	}
+	return result.(*PaginateResult[BoolKeyedNote]), nil
+}
+
+// Connection returns a Relay-style cursor-paginated connection of bool_keyed_notes.
+// Sort order is determined by cursor_keys — custom sorts are not supported.
+// Use Paginate for custom sort orders.
+func (c *boolKeyedNoteClient) Connection(ctx context.Context, input ConnectionInput[BoolKeyedNoteFilter], opts ...func(*CallOptions[BoolKeyedNoteFieldOptions])) (*Connection[BoolKeyedNote], error) {
+	options := resolveCallOptions(opts)
+
+	if options.LockMode != sql.LockNone {
+		if !database.InTransaction(ctx) {
+			return nil, fmt.Errorf("connection bool_keyed_notes: LockMode requires an active transaction")
+		}
+		options.SkipCache = true
+	}
+	result, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+		Op: hook.OpConnection, Table: TableBoolKeyedNotes, Schema: "public",
+		Input: input, CallOptions: options,
+	}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+		// Internal calls with SkipHooks to prevent nested hook invocation
+		internalOpts := func(o *CallOptions[BoolKeyedNoteFieldOptions]) {
+			*o = options
+			o.SkipHooks = true
+		}
+
+		// Validate: first and last are mutually exclusive
+		if input.First != nil && input.Last != nil {
+			return nil, ErrInvalidCursor
+		}
+
+		// Total count (separate COUNT query — no cursor conditions)
+		totalCount, err := c.Count(ctx, input.Filter, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Decode cursors and build keyset conditions
+		var keysetConds []sql.Condition
+		if input.After != nil {
+			cursor, err := decodeBoolKeyedNoteCursor(*input.After, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, ">"))
+		}
+		if input.Before != nil {
+			cursor, err := decodeBoolKeyedNoteCursor(*input.Before, c.cursorKeys)
+			if err != nil {
+				return nil, ErrInvalidCursor
+			}
+			keysetConds = append(keysetConds, cursorKeyset(c.dialect, c.cursorKeys, cursor, "<"))
+		}
+
+		// Direction and limit
+		limit := c.pageSize
+		ascending := true
+		if input.First != nil {
+			limit = *input.First
+		} else if input.Last != nil {
+			limit = *input.Last
+			ascending = false
+		}
+
+		// Fetch limit+1 rows via GetMany (handles FieldOptions, O2O joins, relationships, soft delete)
+		connLimit := limit + 1
+		boolKeyedNotes, err := c.GetMany(ctx, &GetBoolKeyedNotesInput{
+			Filter:     input.Filter,
+			Sorts:      cursorSorts(c.cursorKeys, ascending),
+			Limit:      &connLimit,
+			conditions: keysetConds,
+			// Each edge's cursor is encoded from the row it wraps, so the cursor
+			// keys have to survive a narrowed FieldOptions — otherwise the
+			// encoder reads fields the SELECT never filled and every cursor
+			// carries zero values.
+			requiredColumns: c.cursorKeys,
+		}, internalOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		// Trim extra row and determine page boundaries
+		hasMore := len(boolKeyedNotes) > limit
+		if hasMore {
+			boolKeyedNotes = boolKeyedNotes[:limit]
+		}
+
+		// Backward pagination: reverse for ascending cursor order
+		if !ascending {
+			slices.Reverse(boolKeyedNotes)
+		}
+
+		// Build edges with encoded cursors
+		edges := make([]Edge[BoolKeyedNote], len(boolKeyedNotes))
+		for i, row := range boolKeyedNotes {
+			cursor, err := encodeBoolKeyedNoteCursor(c.cursorKeys, row)
+			if err != nil {
+				return nil, err
+			}
+			edges[i] = Edge[BoolKeyedNote]{
+				Node:   row,
+				Cursor: cursor,
+			}
+		}
+
+		pageInfo := PageInfo{
+			HasNextPage:     (ascending && hasMore) || (!ascending && input.Before != nil),
+			HasPreviousPage: (!ascending && hasMore) || (ascending && input.After != nil),
+		}
+		if len(edges) > 0 {
+			pageInfo.StartCursor = &edges[0].Cursor
+			pageInfo.EndCursor = &edges[len(edges)-1].Cursor
+		}
+
+		return &Connection[BoolKeyedNote]{Edges: edges, PageInfo: pageInfo, TotalCount: totalCount}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connection bool_keyed_notes: %w", err)
+	}
+	return result.(*Connection[BoolKeyedNote]), nil
+}
+
+// encodeBoolKeyedNoteCursor encodes cursor key values as a base64 JSON string.
+func encodeBoolKeyedNoteCursor(keys []string, b *BoolKeyedNote) (string, error) {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			out["id"] = b.ID
+		case "keyed_k":
+			out["keyed_k"] = b.KeyedK
+		case "note":
+			out["note"] = b.Note
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode bool_keyed_note cursor: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// decodeBoolKeyedNoteCursor decodes a cursor string into its key values,
+// each unmarshaled into the key column's Go type.
+func decodeBoolKeyedNoteCursor(encoded string, keys []string) (map[string]any, error) {
+	raw, err := decodeCursor(encoded, keys)
+	if err != nil {
+		return nil, err
+	}
+	var row BoolKeyedNote
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		switch key {
+		case "id":
+			err = json.Unmarshal(raw[key], &row.ID)
+			out[key] = row.ID
+		}
+		if err != nil {
+			return nil, err
+		}
+		if cursorValueIsNull(out[key]) {
+			return nil, ErrInvalidCursor
+		}
+	}
+	return out, nil
+}
+
+// StreamBoolKeyedNotesInput holds query parameters for streaming bool_keyed_notes records.
+// Stream is iterator-style and intentionally has no Limit/Offset.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type StreamBoolKeyedNotesInput struct {
+	Filter *BoolKeyedNoteFilter `json:"filter"`
+	Sorts  []sql.Sort           `json:"sorts"`
+}
+
+// StreamBoolKeyedNoteFieldOptions controls scalar column selection for bool_keyed_notes streams.
+// Stream cannot load relationships — only scalar columns are selectable.
+type StreamBoolKeyedNoteFieldOptions struct {
+	ID     bool `json:"id"`
+	KeyedK bool `json:"keyed_k"`
+	Note   bool `json:"note"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *StreamBoolKeyedNoteFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.KeyedK {
+		cols = append(cols, "keyed_k")
+	}
+	if fo.Note {
+		cols = append(cols, "note")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// HasSelectedColumns reports whether any column is selected.
+func (fo *StreamBoolKeyedNoteFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.KeyedK {
+		return true
+	}
+	if fo.Note {
+		return true
+	}
+	return false
+}
+
+// scanBoolKeyedNoteRow scans a single row into a BoolKeyedNote entity.
+// Used by Stream to yield rows one at a time without materializing the result set.
+func scanBoolKeyedNoteRow(rows database.Rows, columns []string) (*BoolKeyedNote, error) {
+	b := &BoolKeyedNote{}
+
+	targets := make([]any, len(columns))
+	for idx, col := range columns {
+		switch col {
+		case "id":
+			targets[idx] = &b.ID
+		case "keyed_k":
+			targets[idx] = &b.KeyedK
+		case "note":
+			targets[idx] = &b.Note
+		}
+	}
+
+	if err := rows.Scan(targets...); err != nil {
+		return nil, fmt.Errorf("scan bool_keyed_note: %w", err)
+	}
+
+	return b, nil
+}
+
+// Stream returns an iterator over bool_keyed_notes matching the given filter and sort criteria.
+// Rows are yielded as the driver returns them, without materializing the full
+// result set. Cache is bypassed regardless of caller setting.
+// Stream cannot load relationships — use Connection in a loop when relationships
+// are required.
+//
+// Stream refuses an active transaction. It runs consumer code inside an open
+// result set, which inside a transaction is the transaction's only connection,
+// held for the whole iteration — so a statement issued from the loop body on the
+// same txCtx waits on a reservation the loop itself holds. Set
+// CallOptions.AllowInTransaction for a snapshot-consistent stream that issues
+// nothing else on that txCtx. That obligation is the one rule that remains the
+// caller's — drain or close a result set before issuing the next statement on
+// that txCtx — applied to a loop whose body is caller code.
+func (c *boolKeyedNoteClient) Stream(ctx context.Context, input *StreamBoolKeyedNotesInput, opts ...func(*CallOptions[StreamBoolKeyedNoteFieldOptions])) iter.Seq2[*BoolKeyedNote, error] {
+	return func(yield func(*BoolKeyedNote, error) bool) {
+		// A nil input is the zero-value input. Without it, an
+		// unguarded nil dereference in the handler would be recovered by the
+		// panic wrapper and reported as an error instead of streaming the table.
+		if input == nil {
+			input = &StreamBoolKeyedNotesInput{}
+		}
+		options := resolveCallOptions(opts)
+		options.SkipCache = true
+
+		// Stream's contract is that the connection stays open across
+		// caller code; a transaction's is one connection, one statement at a
+		// time. The two cannot both hold, so Stream refuses a transaction unless
+		// the caller opts in. Refused before any SQL is issued and before the
+		// hook chain is built, mirroring the LockMode precondition, and
+		// surfaced through yield because Stream returns an iterator and has no
+		// error return.
+		if database.InTransaction(ctx) && !options.AllowInTransaction {
+			yield(nil, fmt.Errorf("stream bool_keyed_notes: unsupported inside a transaction — use Connection in a loop, "+
+				"or set AllowInTransaction for a snapshot-consistent stream that issues nothing else on this txCtx"))
+			return
+		}
+
+		// stopped is true while the consumer's loop body runs, and stays true
+		// once the body breaks (yield returned false) or panics out of yield.
+		// Calling yield again after either makes the Go runtime panic, so the
+		// chain's error below is yielded only while stopped is false. Every
+		// error the handler yields goes through emit, which prefixes it.
+		var stopped bool
+		emit := func(row *BoolKeyedNote, err error) bool {
+			if err != nil {
+				err = fmt.Errorf("stream bool_keyed_notes: %w", err)
+			}
+			stopped = true
+			if !yield(row, err) {
+				return false
+			}
+			stopped = false
+			return true
+		}
+
+		// A recovered panic and a hook's abort error are the
+		// chain's return value. Stream has no error return, so it yields that
+		// error once, after anything the handler yielded.
+		_, err := c.executeQuery(ctx, options.SkipHooks, &hook.QueryContext{
+			Op: hook.OpStream, Table: TableBoolKeyedNotes, Schema: "public",
+			Input: input, CallOptions: options,
+		}, func(ctx context.Context, q *hook.QueryContext) (any, error) {
+			conn := database.Conn(ctx, c.querier)
+
+			fieldOptions := options.FieldOptions
+			columns := boolKeyedNoteAllColumns
+			if fieldOptions != nil {
+				if selected := fieldOptions.Columns(); len(selected) > 0 {
+					columns = selected
+				}
+			}
+
+			var conds []sql.Condition
+			if input.Filter != nil {
+				conds = input.Filter.ToConditions(c.dialect)
+			}
+
+			query, args := sql.BuildSelect(c.dialect, c.table, sql.SelectOptions{
+				Columns:    columns,
+				Conditions: conds,
+				OrderBy:    input.Sorts,
+			})
+
+			rows, err := conn.Query(ctx, query, args...)
+			if err != nil {
+				emit(nil, err)
+				return nil, nil
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				b, err := scanBoolKeyedNoteRow(rows, columns)
+				if err != nil {
+					if !emit(nil, err) {
+						return nil, nil
+					}
+					continue
+				}
+				if !emit(b, nil) {
+					return nil, nil
+				}
+			}
+			if err := rows.Err(); err != nil {
+				emit(nil, fmt.Errorf("iterate bool_keyed_note rows: %w", err))
+			}
+			return nil, nil
+		})
+		if err != nil && !stopped {
+			yield(nil, fmt.Errorf("stream bool_keyed_notes: %w", err))
+		}
+	}
+}
+
+// BoolKeyedNoteFilter provides type-safe filtering for the bool_keyed_notes table.
+type BoolKeyedNoteFilter struct {
+	ID     *comparator.Number[int64] `json:"id"`
+	KeyedK *comparator.NullableBool  `json:"keyed_k"`
+	Note   *comparator.String        `json:"note"`
+	And    []*BoolKeyedNoteFilter    `json:"and"`
+	Or     []*BoolKeyedNoteFilter    `json:"or"`
+}
+
+// ToConditions converts the filter to a slice of SQL conditions.
+//
+// A nil receiver contributes no conditions. Two callers depend on that. The
+// *Where methods dereference their filter only here and document a nil one as
+// the empty-filter case, so this is what makes ErrEmptyFilter reachable instead
+// of a nil dereference. And a nil entry inside and / or is skipped rather than
+// fatal, matching the "an unset member contributes no SQL" rule the
+// relationship members already follow.
+func (f *BoolKeyedNoteFilter) ToConditions(dialect sql.Dialect, opts ...FilterOption) []sql.Condition {
+	if f == nil {
+		return nil
+	}
+
+	var conds []sql.Condition
+
+	if f.ID != nil {
+		conds = append(conds, f.ID.Parse(dialect.QuoteIdentifier("id"), dialect)...)
+	}
+
+	if f.KeyedK != nil {
+		conds = append(conds, f.KeyedK.Parse(dialect.QuoteIdentifier("keyed_k"), dialect)...)
+	}
+
+	if f.Note != nil {
+		conds = append(conds, f.Note.Parse(dialect.QuoteIdentifier("note"), dialect)...)
+	}
+
+	for _, sub := range f.And {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			conds = append(conds, sql.And(subConds...))
+		}
+	}
+
+	// A filter object's own fields are always conjunctive, so each or member
+	// contributes sql.And of its own conditions and the members are OR-ed
+	// together as ONE group condition. Appending a per-member
+	// sql.Or instead hands the caller N conditions, and buildWhere joins those
+	// with AND — turning or: [A, B] into A AND B, while simultaneously OR-ing a
+	// single member's own fields against each other.
+	//
+	// The group is appended only when some member compiled to something:
+	// sql.Or of nothing expands to a literal "()", which buildWhere keeps
+	// because it is not the empty string, yielding invalid SQL.
+	var orGroup []sql.Condition
+	for _, sub := range f.Or {
+		subConds := sub.ToConditions(dialect, opts...)
+		if len(subConds) > 0 {
+			orGroup = append(orGroup, sql.And(subConds...))
+		}
+	}
+	if len(orGroup) > 0 {
+		conds = append(conds, sql.Or(orGroup...))
+	}
+
+	return conds
+}
+
+// BoolKeyedNoteFieldOptions controls column selection and relationship loading for bool_keyed_notes queries.
+type BoolKeyedNoteFieldOptions struct {
+	ID     bool `json:"id"`
+	KeyedK bool `json:"keyed_k"`
+	Note   bool `json:"note"`
+}
+
+// Columns returns the SQL column names for all selected columns, sorted alphabetically
+// to match the SQL builder's deterministic column ordering.
+func (fo *BoolKeyedNoteFieldOptions) Columns() []string {
+	var cols []string
+	if fo.ID {
+		cols = append(cols, "id")
+	}
+	if fo.KeyedK {
+		cols = append(cols, "keyed_k")
+	}
+	if fo.Note {
+		cols = append(cols, "note")
+	}
+	slices.Sort(cols)
+	return cols
+}
+
+// ColumnMap returns a mapping of Go field name to SQL column name for all columns.
+func (fo *BoolKeyedNoteFieldOptions) ColumnMap() map[string]string {
+	return map[string]string{
+		"ID":     "id",
+		"KeyedK": "keyed_k",
+		"Note":   "note",
+	}
+}
+
+// HasSelectedColumns reports whether any column or relationship is selected.
+func (fo *BoolKeyedNoteFieldOptions) HasSelectedColumns() bool {
+	if fo.ID {
+		return true
+	}
+	if fo.KeyedK {
+		return true
+	}
+	if fo.Note {
+		return true
+	}
+	return false
+}
+
+// CreateBoolKeyedNoteInput holds the fields for creating a bool_keyed_notes record.
+type CreateBoolKeyedNoteInput struct {
+	KeyedK omittable.Value[*bool] `json:"keyed_k,omitzero"`
+	Note   string                 `json:"note"`
+}
+
+// UpdateBoolKeyedNoteInput holds the fields for updating a bool_keyed_notes record.
+// All fields use omittable.Value to distinguish "not set" from "set to zero".
+type UpdateBoolKeyedNoteInput struct {
+	KeyedK omittable.Value[*bool]  `json:"keyed_k,omitzero"`
+	Note   omittable.Value[string] `json:"note,omitzero"`
+}
+
+// GetBoolKeyedNotesInput holds query parameters for retrieving bool_keyed_notes records.
+// Field selection is controlled via CallOptions.FieldOptions, not this struct.
+type GetBoolKeyedNotesInput struct {
+	Filter *BoolKeyedNoteFilter `json:"filter"`
+	Limit  *int                 `json:"limit"`
+	Offset *int                 `json:"offset"`
+	Sorts  []sql.Sort           `json:"sorts"`
+	// conditions holds additional SQL conditions injected by internal callers
+	// (e.g., Connection keyset conditions). Not part of the public API.
+	conditions []sql.Condition
+	// requiredColumns holds columns an internal caller needs read back even
+	// when FieldOptions narrows the projection (e.g., Connection cursor keys).
+	// Not part of the public API.
+	requiredColumns []string
+}
+
 // Category - Product classification categories
 type Category struct {
 	// ID - Unique identifier

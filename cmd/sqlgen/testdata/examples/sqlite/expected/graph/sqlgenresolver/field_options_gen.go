@@ -405,6 +405,94 @@ func binaryKeyEventFieldOptionsFromCollected(opCtx *graphql.OperationContext, fi
 	return fo
 }
 
+// boolKeyedFieldOptionsFromContext returns the
+// models.BoolKeyedFieldOptions for the current GraphQL request.
+func boolKeyedFieldOptionsFromContext(ctx context.Context) *models.BoolKeyedFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "BoolKeyedConnection", "BoolKeyedListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.BoolKeyedFieldOptions{}
+	}
+	return boolKeyedFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// boolKeyedFieldOptionsFromCollected walks one level of
+// the BoolKeyed selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func boolKeyedFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.BoolKeyedFieldOptions {
+	fo := &models.BoolKeyedFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "k":
+			fo.K = true
+		case "label":
+			fo.Label = true
+		case "boolKeyedNotes":
+			fo.BoolKeyedNotes = &models.BoolKeyedNoteRelationshipOptions{
+				FieldOptions: boolKeyedNoteFieldOptionsFromCollected(opCtx, f.Sub),
+			}
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.K = true
+	}
+	return fo
+}
+
+// boolKeyedNoteFieldOptionsFromContext returns the
+// models.BoolKeyedNoteFieldOptions for the current GraphQL request.
+func boolKeyedNoteFieldOptionsFromContext(ctx context.Context) *models.BoolKeyedNoteFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "BoolKeyedNoteConnection", "BoolKeyedNoteListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.BoolKeyedNoteFieldOptions{}
+	}
+	return boolKeyedNoteFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// boolKeyedNoteFieldOptionsFromCollected walks one level of
+// the BoolKeyedNote selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func boolKeyedNoteFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.BoolKeyedNoteFieldOptions {
+	fo := &models.BoolKeyedNoteFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "keyedK":
+			fo.KeyedK = true
+		case "note":
+			fo.Note = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
 // categoryFieldOptionsFromContext returns the
 // models.CategoryFieldOptions for the current GraphQL request.
 func categoryFieldOptionsFromContext(ctx context.Context) *models.CategoryFieldOptions {

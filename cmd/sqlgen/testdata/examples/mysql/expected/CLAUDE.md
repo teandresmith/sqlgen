@@ -15,6 +15,8 @@ sqlgen manifest. Start here: [./manifest/_index.md](./manifest/_index.md).
 - **Article** (`articles`, table) — [./manifest/article.md](./manifest/article.md)
 - **Asset** (`assets`, table) — [./manifest/asset.md](./manifest/asset.md)
 - **AssetDocumentLink** (`asset_document_links`, table) — [./manifest/asset_document_link.md](./manifest/asset_document_link.md)
+- **BoolKeyed** (`bool_keyed`, table) — [./manifest/bool_keyed.md](./manifest/bool_keyed.md)
+- **BoolKeyedNote** (`bool_keyed_notes`, table) — [./manifest/bool_keyed_note.md](./manifest/bool_keyed_note.md)
 - **Category** (`categories`, table) — [./manifest/category.md](./manifest/category.md)
 - **CategoryStat** (`category_stats`, view) — [./manifest/category_stat.md](./manifest/category_stat.md)
 - **DefaultOnlyRow** (`default_only_rows`, table) — [./manifest/default_only_row.md](./manifest/default_only_row.md)

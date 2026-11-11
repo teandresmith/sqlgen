@@ -17,6 +17,8 @@ Features: audit_columns, graphql, soft_delete, views
 | BinaryKey | `binary_keys` | table | [binary_key.md](binary_key.md) |  |
 | BinaryKeyBadge | `binary_key_badges` | table | [binary_key_badge.md](binary_key_badge.md) |  |
 | BinaryKeyEvent | `binary_key_events` | table | [binary_key_event.md](binary_key_event.md) |  |
+| BoolKeyed | `bool_keyed` | table | [bool_keyed.md](bool_keyed.md) |  |
+| BoolKeyedNote | `bool_keyed_notes` | table | [bool_keyed_note.md](bool_keyed_note.md) |  |
 | Category | `categories` | table | [category.md](category.md) |  |
 | CategoryStat | `category_stats` | view | [category_stat.md](category_stat.md) |  |
 | DigitLeadingColumn | `digit_leading_columns` | table | [digit_leading_column.md](digit_leading_column.md) |  |
