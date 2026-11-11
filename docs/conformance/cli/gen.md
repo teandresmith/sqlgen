@@ -632,7 +632,7 @@
 | gen.events.metadata-at-hook-entry | Each per-entity hook calls `MetadataFunc` once at hook entry and merges its result into every event's `Metadata`, shallow-cloned per event, with the tenant stamp applied last (§28.3) | `unit: cmd/sqlgen/gen: TestEventHooks_metadataFunc_mergedAtHookEntry` | all | |
 
 ## §29.2 Configuration
-<!-- prd: 29.2 sha256: 167ad62e47a49488 -->
+<!-- prd: 29.2 sha256: cbf6770c2c1d9d4a -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

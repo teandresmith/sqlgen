@@ -148,33 +148,6 @@
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-379
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 13, cmd/sqlgen/gen
-- **Surfaced by:** FIX-370 vet (2026-11-06), filed on the user's yes
-- **Vetted:** corrected at `22de66f0` (2026-11-11)
-
-**Issue.** **`tenancy.enabled: true` with a `column` no table has crashes generation.** `generating unified client: goimports failed for models/client_gen.go: models/client_gen.go:22:40: expected type argument list (and 1 more errors)`; the raw output shows `tenantResolver tenancy.TenantResolver[]` and `func WithTenantResolver(r tenancy.TenantResolver[]) ClientOption`. Reproduced at `22de66f0` on a plain one-table SQLite schema with no enums. It also crashes when every table carrying the column opts out with `tables.<name>.tenancy.enabled: false`, and when a global `tenancy.type: {type: int64}` is set (that types the tenant column; it does not stand in for one).
-
-**Root cause.** `BuildClientContext` (`cmd/sqlgen/gen/context_client.go:100`) calls `applyClientTenancy` whenever `cfg.Tenancy.Enabled`. That function (`context_client.go:176-180`) sets `TenancyEnabled = true` and takes `TenancyGoType` from `FirstTenantedType(tenancyMap)` (`context_tenancy.go:841`), which returns `""` when no entity is tenanted; `client.go.tmpl:20` and `:72` then emit `TenantResolver[{{ .TenancyGoType }}]` with an empty type. `BuildTenancyContext` (`context_tenancy.go:65`) never checks that at least one entity is tenanted, though `FirstTenantedType`'s comment names the case.
-
-**Suggested fix.**
-- Confirm at base, and refuse this at validation with an error naming the column.
-- Add a config validation test.
-- Pending the user's ruling:
-  - Should a `tenancy.enabled: true` package with no tenanted table or view be refused? §9.6 (~line 3885, "`Tenant` only when the package additionally has a tenanted entity to take its concrete type from") and §29.4.4 ("only for tenancy-enabled packages with at least one tenanted table") read as if such a package is a valid generated shape.
-    - (A, recommended, prototyped) A resolution-level error in `BuildTenancyContext` naming `tenancy.column`, exit 1 (it needs the parsed schema, so it is not load-time config validation): `tenancy: tenancy.enabled is true but no table or view is tenanted: none carries tenant column "workspce_id", or every one that does opts out with tenancy.enabled: false; set tenancy.column to a column the schema has, or turn tenancy.enabled off`. It is skipped when a per-entity error (e.g. rule 5) already explains why nothing is tenanted. No golden churn; 5 test fixtures adjusted. A misspelled column becomes a loud error. Cost: a user who opts every carrier out must also turn the global flag off, and the §9.6/§29.4.4 gating text becomes near-dead. The PRD gets a §29.2.3 paragraph and a §4.13 row. Not auto-accepted, because it plausibly reverses behavior §9.6/§29.4.4 imply.
-    - (B) Generate it: in `applyClientTenancy`, leave `TenancyEnabled` false when `FirstTenantedType` returns "", so `WithTenantResolver` and the `tenantResolver` field are not emitted. Not prototyped; from reading, no golden or fixture churn. A misspelled `tenancy.column` would silently generate a package with no tenant scoping (the §29.2.1 footgun).
-- The user ruled on 2026-11-11: option (A), a resolution-level error in `BuildTenancyContext` naming `tenancy.column`, plus the §29.2.3 paragraph and §4.13 row, as prototyped. No re-vet needed: the prototype already implements the ruled option with green gates and fail-first shown.
-- Prototype results, run at `22de66f0` on 2026-11-10, option (A): reproduction in a sibling example `zz_probe379_min` (sqlite, `CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT NOT NULL)`, `tenancy: {enabled: true, column: workspace_id}`), `GOWORK=off sqlgen generate` → `Generation error: generating unified client: goimports failed for models/client_gen.go: models/client_gen.go:22:40: expected type argument list (and 1 more errors)`, exit=1; the same with `tenancy.type: {type: int64}` added, and with an `audit_logs(workspace_id)` table opted out. With the prototype, `generate` and `validate` both give the refusal above, exit=1. Prototype: the check in `BuildTenancyContext` after the uniform-type check; the stale `FirstTenantedType` comment updated; `TestBuildTenancyContext_noTenantedEntityErrors` (no carrier; a global `tenancy.type` does not stand in; every table and view carrier opted out; a tenanted view alone is enough; a per-entity error is not joined by the refusal) and a `withTenantAnchor` helper; anchor tables added to `TestBuildTenancyContext_forcedSharedOptOutWinsOverDetection`, `TestBuildTenancyContext_viewDetection`, `TestBuildEntityContexts_TenancyTypeReachesTenantColumn` and `...ViewTenantColumn`; `keyMembersContexts` enables tenancy only when the DDL has `workspace_id` (fixes 7 TestNested* fixtures); PRD §29.2.3 paragraph and §4.13 row. Gates: `go test -race ./...` in cmd/sqlgen ok (root and cli rerun with `-timeout=40m` under vetter load: ok); `TestE2EGoldenFiles` green; gofumpt clean; golangci-lint 0 issues. Fail-first: check disabled → `TestBuildTenancyContext_noTenantedEntityErrors` fails on the three refusal cases, `BuildTenancyContext() err = nil, want error containing "no table or view is tenanted: none carries tenant column \"workspace_id\""`; `len(errs) == 0` guard removed → the per-entity case fails `want it not to contain "no table or view is tenanted: …"`. The existing suite without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-379.patch` (6 files, +168/-10).
-
-**References.**
-- PRD §29, §4.13.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-380
 
 - **Status:** Open
@@ -348,6 +321,33 @@ landed), it compiles but loads no children in either direction: `parent 2024-01-
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-379
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 13, cmd/sqlgen/gen
+- **Surfaced by:** FIX-370 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `22de66f0` (2026-11-11)
+
+**Issue.** **`tenancy.enabled: true` with a `column` no table has crashes generation.** `generating unified client: goimports failed for models/client_gen.go: models/client_gen.go:22:40: expected type argument list (and 1 more errors)`; the raw output shows `tenantResolver tenancy.TenantResolver[]` and `func WithTenantResolver(r tenancy.TenantResolver[]) ClientOption`. Reproduced at `22de66f0` on a plain one-table SQLite schema with no enums. It also crashes when every table carrying the column opts out with `tables.<name>.tenancy.enabled: false`, and when a global `tenancy.type: {type: int64}` is set (that types the tenant column; it does not stand in for one).
+
+**Root cause.** `BuildClientContext` (`cmd/sqlgen/gen/context_client.go:100`) calls `applyClientTenancy` whenever `cfg.Tenancy.Enabled`. That function (`context_client.go:176-180`) sets `TenancyEnabled = true` and takes `TenancyGoType` from `FirstTenantedType(tenancyMap)` (`context_tenancy.go:841`), which returns `""` when no entity is tenanted; `client.go.tmpl:20` and `:72` then emit `TenantResolver[{{ .TenancyGoType }}]` with an empty type. `BuildTenancyContext` (`context_tenancy.go:65`) never checks that at least one entity is tenanted, though `FirstTenantedType`'s comment names the case.
+
+**Suggested fix.**
+- Confirm at base, and refuse this at validation with an error naming the column.
+- Add a config validation test.
+- Pending the user's ruling:
+  - Should a `tenancy.enabled: true` package with no tenanted table or view be refused? §9.6 (~line 3885, "`Tenant` only when the package additionally has a tenanted entity to take its concrete type from") and §29.4.4 ("only for tenancy-enabled packages with at least one tenanted table") read as if such a package is a valid generated shape.
+    - (A, recommended, prototyped) A resolution-level error in `BuildTenancyContext` naming `tenancy.column`, exit 1 (it needs the parsed schema, so it is not load-time config validation): `tenancy: tenancy.enabled is true but no table or view is tenanted: none carries tenant column "workspce_id", or every one that does opts out with tenancy.enabled: false; set tenancy.column to a column the schema has, or turn tenancy.enabled off`. It is skipped when a per-entity error (e.g. rule 5) already explains why nothing is tenanted. No golden churn; 5 test fixtures adjusted. A misspelled column becomes a loud error. Cost: a user who opts every carrier out must also turn the global flag off, and the §9.6/§29.4.4 gating text becomes near-dead. The PRD gets a §29.2.3 paragraph and a §4.13 row. Not auto-accepted, because it plausibly reverses behavior §9.6/§29.4.4 imply.
+    - (B) Generate it: in `applyClientTenancy`, leave `TenancyEnabled` false when `FirstTenantedType` returns "", so `WithTenantResolver` and the `tenantResolver` field are not emitted. Not prototyped; from reading, no golden or fixture churn. A misspelled `tenancy.column` would silently generate a package with no tenant scoping (the §29.2.1 footgun).
+- The user ruled on 2026-11-11: option (A), a resolution-level error in `BuildTenancyContext` naming `tenancy.column`, plus the §29.2.3 paragraph and §4.13 row, as prototyped. No re-vet needed: the prototype already implements the ruled option with green gates and fail-first shown.
+- Prototype results, run at `22de66f0` on 2026-11-10, option (A): reproduction in a sibling example `zz_probe379_min` (sqlite, `CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT NOT NULL)`, `tenancy: {enabled: true, column: workspace_id}`), `GOWORK=off sqlgen generate` → `Generation error: generating unified client: goimports failed for models/client_gen.go: models/client_gen.go:22:40: expected type argument list (and 1 more errors)`, exit=1; the same with `tenancy.type: {type: int64}` added, and with an `audit_logs(workspace_id)` table opted out. With the prototype, `generate` and `validate` both give the refusal above, exit=1. Prototype: the check in `BuildTenancyContext` after the uniform-type check; the stale `FirstTenantedType` comment updated; `TestBuildTenancyContext_noTenantedEntityErrors` (no carrier; a global `tenancy.type` does not stand in; every table and view carrier opted out; a tenanted view alone is enough; a per-entity error is not joined by the refusal) and a `withTenantAnchor` helper; anchor tables added to `TestBuildTenancyContext_forcedSharedOptOutWinsOverDetection`, `TestBuildTenancyContext_viewDetection`, `TestBuildEntityContexts_TenancyTypeReachesTenantColumn` and `...ViewTenantColumn`; `keyMembersContexts` enables tenancy only when the DDL has `workspace_id` (fixes 7 TestNested* fixtures); PRD §29.2.3 paragraph and §4.13 row. Gates: `go test -race ./...` in cmd/sqlgen ok (root and cli rerun with `-timeout=40m` under vetter load: ok); `TestE2EGoldenFiles` green; gofumpt clean; golangci-lint 0 issues. Fail-first: check disabled → `TestBuildTenancyContext_noTenantedEntityErrors` fails on the three refusal cases, `BuildTenancyContext() err = nil, want error containing "no table or view is tenanted: none carries tenant column \"workspace_id\""`; `len(errs) == 0` guard removed → the per-entity case fails `want it not to contain "no table or view is tenanted: …"`. The existing suite without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-379.patch` (6 files, +168/-10).
+
+**References.**
+- PRD §29, §4.13.
+
+**Resolution notes.** Resolved 2026-11-11 from the vetted prototype (fresh against HEAD `66473460`, applied clean). `BuildTenancyContext` (`cmd/sqlgen/gen/context_tenancy.go`) now refuses a `tenancy.enabled: true` package with no tenanted table or view, naming `tenancy.column`, when no per-entity tenancy error is already reported; `FirstTenantedType`'s comment updated. Tests: `TestBuildTenancyContext_noTenantedEntityErrors` (no carrier; a global `tenancy.type` does not stand in; every carrier opted out; a tenanted view alone is enough; a per-entity error is not joined by the refusal), anchor tables added to four existing tests, `keyMembersContexts` enables tenancy only for DDL carrying `workspace_id`. Beyond the prototype: a `no tenanted table or view` subtest in `TestValidateGeneration_ReportsViewTenancyErrorsWithTheOthers` pins §4.13's report-together rule for the new error; conformance rows `config.tenancy-none-tenanted{,.message,.severity,.together}` (+ schema N/A) in `docs/conformance/cli/config.md` and `config.tenancy.detection.at-least-one-tenanted` in `config-features.md`; §4, §4.13, §29.2 anchors rehashed after review. Inline after `/verify`: a `the error names the configured tenancy.column` subtest (misspelled `workspce_id`) backs the `.message` row, and `TestBuildEntityContexts_TenancyTypeReachesViewTenantColumn` adds its anchor table only when the view opts out, matching its comment. PRD: §29.2.3 paragraph and §4.13 row, per the 2026-11-11 ruling. Golden churn: none. Gates: `make check` ok, `make check-examples` ok.
 
 ### FIX-374
 

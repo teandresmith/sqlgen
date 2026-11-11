@@ -83,6 +83,9 @@ func TestBuildEntityContexts_TenancyTypeReachesTenantColumn(t *testing.T) {
 		// wantNoTenancyCtx expects no TableTenancyContext at all, which is what
 		// a globally-disabled block produces.
 		wantNoTenancyCtx bool
+		// anchor adds a second, tenanted table: with the fixture's only table
+		// shared, the package would have no tenant type and be refused.
+		anchor bool
 	}{
 		{
 			name:         "global tenancy.type types the tenant column",
@@ -165,6 +168,7 @@ func TestBuildEntityContexts_TenancyTypeReachesTenantColumn(t *testing.T) {
 			wantGoType:   "uuid.UUID",
 			wantImport:   "github.com/google/uuid",
 			wantTenanted: false,
+			anchor:       true,
 		},
 	}
 
@@ -176,13 +180,18 @@ func TestBuildEntityContexts_TenancyTypeReachesTenantColumn(t *testing.T) {
 			cfg.Tenancy.Enabled = !tt.globalOff
 			cfg.Tables["public.projects"] = tt.tableCfg
 			schema := tenantTypeSchema()
+			wantTables := 1
+			if tt.anchor {
+				withTenantAnchor(schema)
+				wantTables++
+			}
 
 			tables, _, err := gen.BuildEntityContextsFromSchema(schema, cfg)
 			if err != nil {
 				t.Fatalf("BuildEntityContextsFromSchema() error = %v, want nil", err)
 			}
-			if len(tables) != 1 {
-				t.Fatalf("BuildEntityContextsFromSchema() built %d tables, want 1", len(tables))
+			if len(tables) != wantTables {
+				t.Fatalf("BuildEntityContextsFromSchema() built %d tables, want %d", len(tables), wantTables)
 			}
 
 			tenant := tenantColumnOf(t, tables[0].Columns, "workspace_id")
@@ -322,6 +331,11 @@ func TestBuildEntityContexts_TenancyTypeReachesViewTenantColumn(t *testing.T) {
 				viewCol("id", "uuid", false),
 				viewCol("workspace_id", sqlType, tt.nullable),
 			)
+			if tt.viewCfg != nil && tt.viewCfg.Tenancy != nil && tt.viewCfg.Tenancy.Enabled != nil && !*tt.viewCfg.Tenancy.Enabled {
+				// The view opts out, so the package needs another tenanted
+				// entity to take its tenant type from.
+				withTenantAnchor(schema)
+			}
 
 			_, views, err := gen.BuildEntityContextsFromSchema(schema, cfg)
 			if err != nil {

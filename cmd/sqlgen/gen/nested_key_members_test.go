@@ -86,8 +86,9 @@ CREATE TABLE users (id bigint PRIMARY KEY, name text NOT NULL);
 CREATE TABLE profiles (user_id bigint PRIMARY KEY REFERENCES users(id), bio text);
 `
 
-// keyMembersContexts builds ddl with nested mutations on and tenancy on
-// workspace_id. mutate adjusts the config first.
+// keyMembersContexts builds ddl with nested mutations on and, when ddl has a
+// workspace_id column, tenancy on it: a tenancy-enabled schema with no
+// tenanted table is refused. mutate adjusts the config first.
 func keyMembersContexts(t *testing.T, dialect config.Dialect, ddl string, mutate func(*config.RootConfig)) map[string]gen.TableContext {
 	t.Helper()
 	contexts, err := buildKeyMembersContexts(t, dialect, ddl, mutate)
@@ -105,7 +106,9 @@ func buildKeyMembersContexts(t *testing.T, dialect config.Dialect, ddl string, m
 	cfg := testInput(schema).Config
 	cfg.Input.Dialect = dialect
 	cfg.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
-	cfg.Tenancy = &config.TenancyConfig{Enabled: true, Column: "workspace_id", Required: new(true)}
+	if strings.Contains(ddl, "workspace_id") {
+		cfg.Tenancy = &config.TenancyConfig{Enabled: true, Column: "workspace_id", Required: new(true)}
+	}
 	if mutate != nil {
 		mutate(cfg)
 	}

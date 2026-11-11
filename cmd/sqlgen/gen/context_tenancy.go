@@ -100,6 +100,17 @@ func BuildTenancyContext(cfg *config.RootConfig, schema *parser.Schema, resolver
 		errs = append(errs, err)
 	}
 
+	// The package's one TenantResolver[T] takes T from a tenanted entity's
+	// tenant column (§29.3.1), so with none there is no type to emit. Checked
+	// only when nothing else failed: a per-entity error already explains why
+	// that entity is not tenanted.
+	if len(errs) == 0 && len(tenanted) == 0 {
+		errs = append(errs, fmt.Errorf(
+			"tenancy: tenancy.enabled is true but no table or view is tenanted: none carries tenant column %q, or every one that does opts out with tenancy.enabled: false; set tenancy.column to a column the schema has, or turn tenancy.enabled off",
+			cfg.Tenancy.Column,
+		))
+	}
+
 	if len(errs) > 0 {
 		return nil, warnings, errors.Join(errs...)
 	}
@@ -837,7 +848,7 @@ func promoteTenantFieldToOmittable(tc *TableContext, tenantColumn string) {
 // table in a tenancy map. Because §29.2.4 requires uniform tenant Go type
 // across all tenanted tables, any tenanted entry carries the canonical
 // answer. Returns empty strings when tenancyMap is nil, empty, or has no
-// tenanted tables (e.g. tenancy enabled but all tables opted-out).
+// tenanted entry, which BuildTenancyContext refuses for an enabled block.
 func FirstTenantedType(tenancyMap map[string]TenancyContext) (goType, importPath string) {
 	if len(tenancyMap) == 0 {
 		return "", ""

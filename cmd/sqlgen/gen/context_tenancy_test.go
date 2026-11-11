@@ -42,6 +42,21 @@ func tableCol(name, sqlType string, nullable, pk bool) parser.Column {
 	}
 }
 
+// withTenantAnchor appends a tenanted table to schema. A fixture whose only
+// entity is shared needs one: a tenancy-enabled package with no tenanted
+// entity has no type for its TenantResolver[T] and is refused.
+func withTenantAnchor(schema *parser.Schema) *parser.Schema {
+	schema.Tables = append(schema.Tables, parser.Table{
+		Name:   "tenant_anchors",
+		Schema: "public",
+		Columns: []parser.Column{
+			tableCol("id", "uuid", false, true),
+			tableCol("workspace_id", "uuid", false, false),
+		},
+	})
+	return schema
+}
+
 func TestBuildTenancyContext_disabledReturnsNil(t *testing.T) {
 	cfg := tenancyTestConfig()
 	cfg.Tenancy.Enabled = false
@@ -130,7 +145,7 @@ func TestBuildTenancyContext_forcedSharedOptOutWinsOverDetection(t *testing.T) {
 	cfg.Tables["public.products"] = config.TableConfig{
 		Tenancy: &config.TableTenancyConfig{Enabled: new(false)},
 	}
-	schema := &parser.Schema{
+	schema := withTenantAnchor(&parser.Schema{
 		Tables: []parser.Table{
 			{
 				Name:   "products",
@@ -141,7 +156,7 @@ func TestBuildTenancyContext_forcedSharedOptOutWinsOverDetection(t *testing.T) {
 				},
 			},
 		},
-	}
+	})
 
 	got, _, err := gen.BuildTenancyContext(cfg, schema, tenancyTestResolver(cfg))
 	if err != nil {
@@ -209,6 +224,120 @@ func TestBuildTenancyContext_compositePKTenantInPK(t *testing.T) {
 	}
 	if entry.Column != "workspace_id" {
 		t.Errorf("Column = %q, want %q", entry.Column, "workspace_id")
+	}
+}
+
+// TestBuildTenancyContext_noTenantedEntityErrors pins the refusal of a
+// tenancy-enabled package in which no table or view is tenanted: the
+// package's TenantResolver[T] takes T from a tenanted entity's tenant column
+// (§29.3.1), so there is no type to emit it with.
+func TestBuildTenancyContext_noTenantedEntityErrors(t *testing.T) {
+	products := parser.Table{
+		Name:   "products",
+		Schema: "public",
+		Columns: []parser.Column{
+			tableCol("id", "uuid", false, true),
+			tableCol("workspace_id", "uuid", false, false),
+		},
+	}
+	widgets := parser.Table{
+		Name:   "widgets",
+		Schema: "public",
+		Columns: []parser.Column{
+			tableCol("id", "uuid", false, true),
+			tableCol("name", "text", false, false),
+		},
+	}
+	stats := parser.View{
+		Name:   "product_stats",
+		Schema: "public",
+		Columns: []parser.Column{
+			viewCol("id", "uuid", false),
+			viewCol("workspace_id", "uuid", false),
+		},
+	}
+	const refusal = `no table or view is tenanted: none carries tenant column "workspace_id"`
+
+	tests := []struct {
+		name       string
+		schema     *parser.Schema
+		tables     map[string]config.TableConfig
+		views      map[string]config.ViewConfig
+		globalType *config.TypeOverride
+		column     string
+		wantErr    string
+		wantNoErr  string
+	}{
+		{
+			name:    "no entity carries the column",
+			schema:  &parser.Schema{Tables: []parser.Table{widgets}},
+			wantErr: refusal,
+		},
+		{
+			// A global tenancy.type does not stand in: it types the tenant
+			// column, and there is no tenant column to type.
+			name:       "a global tenancy.type does not supply the type",
+			schema:     &parser.Schema{Tables: []parser.Table{widgets}},
+			globalType: &config.TypeOverride{Type: "int64"},
+			wantErr:    refusal,
+		},
+		{
+			name:    "every carrier opts out",
+			schema:  &parser.Schema{Tables: []parser.Table{products, widgets}, Views: []parser.View{stats}},
+			tables:  map[string]config.TableConfig{"products": {Tenancy: &config.TableTenancyConfig{Enabled: new(false)}}},
+			views:   map[string]config.ViewConfig{"product_stats": {Tenancy: &config.TableTenancyConfig{Enabled: new(false)}}},
+			wantErr: refusal,
+		},
+		{
+			name:    "the error names the configured tenancy.column",
+			schema:  &parser.Schema{Tables: []parser.Table{products}},
+			column:  "workspce_id",
+			wantErr: `none carries tenant column "workspce_id"`,
+		},
+		{
+			name:   "a tenanted view alone is enough",
+			schema: &parser.Schema{Tables: []parser.Table{widgets}, Views: []parser.View{stats}},
+		},
+		{
+			// The per-entity error already says why the entity is not
+			// tenanted; the package-level refusal would only repeat it.
+			name:      "a per-entity error is not joined by the refusal",
+			schema:    &parser.Schema{Tables: []parser.Table{widgets}},
+			tables:    map[string]config.TableConfig{"widgets": {Tenancy: &config.TableTenancyConfig{Enabled: new(true)}}},
+			wantErr:   `table public.widgets declares tenancy.enabled=true but tenant column "workspace_id" is not present`,
+			wantNoErr: refusal,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tenancyTestConfig()
+			cfg.Tenancy.Type = tt.globalType
+			if tt.column != "" {
+				cfg.Tenancy.Column = tt.column
+			}
+			if tt.tables != nil {
+				cfg.Tables = tt.tables
+			}
+			cfg.Views = tt.views
+
+			_, _, err := gen.BuildTenancyContext(cfg, tt.schema, tenancyTestResolver(cfg))
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("BuildTenancyContext() err = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("BuildTenancyContext() err = nil, want error containing %q", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("BuildTenancyContext() err = %q, want it to contain %q", err, tt.wantErr)
+			}
+			if tt.wantNoErr != "" && strings.Contains(err.Error(), tt.wantNoErr) {
+				t.Errorf("BuildTenancyContext() err = %q, want it not to contain %q", err, tt.wantNoErr)
+			}
+		})
 	}
 }
 

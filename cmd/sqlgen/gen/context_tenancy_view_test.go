@@ -40,6 +40,9 @@ func TestBuildTenancyContext_viewDetection(t *testing.T) {
 		want       gen.TenancyContext
 		wantErr    string
 		wantWarned bool
+		// anchor adds a tenanted table, which a fixture whose view is shared
+		// needs for the package to have a tenant type at all.
+		anchor bool
 	}{
 		{
 			name: "tenant column present detects tenanted (rule 2)",
@@ -61,7 +64,8 @@ func TestBuildTenancyContext_viewDetection(t *testing.T) {
 				viewCol("id", "uuid", false),
 				viewCol("total", "bigint", false),
 			},
-			want: gen.TenancyContext{Tenanted: false},
+			want:   gen.TenancyContext{Tenanted: false},
+			anchor: true,
 		},
 		{
 			name:    "enabled false forces shared even with the column present (rule 4)",
@@ -70,7 +74,8 @@ func TestBuildTenancyContext_viewDetection(t *testing.T) {
 				viewCol("id", "uuid", false),
 				viewCol("workspace_id", "uuid", false),
 			},
-			want: gen.TenancyContext{Tenanted: false},
+			want:   gen.TenancyContext{Tenanted: false},
+			anchor: true,
 		},
 		{
 			name:    "enabled true with the column absent is a hard error (rule 5)",
@@ -180,6 +185,9 @@ func TestBuildTenancyContext_viewDetection(t *testing.T) {
 				cfg.Views["project_stats"] = *tt.viewCfg
 			}
 			schema := viewSchema("project_stats", tt.columns...)
+			if tt.anchor {
+				withTenantAnchor(schema)
+			}
 
 			got, warnings, err := gen.BuildTenancyContext(cfg, schema, tenancyTestResolver(cfg))
 
@@ -731,6 +739,11 @@ func TestValidateGeneration_ReportsViewTenancyErrorsWithTheOthers(t *testing.T) 
 			}},
 			columns: []parser.Column{viewCol("id", "bigint", false), viewCol("workspace_id", "bigint", false)},
 			want:    "tenanted entities must resolve to a uniform tenant Go type",
+		},
+		{
+			name:    "no tenanted table or view",
+			columns: []parser.Column{viewCol("id", "uuid", false)},
+			want:    `no table or view is tenanted: none carries tenant column "workspace_id"`,
 		},
 	}
 
