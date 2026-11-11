@@ -746,8 +746,9 @@ type APIPKArg struct {
 	// unions GoImport across every PK column on every table for the file's
 	// import block.
 	GoImport string
-	// ModelGoType is the Go type the consumer model's PK struct field expects
-	// (e.g. "int64" for `BIGSERIAL PRIMARY KEY`). When ModelGoType differs
+	// ModelGoType is the Go type the consumer model's PK struct field expects,
+	// spelled from the resolver package (e.g. "int64" for `BIGSERIAL PRIMARY
+	// KEY`, "models.Kind" for an enum). When ModelGoType differs
 	// from GoType, the `pkConvert` helper emits a Go conversion at the model-
 	// call boundary. Same value as GoType when no cast is needed.
 	ModelGoType string
@@ -2997,6 +2998,12 @@ func buildAPIPKArgs(ent APIEntity, casing string, scalarsByName map[string]APISc
 		// column, but stripping `[]` unconditionally would mis-type a
 		// `[]byte` PK arg as `byte`.
 		modelGoType := strings.TrimPrefix(col.GoType, "*")
+		if isEnumLikeType(modelGoType) {
+			// The enum is declared in the models package; the resolver and
+			// seed files are not. Qualifying the model side too keeps
+			// pkConvert and the nested id verbs on the identity arm.
+			modelGoType = binds.modelsPkg + "." + modelGoType
+		}
 		argGoType := gqlgenGoTypeFor(bareScalar, modelGoType)
 		// PK arg matches the model's Go type (custom scalars: UUID, Decimal,
 		// DateTime, etc.) — third-party imports flow through. The four spec

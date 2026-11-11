@@ -23,30 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-374
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 16, cmd/sqlgen/gen
-- **Surfaced by:** FIX-370 vet (2026-11-06), filed on the user's yes
-- **Vetted:** corrected at `22de66f0` (2026-11-10)
-
-**Issue.** **An enum in a primary key fails to generate with GraphQL on, a composite member included.** `sqlgen generate` on a graphql example copy with an enum-PK table gives `models/graph/sqlgenresolver/resolvers_gen.go:<line>: undefined: ZzKind` (the line varies by schema; six errors for one single and one composite enum PK), then `Error: gqlgen subprocess failed`. The wrong type also reaches the gqlgen seed files (`models/graph/<t>_gen.resolvers.go`, from `api/seeds.go.tmpl`).
-
-**Root cause.** `buildAPIPKArgs` (`cmd/sqlgen/gen/context_api.go:2986`) writes an unqualified `a.GoType` for an enum key. `funcPKGoArgs` (`funcmap.go:314`) only joins `GoType` and is not a fix site.
-
-**Suggested fix.**
-- In `buildAPIPKArgs`, when `isEnumLikeType(modelGoType)`, prefix `binds.modelsPkg + "."` to the model type before `gqlgenGoTypeFor`, so `GoType` and `ModelGoType` are both `models.Kind`. `pkConvert` and the nested id verbs (`context_api_nested.go:487`) then stay on the identity arm and emit no unqualified `Kind(...)` cast.
-- Regression test: `TestEnumKey_ResolverArgsNameTheModelsType` (`cmd/sqlgen/gen/api_enum_comparator_test.go`), a render test over a single enum PK and an enum+int composite PK, checking the resolver signatures, the unconverted `Get(ctx, kind, …)`, `models.PairPK{Kind: kind, Slot: int32(slot)}` and the two seed-file signatures.
-- Changed from the original: FIX-370 has landed (`f245cca6`), so nothing is pending. Both `GoType` and `ModelGoType` are qualified, because qualifying only the argument type leaves an unqualified cast in `pkConvert` and the nested verbs. The test is a render test, since no unit-level GraphQL build test exists and an enum table in `examples/graphql` would churn its goldens.
-- Auto-accepted the recommended option on 2026-11-10 (`/fix` auto-accept rule): regression test form → a gen render test over resolvers and seeds instead of an enum-PK table in `examples/graphql`, because it was prototyped with green gates, causes no golden churn (the example alternative would), adds no public surface, and reverses no ruling or PRD behavior.
-- Prototype results, run at `22de66f0` on 2026-11-10: reproduction on a sibling copy of `examples/graphql` with `zz_things (kind zz_kind PRIMARY KEY, …)` and `zz_pairs (kind zz_kind, slot INTEGER, …, PRIMARY KEY (kind, slot))`, `GOWORK=off sqlgen generate` → "models/graph/sqlgenresolver/resolvers_gen.go:5834:46: undefined: ZzKind" (plus 5 more), then "Error: gqlgen subprocess failed: running gqlgen (go run github.com/99designs/gqlgen): exit status 1". With the fix the copy generated, built, passed `go vet ./models/...`, and a live GraphQL create/get/update/delete/get-after-delete run on Postgres 16 passed for both tables. Gates: `go test -race ./gen/... ./cli/...` ok; `golangci-lint run ./gen/...` 0 issues; gofumpt clean; `make refs-check` ok; `make update-golden` and `make update-golden-e2e` PASS. Fail-first: qualifier reverted → `TestEnumKey_ResolverArgsNameTheModelsType` fails "output missing \"func (q *Q) Thing(ctx context.Context, kind models.Kind) (*models.Thing, error)\""; the existing suite without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-374.patch` (2 files, +46/-0).
-
-**References.**
-- PRD §26. FIX-370.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-375
 
 - **Status:** Open
@@ -372,6 +348,30 @@ landed), it compiles but loads no children in either direction: `parent 2024-01-
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+
+### FIX-374
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 16, cmd/sqlgen/gen
+- **Surfaced by:** FIX-370 vet (2026-11-06), filed on the user's yes
+- **Vetted:** corrected at `22de66f0` (2026-11-10)
+
+**Issue.** **An enum in a primary key fails to generate with GraphQL on, a composite member included.** `sqlgen generate` on a graphql example copy with an enum-PK table gives `models/graph/sqlgenresolver/resolvers_gen.go:<line>: undefined: ZzKind` (the line varies by schema; six errors for one single and one composite enum PK), then `Error: gqlgen subprocess failed`. The wrong type also reaches the gqlgen seed files (`models/graph/<t>_gen.resolvers.go`, from `api/seeds.go.tmpl`).
+
+**Root cause.** `buildAPIPKArgs` (`cmd/sqlgen/gen/context_api.go:2986`) writes an unqualified `a.GoType` for an enum key. `funcPKGoArgs` (`funcmap.go:314`) only joins `GoType` and is not a fix site.
+
+**Suggested fix.**
+- In `buildAPIPKArgs`, when `isEnumLikeType(modelGoType)`, prefix `binds.modelsPkg + "."` to the model type before `gqlgenGoTypeFor`, so `GoType` and `ModelGoType` are both `models.Kind`. `pkConvert` and the nested id verbs (`context_api_nested.go:487`) then stay on the identity arm and emit no unqualified `Kind(...)` cast.
+- Regression test: `TestEnumKey_ResolverArgsNameTheModelsType` (`cmd/sqlgen/gen/api_enum_comparator_test.go`), a render test over a single enum PK and an enum+int composite PK, checking the resolver signatures, the unconverted `Get(ctx, kind, …)`, `models.PairPK{Kind: kind, Slot: int32(slot)}` and the two seed-file signatures.
+- Changed from the original: FIX-370 has landed (`f245cca6`), so nothing is pending. Both `GoType` and `ModelGoType` are qualified, because qualifying only the argument type leaves an unqualified cast in `pkConvert` and the nested verbs. The test is a render test, since no unit-level GraphQL build test exists and an enum table in `examples/graphql` would churn its goldens.
+- Auto-accepted the recommended option on 2026-11-10 (`/fix` auto-accept rule): regression test form → a gen render test over resolvers and seeds instead of an enum-PK table in `examples/graphql`, because it was prototyped with green gates, causes no golden churn (the example alternative would), adds no public surface, and reverses no ruling or PRD behavior.
+- Prototype results, run at `22de66f0` on 2026-11-10: reproduction on a sibling copy of `examples/graphql` with `zz_things (kind zz_kind PRIMARY KEY, …)` and `zz_pairs (kind zz_kind, slot INTEGER, …, PRIMARY KEY (kind, slot))`, `GOWORK=off sqlgen generate` → "models/graph/sqlgenresolver/resolvers_gen.go:5834:46: undefined: ZzKind" (plus 5 more), then "Error: gqlgen subprocess failed: running gqlgen (go run github.com/99designs/gqlgen): exit status 1". With the fix the copy generated, built, passed `go vet ./models/...`, and a live GraphQL create/get/update/delete/get-after-delete run on Postgres 16 passed for both tables. Gates: `go test -race ./gen/... ./cli/...` ok; `golangci-lint run ./gen/...` 0 issues; gofumpt clean; `make refs-check` ok; `make update-golden` and `make update-golden-e2e` PASS. Fail-first: qualifier reverted → `TestEnumKey_ResolverArgsNameTheModelsType` fails "output missing \"func (q *Q) Thing(ctx context.Context, kind models.Kind) (*models.Thing, error)\""; the existing suite without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-374.patch` (2 files, +46/-0).
+
+**References.**
+- PRD §26. FIX-370.
+
+**Resolution notes.** Resolved 2026-11-11. Applied the vetted prototype clean (fresh at `22de66f0`): `buildAPIPKArgs` (`cmd/sqlgen/gen/context_api.go`) qualifies an enum key's model Go type with the models package, so the resolver and seed PK args read `models.Kind` and `pkConvert` and the nested id verbs stay on the identity arm (no unqualified cast). Regression test `TestEnumKey_ResolverArgsNameTheModelsType` (`cmd/sqlgen/gen/api_enum_comparator_test.go`) renders resolvers and seeds over a single enum PK and an enum+int composite PK; it is claimed by `api.surface.get-backed-by-get` in `docs/conformance/cli/api.md` (req-check needs every gen test claimed). Fail-first: qualifier removed → the test fails "output missing \"func (q *Q) Thing(ctx context.Context, kind models.Kind) (*models.Thing, error)\"". `/verify FIX-374` reviewer doc correction applied inline: the `APIPKArg.ModelGoType` field comment now says the type is spelled from the resolver package (`models.Kind` for an enum). Gates: `make check` ok; `make update-golden` and `make update-golden-e2e` PASS with no golden churn, matching the vet; `make check-examples` ok.
 
 ### FIX-372
 

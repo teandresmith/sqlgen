@@ -505,3 +505,43 @@ func TestEnumKey_FollowsTheFilterField(t *testing.T) {
 		mustContain(t, body, want)
 	}
 }
+
+// An enum primary-key argument, alone or as a composite member, names its type
+// through the models package in the resolver helpers and the seed files, and
+// reaches the client call unconverted. Neither file is in the models package.
+func TestEnumKey_ResolverArgsNameTheModelsType(t *testing.T) {
+	schema := &parserpkg.Schema{
+		Enums: []parserpkg.Enum{{Name: "kind", Schema: "public", Values: []string{"a", "b"}}},
+		Tables: []parserpkg.Table{
+			{Name: "things", Columns: []parserpkg.Column{
+				{Name: "kind", Type: "kind", PrimaryKey: true},
+				{Name: "label", Type: "text"},
+			}},
+			{Name: "pairs", Columns: []parserpkg.Column{
+				{Name: "kind", Type: "kind", PrimaryKey: true},
+				{Name: "slot", Type: "integer", PrimaryKey: true},
+				{Name: "note", Type: "text"},
+			}},
+		},
+	}
+	apiCtx := enumFixtureContext(t, schema)
+	apiCtx.ModelsImportPath = "example.com/foo/gen"
+	apiCtx.ClientName = "Client"
+	resolvers := renderResolvers(t, apiCtx)
+	for _, want := range []string{
+		"func (q *Q) Thing(ctx context.Context, kind models.Kind) (*models.Thing, error)",
+		"q.Client.Things().Get(ctx, kind, func(",
+		"func (m *M) DeleteThing(ctx context.Context, kind models.Kind) (",
+		"func (q *Q) Pair(ctx context.Context, kind models.Kind, slot int) (*models.Pair, error)",
+		"q.Client.Pairs().Get(ctx, models.PairPK{Kind: kind, Slot: int32(slot)}, func(",
+	} {
+		mustContain(t, resolvers, want)
+	}
+	seeds := renderSeeds(t, apiCtx)
+	for _, want := range []string{
+		"func (r *queryResolver) Thing(ctx context.Context, kind models.Kind) (*models.Thing, error)",
+		"func (r *queryResolver) Pair(ctx context.Context, kind models.Kind, slot int) (*models.Pair, error)",
+	} {
+		mustContain(t, seeds, want)
+	}
+}
