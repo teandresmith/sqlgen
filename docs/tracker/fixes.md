@@ -277,9 +277,14 @@ original text named only `keyForMoment` and only MySQL.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
 ### FIX-383
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 13, cmd/sqlgen/gen
 - **Surfaced by:** FIX-379 vet (2026-11-10), filed on the user's yes (2026-11-11)
@@ -321,13 +326,8 @@ original text named only `keyForMoment` and only MySQL.
 **References.**
 - PRD §29.2.3, §6.4 (`exclude_tables`), §9.4b (no-PK tables). FIX-379.
 
-**Resolution notes.** _Filled in by `/fix resolve`._
+**Resolution notes.** `BuildTenancyContext` (`cmd/sqlgen/gen/context_tenancy.go`) now skips a table that `config.MatchExcludeTablePattern` matches or that fails `tableHasResolvedPK`, the same predicates `buildTableContextsPartial` uses, so detection, the per-table checks, the uniform-type check and the no-tenanted-entity refusal see exactly the generated tables; views are still all detected. Doc comment updated. The refusal text now reads "no generated table or view carries tenant column %q, or every one that does opts out …"; the three assertions quoting it updated (`context_tenancy_test.go`, `context_tenancy_view_test.go`). Regression test `TestBuildTenancyContext_skipsTablesThatDoNotGenerate` (5 subtests), claimed by the new registry row `config.tenancy.detection.generated-tables-only` in `docs/conformance/cli/config-features.md`. Prototype applied clean at `630047d0`. Fail-first on the final code: both skips reverted → all 5 subtests fail. Gates: `make check` ok; `make update-golden-e2e` + `make update-golden`: no golden churn (matches vet); `make check-examples` ok.
 
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
 ### FIX-381
 
 - **Status:** Resolved

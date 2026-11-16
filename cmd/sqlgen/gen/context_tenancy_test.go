@@ -256,7 +256,7 @@ func TestBuildTenancyContext_noTenantedEntityErrors(t *testing.T) {
 			viewCol("workspace_id", "uuid", false),
 		},
 	}
-	const refusal = `no table or view is tenanted: none carries tenant column "workspace_id"`
+	const refusal = `no table or view is tenanted: no generated table or view carries tenant column "workspace_id"`
 
 	tests := []struct {
 		name       string
@@ -292,7 +292,7 @@ func TestBuildTenancyContext_noTenantedEntityErrors(t *testing.T) {
 			name:    "the error names the configured tenancy.column",
 			schema:  &parser.Schema{Tables: []parser.Table{products}},
 			column:  "workspce_id",
-			wantErr: `none carries tenant column "workspce_id"`,
+			wantErr: `no generated table or view carries tenant column "workspce_id"`,
 		},
 		{
 			name:   "a tenanted view alone is enough",
@@ -336,6 +336,100 @@ func TestBuildTenancyContext_noTenantedEntityErrors(t *testing.T) {
 			}
 			if tt.wantNoErr != "" && strings.Contains(err.Error(), tt.wantNoErr) {
 				t.Errorf("BuildTenancyContext() err = %q, want it not to contain %q", err, tt.wantNoErr)
+			}
+		})
+	}
+}
+
+// Detection covers generated entities only (§29.2.3): a table exclude_tables
+// drops (§6.4) or that has no resolved primary key (§9.4b) neither fails a
+// tenancy rule nor counts as the tenanted entity the refusal looks for.
+func TestBuildTenancyContext_skipsTablesThatDoNotGenerate(t *testing.T) {
+	widgets := parser.Table{
+		Name:   "widgets",
+		Schema: "public",
+		Columns: []parser.Column{
+			tableCol("id", "integer", false, true),
+			tableCol("workspace_id", "bigint", false, false),
+		},
+	}
+	sharedWidgets := parser.Table{
+		Name:   "widgets",
+		Schema: "public",
+		Columns: []parser.Column{
+			tableCol("id", "integer", false, true),
+			tableCol("name", "text", false, false),
+		},
+	}
+	auditLogs := func(nullable, pk bool) parser.Table {
+		return parser.Table{
+			Name:   "audit_logs",
+			Schema: "public",
+			Columns: []parser.Column{
+				tableCol("id", "integer", false, pk),
+				tableCol("workspace_id", "text", nullable, false),
+			},
+		}
+	}
+	const refusal = `no table or view is tenanted: no generated table or view carries tenant column "workspace_id"`
+
+	tests := []struct {
+		name         string
+		tables       []parser.Table
+		exclude      []string
+		wantErr      string
+		wantTenanted string
+	}{
+		{
+			name:         "an excluded table's divergent tenant type is not checked",
+			tables:       []parser.Table{widgets, auditLogs(false, true)},
+			exclude:      []string{"audit_logs"},
+			wantTenanted: "int64",
+		},
+		{
+			name:         "an excluded table's nullable tenant column is not checked",
+			tables:       []parser.Table{widgets, auditLogs(true, true)},
+			exclude:      []string{"public.audit_*"},
+			wantTenanted: "int64",
+		},
+		{
+			name:         "a table with no primary key is not checked",
+			tables:       []parser.Table{widgets, auditLogs(false, false)},
+			wantTenanted: "int64",
+		},
+		{
+			name:    "an excluded table does not satisfy the no-tenanted-entity refusal",
+			tables:  []parser.Table{sharedWidgets, auditLogs(false, true)},
+			exclude: []string{"audit_logs"},
+			wantErr: refusal,
+		},
+		{
+			name:    "a table with no primary key does not satisfy the no-tenanted-entity refusal",
+			tables:  []parser.Table{sharedWidgets, auditLogs(false, false)},
+			wantErr: refusal,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tenancyTestConfig()
+			cfg.ExcludeTables = tt.exclude
+
+			got, _, err := gen.BuildTenancyContext(cfg, &parser.Schema{Tables: tt.tables}, tenancyTestResolver(cfg))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("BuildTenancyContext() err = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("BuildTenancyContext() err = %v, want nil", err)
+			}
+			if _, ok := got["public.audit_logs"]; ok {
+				t.Errorf("tenancy map has an entry for public.audit_logs, which does not generate")
+			}
+			if gotType, _ := gen.FirstTenantedType(got); gotType != tt.wantTenanted {
+				t.Errorf("FirstTenantedType() = %q, want %q", gotType, tt.wantTenanted)
 			}
 		})
 	}

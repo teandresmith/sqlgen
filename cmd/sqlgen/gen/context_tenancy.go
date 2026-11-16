@@ -52,10 +52,11 @@ func (e tenantedEntry) label() string {
 // BuildTenancyContext runs the detection + type-resolution + validation pass
 // described in PRD §29.2.3 and §29.2.4. The return map is keyed by
 // schema-qualified name (or bare name when the entity has no schema) and
-// contains one entry per parsed table **and** one per parsed view — detection
-// covers every generated entity, because scoping the tables while leaving a
-// tenant-shaped view reading across tenants is the failure mode tenancy
-// exists to prevent (§29.2.3, §29.2.5).
+// contains one entry per generated table **and** one per parsed view. A table
+// exclude_tables drops or that has no resolved primary key is skipped: it
+// generates nothing to scope. Detection covers every generated entity, because
+// scoping the tables while leaving a tenant-shaped view reading across tenants
+// is the failure mode tenancy exists to prevent (§29.2.3, §29.2.5).
 //
 // Returns a nil map when tenancy is not globally enabled; callers should
 // interpret a nil map as "no entity is tenanted". The returned warnings are
@@ -74,6 +75,16 @@ func BuildTenancyContext(cfg *config.RootConfig, schema *parser.Schema, resolver
 
 	for i := range schema.Tables {
 		table := &schema.Tables[i]
+		// Only generated tables are detected (§29.2.3): an excluded (§6.4) or
+		// PK-less (§9.4b) table emits no client to scope, so it neither fails
+		// the tenancy checks nor counts toward the refusal below. Same
+		// predicates as buildTableContextsPartial.
+		if _, excluded := config.MatchExcludeTablePattern(table.Name, table.Schema, cfg.ExcludeTables); excluded {
+			continue
+		}
+		if !tableHasResolvedPK(cfg, table) {
+			continue
+		}
 		entry, uniformIn, tableErrs := resolveTableTenancy(cfg, table, resolver)
 		result[qualifiedTableName(table.Schema, table.Name)] = entry
 		errs = append(errs, tableErrs...)
@@ -106,7 +117,7 @@ func BuildTenancyContext(cfg *config.RootConfig, schema *parser.Schema, resolver
 	// that entity is not tenanted.
 	if len(errs) == 0 && len(tenanted) == 0 {
 		errs = append(errs, fmt.Errorf(
-			"tenancy: tenancy.enabled is true but no table or view is tenanted: none carries tenant column %q, or every one that does opts out with tenancy.enabled: false; set tenancy.column to a column the schema has, or turn tenancy.enabled off",
+			"tenancy: tenancy.enabled is true but no table or view is tenanted: no generated table or view carries tenant column %q, or every one that does opts out with tenancy.enabled: false; set tenancy.column to a column the schema has, or turn tenancy.enabled off",
 			cfg.Tenancy.Column,
 		))
 	}

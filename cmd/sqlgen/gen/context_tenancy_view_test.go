@@ -743,7 +743,7 @@ func TestValidateGeneration_ReportsViewTenancyErrorsWithTheOthers(t *testing.T) 
 		{
 			name:    "no tenanted table or view",
 			columns: []parser.Column{viewCol("id", "uuid", false)},
-			want:    `no table or view is tenanted: none carries tenant column "workspace_id"`,
+			want:    `no table or view is tenanted: no generated table or view carries tenant column "workspace_id"`,
 		},
 	}
 
