@@ -29,7 +29,7 @@
 - **Severity:** tracked
 - **Origin:** phase 6, cmd/sqlgen/gen
 - **Surfaced by:** FIX-372 re-vet (2026-11-10), filed on the user's yes
-- **Vetted:** ready at `57e8b91a` (2026-11-13)
+- **Vetted:** ready at `bd76ff03` (2026-11-16)
 
 **Issue.** **A SQLite time key next to an FK of another storage class does not compile, and routing it through
 the tuple loader would load nothing.** A generated SQLite schema of `CREATE TABLE stamps (k DATETIME PRIMARY
@@ -126,6 +126,17 @@ landed), it compiles but loads no children in either direction: `parent 2024-01-
   `make req-check` ok (6322 requirements); `make refs-check` ok. Fail-first as above; removing the `types.NullDateTime`
   unwrap now also fails `TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused/text_key,_datetime_fk` and
   `/integer_key,_datetime_fk`. Golden churn: none. Patch: `.claude/prototypes/FIX-380.patch` (8 files, +235/-38).
+- Prototype results, re-run at `bd76ff03` on 2026-11-16: the `57e8b91a` patch applied with `git apply --3way`; the four
+  `.go` files applied cleanly over FIX-377. PRD.md conflicted only on the §4.13 phase-3 line (FIX-377 added its Go-map-key
+  clause there): both clauses kept, FIX-380's after the duplicate-relationship-name clause. The §13.3 hunk merged cleanly
+  next to FIX-378's "buckets compare keys as Go sees them" paragraph. The conformance `config-fields.md`, `config.md` and
+  `gen.md` anchors re-hashed with `make req-rehash SECTIONS=4,4.13,13.3`. A combined PG probe (`text[]` PK plus a
+  timestamptz PK with a text FK) gives `validation failed with 2 error(s)`, one from each fix. Reproduction unchanged
+  (`out/models_gen.go:2442:9: cannot use &comparator.NullableTime{…} … as *comparator.NullableID value` and the
+  reverse). Gates: `go test -race -count=1 ./gen/` ok; `go test -short -count=1 ./cli/` ok; vet, gofumpt clean;
+  golangci-lint 0 issues; `make req-check` ok (6334 requirements); `make refs-check` ok; `make update-golden` /
+  `update-golden-e2e` no golden changes. Fail-first as before; removing the `types.NullDateTime` unwrap now also fails
+  `/nullable_unique_key`. Golden churn: none. Patch: `.claude/prototypes/FIX-380.patch` (8 files, +235/-38).
 
 **References.**
 - PRD §13.3 (FK type conversion; "A time key next to a key of another family, which only SQLite accepts, is not
@@ -143,6 +154,7 @@ landed), it compiles but loads no children in either direction: `parent 2024-01-
 - **Severity:** tracked
 - **Origin:** phase 11, cmd/sqlgen/gen
 - **Surfaced by:** FIX-377 implementation (2026-11-16), filed on the user's yes (2026-11-16)
+- **Vetted:** ready at `bd76ff03` (2026-11-16)
 
 **Issue.** **A PostgreSQL array column retyped by `type_map` to its own generated slice type gets a filter field that
 does not compile.** `CREATE TYPE kind AS ENUM ('a','b'); CREATE TABLE refs (id integer PRIMARY KEY, kinds kind[]);`
@@ -151,14 +163,82 @@ comparable` on `Kinds *comparator.Enum[KindSlice]` (and `*comparator.NullableEnu
 fields are `comparator.Slice[Kind]` / `comparator.NullableSlice[Kind]`. The column need not be a key.
 
 **Root cause.** Not yet vetted. Filter comparator resolution (`resolveGenericComparator`,
-`cmd/sqlgen/gen/context_table.go:2496`) loses `IsSlice` for a retyped array and falls through to the Enum comparator.
+`cmd/sqlgen/gen/context_table.go:2514`) sees a bare capitalised name and `isEnumLikeType` sends it to `Enum`. The
+element type is lost one level up: every per-column retype goes through `gotype.FromLiteral` (`type_map`,
+`column_map`) or `FromOverride` (`overrides.types`), and both return a GoType with `IsSlice` false. Table and global
+`overrides.types`, `column_map.type`, and global `overrides.types` on a view column all hit it (measured).
 
 **Suggested fix.**
-- Keep the slice comparator for an array column whose `type_map` / `overrides.types` retype names a slice type, or
-  refuse the retype loudly at generate time; decide at vet.
+- Prototyped (option a): new internal `ColumnContext.ArrayElemGoType`, filled by a `retypedArrayElemGoType` helper from
+  `buildColumnContext` and `buildViewColumns`. On PostgreSQL only, for a column whose resolved Go type is not
+  `IsSlice` but whose `BaseSQLType` ends in `[]`, it resolves the element SQL type as the unretyped branch does.
+  `resolveGenericComparator`, `columnIsFilterable` and `sliceElementType` read it, so a retyped array keeps
+  `Slice[elem]` / `NullableSlice[elem]` (and its GraphQL comparator), and a JSON element stays non-filterable.
+  The PostgreSQL guard is required (`TestSliceComparator_dialectGating` fails without it).
+- Tests: `TestGenerate_RetypedArrayColumnKeepsSliceFilter` (`cmd/sqlgen/cli/retyped_array_filter_test.go`, 8 cases,
+  each builds); FIX-377's `TestGenerate_UnkeyableForeignKeyRetypedToItsOwnSliceTypeGivesNoRelationship` now builds.
+- Vet correction: the fix is not confined to `resolveGenericComparator`; the element must be recovered where the
+  ColumnContext is built.
+- Auto-accepted under `/fix`'s rule: an `overrides.types` retype of an array column keeps `Slice[elem]` (gates green; no
+  golden churn against any alternative; no exported identifier or config key added; §7.1 already says "Use
+  `overrides.types` when array semantics matter").
+- Pending the user's ruling: how should a per-column literal retype (`type_map`, `column_map.type`) of a PostgreSQL array
+  filter? PRD §7.1 says a `[]T` literal "is *not* treated as an array column, so it filters through the scalar
+  comparator". (a, recommended, prototyped) every array column keeps `Slice[elem]` whatever its retype; `'[]string'` /
+  `'[]Kind'` literals move from `comparator.String` (text operators on an array) to `Slice[elem]`; amend §7.1. (b) follow
+  §7.1: `[]T` literals keep `String`; named slices need a new `comparator.Opaque[T]` arm (not prototyped, GraphQL
+  projection unmeasured). (c) refuse the retype loudly; conflicts with FIX-377's tests that retype to `KindSlice`.
+- The user ruled on 2026-11-16: option (a). Every PostgreSQL array column keeps `Slice[elem]` whatever its retype
+  (`type_map`, `column_map.type`, `overrides.types`); amend the PRD §7.1 sentence that a `[]T` literal "is *not* treated
+  as an array column".
+- Prototype results, run at `bd76ff03` on 2026-11-16: reproduction with a probe (`generate` + `go build`, pgx and stdlib)
+  → `out/models_gen.go:1847:33: KindSlice does not satisfy comparable` for type_map, table and global overrides.types and
+  column_map; `out/views_gen.go:474:33` for a view under global overrides.types; `Tags does not satisfy comparable` for a
+  local `type Tags []string`; `'[]string'` / `'[]Kind'` literals build with `comparator.String`. Gates: `go test -race
+  -count=1 ./gen/... ./cli/...` ok; golangci-lint 0 issues; `make update-golden` no churn; `make update-golden-e2e` PASS,
+  no churn. Fail-first: table call zeroed → "models_gen.go has no filter field matching Kinds\s+\*comparator\.NullableSlice\[Kind\]"
+  and "KindSlice does not satisfy comparable"; view call zeroed → "out/views_gen.go:474:33: KindSlice does not satisfy
+  comparable"; `resolveGenericComparator`, `sliceElementType` and `columnIsFilterable` arms each fail their cases; dialect
+  guard removed → "mysql: column tags references \"StringSliceComparator\"". The existing suite without the fix passes.
+  Golden churn: none. Patch: `.claude/prototypes/FIX-384.patch` (5 files, +196/-31).
+- Second vet, run at `bd76ff03` on 2026-11-16, on the ruled option (a): code unchanged from the first wave. PRD §7.1's
+  `[]T`-literal sentence replaced (a retype from any of steps 1–4 keeps `comparator.Slice[E]` / `NullableSlice[E]`;
+  json/jsonb arrays stay unfilterable); §11.2 "Array types" row says `T` is the element SQL type's Go type; the 10
+  `gotype.postgres-*-array.column-override` rows in `docs/conformance/cli/gotype.md` reworded; new row
+  `comparator.slice.retyped-array` in `docs/conformance/runtime/sql.md`. New subtest "column_map type to an enum slice
+  literal"; the `'[]string'` / `'[]Kind'` cases assert `Slice[string]` / `Slice[Kind]` and fail with the arms reverted
+  ("models_gen.go has no filter field matching Kinds\s+\*comparator\.NullableSlice\[string\]"). Gates: `make req-rehash
+  SECTIONS=7.1,11.2` (2 anchors); `make req-check` ok (6331 requirements); `make refs-check` ok; `go test -race -count=1
+  ./gen/... ./cli/...` ok. Golden churn: none. Patch: `.claude/prototypes/FIX-384.patch` (8 files, +217/-45).
 
 **References.**
-- PRD §11 (comparators), §4.13. FIX-377 (`1c4849fd`).
+- PRD §7.1 (type resolution; literal retypes), §11 (comparators), §4.13. FIX-377 (`1c4849fd`).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+### FIX-385
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 7, parser
+- **Surfaced by:** FIX-384 vet (2026-11-16), filed on the user's yes (2026-11-16)
+
+**Issue.** **A view column retyped with `@type` over a PostgreSQL array does not compile.** postgres/pgx, schema
+`CREATE TYPE kind AS ENUM ('a','b'); CREATE TABLE refs (id integer PRIMARY KEY, kinds kind[], nn kind[] NOT NULL);`,
+view file `-- @pk: id` / `-- @type kinds: KindSlice` / `CREATE VIEW vrefs AS SELECT id, kinds, nn FROM refs;` →
+`sqlgen generate` exits 0; `go build` → `out/views_gen.go:474:25: KindSlice does not satisfy comparable` (filter
+`Kinds *comparator.Enum[KindSlice]`). Reproduced with and without FIX-384's prototype.
+
+**Root cause.** Not yet vetted. `parser/view.go:1011-1013` overwrites `col.Type` with the `@type` Go literal, so the
+generator never sees the array SQL type and FIX-384's element recovery cannot run.
+
+**Suggested fix.**
+- Keep the column's SQL type alongside the `@type` override in the parser, so the generator resolves the Go type from
+  the override and the comparator from the SQL type (as FIX-384 does for table columns).
+- Add the view `@type` case to FIX-384's `TestGenerate_RetypedArrayColumnKeepsSliceFilter`.
+
+**References.**
+- PRD §7.1, §10 (views, `@type`). FIX-384.
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
