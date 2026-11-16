@@ -88,8 +88,8 @@ CREATE TABLE children (id BIGINT PRIMARY KEY, parent_id INT REFERENCES parents (
 // The comparator family decides, not the Go type: two enums of different names
 // and two time types of different spellings filter alike, so they keep the
 // one-column loader, while an enum next to a text key does not. A time key next
-// to a key of another family stays off the tuple loader, which would match no
-// row.
+// to a key of another family is refused before the loader is chosen
+// (TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused).
 func TestGetTemplate_keyComparatorFamilies(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
@@ -132,13 +132,6 @@ CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, k DATETIME REFERENCES stamps (k
 			parent: "stamps",
 			want:   "K: &comparator.NullableTime{Time: comparator.Time{In: dateTimeKeys(chunk)}},",
 		},
-		{
-			name:    "sqlite datetime next to text",
-			dialect: config.DialectSQLite,
-			ddl: `CREATE TABLE stamps (k DATETIME PRIMARY KEY);
-CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, k TEXT REFERENCES stamps (k));`,
-			parent: "stamps",
-		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tables := keyMismatchTables(t, tt.dialect, config.DriverStdlib, true, tt.ddl)
@@ -151,6 +144,99 @@ CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, k TEXT REFERENCES stamps (k));`
 			}
 			if tt.want != "" {
 				assertContainsAll(t, output, tt.want)
+			}
+		})
+	}
+}
+
+// A key that pairs a time column with a column of another type has no loader
+// that can compare the two: the one-column loader does not compile, and the
+// tuple loader matches no row. Generation refuses it on every edge type and key
+// shape, in both directions, naming the edge, both columns and their storage
+// classes (PRD §4.13, §13.3).
+func TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		dialect config.Dialect
+		ddl     string
+		retype  map[string]config.TableConfig
+		want    string
+	}{
+		{
+			name:    "datetime key, text fk",
+			dialect: config.DialectSQLite,
+			ddl: `CREATE TABLE stamps (k DATETIME PRIMARY KEY);
+CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, k TEXT REFERENCES stamps (k));`,
+			want: `tables.stamps.relationships: "stamp_kids" pairs stamp_kids.k (text) with stamps.k (datetime), a time column next to a column of another storage class`,
+		},
+		{
+			name:    "text key, datetime fk",
+			dialect: config.DialectSQLite,
+			ddl: `CREATE TABLE stamps (k TEXT PRIMARY KEY);
+CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, k DATETIME REFERENCES stamps (k));`,
+			want: `tables.stamps.relationships: "stamp_kids" pairs stamp_kids.k (datetime) with stamps.k (text), a time column next to a column of another storage class`,
+		},
+		{
+			name:    "integer key, datetime fk",
+			dialect: config.DialectSQLite,
+			ddl: `CREATE TABLE users (id INTEGER PRIMARY KEY);
+CREATE TABLE profiles (id INTEGER PRIMARY KEY, user_at DATETIME REFERENCES users (id));`,
+			want: `"profiles" pairs profiles.user_at (datetime) with users.id (integer)`,
+		},
+		{
+			name:    "composite member",
+			dialect: config.DialectSQLite,
+			ddl: `CREATE TABLE stamps (a INTEGER NOT NULL, k DATETIME NOT NULL, PRIMARY KEY (a, k));
+CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, a INTEGER, k TEXT, FOREIGN KEY (a, k) REFERENCES stamps (a, k));`,
+			want: `"stamp_kids" pairs stamp_kids.k (text) with stamps.k (datetime)`,
+		},
+		{
+			name:    "nullable unique key",
+			dialect: config.DialectSQLite,
+			ddl: `CREATE TABLE stamps (id INTEGER PRIMARY KEY, k DATETIME UNIQUE);
+CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, k TEXT REFERENCES stamps (k));`,
+			want: `"stamp_kids" pairs stamp_kids.k (text) with stamps.k (datetime)`,
+		},
+		{
+			name:    "m2m junction",
+			dialect: config.DialectSQLite,
+			ddl: `CREATE TABLE stamps (k DATETIME PRIMARY KEY);
+CREATE TABLE tags (id INTEGER PRIMARY KEY);
+CREATE TABLE stamp_tags (k TEXT NOT NULL REFERENCES stamps (k), tag_id INTEGER NOT NULL REFERENCES tags (id), PRIMARY KEY (k, tag_id));`,
+			want: `"tags" pairs stamp_tags.k (text) with stamps.k (datetime)`,
+		},
+		{
+			name:    "retyped fk of the same type names the override",
+			dialect: config.DialectPostgres,
+			ddl: `CREATE TABLE stamps (k timestamptz PRIMARY KEY);
+CREATE TABLE stamp_kids (id BIGINT PRIMARY KEY, k timestamptz REFERENCES stamps (k));`,
+			retype: map[string]config.TableConfig{"stamp_kids": {ColumnMap: map[string]config.ColumnOverride{"k": {Type: "string"}}}},
+			want:   `pairs public.stamp_kids.k (timestamptz) with public.stamps.k (timestamptz), a time column next to a column of another type: no loader can compare them, since neither side spells the time as the other stores it. Declare both columns with the same type, or, where an override retyped one of them, give both the same Go type`,
+		},
+		{
+			name:    "postgres schema file names types",
+			dialect: config.DialectPostgres,
+			ddl: `CREATE TABLE stamps (k timestamptz PRIMARY KEY);
+CREATE TABLE stamp_kids (id BIGINT PRIMARY KEY, k TEXT REFERENCES stamps (k));`,
+			want: `a time column next to a column of another type: no loader can compare them, since neither side spells the time as the other stores it. Declare both columns with the same type`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := parseDDLForTest(t, tt.dialect, tt.ddl)
+			parser.DetectRelationships(schema)
+			input := testInput(schema)
+			input.Config.Input.Dialect = tt.dialect
+			input.Config.Tables = tt.retype
+			input.Config.Generation.NestedMutations = &config.NestedMutationsConfig{Enabled: new(true)}
+			_, err := gen.BuildTableContextsFromSchema(schema, input.Config)
+			if err == nil {
+				t.Fatal("BuildTableContextsFromSchema() error = nil, want the time-key refusal")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error = %v\nwant it to contain %q", err, tt.want)
+			}
+			if n := strings.Count(err.Error(), "a time column next to"); n != 1 {
+				t.Errorf("the pair is reported %d times, want once: %v", n, err)
 			}
 		})
 	}

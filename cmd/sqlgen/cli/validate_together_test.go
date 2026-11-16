@@ -99,6 +99,12 @@ func TestValidate_ReportsEachGenerationRuleWithTheOthers(t *testing.T) {
 			want:  []string{`("CycleName").fk: references view "cycle_names"`},
 		},
 		{
+			name: "time key next to a key of another type",
+			schema: "CREATE TABLE stamps (k timestamptz PRIMARY KEY);\n" +
+				"CREATE TABLE stamp_kids (id serial PRIMARY KEY, k text REFERENCES stamps(k));",
+			want: []string{`"stamp_kids" pairs public.stamp_kids.k (text) with public.stamps.k (timestamptz), a time column next to a column of another type`},
+		},
+		{
 			name:   "column name override colliding with another field",
 			schema: "CREATE TABLE users (id serial PRIMARY KEY, name text NOT NULL, label text NOT NULL);",
 			extra:  "tables:\n  users:\n    column_map:\n      label:\n        name: Name\n",

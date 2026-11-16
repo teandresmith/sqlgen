@@ -74,6 +74,9 @@ func buildTableContextsPartial(input *GenerateInput, collisions map[string]bool)
 	// Second pass: wire FK Go types and FK column nullability into relationships
 	// using cross-table information (PK and column metadata).
 	wireRelationshipFKMetadata(contexts)
+	if err := validateTimeKeyPairs(input, contexts); err != nil {
+		errs = append(errs, err)
+	}
 
 	// Third pass: resolve the junction clients and the nested-surface flag the
 	// entity clients carry for nested mutations (PRD §9.9). Cross-table for the
@@ -247,9 +250,9 @@ func referencesNullable(key []KeyMemberContext) bool {
 // name, which MySQL gives each column: the one-column loader converts the
 // parent's keys to the FK's enum (FKEnumGoType), and every other loader binds
 // them as the strings they are. Every time key filters through comparator.Time,
-// whatever its Go type. A time key next to a key of another family, which only
-// SQLite accepts, is left out: the tuple loader compiles for it but matches no
-// row, since neither side spells the time as the other stores it.
+// whatever its Go type, and a nullable SQLite datetime FK, which classifies as
+// ID through its types.NullDateTime, does too. A time key next to a key of
+// another family never reaches here: validateTimeKeyPairs refuses it.
 func comparatorsDiffer(key []KeyMemberContext) bool {
 	return slices.ContainsFunc(key, func(m KeyMemberContext) bool {
 		family, param := pkComparatorFamily(m.GoType)
@@ -262,6 +265,99 @@ func comparatorsDiffer(key []KeyMemberContext) bool {
 		}
 		return family != refFamily || param != refParam
 	})
+}
+
+// validateTimeKeyPairs refuses a relationship key that pairs a time column with
+// a column of another type, which only SQLite accepts as a foreign key (PRD
+// §13.3). No loader can compare the two: the one-column loader does not compile,
+// since comparator.Time does not assign into the other side's filter field, and
+// the tuple loader matches no row, since neither side spells the time as the
+// other stores it. Each column pair is reported once, under the first edge
+// over it.
+func validateTimeKeyPairs(input *GenerateInput, contexts []TableContext) error {
+	colsByTable := make(map[string]map[string]ColumnContext, len(contexts))
+	for _, tc := range contexts {
+		byName := make(map[string]ColumnContext, len(tc.Columns))
+		for _, c := range tc.Columns {
+			byName[c.Name] = c
+		}
+		colsByTable[qualifiedOrBare(tc.Schema, tc.TableName)] = byName
+	}
+	kind := "type"
+	if input.Config.Input.Dialect == config.DialectSQLite {
+		kind = "storage class"
+	}
+
+	var errs []error
+	seen := map[string]bool{}
+	for _, tc := range contexts {
+		for _, r := range tc.Relationships {
+			for _, side := range relationshipKeySides(r, tc) {
+				holder := lookupTableCols(colsByTable, side.holderSchema, side.holderTable)
+				referenced := lookupTableCols(colsByTable, side.refSchema, side.refTable)
+				for _, p := range side.pairs {
+					local, ok := holder[p.Local]
+					ref, refOK := referenced[p.Referenced]
+					if !ok || !refOK || isTimeKeyColumn(local.GoType) == isTimeKeyColumn(ref.GoType) {
+						continue
+					}
+					localName := qualifiedOrBare(side.holderSchema, side.holderTable) + "." + local.Name
+					refName := qualifiedOrBare(side.refSchema, side.refTable) + "." + ref.Name
+					if seen[localName+" "+refName] || seen[refName+" "+localName] {
+						continue
+					}
+					seen[localName+" "+refName] = true
+					errs = append(errs, timeKeyPairError(qualifiedOrBare(tc.Schema, tc.TableName), r.Name, localName, refName, local, ref, kind))
+				}
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// timeKeyPairError is validateTimeKeyPairs' refusal of one column pair. The
+// remedy names the override route too: two columns of one SQL type differ when
+// an override retyped one of them.
+func timeKeyPairError(table, edge, localName, refName string, local, ref ColumnContext, kind string) error {
+	return fmt.Errorf(
+		"tables.%s.relationships: %q pairs %s (%s) with %s (%s), a time column next to a column of another %s: no loader can compare them, since neither side spells the time as the other stores it. Declare both columns with the same %s, or, where an override retyped one of them, give both the same Go type (PRD §4.13 / §13.3)",
+		table, edge, localName, local.SQLType, refName, ref.SQLType, kind, kind,
+	)
+}
+
+// relationshipKeySide is one key of an edge: the table holding its columns, the
+// table they reference, and the pairs.
+type relationshipKeySide struct {
+	holderSchema, holderTable string
+	refSchema, refTable       string
+	pairs                     []parser.KeyPair
+}
+
+// relationshipKeySides returns an edge's keys: an M2M junction's two, an O2M or
+// has-one edge's key on the target, and a belongs-to edge's key on the parent.
+func relationshipKeySides(r RelationshipContext, parent TableContext) []relationshipKeySide {
+	switch {
+	case r.Type == parser.ManyToMany:
+		return []relationshipKeySide{
+			{r.JunctionSchema, r.JunctionTable, parent.Schema, parent.TableName, r.JunctionLocal},
+			{r.JunctionSchema, r.JunctionTable, r.TargetSchema, r.TargetTable, r.JunctionReference},
+		}
+	case r.Type == parser.OneToMany || r.FKOnTarget:
+		return []relationshipKeySide{{r.TargetSchema, r.TargetTable, parent.Schema, parent.TableName, r.Key}}
+	}
+	return []relationshipKeySide{{parent.Schema, parent.TableName, r.TargetSchema, r.TargetTable, r.Key}}
+}
+
+// isTimeKeyColumn reports whether a key column's Go type holds a time, through
+// a pointer or a Null wrapper too.
+func isTimeKeyColumn(goType string) bool {
+	base := strings.TrimPrefix(goType, "*")
+	if underlying, ok := gotype.StdNullUnderlying(base); ok {
+		base = underlying
+	} else if underlying, ok := builtinWrapperValues[base]; ok {
+		base = underlying
+	}
+	return isTimeKeyGoType(base)
 }
 
 // loadKeyMembers resolves key pairs against the table holding the key and the

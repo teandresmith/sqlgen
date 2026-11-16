@@ -23,131 +23,6 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-380
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 6, cmd/sqlgen/gen
-- **Surfaced by:** FIX-372 re-vet (2026-11-10), filed on the user's yes
-- **Vetted:** ready at `bd76ff03` (2026-11-16)
-
-**Issue.** **A SQLite time key next to an FK of another storage class does not compile, and routing it through
-the tuple loader would load nothing.** A generated SQLite schema of `CREATE TABLE stamps (k DATETIME PRIMARY
-KEY); CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, k TEXT REFERENCES stamps (k));`, then `go build
--gcflags=-e ./...`, gives `cannot use &comparator.NullableTime{…} (value of type *comparator.NullableTime) as
-*comparator.NullableID value in struct literal`. The reverse pair (TEXT PK with a DATETIME FK) fails the same way
-with the types swapped. Routed through the keyed tuple loader instead (prototyped during the FIX-372 re-vet, not
-landed), it compiles but loads no children in either direction: `parent 2024-01-02 03:04:05 +0000 UTC kids=0` and
-`parent "2024-01-02 03:04:05" kids=0`. Only SQLite accepts the pair; PRD §13.3 states it is not yet supported.
-
-**Root cause.** The two sides spell the same instant differently, and no layer picks one spelling.
-- The DATETIME side is `types.DateTime`. It filters through `comparator.Time` (FIX-371), binds through
-  `DateTime.Value()` in the configured output layout (RFC3339Nano by default, `types/datetime.go:146`), and in a
-  tuple-loader bucket key spells as `fmt.Sprint` (`2024-01-02 03:04:05 +0000 UTC`).
-- The TEXT side is a `string` on `comparator.ID` that holds whatever text was stored (`2024-01-02 03:04:05`).
-- So the plain one-column loader cannot assign one comparator into the other's field, and the tuple loader compares
-  text that never matches. `comparatorsDiffer` (`cmd/sqlgen/gen/context_table.go:253`, the `(family == "Time") !=
-  (refFamily == "Time")` arm) keeps the pair off the tuple loader only for a one-column O2M/has-one key whose
-  referenced column is NOT NULL (auto-accepted in FIX-372: a loud compile error beats a silent empty load). A
-  composite key with a time member, a nullable referenced UNIQUE key, and a DATETIME FK into an INTEGER key reach
-  the tuple loader anyway (`CompositeKey()` / `referencesNullable`), compile, and silently load 0 children; an M2M
-  junction takes the plain list and also loads 0 (measured at `22de66f0`). The arm stays needed after the fix: a
-  nullable SQLite DATETIME FK is `types.NullDateTime`, which `pkComparatorFamily` classifies as "ID", and the arm
-  keeps DATETIME→nullable DATETIME on the plain list.
-
-**Suggested fix.**
-- Pending the user's ruling, before vetting:
-  - (A) Pick a canonical text spelling for a SQLite time key compared against TEXT, for example the layout
-    `types.DateTime` binds (`SetOutputLayout`, RFC3339Nano by default). Convert the time side to it, both when
-    binding the other side's filter and when building the tuple-loader bucket key. Then lift the
-    `comparatorsDiffer` carve-out for the pair. Rows whose TEXT was stored in another spelling would still match
-    no parent, so the limit needs documenting.
-  - (B) Refuse the pair at generation with a diagnostic naming the edge and the two storage classes, instead of
-    leaving a Go compile error. Keep PRD §13.3's "not yet supported" and make it a stated generation error.
-- The user ruled on 2026-11-10: option (B). Refuse the pair at generation with a diagnostic that names the edge,
-  both columns and their storage classes, and suggests declaring both columns with the same storage class. Option
-  (A) was declined: a TEXT value stored in another spelling would still match no parent silently, and the bind
-  layout (`SetOutputLayout`) is a runtime setting the generator cannot see.
-- Either way, add a SQLite example fixture for both directions (DATETIME PK with TEXT FK, TEXT PK with DATETIME FK)
-  and a live load test, or a generation-error test for (B).
-- Recheck the nested-write side for the same pair. FIX-372's `nullWrapperHolds` reads a `types.DateTime` key as
-  `time.Time`; confirm the E1 drop or the conversion matches the option chosen.
-- Verified option (B), from the vet at `22de66f0`:
-  - `validateTimeKeyPairs` (`gen/context_table.go`) runs in `buildTableContextsPartial` right after
-    `wireRelationshipFKMetadata`, so `generate`, `validate` and `graphql gen` all reach it, as a resolution-level
-    error (exit 1). It walks every edge's key (O2M/has-one on the target, belongs-to on the parent, both M2M junction
-    keys) and refuses a pair where only one column holds a time (`isTimeKeyColumn`: strip `*`, unwrap `sql.Null*`
-    and `types.NullDateTime`, then `isTimeKeyGoType`), reporting each column pair once: `tables.stamps.relationships:
-    "stamp_kids" pairs stamp_kids.k (text) with stamps.k (datetime), a time column next to a column of another
-    storage class: no loader can compare them, since neither side spells the time as the other stores it. Declare
-    both columns with the same storage class (PRD §4.13 / §13.3)`. Outside SQLite it says "type" instead of
-    "storage class"; it runs on every dialect, since a PG or MySQL schema file can carry the pair.
-  - Tests: new `TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused` (both directions, integer key with a
-    datetime FK, composite member, nullable unique, M2M, PG wording, reported once);
-    `TestGenerate_TimeKeyNextToAnotherStorageClassIsRefused` (both directions plus the declared o2o, both
-    `use_pointers` settings, generate and validate, exit 1) replaces FIX-372's
-    `TestGenerate_DeclaredTimeFKIntoIntegerKeyCompiles`; a `TestValidate_ReportsEachGenerationRuleWithTheOthers` row;
-    the `sqlite datetime next to text` case of `TestGetTemplate_keyComparatorFamilies` is removed.
-  - PRD: §13.3 "is not yet supported." → "is a generation error ([4.13]): the one-column loader does not compile for
-    it, and the key-tuple loader matches no row, since neither side spells the time as the other stores it."; a
-    §4.13 row **A relationship key pairing a time column with a column of another type** (Error, resolution-level);
-    the phase-3 list gains the check. Registry: `config.relationship-key-time-next-to-other-type` (+ `.message`,
-    `.severity`, `.together`) and a `× schema` matrix row in config.md; `gen.fk-convert.comparator-mismatch` now
-    reads "is a generation error instead"; `gen.nested.key-of-another-type-ineligible` (gen.md:253) drops the
-    replaced test's citation; `make req-rehash SECTIONS=4,4.13,13.3`.
-  - Nested side: no change. The pair never reaches `ValidateNestedWriteEligibility` / `nullWrapperHolds`, because
-    generation stops first. `nullWrapperHolds`' `types.DateTime`→`time.Time` read is still needed for
-    DATETIME→nullable DATETIME; its `types.NullDateTime`-over-another-type E1 branch is now unreachable from a schema
-    but stays pinned by `TestNestedAssignExpr_NullWrapperValue`.
-  - Scope: the refusal covers every key shape and edge type, not only the one-column O2M, since the composite,
-    nullable-unique, M2M and integer cases have the same root cause at the same fix site and load nothing silently.
-    A SQLite boolean key next to another storage class is outside this check (bool keys take the Bool family since FIX-376).
-- Prototype results, run at `22de66f0` on 2026-11-10: reproduction with a throwaway `cli/zz_probe_fix380_test.go`
-  (sqlite/stdlib, nested on, generate then `go build -gcflags=-e ./...`) → DATETIME PK + TEXT FK: `cannot use
-  &comparator.NullableTime{…} (value of type *comparator.NullableTime) as *comparator.NullableID value in struct
-  literal`; TEXT PK + DATETIME FK: `cannot use &comparator.NullableID{…} … as *comparator.NullableTime` (1 error per
-  direction). Composite, nullable-UNIQUE, M2M and DATETIME→INTEGER build; a live load on modernc sqlite with the same
-  text `'2024-01-02T03:04:05Z'` on both sides gives `parent {A:1 K:2024-01-02 03:04:05 +0000 UTC StampKids:[]}`,
-  `parent {ID:1 K:{… Valid:true} StampKids:[]}`, `parent {ID:1 Profiles:[]}` and `parent {K:… Tags:[]}`. Gates:
-  `go test -race ./gen/` ok; `go test -short ./cli/` (incl. `TestE2EGoldenFiles`) ok; the two new cli tests ok;
-  `go vet` clean; golangci-lint 0 issues; gofumpt clean; `make req-check` ok (6314 requirements); `make refs-check`
-  ok. Fail-first: `validateTimeKeyPairs` call removed → `TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused/*`
-  "BuildTableContextsFromSchema() error = nil, want the time-key refusal",
-  `TestGenerate_TimeKeyNextToAnotherStorageClassIsRefused/datetime_key,_text_fk/use_pointers_true/generate` "generate
-  succeeded, want the time-key refusal", and the validate row fails; `types.NullDateTime` unwrap removed →
-  `TestGetTemplate_keyComparatorFamilies/nullable_sqlite_datetime` "pairs stamp_kids.k (datetime) with stamps.k
-  (datetime), a time column next to a column of another storage class". The existing suite without the fix passes.
-  Golden churn: none. Patch: `.claude/prototypes/FIX-380.patch` (8 files, +235/-38).
-- Prototype results, re-run at `57e8b91a` on 2026-11-13: the `22de66f0` patch applied with `git apply --3way`; only the
-  `<!-- prd: … sha256 -->` anchors in conformance `config-fields.md` (§4) and `config.md` (§4.13) conflicted (FIX-379
-  changed those sections), kept HEAD's and re-ran `make req-rehash SECTIONS=4,4.13,13.3`. Content unchanged. Reproduction
-  unchanged (`out/models_gen.go:2442:9: cannot use &comparator.NullableTime{…} … as *comparator.NullableID value` and the
-  reverse). Gates: `go test -race ./gen/` ok; `go test -short -count=1 ./cli/` ok; gofumpt clean; golangci-lint 0 issues;
-  `make req-check` ok (6322 requirements); `make refs-check` ok. Fail-first as above; removing the `types.NullDateTime`
-  unwrap now also fails `TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused/text_key,_datetime_fk` and
-  `/integer_key,_datetime_fk`. Golden churn: none. Patch: `.claude/prototypes/FIX-380.patch` (8 files, +235/-38).
-- Prototype results, re-run at `bd76ff03` on 2026-11-16: the `57e8b91a` patch applied with `git apply --3way`; the four
-  `.go` files applied cleanly over FIX-377. PRD.md conflicted only on the §4.13 phase-3 line (FIX-377 added its Go-map-key
-  clause there): both clauses kept, FIX-380's after the duplicate-relationship-name clause. The §13.3 hunk merged cleanly
-  next to FIX-378's "buckets compare keys as Go sees them" paragraph. The conformance `config-fields.md`, `config.md` and
-  `gen.md` anchors re-hashed with `make req-rehash SECTIONS=4,4.13,13.3`. A combined PG probe (`text[]` PK plus a
-  timestamptz PK with a text FK) gives `validation failed with 2 error(s)`, one from each fix. Reproduction unchanged
-  (`out/models_gen.go:2442:9: cannot use &comparator.NullableTime{…} … as *comparator.NullableID value` and the
-  reverse). Gates: `go test -race -count=1 ./gen/` ok; `go test -short -count=1 ./cli/` ok; vet, gofumpt clean;
-  golangci-lint 0 issues; `make req-check` ok (6334 requirements); `make refs-check` ok; `make update-golden` /
-  `update-golden-e2e` no golden changes. Fail-first as before; removing the `types.NullDateTime` unwrap now also fails
-  `/nullable_unique_key`. Golden churn: none. Patch: `.claude/prototypes/FIX-380.patch` (8 files, +235/-38).
-
-**References.**
-- PRD §13.3 (FK type conversion; "A time key next to a key of another family, which only SQLite accepts, is not
-  yet supported"), §11.2 (comparator families).
-- FIX-372 (`c88b5c7e`; the carve-out and its auto-accept), FIX-371 (`f36be88e`; time keys on `comparator.Time`),
-  FIX-363 (datetime key terms).
-- `cmd/sqlgen/gen/key_mismatch_test.go`, `TestGetTemplate_keyComparatorFamilies/sqlite_datetime_next_to_text` (pins
-  the carve-out, and must change with either option).
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-384
 
 - **Status:** Open
@@ -247,6 +122,132 @@ generator never sees the array SQL type and FIX-384's element recovery cannot ru
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-380
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 6, cmd/sqlgen/gen
+- **Surfaced by:** FIX-372 re-vet (2026-11-10), filed on the user's yes
+- **Vetted:** ready at `bd76ff03` (2026-11-16)
+
+**Issue.** **A SQLite time key next to an FK of another storage class does not compile, and routing it through
+the tuple loader would load nothing.** A generated SQLite schema of `CREATE TABLE stamps (k DATETIME PRIMARY
+KEY); CREATE TABLE stamp_kids (id INTEGER PRIMARY KEY, k TEXT REFERENCES stamps (k));`, then `go build
+-gcflags=-e ./...`, gives `cannot use &comparator.NullableTime{…} (value of type *comparator.NullableTime) as
+*comparator.NullableID value in struct literal`. The reverse pair (TEXT PK with a DATETIME FK) fails the same way
+with the types swapped. Routed through the keyed tuple loader instead (prototyped during the FIX-372 re-vet, not
+landed), it compiles but loads no children in either direction: `parent 2024-01-02 03:04:05 +0000 UTC kids=0` and
+`parent "2024-01-02 03:04:05" kids=0`. Only SQLite accepts the pair; PRD §13.3 states it is not yet supported.
+
+**Root cause.** The two sides spell the same instant differently, and no layer picks one spelling.
+- The DATETIME side is `types.DateTime`. It filters through `comparator.Time` (FIX-371), binds through
+  `DateTime.Value()` in the configured output layout (RFC3339Nano by default, `types/datetime.go:146`), and in a
+  tuple-loader bucket key spells as `fmt.Sprint` (`2024-01-02 03:04:05 +0000 UTC`).
+- The TEXT side is a `string` on `comparator.ID` that holds whatever text was stored (`2024-01-02 03:04:05`).
+- So the plain one-column loader cannot assign one comparator into the other's field, and the tuple loader compares
+  text that never matches. `comparatorsDiffer` (`cmd/sqlgen/gen/context_table.go:256`, the `(family == "Time") !=
+  (refFamily == "Time")` arm) keeps the pair off the tuple loader only for a one-column O2M/has-one key whose
+  referenced column is NOT NULL (auto-accepted in FIX-372: a loud compile error beats a silent empty load). A
+  composite key with a time member, a nullable referenced UNIQUE key, and a DATETIME FK into an INTEGER key reach
+  the tuple loader anyway (`CompositeKey()` / `referencesNullable`), compile, and silently load 0 children; an M2M
+  junction takes the plain list and also loads 0 (measured at `22de66f0`). The arm stays needed after the fix: a
+  nullable SQLite DATETIME FK is `types.NullDateTime`, which `pkComparatorFamily` classifies as "ID", and the arm
+  keeps DATETIME→nullable DATETIME on the plain list.
+
+**Suggested fix.**
+- Pending the user's ruling, before vetting:
+  - (A) Pick a canonical text spelling for a SQLite time key compared against TEXT, for example the layout
+    `types.DateTime` binds (`SetOutputLayout`, RFC3339Nano by default). Convert the time side to it, both when
+    binding the other side's filter and when building the tuple-loader bucket key. Then lift the
+    `comparatorsDiffer` carve-out for the pair. Rows whose TEXT was stored in another spelling would still match
+    no parent, so the limit needs documenting.
+  - (B) Refuse the pair at generation with a diagnostic naming the edge and the two storage classes, instead of
+    leaving a Go compile error. Keep PRD §13.3's "not yet supported" and make it a stated generation error.
+- The user ruled on 2026-11-10: option (B). Refuse the pair at generation with a diagnostic that names the edge,
+  both columns and their storage classes, and suggests declaring both columns with the same storage class. Option
+  (A) was declined: a TEXT value stored in another spelling would still match no parent silently, and the bind
+  layout (`SetOutputLayout`) is a runtime setting the generator cannot see.
+- Either way, add a SQLite example fixture for both directions (DATETIME PK with TEXT FK, TEXT PK with DATETIME FK)
+  and a live load test, or a generation-error test for (B).
+- Recheck the nested-write side for the same pair. FIX-372's `nullWrapperHolds` reads a `types.DateTime` key as
+  `time.Time`; confirm the E1 drop or the conversion matches the option chosen.
+- Verified option (B), from the vet at `22de66f0`:
+  - `validateTimeKeyPairs` (`gen/context_table.go`) runs in `buildTableContextsPartial` right after
+    `wireRelationshipFKMetadata`, so `generate`, `validate` and `graphql gen` all reach it, as a resolution-level
+    error (exit 1). It walks every edge's key (O2M/has-one on the target, belongs-to on the parent, both M2M junction
+    keys) and refuses a pair where only one column holds a time (`isTimeKeyColumn`: strip `*`, unwrap `sql.Null*`
+    and `types.NullDateTime`, then `isTimeKeyGoType`), reporting each column pair once: `tables.stamps.relationships:
+    "stamp_kids" pairs stamp_kids.k (text) with stamps.k (datetime), a time column next to a column of another
+    storage class: no loader can compare them, since neither side spells the time as the other stores it. Declare
+    both columns with the same storage class (PRD §4.13 / §13.3)`. Outside SQLite it says "type" instead of
+    "storage class"; it runs on every dialect, since a PG or MySQL schema file can carry the pair.
+  - Tests: new `TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused` (both directions, integer key with a
+    datetime FK, composite member, nullable unique, M2M, PG wording, reported once);
+    `TestGenerate_TimeKeyNextToAnotherStorageClassIsRefused` (both directions plus the declared o2o, both
+    `use_pointers` settings, generate and validate, exit 1) replaces FIX-372's
+    `TestGenerate_DeclaredTimeFKIntoIntegerKeyCompiles`; a `TestValidate_ReportsEachGenerationRuleWithTheOthers` row;
+    the `sqlite datetime next to text` case of `TestGetTemplate_keyComparatorFamilies` is removed.
+  - PRD: §13.3 "is not yet supported." → "is a generation error ([4.13]): the one-column loader does not compile for
+    it, and the key-tuple loader matches no row, since neither side spells the time as the other stores it."; a
+    §4.13 row **A relationship key pairing a time column with a column of another type** (Error, resolution-level);
+    the phase-3 list gains the check. Registry: `config.relationship-key-time-next-to-other-type` (+ `.message`,
+    `.severity`, `.together`) and a `× schema` matrix row in config.md; `gen.fk-convert.comparator-mismatch` now
+    reads "is a generation error instead"; `gen.nested.key-of-another-type-ineligible` (gen.md:253) drops the
+    replaced test's citation; `make req-rehash SECTIONS=4,4.13,13.3`.
+  - Nested side: no change. The pair never reaches `ValidateNestedWriteEligibility` / `nullWrapperHolds`, because
+    generation stops first. `nullWrapperHolds`' `types.DateTime`→`time.Time` read is still needed for
+    DATETIME→nullable DATETIME; its `types.NullDateTime`-over-another-type E1 branch is now unreachable from a schema
+    but stays pinned by `TestNestedAssignExpr_NullWrapperValue`.
+  - Scope: the refusal covers every key shape and edge type, not only the one-column O2M, since the composite,
+    nullable-unique, M2M and integer cases have the same root cause at the same fix site and load nothing silently.
+    A SQLite boolean key next to another storage class is outside this check (bool keys take the Bool family since FIX-376).
+- Prototype results, run at `22de66f0` on 2026-11-10: reproduction with a throwaway `cli/zz_probe_fix380_test.go`
+  (sqlite/stdlib, nested on, generate then `go build -gcflags=-e ./...`) → DATETIME PK + TEXT FK: `cannot use
+  &comparator.NullableTime{…} (value of type *comparator.NullableTime) as *comparator.NullableID value in struct
+  literal`; TEXT PK + DATETIME FK: `cannot use &comparator.NullableID{…} … as *comparator.NullableTime` (1 error per
+  direction). Composite, nullable-UNIQUE, M2M and DATETIME→INTEGER build; a live load on modernc sqlite with the same
+  text `'2024-01-02T03:04:05Z'` on both sides gives `parent {A:1 K:2024-01-02 03:04:05 +0000 UTC StampKids:[]}`,
+  `parent {ID:1 K:{… Valid:true} StampKids:[]}`, `parent {ID:1 Profiles:[]}` and `parent {K:… Tags:[]}`. Gates:
+  `go test -race ./gen/` ok; `go test -short ./cli/` (incl. `TestE2EGoldenFiles`) ok; the two new cli tests ok;
+  `go vet` clean; golangci-lint 0 issues; gofumpt clean; `make req-check` ok (6314 requirements); `make refs-check`
+  ok. Fail-first: `validateTimeKeyPairs` call removed → `TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused/*`
+  "BuildTableContextsFromSchema() error = nil, want the time-key refusal",
+  `TestGenerate_TimeKeyNextToAnotherStorageClassIsRefused/datetime_key,_text_fk/use_pointers_true/generate` "generate
+  succeeded, want the time-key refusal", and the validate row fails; `types.NullDateTime` unwrap removed →
+  `TestGetTemplate_keyComparatorFamilies/nullable_sqlite_datetime` "pairs stamp_kids.k (datetime) with stamps.k
+  (datetime), a time column next to a column of another storage class". The existing suite without the fix passes.
+  Golden churn: none. Patch: `.claude/prototypes/FIX-380.patch` (8 files, +235/-38).
+- Prototype results, re-run at `57e8b91a` on 2026-11-13: the `22de66f0` patch applied with `git apply --3way`; only the
+  `<!-- prd: … sha256 -->` anchors in conformance `config-fields.md` (§4) and `config.md` (§4.13) conflicted (FIX-379
+  changed those sections), kept HEAD's and re-ran `make req-rehash SECTIONS=4,4.13,13.3`. Content unchanged. Reproduction
+  unchanged (`out/models_gen.go:2442:9: cannot use &comparator.NullableTime{…} … as *comparator.NullableID value` and the
+  reverse). Gates: `go test -race ./gen/` ok; `go test -short -count=1 ./cli/` ok; gofumpt clean; golangci-lint 0 issues;
+  `make req-check` ok (6322 requirements); `make refs-check` ok. Fail-first as above; removing the `types.NullDateTime`
+  unwrap now also fails `TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused/text_key,_datetime_fk` and
+  `/integer_key,_datetime_fk`. Golden churn: none. Patch: `.claude/prototypes/FIX-380.patch` (8 files, +235/-38).
+- Prototype results, re-run at `bd76ff03` on 2026-11-16: the `57e8b91a` patch applied with `git apply --3way`; the four
+  `.go` files applied cleanly over FIX-377. PRD.md conflicted only on the §4.13 phase-3 line (FIX-377 added its Go-map-key
+  clause there): both clauses kept, FIX-380's after the duplicate-relationship-name clause. The §13.3 hunk merged cleanly
+  next to FIX-378's "buckets compare keys as Go sees them" paragraph. The conformance `config-fields.md`, `config.md` and
+  `gen.md` anchors re-hashed with `make req-rehash SECTIONS=4,4.13,13.3`. A combined PG probe (`text[]` PK plus a
+  timestamptz PK with a text FK) gives `validation failed with 2 error(s)`, one from each fix. Reproduction unchanged
+  (`out/models_gen.go:2442:9: cannot use &comparator.NullableTime{…} … as *comparator.NullableID value` and the
+  reverse). Gates: `go test -race -count=1 ./gen/` ok; `go test -short -count=1 ./cli/` ok; vet, gofumpt clean;
+  golangci-lint 0 issues; `make req-check` ok (6334 requirements); `make refs-check` ok; `make update-golden` /
+  `update-golden-e2e` no golden changes. Fail-first as before; removing the `types.NullDateTime` unwrap now also fails
+  `/nullable_unique_key`. Golden churn: none. Patch: `.claude/prototypes/FIX-380.patch` (8 files, +235/-38).
+- Auto-accepted the recommended option on 2026-11-16 (`/fix` auto-accept rule): when an override retypes one of two time columns (a PG `timestamptz` FK with `column_map: {k: {type: string}}`), the refusal read "pairs … (timestamptz) with … (timestamptz) … Declare both columns with the same type", a remedy already met → the remedy also says "or, where an override retyped one of them, give both the same Go type", because it was tested with its gates green, causes no golden churn, adds no public surface (error text only), and reverses no ruling or PRD behavior (it adds §4.13 text for an unspecified case).
+
+**References.**
+- PRD §13.3 (FK type conversion; "A time key next to a key of another family, which only SQLite accepts, is not
+  yet supported"), §11.2 (comparator families).
+- FIX-372 (`c88b5c7e`; the carve-out and its auto-accept), FIX-371 (`f36be88e`; time keys on `comparator.Time`),
+  FIX-363 (datetime key terms).
+- `cmd/sqlgen/gen/key_mismatch_test.go`, `TestGetTemplate_keyComparatorFamilies/sqlite_datetime_next_to_text` (pins
+  the carve-out, and must change with either option).
+
+**Resolution notes.** Option (B), as ruled on 2026-11-10. The vetted prototype (`bd76ff03`) applied cleanly with `git apply --3way`. The refusal's remedy also names the override route (auto-accepted, see Suggested fix), pinned by the `retyped fk of the same type names the override` row; PRD §4.13 row and the `.message` registry row updated, `make req-rehash SECTIONS=4,4.13,13.3`. An M2M through an excluded junction is not refused, as in the prototype: the loader types an excluded holder's columns from the columns they reference, so a TEXT junction column into a DATETIME key loads the same as a DATETIME one (reviewer probe, `tags=0`/`tags=1` for both), and the refusal's premise does not hold there. A schema fallback refusing it was tried and reverted. `validateTimeKeyPairs` (`cmd/sqlgen/gen/context_table.go`) runs right after `wireRelationshipFKMetadata` and refuses, as a resolution-level error, any relationship key (O2M/has-one, belongs-to, both M2M junction keys; one-column, composite or nullable-unique) that pairs a time column with a column of another type, naming the edge, both columns and their storage classes ("type" outside SQLite), each column pair once. `comparatorsDiffer`'s comment now says the pair never reaches it. Tests: `TestBuildTableContexts_timeKeyNextToAnotherTypeIsRefused`, `TestGenerate_TimeKeyNextToAnotherStorageClassIsRefused` (replaces `TestGenerate_DeclaredTimeFKIntoIntegerKeyCompiles`), a `TestValidate_ReportsEachGenerationRuleWithTheOthers` row; the `sqlite datetime next to text` case of `TestGetTemplate_keyComparatorFamilies` is removed. PRD §13.3 and §4.13 (row + phase-3 list) state the generation error; conformance `config.md`, `config-fields.md`, `gen.md` updated and re-hashed. Nested side unchanged (generation stops before `ValidateNestedWriteEligibility`). Gates: `make check` ok; `make update-golden` / `update-golden-e2e` no golden churn; `make check-examples` ok. Inline: the `comparatorsDiffer` line ref in Root cause moved to `:256`; backlog line on the declared `types.NullDateTime` fk into an integer key removed, as this fix closes it.
+
 ### FIX-377
 
 - **Status:** Resolved

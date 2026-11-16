@@ -376,10 +376,10 @@ CREATE TABLE stamp_kids (id integer PRIMARY KEY, stamp_k datetime(6) REFERENCES 
 	}
 }
 
-// A declared edge whose FK is a nullable datetime column into an integer key
-// gets no nested writer, since types.NullDateTime cannot hold the parent's key,
-// and the package builds.
-func TestGenerate_DeclaredTimeFKIntoIntegerKeyCompiles(t *testing.T) {
+// A SQLite time key next to an FK of another storage class has no loader that
+// can compare the two, so generate and validate refuse it, in both directions
+// and on a declared edge, and exit 1 (PRD §4.13, §13.3).
+func TestGenerate_TimeKeyNextToAnotherStorageClassIsRefused(t *testing.T) {
 	const cfg = `version: 1
 input:
   dialect: sqlite
@@ -394,7 +394,8 @@ overrides:
 generation:
   nested_mutations:
     enabled: true
-tables:
+%s`
+	const declared = `tables:
   users:
     relationships:
       - name: Profile
@@ -402,22 +403,41 @@ tables:
         table: profiles
         fk: user_at
 `
-	const schema = `CREATE TABLE users (id integer PRIMARY KEY);
-CREATE TABLE profiles (id integer PRIMARY KEY, user_at datetime);`
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct{ name, schema, tables, want string }{
+		{
+			"datetime key, text fk", `CREATE TABLE stamps (k datetime PRIMARY KEY);
+CREATE TABLE stamp_kids (id integer PRIMARY KEY, k text REFERENCES stamps (k));`, "",
+			`tables.stamps.relationships: "stamp_kids" pairs stamp_kids.k (text) with stamps.k (datetime), a time column next to a column of another storage class: no loader can compare them, since neither side spells the time as the other stores it. Declare both columns with the same storage class`,
+		},
+		{
+			"text key, datetime fk", `CREATE TABLE stamps (k text PRIMARY KEY);
+CREATE TABLE stamp_kids (id integer PRIMARY KEY, k datetime REFERENCES stamps (k));`, "",
+			`tables.stamps.relationships: "stamp_kids" pairs stamp_kids.k (datetime) with stamps.k (text)`,
+		},
+		{
+			"declared datetime fk into an integer key", `CREATE TABLE users (id integer PRIMARY KEY);
+CREATE TABLE profiles (id integer PRIMARY KEY, user_at datetime);`, declared,
+			`tables.users.relationships: "Profile" pairs profiles.user_at (datetime) with users.id (integer)`,
+		},
 	}
-	for _, usePointers := range []bool{true, false} {
-		t.Run(fmt.Sprintf("use_pointers %v", usePointers), func(t *testing.T) {
-			dir, stderr, err := runCommand(t, "generate", schema, fmt.Sprintf(cfg, usePointers))
-			if err != nil {
-				t.Fatalf("generate: %v\nstderr: %s", err, stderr)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, usePointers := range []bool{true, false} {
+				for _, command := range []string{"generate", "validate"} {
+					t.Run(fmt.Sprintf("use_pointers %v/%s", usePointers, command), func(t *testing.T) {
+						_, stderr, err := runCommand(t, command, tt.schema, fmt.Sprintf(cfg, usePointers, tt.tables))
+						if err == nil {
+							t.Fatalf("%s succeeded, want the time-key refusal\nstderr: %s", command, stderr)
+						}
+						if code := exitCodeOf(t, err); code != ExitGeneration {
+							t.Errorf("exit code = %d, want %d", code, ExitGeneration)
+						}
+						if !strings.Contains(err.Error()+stderr, tt.want) {
+							t.Errorf("error = %v\nstderr: %s\nwant it to contain %q", err, stderr, tt.want)
+						}
+					})
+				}
 			}
-			if testing.Short() && os.Getenv("SQLGEN_BUILD_GENERATED") == "" {
-				return
-			}
-			buildGenerated(t, root, dir)
 		})
 	}
 }
