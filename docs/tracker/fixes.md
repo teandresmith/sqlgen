@@ -137,6 +137,33 @@ landed), it compiles but loads no children in either direction: `parent 2024-01-
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
+### FIX-384
+
+- **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 11, cmd/sqlgen/gen
+- **Surfaced by:** FIX-377 implementation (2026-11-16), filed on the user's yes (2026-11-16)
+
+**Issue.** **A PostgreSQL array column retyped by `type_map` to its own generated slice type gets a filter field that
+does not compile.** `CREATE TYPE kind AS ENUM ('a','b'); CREATE TABLE refs (id integer PRIMARY KEY, kinds kind[]);`
+with `type_map: {kinds: KindSlice}` (pgx) → `sqlgen generate` exits 0; `go build` → `KindSlice does not satisfy
+comparable` on `Kinds *comparator.Enum[KindSlice]` (and `*comparator.NullableEnum[KindSlice]`). With no retype the
+fields are `comparator.Slice[Kind]` / `comparator.NullableSlice[Kind]`. The column need not be a key.
+
+**Root cause.** Not yet vetted. Filter comparator resolution (`resolveGenericComparator`,
+`cmd/sqlgen/gen/context_table.go:2496`) loses `IsSlice` for a retyped array and falls through to the Enum comparator.
+
+**Suggested fix.**
+- Keep the slice comparator for an array column whose `type_map` / `overrides.types` retype names a slice type, or
+  refuse the retype loudly at generate time; decide at vet.
+- Then add FIX-377's held-out inferred-FK case (detected edge, both sides retyped to `KindSlice`: warning, no edge,
+  build ok) to `cmd/sqlgen/cli/unkeyable_fk_test.go`.
+
+**References.**
+- PRD §11 (comparators), §4.13. FIX-377 (`1c4849fd`).
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
 <!-- fixes:open:end -->
 
 ## Resolved
