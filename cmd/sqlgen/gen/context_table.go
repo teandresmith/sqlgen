@@ -435,6 +435,9 @@ func buildSingleTableContext(input *GenerateInput, table *parser.Table, collisio
 	if err != nil {
 		return TableContext{}, err
 	}
+	if err := checkPrimaryKeyCanKeyAMap(qualifiedTableOrName(table), pkColumns); err != nil {
+		return TableContext{}, err
+	}
 
 	input.Warnings = append(input.Warnings, unmapped...)
 	input.Warnings = append(input.Warnings,
@@ -453,6 +456,46 @@ func buildSingleTableContext(input *GenerateInput, table *parser.Table, collisio
 	}
 	tc.CursorKeyColumns = buildCursorKeyColumns(tc.Columns, tc.CursorKeys)
 	return tc, nil
+}
+
+// checkPrimaryKeyCanKeyAMap rejects a primary-key column whose Go type
+// cannot key a Go map (PRD §4.13): a MySQL SET, a PostgreSQL array (enum
+// arrays included) or a types.JSON column. Get and the batch writes filter
+// on the key, the batch writes and the loaders collect keys into maps, and
+// no comparator family both compares such a value for equality and keys a
+// map, so the generated package would not compile. The comparator.Opaque
+// types are slices too, but every key site renders them through KeySetKey.
+func checkPrimaryKeyCanKeyAMap(table string, pkColumns []ColumnContext) error {
+	for _, col := range pkColumns {
+		if keyColumnCanKeyAMap(col) {
+			continue
+		}
+		return fmt.Errorf(
+			"primary-key column %q of table %s has Go type %s, which cannot key a Go map, so the generated package would not compile; key the table on other columns with tables.%s.primary_key.columns, or drop it with exclude_tables",
+			col.Name, table, strings.TrimPrefix(col.GoType, "*"), table,
+		)
+	}
+	return nil
+}
+
+// keyColumnCanKeyAMap reports whether a key column's Go type can key a map,
+// directly or, for the comparator.Opaque family, through KeySetKey. A MySQL
+// SET or PostgreSQL array that column_map, type_map or overrides.types
+// retypes is accepted only as a predeclared or package-qualified type, never
+// as a type of the generated package, its own set or slice type included: a
+// retype to a bare name loses IsSlice, so both are told by the SQL type.
+func keyColumnCanKeyAMap(col ColumnContext) bool {
+	base := strings.TrimPrefix(col.GoType, "*")
+	if col.IsSlice {
+		return false
+	}
+	if (col.IsSet || strings.HasSuffix(col.BaseSQLType, "]")) && !isPredeclaredScalar(base) && !strings.Contains(base, ".") {
+		return false
+	}
+	if family, _ := pkComparatorFamily(base); family == "Opaque" {
+		return true
+	}
+	return goTypeComparable(base)
 }
 
 // buildTableColumns builds the contexts of a table's columns and its primary
@@ -1668,6 +1711,15 @@ func buildRelationshipContexts(
 			))
 			continue
 		}
+		// An o2m/m2m key column that cannot key a Go map omits the edge with
+		// a warning (unkeyableKeyMember).
+		if member, goType, constraint := targets.unkeyableKeyMember(schema, r); member != "" {
+			omitted = append(omitted, fmt.Sprintf(
+				"tables.%s: foreign key %s gives no relationship %q: its column %s has Go type %s, which cannot key a Go map, so the generated package would not compile; list %q in `exclude_relationships` to silence this (PRD §4.13, §5.3)",
+				qualifiedName, constraint, visibleName, member, goType, visibleName,
+			))
+			continue
+		}
 		inferred = append(inferred, relationshipToContext(schema, r, targets))
 	}
 
@@ -1737,13 +1789,8 @@ func mergeDeclaredRelationships(
 			continue
 		}
 		rel := configRelationshipToContext(schema, r, qualifiedName, targets)
-		// The user declared this edge by name, so a link column removed by
-		// `exclude_columns` is an error, as an unresolvable target is.
-		if member := targets.excludedDeclaredMember(schema, rel, qualifiedName); member != "" {
-			errs = append(errs, fmt.Errorf(
-				"tables.%s.relationships: %q links through %s, which `exclude_columns` removes from the generated model; keep the column or remove the relationship (PRD §4.13, §13.4)",
-				qualifiedName, r.Name, member,
-			))
+		if err := checkDeclaredLinkColumns(schema, rel, targets, qualifiedName); err != nil {
+			errs = append(errs, err)
 			continue
 		}
 		// The !replaced guard keeps a second declared entry resolving to the
@@ -1774,6 +1821,28 @@ func mergeDeclaredRelationships(
 		return nil, nil, err
 	}
 	return append(rels, declared...), warnings, nil
+}
+
+// checkDeclaredLinkColumns rejects a declared relationship whose link
+// columns the generated model cannot carry: one that `exclude_columns`
+// removes, or, on an `o2m` or `m2m` edge, one whose Go type cannot key a Go
+// map (a MySQL SET or a PostgreSQL array). The FK-inferred counterparts are
+// omitted with a warning; the user declared this edge by name, so each is an
+// error, as an unresolvable target is (PRD §4.13).
+func checkDeclaredLinkColumns(schema *parser.Schema, rel RelationshipContext, targets *relationshipTargets, qualifiedName string) error {
+	if member := targets.excludedDeclaredMember(schema, rel, qualifiedName); member != "" {
+		return fmt.Errorf(
+			"tables.%s.relationships: %q links through %s, which `exclude_columns` removes from the generated model; keep the column or remove the relationship (PRD §4.13, §13.4)",
+			qualifiedName, rel.Name, member,
+		)
+	}
+	if member, goType := targets.unkeyableDeclaredMember(schema, rel, qualifiedName); member != "" {
+		return fmt.Errorf(
+			"tables.%s.relationships: %q links through %s, whose Go type %s cannot key a Go map, so the generated package would not compile; link the relationship through other columns or remove it (PRD §4.13, §13.4)",
+			qualifiedName, rel.Name, member, goType,
+		)
+	}
+	return nil
 }
 
 func relationshipToContext(schema *parser.Schema, r parser.Relationship, targets *relationshipTargets) RelationshipContext {
@@ -2484,7 +2553,9 @@ func resolveGenericComparator(col ColumnContext, baseGoType string) string {
 // ahead of its key arm for the same reason.
 //
 // IsSet and IsSlice columns are not modelled: the Go type alone does not
-// identify them, and neither compiles as a key.
+// identify them, and checkPrimaryKeyCanKeyAMap refuses either as a key unless
+// column_map, type_map or overrides.types retypes it to a predeclared or
+// package-qualified type.
 func pkComparatorFamily(goType string) (family, typeParam string) {
 	base := strings.TrimPrefix(goType, "*")
 	if underlying, ok := gotype.StdNullUnderlying(base); ok {

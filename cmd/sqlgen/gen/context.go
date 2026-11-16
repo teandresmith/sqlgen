@@ -1943,7 +1943,7 @@ func goTypeComparable(goType string) bool {
 		return false
 	}
 	switch goType {
-	case "net.IP", "net.IPNet", "net.HardwareAddr", "json.RawMessage":
+	case "net.IP", "net.IPNet", "net.HardwareAddr", "json.RawMessage", "types.JSON":
 		return false
 	}
 	return true

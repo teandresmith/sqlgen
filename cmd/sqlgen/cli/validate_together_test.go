@@ -64,6 +64,18 @@ func TestValidate_ReportsEachGenerationRuleWithTheOthers(t *testing.T) {
 			want: []string{"which `exclude_columns` removes"},
 		},
 		{
+			name:   "primary key that cannot key a Go map",
+			schema: "CREATE TABLE things (tags text[] PRIMARY KEY, name text NOT NULL);",
+			want:   []string{`primary-key column "tags" of table public.things has Go type []string, which cannot key a Go map`},
+		},
+		{
+			name: "declared relationship through a link column that cannot key a Go map",
+			schema: "CREATE TABLE owners (id serial PRIMARY KEY);\n" +
+				"CREATE TABLE pets (id serial PRIMARY KEY, owner_tags text[]);",
+			extra: "tables:\n  owners:\n    relationships:\n      - name: Pets\n        type: o2m\n        table: pets\n        fk: owner_tags\n",
+			want:  []string{`"Pets" links through public.pets.owner_tags, whose Go type []string cannot key a Go map`},
+		},
+		{
 			name: "two detected relationships sharing a name",
 			schema: "CREATE TABLE organizations (id bigint PRIMARY KEY);\n" +
 				"CREATE TABLE users (id bigint PRIMARY KEY, organization_id bigint REFERENCES organizations(id));\n" +

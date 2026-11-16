@@ -40,6 +40,11 @@ type relationshipTargets struct {
 	ambiguous map[string][]string           // bare name → the schemas of every entity answering to it
 	schemas   map[string][]string           // bare name → the schema of every parsed entity with the name
 	excluded  map[string]map[string]bool    // "schema.name" → the columns `exclude_columns` removes from the table
+	// columnGoType resolves a column of a parsed table to the Go type the
+	// table's own build gives it, as a ColumnContext carrying GoType,
+	// BaseSQLType, IsSlice and IsSet. ok is false for a column the table does
+	// not have.
+	columnGoType func(table *parser.Table, column string) (col ColumnContext, ok bool)
 }
 
 // relationshipTarget is the entity a relationship's target name resolves to.
@@ -68,6 +73,9 @@ func newRelationshipTargets(input *GenerateInput, collisions map[string]bool) *r
 		ambiguous: make(map[string][]string),
 		schemas:   make(map[string][]string),
 		excluded:  make(map[string]map[string]bool),
+	}
+	t.columnGoType = func(table *parser.Table, column string) (ColumnContext, bool) {
+		return resolvedKeyColumn(input, table, column)
 	}
 	// add records one parsed entity; structName is "" when it generates nothing.
 	add := func(schema, name, structName string, pk []string) {
@@ -234,40 +242,63 @@ func (t *relationshipTargets) generates(qualifiedTarget string) bool {
 	return res == targetGenerated
 }
 
+// inferredKeySide is one foreign key of an FK-inferred edge: the table that
+// holds it, the table it references, its column pairs and its constraint name.
+type inferredKeySide struct {
+	holder, referenced *parser.Table
+	key                []parser.KeyPair
+	constraint         string
+}
+
+// inferredKeySides returns the foreign keys an FK-inferred edge joins on: the
+// edge's own key, or an M2M junction's two keys. A table the schema does not
+// hold is nil.
+func inferredKeySides(schema *parser.Schema, r parser.Relationship) []inferredKeySide {
+	type side struct {
+		holder, referenced, constraint string
+		key                            []parser.KeyPair
+	}
+	var sides []side
+	switch r.Type {
+	case parser.OneToMany:
+		sides = []side{{r.TargetTable, r.SourceTable, r.Constraint, r.Key}}
+	case parser.OneToOne:
+		sides = []side{{r.SourceTable, r.TargetTable, r.Constraint, r.Key}}
+	case parser.ManyToMany:
+		sides = []side{
+			{r.JunctionTable, r.SourceTable, r.JunctionLocalConstraint, r.JunctionLocal},
+			{r.JunctionTable, r.TargetTable, r.JunctionReferenceConstraint, r.JunctionReference},
+		}
+	}
+	out := make([]inferredKeySide, len(sides))
+	for i, s := range sides {
+		hSchema, hName := splitQualifiedName(s.holder)
+		rSchema, rName := splitQualifiedName(s.referenced)
+		out[i] = inferredKeySide{
+			holder:     findSchemaTable(schema, hSchema, hName),
+			referenced: findSchemaTable(schema, rSchema, rName),
+			key:        s.key,
+			constraint: s.constraint,
+		}
+	}
+	return out
+}
+
 // excludedKeyMember returns the first key column of an FK-inferred edge that
 // `exclude_columns` removes, spelled "table.column", or "" when there is none.
 // The members are every column of the edge's key (an M2M junction's two keys)
 // and every column each one references. Every member must be in the generated
 // model on both sides, or the edge is omitted with a warning (PRD §4.13).
 func (t *relationshipTargets) excludedKeyMember(schema *parser.Schema, r parser.Relationship) string {
-	type keySide struct {
-		holder, referenced string
-		key                []parser.KeyPair
-	}
-	var sides []keySide
-	switch r.Type {
-	case parser.OneToMany:
-		sides = []keySide{{r.TargetTable, r.SourceTable, r.Key}}
-	case parser.OneToOne:
-		sides = []keySide{{r.SourceTable, r.TargetTable, r.Key}}
-	case parser.ManyToMany:
-		sides = []keySide{
-			{r.JunctionTable, r.SourceTable, r.JunctionLocal},
-			{r.JunctionTable, r.TargetTable, r.JunctionReference},
-		}
-	}
-	for _, side := range sides {
-		hSchema, hName := splitQualifiedName(side.holder)
-		rSchema, rName := splitQualifiedName(side.referenced)
-		holder, ref := findSchemaTable(schema, hSchema, hName), findSchemaTable(schema, rSchema, rName)
+	for _, side := range inferredKeySides(schema, r) {
 		for _, pair := range side.key {
-			if holder != nil {
-				if member := t.excludedColumn(holder, pair.Local); member != "" {
+			if side.holder != nil {
+				if member := t.excludedColumn(side.holder, pair.Local); member != "" {
 					return member
 				}
 			}
-			if ref != nil {
-				if member := t.excludedColumn(ref, pair.Referenced); member != "" {
+			if side.referenced != nil {
+				if member := t.excludedColumn(side.referenced, pair.Referenced); member != "" {
 					return member
 				}
 			}
@@ -276,11 +307,45 @@ func (t *relationshipTargets) excludedKeyMember(schema *parser.Schema, r parser.
 	return ""
 }
 
-// excludedDeclaredMember is excludedKeyMember for a declared relationship:
-// every column of its `fk` on the table that holds it, or of an M2M's junction
-// keys. A declared key joins the primary key on the other side, so only the
-// link columns are checked.
-func (t *relationshipTargets) excludedDeclaredMember(schema *parser.Schema, rel RelationshipContext, source string) string {
+// unkeyableKeyMember returns the first key column of an FK-inferred edge whose
+// Go type cannot key a Go map (keyColumnCanKeyAMap), spelled "table.column",
+// with its Go type and the foreign key it belongs to; member is "" when there
+// is none. It walks the members excludedKeyMember walks. The loaders collect
+// such a key into a map and the filter compares it as an ID, so the generated
+// package would not compile; the edge is omitted with a warning (PRD §4.13).
+// A foreign key into the resolved primary key never gets here, since
+// checkPrimaryKeyCanKeyAMap refuses the target first: what is left is a key
+// into a UNIQUE key, or into a declared PRIMARY KEY that primary_key.columns
+// replaced, of the same type.
+//
+// A one-to-one edge answers "": it is loaded by a LEFT JOIN in the parent
+// query, which compares the columns in SQL and keys no map, and its
+// generated package compiles, so it keeps its edge (PRD §4.13).
+func (t *relationshipTargets) unkeyableKeyMember(schema *parser.Schema, r parser.Relationship) (member, goType, constraint string) {
+	if r.Type == parser.OneToOne {
+		return "", "", ""
+	}
+	for _, side := range inferredKeySides(schema, r) {
+		for _, pair := range side.key {
+			for _, c := range []struct {
+				table *parser.Table
+				name  string
+			}{{side.holder, pair.Local}, {side.referenced, pair.Referenced}} {
+				if goType := t.unkeyableColumn(c.table, c.name); goType != "" {
+					return qualifiedTableOrName(c.table) + "." + c.name, goType, side.constraint
+				}
+			}
+		}
+	}
+	return "", "", ""
+}
+
+// declaredLinkColumns returns the table that holds a declared relationship's
+// link columns and those columns: its `fk` on the table that holds it, or an
+// M2M's junction keys. A declared key joins the primary key on the other side,
+// so only the link columns are returned. The table is nil when the schema does
+// not hold it.
+func declaredLinkColumns(schema *parser.Schema, rel RelationshipContext, source string) (*parser.Table, []string) {
 	holder, cols := source, keyLocals(rel)
 	switch {
 	case rel.Type == parser.ManyToMany:
@@ -295,7 +360,13 @@ func (t *relationshipTargets) excludedDeclaredMember(schema *parser.Schema, rel 
 		holder = qualifiedTableName(rel.TargetSchema, rel.TargetTable)
 	}
 	hSchema, hName := splitQualifiedName(holder)
-	table := findSchemaTable(schema, hSchema, hName)
+	return findSchemaTable(schema, hSchema, hName), cols
+}
+
+// excludedDeclaredMember is excludedKeyMember for a declared relationship:
+// every column declaredLinkColumns returns.
+func (t *relationshipTargets) excludedDeclaredMember(schema *parser.Schema, rel RelationshipContext, source string) string {
+	table, cols := declaredLinkColumns(schema, rel, source)
 	if table == nil {
 		return ""
 	}
@@ -305,6 +376,37 @@ func (t *relationshipTargets) excludedDeclaredMember(schema *parser.Schema, rel 
 		}
 	}
 	return ""
+}
+
+// unkeyableDeclaredMember is unkeyableKeyMember for a declared relationship:
+// the first column declaredLinkColumns returns whose Go type cannot key a Go
+// map, spelled "table.column", with its Go type, or "" when there is none.
+// A declared `o2o` answers "", as an FK-inferred one does.
+func (t *relationshipTargets) unkeyableDeclaredMember(schema *parser.Schema, rel RelationshipContext, source string) (member, goType string) {
+	if rel.Type == parser.OneToOne {
+		return "", ""
+	}
+	table, cols := declaredLinkColumns(schema, rel, source)
+	for _, name := range cols {
+		if goType := t.unkeyableColumn(table, name); goType != "" {
+			return qualifiedTableOrName(table) + "." + name, goType
+		}
+	}
+	return "", ""
+}
+
+// unkeyableColumn returns the Go type of the named column of table when that
+// type cannot key a Go map, else "". A nil table, an unknown column, or an
+// index built without a type resolver answers "".
+func (t *relationshipTargets) unkeyableColumn(table *parser.Table, name string) string {
+	if t.columnGoType == nil || table == nil || name == "" {
+		return ""
+	}
+	col, ok := t.columnGoType(table, name)
+	if !ok || keyColumnCanKeyAMap(col) {
+		return ""
+	}
+	return strings.TrimPrefix(col.GoType, "*")
 }
 
 // excludedColumn returns "table.column" when `exclude_columns` removes the
@@ -418,4 +520,29 @@ func checkResolvedDuplicate(
 		"tables.%s.relationships[%d]: duplicate relationship — same target, fk, filter and discriminator as relationships[%d] (PRD §13.7.3): %q and %q both name %s; give each entry a distinct filter or discriminator value to produce sub-categorized fields",
 		qualifiedTable, i, prev, r.Table, rels[prev].Table, resolved,
 	)
+}
+
+// resolvedKeyColumn resolves a column of a parsed table the way
+// buildColumnContext does, to the fields keyColumnCanKeyAMap reads: the Go
+// type under the table's `column_map`, `type_map` and `overrides.types`, the
+// base SQL type, and the slice and SET flags. ok is false for a column the
+// table does not have.
+func resolvedKeyColumn(input *GenerateInput, table *parser.Table, column string) (ColumnContext, bool) {
+	col := parser.ColumnByName(table, column)
+	if col == nil {
+		return ColumnContext{}, false
+	}
+	tableCfg := resolveTableConfig(input.Config.Tables, table.Schema, table.Name)
+	var tableOverrides map[string]config.TypeOverride
+	if tableCfg.Overrides != nil {
+		tableOverrides = tableCfg.Overrides.Types
+	}
+	resolver := input.Resolver.ForSchema(table.Schema)
+	gt := resolveColumnGoType(resolver, col, tableCfg, tableOverrides, input.Config.Tenancy)
+	return ColumnContext{
+		GoType:      gt.Name,
+		BaseSQLType: baseSQLType(resolver, col.Type),
+		IsSlice:     gt.IsSlice,
+		IsSet:       resolver.IsSet(col.Type),
+	}, true
 }
