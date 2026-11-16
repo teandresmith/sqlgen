@@ -228,9 +228,14 @@ landed), it compiles but loads no children in either direction: `parent 2024-01-
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
 ### FIX-382
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 12, cmd/sqlgen/gen
 - **Surfaced by:** FIX-375 vet (2026-11-10), filed on the user's yes (2026-11-11)
@@ -271,17 +276,13 @@ original text named only `keyForMoment` and only MySQL.
   (stale cache entry)" and "Get after an IST-keyed delete = (&{1 2026-01-02 03:04:05.123456 +0000 UTC}, <nil>), want
   ErrNotFound (stale cache entry)". The existing suite without the fix passes. Golden churn: none. Patch:
   `.claude/prototypes/FIX-382.patch` (5 files, +214/-4).
+- Auto-accepted the recommended option on 2026-11-16 (`/fix` auto-accept rule): the new conformance row's untested "tenant segment is not normalized" clause → drop it from the row and keep the PRD sentence as rationale (no time-typed tenant is a realistic shape; §29.5 byte-identity is pinned by `cache-key.entity.tenanted`), because it was checked with green gates, causes no golden churn, adds no public surface and reverses no ruling or PRD behavior.
 
 **References.**
 - PRD §27 (caching), §27.5 (key format). `cache/key.go`. FIX-375.
 
-**Resolution notes.** _Filled in by `/fix resolve`._
+**Resolution notes.** Landed the vetted prototype as is (applied clean at `db259c68`). A `writePK` helper in `cache/key.go` replaces the `%v` PK write in `BuildKey`, `BuildCompositeKey`, `BuildTenantKey` and `BuildCompositeTenantKey`: a non-pointer value with `UTC() time.Time` (time.Time, types.DateTime) is written as its UTC instant, which also drops the monotonic reading; the tenant segment is untouched. PRD §27.5 gains "A time key is its UTC instant". Tests: `TestBuildKeyTimePKZoneIndependent` (cache) and live `TestCacheTimeKeyZones` in the tenancy and tenancy_mysql examples. Conformance: new row `cache-key.time-utc-instant` in `docs/conformance/runtime/cache.md`, §27 and §27.5 rehashed. Fail-first: `writePK` normalization reverted → `TestBuildKeyTimePKZoneIndependent` fails 7/8. Golden churn: none (`make update-golden-e2e` changed only the known go.sum lines, reverted). The fail-first count is 7/8 on a host whose local zone is not UTC (6/8 under `TZ=UTC`). `/verify` inline doc fixes: the `BuildKey` and `writePK` comments in `cache/key.go` and the `cache-key.entity.single-pk` row now state the UTC-instant rule.
 
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
 ### FIX-383
 
 - **Status:** Resolved

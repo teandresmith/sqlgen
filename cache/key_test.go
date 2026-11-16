@@ -3,8 +3,10 @@ package cache_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/teandresmith/sqlgen/cache"
+	"github.com/teandresmith/sqlgen/types"
 )
 
 func TestBuildKey(t *testing.T) {
@@ -503,6 +505,55 @@ func TestPatternsMatchTheKeysTheyCover(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := matches(tt.pattern, tt.key); got != tt.want {
 				t.Errorf("pattern %q matches key %q = %v, want %v", tt.pattern, tt.key, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBuildKeyTimePKZoneIndependent pins that a time key builds one key per
+// instant whatever zone the caller names it in, and drops a monotonic
+// reading, so an invalidation keyed in another zone than the cached read
+// evicts that entry.
+func TestBuildKeyTimePKZoneIndependent(t *testing.T) {
+	ist := time.FixedZone("IST", 5*3600+30*60)
+	at := time.Date(2026, 1, 2, 3, 4, 5, 123456000, time.UTC)
+	now := time.Now()
+	const single = "sqlgen:moments:fingerprint:vfp:pk:2026-01-02 03:04:05.123456 +0000 UTC"
+
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"single utc", cache.BuildKey("sqlgen", "", "moments", "fp", at), single},
+		{"single ist", cache.BuildKey("sqlgen", "", "moments", "fp", at.In(ist)), single},
+		{"single local", cache.BuildKey("sqlgen", "", "moments", "fp", at.Local()), single},
+		{"types.DateTime ist", cache.BuildKey("sqlgen", "", "moments", "fp", types.DateTime{Time: at.In(ist)}), single},
+		{
+			"monotonic dropped",
+			cache.BuildKey("sqlgen", "", "moments", "fp", now),
+			"sqlgen:moments:fingerprint:vfp:pk:" + now.Round(0).UTC().String(),
+		},
+		{
+			"tenant ist",
+			cache.BuildTenantKey("sqlgen", "", "moments", "fp", "acme", at.In(ist)),
+			"sqlgen:moments:tenant:acme:fingerprint:vfp:pk:2026-01-02 03:04:05.123456 +0000 UTC",
+		},
+		{
+			"composite ist",
+			cache.BuildCompositeKey("sqlgen", "", "links", "fp", []any{int64(7), at.In(ist)}),
+			"sqlgen:links:fingerprint:vfp:pk:7:2026-01-02 03:04:05.123456 +0000 UTC",
+		},
+		{
+			"composite tenant ist",
+			cache.BuildCompositeTenantKey("sqlgen", "", "links", "fp", "acme", []any{int64(7), at.In(ist)}),
+			"sqlgen:links:tenant:acme:fingerprint:vfp:pk:7:2026-01-02 03:04:05.123456 +0000 UTC",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Errorf("key = %q, want %q", tt.got, tt.want)
 			}
 		})
 	}

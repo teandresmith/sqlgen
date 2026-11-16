@@ -2,7 +2,9 @@ package cache
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
+	"time"
 )
 
 // BuildKey returns a cache key using the labeled-segment grammar:
@@ -19,15 +21,16 @@ import (
 // remaining key is still well-formed.
 //
 // The pk: label is ALWAYS the terminal labeled segment — nothing follows
-// it. PKs are formatted with %v, which is correct for scalars like
-// uuid.UUID (stringer), int64, and string. Pointer types are not
+// it. PKs are formatted with %v (a time value as its UTC instant, see
+// writePK), which is correct for scalars like uuid.UUID (stringer), int64,
+// and string. Pointer types are not
 // supported: their %v rendering is the address, not the value.
 func BuildKey(prefix, schema, table, fingerprint string, pk any) string {
 	var b strings.Builder
 	writeHead(&b, prefix, schema, table)
 	writeFingerprint(&b, fingerprint)
 	b.WriteString(":pk:")
-	fmt.Fprintf(&b, "%v", pk)
+	writePK(&b, pk)
 	return b.String()
 }
 
@@ -48,7 +51,7 @@ func BuildCompositeKey(prefix, schema, table, fingerprint string, pks []any) str
 		if i > 0 {
 			b.WriteByte(':')
 		}
-		fmt.Fprintf(&b, "%v", pk)
+		writePK(&b, pk)
 	}
 	return b.String()
 }
@@ -93,7 +96,7 @@ func BuildTenantKey(prefix, schema, table, fingerprint string, tenant, pk any) s
 	writeTenant(&b, tenant)
 	writeFingerprint(&b, fingerprint)
 	b.WriteString(":pk:")
-	fmt.Fprintf(&b, "%v", pk)
+	writePK(&b, pk)
 	return b.String()
 }
 
@@ -110,7 +113,7 @@ func BuildCompositeTenantKey(prefix, schema, table, fingerprint string, tenant a
 		if i > 0 {
 			b.WriteByte(':')
 		}
-		fmt.Fprintf(&b, "%v", pk)
+		writePK(&b, pk)
 	}
 	return b.String()
 }
@@ -165,4 +168,14 @@ func writeFingerprint(b *strings.Builder, fingerprint string) {
 func writeTenant(b *strings.Builder, tenant any) {
 	b.WriteString(":tenant:")
 	fmt.Fprintf(b, "%v", tenant)
+}
+
+// writePK writes one PK component with %v. A non-pointer time value
+// (time.Time, or a type embedding it) is written as its UTC instant, with no
+// monotonic reading, so one instant builds one key in any zone.
+func writePK(b *strings.Builder, pk any) {
+	if t, ok := pk.(interface{ UTC() time.Time }); ok && reflect.ValueOf(pk).Kind() != reflect.Pointer {
+		pk = t.UTC()
+	}
+	fmt.Fprintf(b, "%v", pk)
 }

@@ -14001,6 +14001,8 @@ Any migration that regenerates the Go struct produces a new fingerprint → new 
 
 **PK types are values, not pointers.** Every PK passed to the cache key helpers must be a value type (scalar like `uuid.UUID`, `int64`, `string`; or a composite-PK struct value). Pointer types stringify to the underlying memory address via `%v` and produce a different cache key on every call. The generated per-table `keyFor{Table}(pk T)` helpers are typed with concrete value `T`, so generated code can't hit the mistake; user-direct callers (`cache.SetAs`, custom `InvalidationSource`, admin tools) must dereference at the boundary.
 
+**A time key is its UTC instant.** The key helpers write a time PK value, or a time component of a composite PK (`time.Time`, or a value type embedding one such as `types.DateTime`), as that instant in UTC, without a monotonic reading. One instant therefore builds one key whatever zone the caller names it in, so a `Get` keyed in UTC and an `Update` or `Delete` keyed in `time.Local` or any other zone address the same cache entry and the write evicts it. The tenant segment is not normalized: it stays the `%v` form the 29.5 stamp matches byte for byte.
+
 ### 27.6 Cache Invariant
 
 **The cache only ever contains full entities.** This is a hard invariant that prevents serving incomplete data from cache.

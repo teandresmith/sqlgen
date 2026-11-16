@@ -20,7 +20,7 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 §29.5, `BuildTablePattern` and `BuildTenantTablePattern`) with the table shapes that change them.
 
 ## §27 Caching
-<!-- prd: 27 sha256: 1ed6a6d177707fb7 -->
+<!-- prd: 27 sha256: fc68a7cb5ed5bfd1 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -54,7 +54,7 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | cache.facade.with-cache-outermost | `WithCache` puts the cache query hook outside every hook registered with `WithQueryHook`, whichever option comes first: a cache hit returns before a user query hook runs | `example: cache: TestWithCache_OutermostWhateverTheOptionOrder/WithCache before the user hook`; `example: cache: TestWithCache_OutermostWhateverTheOptionOrder/WithCache after the user hook` | all |  |
 
 ## §27.5 Cache Key Generation
-<!-- prd: 27.5 sha256: d7434d8dfdde6884 -->
+<!-- prd: 27.5 sha256: c21af87fbe355014 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -69,7 +69,8 @@ The `cache-keys` matrix crosses the three key shapes the PRD defines (the entity
 | fingerprint.serializer | Switching `cache.serializer` from `json` to `msgpack` changes the table's fingerprint | `unit: cmd/sqlgen/gen: TestFingerprint_serializerSwitch` | all |  |
 | cache.invalidate-table.pattern | `InvalidateTable` invalidates through `cache.BuildTablePattern(prefix, schema, name)` built from the table's schema and bare SQL name, not from the schema-qualified `hook.TableName` value | `unit: cmd/sqlgen/gen: TestCacheTemplate_emitsInvalidateTablePattern` | postgres |  |
 | cache.invalidate.mutations-by-key | No mutation invalidates through a table pattern: in a package with no tenanted table, `BuildTablePattern` is called only by `InvalidateTable` | `unit: cmd/sqlgen/gen: TestCacheTemplate_whereOpsShareKeyBasedArm`; `example: cache: TestMutation_WhereMutationsInvalidateByKey` | all |  |
-| cache-key.entity.single-pk | A single-PK entity key is `{prefix}:{schema}.{table}:fingerprint:v{fingerprint}:pk:{pk}`, with the PK formatted by `%v` and `pk:` the last labeled segment | `unit: cache: TestBuildKey/postgres with schema and fingerprint`; `unit: cache: TestBuildKey/postgres uuid pk`; `unit: cache: TestBuildKey/custom prefix`; `unit: cache: TestBuildKeyLabelOrdering` | all | cache-keys: entity × single-pk |
+| cache-key.entity.single-pk | A single-PK entity key is `{prefix}:{schema}.{table}:fingerprint:v{fingerprint}:pk:{pk}`, with the PK formatted by `%v` (a time PK as its UTC instant, see `cache-key.time-utc-instant`) and `pk:` the last labeled segment | `unit: cache: TestBuildKey/postgres with schema and fingerprint`; `unit: cache: TestBuildKey/postgres uuid pk`; `unit: cache: TestBuildKey/custom prefix`; `unit: cache: TestBuildKeyLabelOrdering` | all | cache-keys: entity × single-pk |
+| cache-key.time-utc-instant | A time PK value, or a time component of a composite PK (`time.Time`, or a value type embedding it such as `types.DateTime`), is written into the key as its UTC instant with no monotonic reading, so one instant builds one key whatever its zone | `unit: cache: TestBuildKeyTimePKZoneIndependent`; `example: tenancy: TestCacheTimeKeyZones`; `example: tenancy_mysql: TestCacheTimeKeyZones` | all |  |
 | cache-key.entity.composite-pk | A composite key joins its PK components with `:` in the order given, all after the one terminal `pk:` label | `unit: cache: TestBuildCompositeKey/two-column composite`; `unit: cache: TestBuildCompositeKey/three-column composite` | all | cache-keys: entity × composite-pk |
 | cache-key.entity.schema | With a schema, the key's table segment is `{schema}.{table}` | `unit: cache: TestBuildKey/postgres with schema and fingerprint`; `unit: cache: TestBuildCompositeKey/two-column composite` | all | cache-keys: entity × schema |
 | cache-key.entity.no-schema | With no schema (MySQL, SQLite), the key's table segment is the bare table name, with no `.` | `unit: cache: TestBuildKey/mysql empty schema`; `unit: cache: TestBuildKey/sqlite empty schema`; `unit: cache: TestBuildCompositeKey/mysql two-column composite no schema` | mysql, sqlite | cache-keys: entity × no-schema |
