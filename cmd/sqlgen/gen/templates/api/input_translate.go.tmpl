@@ -338,12 +338,17 @@ func {{ $e.ChildTranslateFunc }}(in {{ $gqlPrefix }}{{ $e.ChildInputName }}) *{{
 
 {{- /* One id verb: threaded through when gqlgen binds the key's scalar to the */ -}}
 {{- /* model's own type, converted when it does not — element by element on a  */ -}}
-{{- /* list, through a local on a has-one edge's single optional id.           */ -}}
+{{- /* list, through a local on a has-one edge's single optional id. A list    */ -}}
+{{- /* of a struct key (`[Time!]`) arrives as []*T and is dereferenced.        */ -}}
 {{- define "api/nested-id-verb" -}}
 {{- if and .Cast .Singular -}}
 	if in.{{ .GoField }} != nil {
 		v := {{ .Cast }}(*in.{{ .GoField }})
 		out.{{ .GoField }} = &v
+	}
+{{ else if .ElemPtr -}}
+	for _, v := range in.{{ .GoField }} {
+		out.{{ .GoField }} = append(out.{{ .GoField }}, *v)
 	}
 {{ else if .Cast -}}
 	for _, v := range in.{{ .GoField }} {

@@ -260,7 +260,7 @@ The `api-generation` matrix rows for §26.4; its other rows are in [`api-schema.
 | api.nested.update-flat-nullable | On `Update<T>WithRelatedInput` the flat member is nullable | `unit: cmd/sqlgen/gen: TestAPINestedSchema_EachShapeProjects` | all | |
 | api.nested.update-nested-only | An update that sets only nested members leaves the parent's columns untouched | `example: graphql: TestGraphQLNested_UpdateOnlyTouchesNestedRows` | all | |
 | api.nested.update-nested-only-no-statement | An update that omits the flat member issues no parent `UPDATE` | `example: graphql: TestSurfacePromises_NestedUpdateWithoutFlatMemberIssuesNoParentUpdate` | all | |
-| api.nested.verb-list | A list-shaped verb takes a list of non-null elements (`create: [X!]`, `connect: [ID!]`) | `unit: cmd/sqlgen/gen: TestAPINestedSchema_EachShapeProjects` | all | |
+| api.nested.verb-list | A list-shaped verb takes a list of non-null elements (`create: [X!]`, `connect: [ID!]`) | `unit: cmd/sqlgen/gen: TestAPINestedSchema_EachShapeProjects`; `unit: cmd/sqlgen/gen: TestAPINestedTemplates_IDVerbElementShapes` | all | |
 | api.nested.has-one-single | A has-one verb takes one value (`create: X`, `connect: ID`) | `unit: cmd/sqlgen/gen: TestAPINestedSchema_EachShapeProjects`; `example: graphql: TestGraphQLNested_HasOneIntKeyRelinks` | all | |
 | api.nested.child-drops-fk | A nested child input omits the traversed FK | `unit: cmd/sqlgen/gen: TestAPINestedSchema_EachShapeProjects` | all | |
 | api.nested.child-drops-discriminator | A nested child input omits the discriminator column | `golden: graphql` | all | |

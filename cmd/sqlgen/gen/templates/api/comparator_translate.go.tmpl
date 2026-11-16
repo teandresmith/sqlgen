@@ -278,10 +278,10 @@ func {{ $tr.FuncName }}(in *{{ $gqlPrefix }}{{ $tr.InputTypeName }}) {{ $tr.GoRe
 		out.Lte = in.Lte
 	}
 {{- /*
-  gqlgen binds a list of a CUSTOM scalar as []*T even when the element is
-  declared non-null (`[Time!]`), unlike the builtin scalars, which come
-  through as []string / []float64. Deref with a nil guard so the generated
-  code is correct either way a value arrives.
+  gqlgen binds a non-null list element as *T when its Go type is a struct
+  (`[Time!]` arrives as []*time.Time), while `[Duration!]` and the builtin
+  scalars stay bare. Deref with a nil guard so the generated code is correct
+  either way a value arrives.
 */}}
 	if len(in.In) > 0 {
 		xs := make([]time.Time, 0, len(in.In))

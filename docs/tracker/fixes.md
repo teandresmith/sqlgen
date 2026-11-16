@@ -228,56 +228,6 @@ landed), it compiles but loads no children in either direction: `parent 2024-01-
 
 **Resolution notes.** _Filled in by `/fix resolve`._
 
-### FIX-381
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 27, cmd/sqlgen/gen
-- **Surfaced by:** FIX-375 vet (2026-11-10), filed on the user's yes (2026-11-11)
-- **Vetted:** corrected at `57e8b91a` (2026-11-13)
-
-**Issue.** **A GraphQL nested list `connect` / `disconnect` into a time- or decimal-keyed target does not compile.** `sqlgen generate` on the mysql example plus a `stamps(at DATETIME(6) PRIMARY KEY)` O2M/M2M fixture gives `models/graph/input_translate_gen.go:<line>:16: cannot use in.Connect (variable of type []*"time".Time) as []"time".Time value in assignment` (and the same for `in.Disconnect`). On the sqlite example the element type is `[]*types.DateTime`; a `decimal.Decimal` key gives `cannot use in.Connect (variable of type []*decimal.Decimal) as []decimal.Decimal value`. A has-one (singular) edge compiles, since both sides are `*time.Time`. The schema declares `connect: [Time!]`, but gqlgen binds `[]*time.Time`.
-
-**Root cause.** gqlgen (v0.17.90, `CopyModifiersFromAst`) makes a non-null list element a pointer when its Go type is
-a struct (the rule already recorded on `opaqueComparatorBindings` in `context_api.go`): `time.Time`, `types.DateTime`,
-`decimal.Decimal`, `net.IPNet`. `uuid.UUID` and `ksuid.KSUID` are arrays and unaffected. The translator's identity arm
-(`out.Connect = in.Connect`, `templates/api/input_translate.go.tmpl` "api/nested-id-verb") assigns the gqlgen slice
-directly. The list int arm is `for _, v := range in.Connect { out.Connect = append(out.Connect, int64(v)) }`; the
-`int64(*in.Connect)` unwrap the original text cited is the singular arm. FIX-375 did not change this path: its
-`nestedBucketKey` lives only in the Go executor.
-
-**Suggested fix.**
-- Add `ElemPtr bool` to `APINestedIDVerb`; `projectAPINestedIDVerbs` (`context_api_nested.go`) sets it to
-  `!out.Singular && gqlgenListElemIsPointer(pk.GoType)`, a new helper true for `time.Time`, `types.DateTime`,
-  `decimal.Decimal` and `net.IPNet`.
-- Template: a new `else if .ElemPtr` arm, `for _, v := range in.X { out.X = append(out.X, *v) }` (`Cast(*v)` when a Cast
-  is also set). The singular, Cast and identity arms are unchanged.
-- Test: table-driven `TestAPINestedTemplates_IDVerbElementShapes` in `gen/api_nested_test.go`, from real DDL per dialect
-  (postgres timestamptz, mysql datetime(6), sqlite datetime, mysql decimal override → `*v`; postgres bigint keeps
-  `int64(v)`, postgres uuid keeps the identity assignment).
-- Changed from the original suggestion: (1) no `types.DateTime` conversion on SQLite, just the same `*v`; (2) keyed on
-  gqlgen's struct-element rule, not "time key", so `decimal.Decimal` keys (same root cause and fix site, measured
-  failing) are included; (3) a render test, not a live GraphQL build, because no example carries a struct-keyed nested
-  edge and adding one churns goldens; the live compile was shown with probes. The live GraphQL test for FIX-375's
-  time-key bucketing is not part of this fix.
-- Prototype results, run at `57e8b91a` on 2026-11-13: reproduction with sibling copies `probe_mysql` (mysql example +
-  `stamps(at DATETIME(6) PK, user_id FK)` O2M `Stamps`, M2M `LinkedStamps` via `user_stamp_links`, and
-  `price_points(amount DECIMAL(10,2) PK)` with a decimal override) and `probe_sqlite`, `GOWORK=off sqlgen generate` →
-  `input_translate_gen.go:3165:16: cannot use in.Connect (variable of type []*"time".Time) as []"time".Time value in
-  assignment`, `…:3264:16: cannot use in.Connect (variable of type []*decimal.Decimal) as []decimal.Decimal value in
-  assignment`, sqlite `…:3878:16: cannot use in.Connect (variable of type []*types.DateTime) as []types.DateTime value in
-  assignment` (and the same for Disconnect); with the patch both probes generate, `go build ./...` and `go vet` clean.
-  Gates: `go test -race -count=1 ./gen/...` ok; golangci-lint 0 issues; `make update-golden` no diff; `make
-  update-golden-e2e` PASS, no diff. Fail-first: template arm reverted →
-  `TestAPINestedTemplates_IDVerbElementShapes/{postgres_timestamptz,mysql_datetime,sqlite_datetime,mysql_decimal_override}`
-  fail "output missing \"out.Connect = append(out.Connect, *v)\""; projection forced false → same. The existing suite
-  without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-381.patch` (3 files, +116/-3).
-
-**References.**
-- PRD §26.5.5, §9.9. FIX-375.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
 ### FIX-382
 
 - **Status:** Open
@@ -378,6 +328,56 @@ original text named only `keyForMoment` and only MySQL.
 ## Resolved
 
 <!-- fixes:resolved:begin -->
+### FIX-381
+
+- **Status:** Resolved
+- **Severity:** tracked
+- **Origin:** phase 27, cmd/sqlgen/gen
+- **Surfaced by:** FIX-375 vet (2026-11-10), filed on the user's yes (2026-11-11)
+- **Vetted:** corrected at `57e8b91a` (2026-11-13)
+
+**Issue.** **A GraphQL nested list `connect` / `disconnect` into a time- or decimal-keyed target does not compile.** `sqlgen generate` on the mysql example plus a `stamps(at DATETIME(6) PRIMARY KEY)` O2M/M2M fixture gives `models/graph/input_translate_gen.go:<line>:16: cannot use in.Connect (variable of type []*"time".Time) as []"time".Time value in assignment` (and the same for `in.Disconnect`). On the sqlite example the element type is `[]*types.DateTime`; a `decimal.Decimal` key gives `cannot use in.Connect (variable of type []*decimal.Decimal) as []decimal.Decimal value`. A has-one (singular) edge compiles, since both sides are `*time.Time`. The schema declares `connect: [Time!]`, but gqlgen binds `[]*time.Time`.
+
+**Root cause.** gqlgen (v0.17.90, `CopyModifiersFromAst`) makes a non-null list element a pointer when its Go type is
+a struct (the rule already recorded on `opaqueComparatorBindings` in `context_api.go`): `time.Time`, `types.DateTime`,
+`decimal.Decimal`, `net.IPNet`. `uuid.UUID` and `ksuid.KSUID` are arrays and unaffected. The translator's identity arm
+(`out.Connect = in.Connect`, `templates/api/input_translate.go.tmpl` "api/nested-id-verb") assigns the gqlgen slice
+directly. The list int arm is `for _, v := range in.Connect { out.Connect = append(out.Connect, int64(v)) }`; the
+`int64(*in.Connect)` unwrap the original text cited is the singular arm. FIX-375 did not change this path: its
+`nestedBucketKey` lives only in the Go executor.
+
+**Suggested fix.**
+- Add `ElemPtr bool` to `APINestedIDVerb`; `projectAPINestedIDVerbs` (`context_api_nested.go`) sets it to
+  `!out.Singular && gqlgenListElemIsPointer(pk.GoType)`, a new helper true for `time.Time`, `types.DateTime`,
+  `decimal.Decimal` and `net.IPNet`.
+- Template: a new `else if .ElemPtr` arm, `for _, v := range in.X { out.X = append(out.X, *v) }` (`Cast(*v)` when a Cast
+  is also set). The singular, Cast and identity arms are unchanged.
+- Test: table-driven `TestAPINestedTemplates_IDVerbElementShapes` in `gen/api_nested_test.go`, from real DDL per dialect
+  (postgres timestamptz, mysql datetime(6), sqlite datetime, mysql decimal override → `*v`; postgres bigint keeps
+  `int64(v)`, postgres uuid keeps the identity assignment).
+- Changed from the original suggestion: (1) no `types.DateTime` conversion on SQLite, just the same `*v`; (2) keyed on
+  gqlgen's struct-element rule, not "time key", so `decimal.Decimal` keys (same root cause and fix site, measured
+  failing) are included; (3) a render test, not a live GraphQL build, because no example carries a struct-keyed nested
+  edge and adding one churns goldens; the live compile was shown with probes. The live GraphQL test for FIX-375's
+  time-key bucketing is not part of this fix.
+- Prototype results, run at `57e8b91a` on 2026-11-13: reproduction with sibling copies `probe_mysql` (mysql example +
+  `stamps(at DATETIME(6) PK, user_id FK)` O2M `Stamps`, M2M `LinkedStamps` via `user_stamp_links`, and
+  `price_points(amount DECIMAL(10,2) PK)` with a decimal override) and `probe_sqlite`, `GOWORK=off sqlgen generate` →
+  `input_translate_gen.go:3165:16: cannot use in.Connect (variable of type []*"time".Time) as []"time".Time value in
+  assignment`, `…:3264:16: cannot use in.Connect (variable of type []*decimal.Decimal) as []decimal.Decimal value in
+  assignment`, sqlite `…:3878:16: cannot use in.Connect (variable of type []*types.DateTime) as []types.DateTime value in
+  assignment` (and the same for Disconnect); with the patch both probes generate, `go build ./...` and `go vet` clean.
+  Gates: `go test -race -count=1 ./gen/...` ok; golangci-lint 0 issues; `make update-golden` no diff; `make
+  update-golden-e2e` PASS, no diff. Fail-first: template arm reverted →
+  `TestAPINestedTemplates_IDVerbElementShapes/{postgres_timestamptz,mysql_datetime,sqlite_datetime,mysql_decimal_override}`
+  fail "output missing \"out.Connect = append(out.Connect, *v)\""; projection forced false → same. The existing suite
+  without the fix passes. Golden churn: none. Patch: `.claude/prototypes/FIX-381.patch` (3 files, +116/-3).
+
+**References.**
+- PRD §26.5.1, §26.5.4, §9.9. FIX-375.
+
+**Resolution notes.** Resolved 2026-11-16 from the vetted prototype (fresh against HEAD `66430434`, applied clean). `APINestedIDVerb` gains `ElemPtr`, set by `projectAPINestedIDVerbs` (`cmd/sqlgen/gen/context_api_nested.go`) to `!Singular && gqlgenListElemIsPointer(pk.GoType)`; the new helper is true for `time.Time`, `types.DateTime`, `decimal.Decimal` and `net.IPNet`, the struct key types gqlgen binds as `[]*T` in a `[Key!]` list. `templates/api/input_translate.go.tmpl` "api/nested-id-verb" gains an `ElemPtr` arm that appends `*v` (or `Cast(*v)`); the singular, Cast and identity arms are unchanged. Test: `TestAPINestedTemplates_IDVerbElementShapes` (postgres timestamptz, mysql datetime(6), sqlite datetime, mysql decimal override dereference; postgres bigint keeps `int64(v)`, uuid keeps the identity assignment); fail-first with the projection forced false fails the four struct-key cases. Beyond the prototype: the test is claimed on conformance row `api.nested.verb-list` (`docs/conformance/cli/api.md`), which `req-check` required. Golden churn: none, matching the vet. Gates: `make check` ok, `make check-examples` ok. Inline after `/verify`: the ElemPtr arm's `Cast(*v)` sub-arm dropped (`gqlgenGoTypeFor` returns the model type for every struct scalar, so `Cast` is always empty there and no fixture rendered it); the `comparator_translate.go.tmpl` deref comment now states gqlgen's struct-element rule rather than "custom scalar"; References corrected from §26.5.5 to §26.5.1 / §26.5.4. The 2026-11-13 backlog line for that comment is removed; the consumer-declared struct-scalar case stays on its existing backlog line.
+
 ### FIX-376
 
 - **Status:** Resolved

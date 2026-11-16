@@ -178,6 +178,9 @@ type APINestedIDVerb struct {
 	// Singular reports a has-one verb: one optional id, a pointer on both
 	// sides, rather than a list.
 	Singular bool
+	// ElemPtr reports a list whose gqlgen elements arrive as `*T`, so each
+	// is dereferenced before it is appended. See gqlgenListElemIsPointer.
+	ElemPtr bool
 }
 
 // APINestedConflictTarget is one value of the `<Parent>ConflictTarget` enum.
@@ -487,14 +490,28 @@ func projectAPINestedIDVerbs(out *APINestedEdge, target *APITableContext) {
 	if pk.ModelGoType != pk.GoType && pk.ModelGoType != "" {
 		cast = pk.ModelGoType
 	}
+	elemPtr := !out.Singular && gqlgenListElemIsPointer(pk.GoType)
 	if out.HasConnect {
-		verb := APINestedIDVerb{GoField: "Connect", Cast: cast, Singular: out.Singular}
+		verb := APINestedIDVerb{GoField: "Connect", Cast: cast, Singular: out.Singular, ElemPtr: elemPtr}
 		out.CreateIDVerbs = append(out.CreateIDVerbs, verb)
 		out.UpdateIDVerbs = append(out.UpdateIDVerbs, verb)
 	}
 	if out.HasDisconnect {
-		out.UpdateIDVerbs = append(out.UpdateIDVerbs, APINestedIDVerb{GoField: "Disconnect", Cast: cast, Singular: out.Singular})
+		out.UpdateIDVerbs = append(out.UpdateIDVerbs, APINestedIDVerb{GoField: "Disconnect", Cast: cast, Singular: out.Singular, ElemPtr: elemPtr})
 	}
+}
+
+// gqlgenListElemIsPointer reports whether gqlgen binds a non-null list
+// element of goType as `*T`. It does exactly when the Go type is a struct
+// (gqlgen v0.17.90, `codegen/config/binder.go` CopyModifiersFromAst), so
+// `[Time!]` arrives as []*time.Time while `[UUID!]` stays []uuid.UUID. The
+// cases are the struct types the built-in scalar registry binds a key to.
+func gqlgenListElemIsPointer(goType string) bool {
+	switch goType {
+	case "time.Time", dateTimeGoType, "decimal.Decimal", "net.IPNet":
+		return true
+	}
+	return false
 }
 
 // apiNestedVerbType spells a verb's schema type: a list of non-null elements,
