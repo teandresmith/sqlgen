@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// A primary key whose Go type cannot key a Go map — a MySQL SET, a
-// PostgreSQL array or a jsonb column — is refused by validate and generate,
-// naming the column, rather than generating a package that does not compile
-// (PRD §4.13). Keying the same table on another column generates a package
-// that builds.
+// A primary key that cannot key a Go map — a MySQL SET, a PostgreSQL array
+// or a jsonb column, whatever Go type column_map, type_map or overrides.types
+// gives it — is refused by validate and generate, naming the column, rather
+// than generating a package that does not compile (PRD §4.13). Keying the
+// same table on another column generates a package that builds.
 func TestGenerate_UnkeyablePrimaryKeyIsAnError(t *testing.T) {
 	const body = `version: 1
 input:
@@ -32,13 +32,19 @@ generation:
 		{
 			"mysql set", "mysql", "stdlib",
 			`CREATE TABLE things (sk set('a', 'b') PRIMARY KEY, name varchar(40) NOT NULL);`, "",
-			`primary-key column "sk" of table things has Go type ThingsSkSet, which cannot key a Go map, so the generated package would not compile; key the table on other columns with tables.things.primary_key.columns, or drop it with exclude_tables`,
+			`primary-key column "sk" of table things is a MySQL SET column; a SET, array or JSON column never keys a Go map, whatever Go type (here ThingsSkSet) column_map, type_map or overrides.types gives it; key the table on other columns with tables.things.primary_key.columns, or drop it with exclude_tables`,
 		},
 		{
 			"mysql set retyped to its own set type", "mysql", "stdlib",
 			`CREATE TABLE things (sk set('a', 'b') PRIMARY KEY, name varchar(40) NOT NULL);`,
 			"tables:\n  things:\n    type_map:\n      sk: ThingsSkSet\n",
-			`primary-key column "sk" of table things has Go type ThingsSkSet, which cannot key a Go map`,
+			`primary-key column "sk" of table things is a MySQL SET column; a SET, array or JSON column never keys a Go map, whatever Go type (here ThingsSkSet) column_map, type_map or overrides.types gives it; key the table on other columns with tables.things.primary_key.columns, or drop it with exclude_tables`,
+		},
+		{
+			"mysql set retyped to string", "mysql", "stdlib",
+			`CREATE TABLE things (sk set('a', 'b') PRIMARY KEY, name varchar(40) NOT NULL);`,
+			"tables:\n  things:\n    type_map:\n      sk: string\n",
+			`primary-key column "sk" of table things is a MySQL SET column; a SET, array or JSON column never keys a Go map, whatever Go type (here string)`,
 		},
 		{
 			"postgres enum array", "postgres", "pgx",
@@ -51,7 +57,7 @@ CREATE TABLE things (kinds kind[] PRIMARY KEY, name text NOT NULL);`, "",
 			`CREATE TYPE kind AS ENUM ('a', 'b');
 CREATE TABLE things (kinds kind[] PRIMARY KEY, name text NOT NULL);`,
 			"tables:\n  things:\n    type_map:\n      kinds: KindSlice\n",
-			`primary-key column "kinds" of table public.things has Go type KindSlice, which cannot key a Go map`,
+			`primary-key column "kinds" of table public.things is an array column; a SET, array or JSON column never keys a Go map, whatever Go type (here KindSlice)`,
 		},
 		{
 			"postgres text array", "postgres", "stdlib",
@@ -59,9 +65,27 @@ CREATE TABLE things (kinds kind[] PRIMARY KEY, name text NOT NULL);`,
 			`primary-key column "tags" of table public.things has Go type []string, which cannot key a Go map, so the generated package would not compile; key the table on other columns with tables.public.things.primary_key.columns, or drop it with exclude_tables`,
 		},
 		{
+			"postgres text array retyped to string", "postgres", "pgx",
+			`CREATE TABLE things (tags text[] PRIMARY KEY, name text NOT NULL);`,
+			"tables:\n  things:\n    type_map:\n      tags: string\n",
+			`primary-key column "tags" of table public.things is an array column; a SET, array or JSON column never keys a Go map, whatever Go type (here string)`,
+		},
+		{
+			"postgres text array retyped to string by column_map", "postgres", "pgx",
+			`CREATE TABLE things (tags text[] PRIMARY KEY, name text NOT NULL);`,
+			"tables:\n  things:\n    column_map:\n      tags:\n        type: string\n",
+			`primary-key column "tags" of table public.things is an array column; a SET, array or JSON column never keys a Go map, whatever Go type (here string)`,
+		},
+		{
 			"postgres jsonb", "postgres", "pgx",
 			`CREATE TABLE things (j jsonb PRIMARY KEY, name text NOT NULL);`, "",
 			`primary-key column "j" of table public.things has Go type types.JSON, which cannot key a Go map`,
+		},
+		{
+			"postgres jsonb retyped to string", "postgres", "pgx",
+			`CREATE TABLE things (j jsonb PRIMARY KEY, name text NOT NULL);`,
+			"tables:\n  things:\n    type_map:\n      j: string\n",
+			`primary-key column "j" of table public.things is a JSON column; a SET, array or JSON column never keys a Go map, whatever Go type (here string)`,
 		},
 		{
 			"composite member", "postgres", "pgx",
@@ -92,8 +116,7 @@ CREATE TABLE things (kinds kind[] PRIMARY KEY, name text NOT NULL);`,
 
 	// The way out the error names: the same columns, keyed on a comparable
 	// one, generate a package that compiles. A bytea key is a slice too, but
-	// comparator.Opaque keys it, so it is not refused. A SET retyped to
-	// string by type_map is a string key, so it is not refused either.
+	// comparator.Opaque keys it, so it is not refused.
 	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
@@ -105,16 +128,6 @@ CREATE TABLE things (kinds kind[] PRIMARY KEY, name text NOT NULL);`,
 			"keyed elsewhere and bytea", "postgres", "pgx",
 			`CREATE TABLE things (id integer PRIMARY KEY, tags text[] NOT NULL UNIQUE, name text NOT NULL);
 CREATE TABLE blobs (b bytea PRIMARY KEY, name text NOT NULL);`, "",
-		},
-		{
-			"postgres text array retyped to string", "postgres", "pgx",
-			`CREATE TABLE things (tags text[] PRIMARY KEY, name text NOT NULL);`,
-			"tables:\n  things:\n    type_map:\n      tags: string\n",
-		},
-		{
-			"mysql set retyped to string", "mysql", "stdlib",
-			`CREATE TABLE things (sk set('a', 'b') PRIMARY KEY, name varchar(40) NOT NULL);`,
-			"tables:\n  things:\n    type_map:\n      sk: string\n",
 		},
 	}
 	for _, tt := range accepted {

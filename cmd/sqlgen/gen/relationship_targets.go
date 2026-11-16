@@ -307,12 +307,11 @@ func (t *relationshipTargets) excludedKeyMember(schema *parser.Schema, r parser.
 	return ""
 }
 
-// unkeyableKeyMember returns the first key column of an FK-inferred edge whose
-// Go type cannot key a Go map (keyColumnCanKeyAMap), spelled "table.column",
-// with its Go type and the foreign key it belongs to; member is "" when there
+// unkeyableKeyMember returns the first key column of an FK-inferred edge that
+// cannot key a Go map (keyColumnUnkeyableReason), spelled "table.column",
+// with the reason and the foreign key it belongs to; member is "" when there
 // is none. It walks the members excludedKeyMember walks. The loaders collect
-// such a key into a map and the filter compares it as an ID, so the generated
-// package would not compile; the edge is omitted with a warning (PRD §4.13).
+// such a key into a map and the filter compares it as an ID; the edge is omitted with a warning (PRD §4.13).
 // A foreign key into the resolved primary key never gets here, since
 // checkPrimaryKeyCanKeyAMap refuses the target first: what is left is a key
 // into a UNIQUE key, or into a declared PRIMARY KEY that primary_key.columns
@@ -321,7 +320,7 @@ func (t *relationshipTargets) excludedKeyMember(schema *parser.Schema, r parser.
 // A one-to-one edge answers "": it is loaded by a LEFT JOIN in the parent
 // query, which compares the columns in SQL and keys no map, and its
 // generated package compiles, so it keeps its edge (PRD §4.13).
-func (t *relationshipTargets) unkeyableKeyMember(schema *parser.Schema, r parser.Relationship) (member, goType, constraint string) {
+func (t *relationshipTargets) unkeyableKeyMember(schema *parser.Schema, r parser.Relationship) (member, reason, constraint string) {
 	if r.Type == parser.OneToOne {
 		return "", "", ""
 	}
@@ -331,8 +330,8 @@ func (t *relationshipTargets) unkeyableKeyMember(schema *parser.Schema, r parser
 				table *parser.Table
 				name  string
 			}{{side.holder, pair.Local}, {side.referenced, pair.Referenced}} {
-				if goType := t.unkeyableColumn(c.table, c.name); goType != "" {
-					return qualifiedTableOrName(c.table) + "." + c.name, goType, side.constraint
+				if reason := t.unkeyableColumn(c.table, c.name); reason != "" {
+					return qualifiedTableOrName(c.table) + "." + c.name, reason, side.constraint
 				}
 			}
 		}
@@ -379,34 +378,34 @@ func (t *relationshipTargets) excludedDeclaredMember(schema *parser.Schema, rel 
 }
 
 // unkeyableDeclaredMember is unkeyableKeyMember for a declared relationship:
-// the first column declaredLinkColumns returns whose Go type cannot key a Go
-// map, spelled "table.column", with its Go type, or "" when there is none.
+// the first column declaredLinkColumns returns that cannot key a Go map,
+// spelled "table.column", with the reason, or "" when there is none.
 // A declared `o2o` answers "", as an FK-inferred one does.
-func (t *relationshipTargets) unkeyableDeclaredMember(schema *parser.Schema, rel RelationshipContext, source string) (member, goType string) {
+func (t *relationshipTargets) unkeyableDeclaredMember(schema *parser.Schema, rel RelationshipContext, source string) (member, reason string) {
 	if rel.Type == parser.OneToOne {
 		return "", ""
 	}
 	table, cols := declaredLinkColumns(schema, rel, source)
 	for _, name := range cols {
-		if goType := t.unkeyableColumn(table, name); goType != "" {
-			return qualifiedTableOrName(table) + "." + name, goType
+		if reason := t.unkeyableColumn(table, name); reason != "" {
+			return qualifiedTableOrName(table) + "." + name, reason
 		}
 	}
 	return "", ""
 }
 
-// unkeyableColumn returns the Go type of the named column of table when that
-// type cannot key a Go map, else "". A nil table, an unknown column, or an
+// unkeyableColumn returns why the named column of table cannot key a Go map
+// (keyColumnUnkeyableReason), else "". A nil table, an unknown column, or an
 // index built without a type resolver answers "".
 func (t *relationshipTargets) unkeyableColumn(table *parser.Table, name string) string {
 	if t.columnGoType == nil || table == nil || name == "" {
 		return ""
 	}
 	col, ok := t.columnGoType(table, name)
-	if !ok || keyColumnCanKeyAMap(col) {
+	if !ok {
 		return ""
 	}
-	return strings.TrimPrefix(col.GoType, "*")
+	return keyColumnUnkeyableReason(col)
 }
 
 // excludedColumn returns "table.column" when `exclude_columns` removes the
@@ -523,9 +522,9 @@ func checkResolvedDuplicate(
 }
 
 // resolvedKeyColumn resolves a column of a parsed table the way
-// buildColumnContext does, to the fields keyColumnCanKeyAMap reads: the Go
-// type under the table's `column_map`, `type_map` and `overrides.types`, the
-// base SQL type, and the slice and SET flags. ok is false for a column the
+// buildColumnContext does, to the fields keyColumnUnkeyableReason reads: the
+// Go type under the table's `column_map`, `type_map` and `overrides.types`,
+// the base SQL type, and the slice and SET flags. ok is false for a column the
 // table does not have.
 func resolvedKeyColumn(input *GenerateInput, table *parser.Table, column string) (ColumnContext, bool) {
 	col := parser.ColumnByName(table, column)

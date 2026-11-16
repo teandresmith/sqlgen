@@ -8,9 +8,10 @@ import (
 	"testing"
 )
 
-// A detected foreign key over columns whose Go type cannot key a Go map — a
-// PostgreSQL array or a MySQL SET into a UNIQUE column of the same type —
-// gives no to-many relationship and a warning naming the constraint and the
+// A detected foreign key over columns that cannot key a Go map — a
+// PostgreSQL array or a MySQL SET into a UNIQUE column of the same type,
+// whatever Go type column_map, type_map or overrides.types gives it — gives
+// no to-many relationship and a warning naming the constraint and the
 // column, as a foreign key into non-key columns does, rather than an edge
 // whose loader and filter do not compile (PRD §4.13). A one-to-one edge over
 // the same columns is loaded by a join, so it keeps its edge with no warning,
@@ -57,7 +58,7 @@ CREATE TABLE refs (id integer PRIMARY KEY, tags text[] REFERENCES things(tags));
 			"mysql set", "mysql", "stdlib",
 			`CREATE TABLE things (id int PRIMARY KEY, sk set('a', 'b') NOT NULL, UNIQUE KEY uq_sk (sk));
 CREATE TABLE refs (id int PRIMARY KEY, sk set('a', 'b'), CONSTRAINT fk_sk FOREIGN KEY (sk) REFERENCES things(sk));`, "",
-			"Warning: tables.things: foreign key fk_sk gives no relationship \"refs\": its column refs.sk has Go type RefsSkSet, which cannot key a Go map, so the generated package would not compile; list \"refs\" in `exclude_relationships` to silence this (PRD §4.13, §5.3)\n",
+			"Warning: tables.things: foreign key fk_sk gives no relationship \"refs\": its column refs.sk is a MySQL SET column; a SET, array or JSON column never keys a Go map, whatever Go type (here RefsSkSet) column_map, type_map or overrides.types gives it; list \"refs\" in `exclude_relationships` to silence this (PRD §4.13, §5.3)\n",
 			"",
 		},
 		{
@@ -65,17 +66,24 @@ CREATE TABLE refs (id int PRIMARY KEY, sk set('a', 'b'), CONSTRAINT fk_sk FOREIG
 			`CREATE TABLE things (id int PRIMARY KEY, sk set('a', 'b') NOT NULL, UNIQUE KEY uq_sk (sk));
 CREATE TABLE refs (id int PRIMARY KEY, sk set('a', 'b'), CONSTRAINT fk_sk FOREIGN KEY (sk) REFERENCES things(sk));`,
 			"tables:\n  refs:\n    type_map:\n      sk: RefsSkSet\n",
-			`Warning: tables.things: foreign key fk_sk gives no relationship "refs": its column refs.sk has Go type RefsSkSet, which cannot key a Go map`,
+			`Warning: tables.things: foreign key fk_sk gives no relationship "refs": its column refs.sk is a MySQL SET column; a SET, array or JSON column never keys a Go map, whatever Go type (here RefsSkSet)`,
 			"",
 		},
 		{
-			// A SET retyped to string on both sides is a string key: the
-			// edge is kept and builds.
 			"mysql set retyped to string", "mysql", "stdlib",
 			`CREATE TABLE things (id int PRIMARY KEY, sk set('a', 'b') NOT NULL, UNIQUE KEY uq_sk (sk));
 CREATE TABLE refs (id int PRIMARY KEY, sk set('a', 'b'), CONSTRAINT fk_sk FOREIGN KEY (sk) REFERENCES things(sk));`,
 			"tables:\n  things:\n    type_map:\n      sk: string\n  refs:\n    type_map:\n      sk: string\n",
-			"", "Refs []*Ref",
+			`Warning: tables.things: foreign key fk_sk gives no relationship "refs": its column refs.sk is a MySQL SET column; a SET, array or JSON column never keys a Go map, whatever Go type (here string)`,
+			"",
+		},
+		{
+			"postgres text array retyped to string", "postgres", "pgx",
+			`CREATE TABLE things (id integer PRIMARY KEY, tags text[] NOT NULL UNIQUE);
+CREATE TABLE refs (id integer PRIMARY KEY, tags text[] REFERENCES things(tags));`,
+			"tables:\n  things:\n    type_map:\n      tags: string\n  refs:\n    type_map:\n      tags: string\n",
+			`Warning: tables.public.things: foreign key refs_tags_fkey gives no relationship "refs": its column public.refs.tags is an array column; a SET, array or JSON column never keys a Go map, whatever Go type (here string)`,
+			"",
 		},
 		{
 			// A junction whose two foreign keys sit inside a UNIQUE key is
@@ -144,8 +152,49 @@ CREATE TABLE refs (id int PRIMARY KEY, sk set('a', 'b'));`,
 	}
 }
 
-// A declared to-many relationship whose link columns cannot key a Go map is
-// an error naming the relationship and the column, since the user asked for
+// An enum array retyped to its own slice type on both sides of a detected
+// foreign key is still an array: the edge is omitted with the warning. The
+// package is not built here: its filter for the retyped column does not
+// compile, since resolveGenericComparator picks comparator.Enum for an array
+// retyped to a bare local type name, a separate defect.
+func TestGenerate_UnkeyableForeignKeyRetypedToItsOwnSliceTypeGivesNoRelationship(t *testing.T) {
+	const cfg = `version: 1
+input:
+  dialect: postgres
+  paths: [schema.sql]
+output:
+  driver: pgx
+  dir: out
+  package: models
+tables:
+  things:
+    type_map:
+      kinds: KindSlice
+  refs:
+    type_map:
+      kinds: KindSlice
+`
+	const schema = `CREATE TYPE kind AS ENUM ('a', 'b');
+CREATE TABLE things (id integer PRIMARY KEY, kinds kind[] NOT NULL UNIQUE);
+CREATE TABLE refs (id integer PRIMARY KEY, kinds kind[] REFERENCES things(kinds));`
+	const want = `Warning: tables.public.things: foreign key refs_kinds_fkey gives no relationship "refs": its column public.refs.kinds is an array column; a SET, array or JSON column never keys a Go map, whatever Go type (here KindSlice)`
+	for _, command := range []string{"validate", "generate"} {
+		dir, stderr, err := runCommand(t, command, schema, cfg)
+		if err != nil {
+			t.Fatalf("%s: %v\nstderr: %s", command, err, stderr)
+		}
+		if strings.Count(stderr, want) != 1 {
+			t.Errorf("%s stderr = %q, want %q once", command, stderr, want)
+		}
+		if command == "generate" && strings.Contains(generatedGo(t, dir)["models_gen.go"], "Refs []*Ref") {
+			t.Errorf("models_gen.go has the Refs edge, want it omitted")
+		}
+	}
+}
+
+// A declared to-many relationship whose link columns cannot key a Go map —
+// whatever Go type column_map, type_map or overrides.types gives a SET or
+// array column — is an error naming the relationship and the column, since the user asked for
 // the edge by name (PRD §4.13). A declared one-to-one keeps its edge
 // (TestGenerate_UnkeyableForeignKeyGivesNoRelationship/declared one-to-one).
 func TestGenerate_UnkeyableDeclaredRelationshipIsAnError(t *testing.T) {
@@ -167,7 +216,7 @@ tables:
 			`CREATE TABLE things (id integer PRIMARY KEY, name text NOT NULL);
 CREATE TABLE refs (id integer PRIMARY KEY, tags text[]);`,
 			"  things:\n    relationships:\n      - name: Refs\n        type: o2m\n        table: refs\n        fk: tags\n",
-			`tables.public.things.relationships: "Refs" links through public.refs.tags, whose Go type []string cannot key a Go map`,
+			`tables.public.things.relationships: "Refs" links through public.refs.tags, and that column has Go type []string, which cannot key a Go map`,
 		},
 		{
 			"postgres m2m", "postgres", "pgx",
@@ -175,7 +224,7 @@ CREATE TABLE refs (id integer PRIMARY KEY, tags text[]);`,
 CREATE TABLE others (id integer PRIMARY KEY);
 CREATE TABLE links (tags text[], other_id integer);`,
 			"  things:\n    relationships:\n      - name: Others\n        type: m2m\n        table: others\n        junction: links\n        junction_local_fk: tags\n        junction_reference_fk: other_id\n",
-			`tables.public.things.relationships: "Others" links through public.links.tags, whose Go type []string cannot key a Go map`,
+			`tables.public.things.relationships: "Others" links through public.links.tags, and that column has Go type []string, which cannot key a Go map`,
 		},
 		{
 			"postgres enum array retyped to its own slice type", "postgres", "pgx",
@@ -183,14 +232,28 @@ CREATE TABLE links (tags text[], other_id integer);`,
 CREATE TABLE things (id integer PRIMARY KEY, name text NOT NULL);
 CREATE TABLE refs (id integer PRIMARY KEY, kinds kind[]);`,
 			"  things:\n    relationships:\n      - name: Refs\n        type: o2m\n        table: refs\n        fk: kinds\n  refs:\n    type_map:\n      kinds: KindSlice\n",
-			`tables.public.things.relationships: "Refs" links through public.refs.kinds, whose Go type KindSlice cannot key a Go map`,
+			`tables.public.things.relationships: "Refs" links through public.refs.kinds, and that column is an array column; a SET, array or JSON column never keys a Go map, whatever Go type (here KindSlice)`,
 		},
 		{
 			"mysql o2m", "mysql", "stdlib",
 			`CREATE TABLE things (id int PRIMARY KEY, name varchar(40) NOT NULL);
 CREATE TABLE refs (id int PRIMARY KEY, sk set('a', 'b'));`,
 			"  things:\n    relationships:\n      - name: Refs\n        type: o2m\n        table: refs\n        fk: sk\n",
-			`tables.things.relationships: "Refs" links through refs.sk, whose Go type RefsSkSet cannot key a Go map`,
+			`tables.things.relationships: "Refs" links through refs.sk, and that column is a MySQL SET column; a SET, array or JSON column never keys a Go map, whatever Go type (here RefsSkSet)`,
+		},
+		{
+			"mysql set retyped to string", "mysql", "stdlib",
+			`CREATE TABLE things (id int PRIMARY KEY, name varchar(40) NOT NULL);
+CREATE TABLE refs (id int PRIMARY KEY, sk set('a', 'b'));`,
+			"  things:\n    relationships:\n      - name: Refs\n        type: o2m\n        table: refs\n        fk: sk\n  refs:\n    type_map:\n      sk: string\n",
+			`tables.things.relationships: "Refs" links through refs.sk, and that column is a MySQL SET column; a SET, array or JSON column never keys a Go map, whatever Go type (here string) column_map, type_map or overrides.types gives it; link the relationship through other columns or remove it (PRD §4.13, §13.4)`,
+		},
+		{
+			"postgres text array retyped to string", "postgres", "pgx",
+			`CREATE TABLE things (id integer PRIMARY KEY, name text NOT NULL);
+CREATE TABLE refs (id integer PRIMARY KEY, tags text[]);`,
+			"  things:\n    relationships:\n      - name: Refs\n        type: o2m\n        table: refs\n        fk: tags\n  refs:\n    type_map:\n      tags: string\n",
+			`tables.public.things.relationships: "Refs" links through public.refs.tags, and that column is an array column; a SET, array or JSON column never keys a Go map, whatever Go type (here string)`,
 		},
 	}
 	for _, tt := range tests {

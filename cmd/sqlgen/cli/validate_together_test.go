@@ -73,7 +73,7 @@ func TestValidate_ReportsEachGenerationRuleWithTheOthers(t *testing.T) {
 			schema: "CREATE TABLE owners (id serial PRIMARY KEY);\n" +
 				"CREATE TABLE pets (id serial PRIMARY KEY, owner_tags text[]);",
 			extra: "tables:\n  owners:\n    relationships:\n      - name: Pets\n        type: o2m\n        table: pets\n        fk: owner_tags\n",
-			want:  []string{`"Pets" links through public.pets.owner_tags, whose Go type []string cannot key a Go map`},
+			want:  []string{`"Pets" links through public.pets.owner_tags, and that column has Go type []string, which cannot key a Go map`},
 		},
 		{
 			name: "two detected relationships sharing a name",
