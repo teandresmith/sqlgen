@@ -107,21 +107,25 @@ func TestGetTemplate_o2mCompositeKeyLoading(t *testing.T) {
 	})
 }
 
-// An M2M load reads the junction by tuple, scans each distinct junction column
-// once (a tenant junction shares its tenant column between both keys), and
-// maps targets on every key column.
+// An M2M load reads the junction by tuple, joined to the target on every
+// reference column, so the target key comes back in the target's own spelling
+// (a tenant junction shares its tenant column between both keys, and the join
+// reads the target's), and maps targets on every key column.
 func TestGetTemplate_m2mCompositeKeyLoading(t *testing.T) {
 	output := executeGetTemplate(t, compositeLoadTables(t, config.DriverPgx)["tasks"])
 	assertContainsAll(t, output,
 		"for start := 0; start < len(taskKeys); start += 4000 {",
-		`Columns:    []string{"workspace_id", "task_id", "label_id"},`,
-		`Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "task_id"}, chunk)},`,
+		`On: "t." + c.dialect.QuoteIdentifier("workspace_id") + " = j." + c.dialect.QuoteIdentifier("workspace_id") + " AND t." + c.dialect.QuoteIdentifier("id") + " = j." + c.dialect.QuoteIdentifier("label_id"),`,
+		`Columns: []string{"workspace_id", "id"},`,
+		`Columns: []string{"workspace_id", "task_id"},`,
+		`sql.BuildCompositePKBatchCondition(c.dialect, []string{"workspace_id", "task_id"}, chunk),`,
+		`}), sql.Where("t."+c.dialect.QuoteIdentifier("workspace_id")).IsNotNull()),`,
 		"var key0 int64",
 		"var key1 int64",
-		"var key2 int64",
-		`case "label_id":`,
+		`case "t.id":`,
+		"ptrs[i] = &target.ID",
 		"parentToTargetIDs := make(map[[2]string][][2]string)",
-		"parentID, targetID := [2]string{fmt.Sprint(key0), fmt.Sprint(key1)}, [2]string{fmt.Sprint(key0), fmt.Sprint(key2)}",
+		"parentID, targetID := [2]string{fmt.Sprint(key0), fmt.Sprint(key1)}, [2]string{fmt.Sprint(target.WorkspaceID), fmt.Sprint(target.ID)}",
 		`sql.TupleInSubquery(c.dialect, []string{"workspace_id", "id"}, sql.Subquery{`,
 		`SQL: "SELECT j." + c.dialect.QuoteIdentifier("workspace_id") + ", j." + c.dialect.QuoteIdentifier("label_id") +`,
 		`requiredColumns: []string{"workspace_id", "id"},`,

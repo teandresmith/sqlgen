@@ -284,7 +284,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert.idempotent-returns-row | A conflict that changes nothing still resolves the PK: an idempotent `Upsert` returns the conflicting row, not a not-found error. This covers the MySQL no-change OK packet and the `DO NOTHING` branch | `conformance: Upsert/a conflict that changes nothing returns the existing row`; `conformance: Upsert/a conflict on a target that covers every column it writes leaves the row as it is and returns it` | all | |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: 443c6079c27bb433 -->
+<!-- prd: 9.8 sha256: 2f1f0f0ef6fc1cf2 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -301,7 +301,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | get.soft-delete | A soft-deleted row is not returned by `Get`: its key gives `ErrNotFound`, while a live row's key returns it | `conformance: Get/a soft-deleted row returns ErrNotFound` | all | client-methods: Get × soft-delete |
 
 ## §9.8.3 GetMany
-<!-- prd: 9.8.3 sha256: 75069df918145bbd -->
+<!-- prd: 9.8.3 sha256: e1f384c456df701d -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -471,7 +471,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | increment.composite-pk | On a composite-PK table `Increment` takes the `{Table}PK` struct and matches all PK columns, so only that tuple changes, and it records that tuple as its affected key | `conformance: Increment/a composite key increments only its own tuple` | all | client-methods: Increment × composite-pk |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: 2edb2b803d32adfe -->
+<!-- prd: 9.9 sha256: 51be945ba60a4f6b -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -574,7 +574,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | upsert-with-related.hooks | `UpsertWithRelated` has no op of its own: the mutation hook sees one call per inner write in §9.9.6 order with its own `Op` and `Table`. That is the parent `upsert`, then per edge in Go-field-name order (`Posts`, `Profile`, `Tags`): `clear` before `create` before `connect` before `link` before `disconnect`. Visibility and occupancy reads fire query hooks. The adoption's verify read and the terminal parent read fire none. The terminal read's relationship loads fire the caller's (§9.6). `SkipHooks` on the call fires no hook on any inner call | `conformance: UpsertWithRelated/the mutation hook sees one call per inner write in execution order, and neither the verify read nor the terminal read fires a query hook`; `conformance: UpsertWithRelated/SkipHooks on the call fires no hook on any inner call` | all | client-methods: UpsertWithRelated × hooks |
 
 ## §13.2 Loading Strategy
-<!-- prd: 13.2 sha256: 5327d767bcdd32e9 -->
+<!-- prd: 13.2 sha256: 43f06deda121127d -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -584,6 +584,8 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | load.fanout-no-tx-bound | The O2M/M2M loader fan-out sets no concurrency bound of its own, inside a transaction or out | `unit: cmd/sqlgen/gen: TestGetTemplate_relationshipFanOutIsUnbounded` | all |  |
 | load.fanout-in-tx-serializes | Inside a transaction the O2M/M2M loads of one read are dispatched in parallel and the transaction's connection reservation serializes their statements, so a read whose two such loads overlap still loads both | `conformance: Get/selecting two fanned-out relationships inside a transaction loads both` | all |  |
 | load.key-condition-appended | The composite key condition is appended to the child query's conditions, so a consumer filter still applies | `conformance: GetMany/a consumer filter on a composite edge applies with the key condition`; `conformance: GetMany/a soft-delete comparator in a consumer filter narrows a composite edge's default`; `conformance: GetMany/a composite key load past one chunk binds at most its chunk per statement` | all |  |
+| load.key-compared-as-go | An O2M loader maps children, and an M2M loader maps junction rows, to parents by comparing keys byte for byte: a loaded key that differs from every parent's only in case, on a case-insensitive collation, fails the read with an error naming the mismatch rather than dropping the row | `conformance: GetMany/a loaded key that differs from its parent's only in case is an error, and from its target's loads` | mysql |  |
+| load.m2m-target-key-as-stored | An M2M loader's junction read joins the target and maps targets on the key as the target stores it, so a junction reference that differs from its target's key only in case, on a case-insensitive collation, still loads that target, with no added statement | `conformance: GetMany/a loaded key that differs from its parent's only in case is an error, and from its target's loads` | mysql |  |
 
 ## §14.1 Offset-Based
 <!-- prd: 14.1 sha256: 49980305eb959c7f -->
@@ -859,7 +861,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | error-prefix.tenant-mismatch | A `tenancy.ErrMismatch` is returned under the method's prefix like any other error, on `Get`, `Update` and `Create` alike | `example: tenancy: TestErrMismatch_CarriesTheMethodPrefix` | sqlite |  |
 
 ## §25.1 Query Count Guarantee
-<!-- prd: 25.1 sha256: 8767d2332a3a8270 -->
+<!-- prd: 25.1 sha256: 30bc2a28df8813d0 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|

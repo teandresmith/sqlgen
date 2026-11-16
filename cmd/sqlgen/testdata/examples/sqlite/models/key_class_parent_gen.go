@@ -468,8 +468,21 @@ func (c *keyClassParentClient) loadRelationships(ctx context.Context, conn datab
 				key := [1]string{(*r.ParentID)}
 				byKey[key] = append(byKey[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the columns' comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[[1]string]struct{}, len(byKey))
 			for _, parent := range keyClassParentKeyed {
-				parent.KeyClassChildren = byKey[[1]string{fmt.Sprint(parent.ID)}]
+				key := [1]string{fmt.Sprint(parent.ID)}
+				rs, ok := byKey[key]
+				parent.KeyClassChildren = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byKey) {
+				return fmt.Errorf("load key_class_parent key_class_children: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byKey)-len(matched), len(byKey))
 			}
 			return nil
 		})
@@ -539,8 +552,21 @@ func (c *keyClassParentClient) loadRelationships(ctx context.Context, conn datab
 				key := [1]string{fmt.Sprint((*r.ParentID))}
 				byKey[key] = append(byKey[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the columns' comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[[1]string]struct{}, len(byKey))
 			for _, parent := range keyClassParentKeyed {
-				parent.KeyClassRealChildren = byKey[[1]string{fmt.Sprint(float64(parent.ID))}]
+				key := [1]string{fmt.Sprint(float64(parent.ID))}
+				rs, ok := byKey[key]
+				parent.KeyClassRealChildren = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byKey) {
+				return fmt.Errorf("load key_class_parent key_class_real_children: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byKey)-len(matched), len(byKey))
 			}
 			return nil
 		})

@@ -494,8 +494,21 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
 				key := fmt.Sprint(r.ProductID)
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range products {
-				products[i].OrderItems = byFK[fmt.Sprint(products[i].ID)]
+				key := fmt.Sprint(products[i].ID)
+				rs, ok := byFK[key]
+				products[i].OrderItems = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load product order_items: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})
@@ -564,8 +577,21 @@ func (c *productClient) loadRelationships(ctx context.Context, conn database.Que
 				key := fmt.Sprint(r.ProductID)
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range products {
-				products[i].ProductTagLabels = byFK[fmt.Sprint(products[i].ID)]
+				key := fmt.Sprint(products[i].ID)
+				rs, ok := byFK[key]
+				products[i].ProductTagLabels = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load product product_tag_labels: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})

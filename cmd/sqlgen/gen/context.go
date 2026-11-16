@@ -323,8 +323,9 @@ type RelationshipContext struct {
 	// key into the target. Empty when KeyedLoad is false.
 	LoadKey          []KeyMemberContext
 	LoadReferenceKey []KeyMemberContext
-	// JunctionColumns are the junction columns an M2M load scans, each once:
-	// a tenant junction's two keys share the tenant column.
+	// JunctionColumns are the junction columns of an M2M edge's two keys,
+	// each once: a tenant junction's two keys share the tenant column. The
+	// keyed loader scans the LoadKey columns only.
 	JunctionColumns []JunctionColumnContext
 	// ParentKey is the column on this table that the edge's key references:
 	// the parent side of an O2M, has-one or M2M edge, which the loaders
@@ -419,8 +420,8 @@ type RelationshipContext struct {
 	// loader converts each parent key to the type the FK's comparator takes.
 	FKEnumGoType string
 	// JunctionReferenceGoType is the resolved Go type of the junction's
-	// reference FK column (M2M only). The loader scans the junction into
-	// FKColumnGoType and this type, so each key keeps its own type.
+	// reference FK column (M2M only). The loader does not read it: the
+	// junction read takes the target key from the joined target.
 	JunctionReferenceGoType string
 	// TargetPKFieldName is the Go field name of the target column the M2M
 	// junction's reference key references (e.g. "ID"), the target's PK unless

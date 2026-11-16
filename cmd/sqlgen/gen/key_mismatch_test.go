@@ -213,7 +213,9 @@ CREATE TABLE ints (id BIGINT PRIMARY KEY, float_id INT REFERENCES floats (id));`
 CREATE TABLE others (id BIGINT PRIMARY KEY);
 CREATE TABLE links (other_id BIGINT NOT NULL REFERENCES others (id), float_id INT NOT NULL REFERENCES floats (id), PRIMARY KEY (other_id, float_id));`,
 			parent: "others",
-			keys:   []string{"fmt.Sprint(float64(key1))"},
+			// The target key is read off the joined target, so both map
+			// sides stringify the float as it is stored.
+			keys: []string{"[1]string{fmt.Sprint(target.ID)}", "parentsByTarget[[1]string{fmt.Sprint(t.ID)}]"},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

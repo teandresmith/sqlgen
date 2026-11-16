@@ -532,8 +532,21 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				key := fmt.Sprint(r.AccountID)
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range accounts {
-				accounts[i].Projects = byFK[fmt.Sprint(accounts[i].ID)]
+				key := fmt.Sprint(accounts[i].ID)
+				rs, ok := byFK[key]
+				accounts[i].Projects = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load account projects: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})
@@ -605,8 +618,21 @@ func (c *accountClient) loadRelationships(ctx context.Context, conn database.Que
 				key := fmt.Sprint((*r.AssigneeID))
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range accounts {
-				accounts[i].Tasks = byFK[fmt.Sprint(accounts[i].ID)]
+				key := fmt.Sprint(accounts[i].ID)
+				rs, ok := byFK[key]
+				accounts[i].Tasks = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load account tasks: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})
@@ -3203,8 +3229,21 @@ func (c *projectClient) loadRelationships(ctx context.Context, conn database.Que
 				key := fmt.Sprint(r.ProjectID)
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range projects {
-				projects[i].Tasks = byFK[fmt.Sprint(projects[i].ID)]
+				key := fmt.Sprint(projects[i].ID)
+				rs, ok := byFK[key]
+				projects[i].Tasks = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load project tasks: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})
@@ -7772,8 +7811,21 @@ func (c *taskClient) loadRelationships(ctx context.Context, conn database.Querie
 				key := fmt.Sprint(r.TaskID)
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range tasks {
-				tasks[i].TaskLabels = byFK[fmt.Sprint(tasks[i].ID)]
+				key := fmt.Sprint(tasks[i].ID)
+				rs, ok := byFK[key]
+				tasks[i].TaskLabels = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load task task_labels: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})

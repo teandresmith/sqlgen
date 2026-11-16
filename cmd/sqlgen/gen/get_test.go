@@ -610,9 +610,13 @@ func TestGetTemplate_m2mRelationshipLoading(t *testing.T) {
 
 	wantPatterns := []string{
 		"if fo.Tags != nil {",
-		`sql.BuildSelect(c.dialect, sql.Table{Schema: "public", Name: "product_tags"}`,
-		`"product_id", "tag_id"`,
+		// The junction read joins the target, so the target key comes back
+		// in the target's own spelling.
+		`sql.BuildSelectJoin(c.dialect, sql.Table{Schema: "public", Name: "product_tags"}`,
+		`On:      "t." + c.dialect.QuoteIdentifier("id") + " = j." + c.dialect.QuoteIdentifier("tag_id"),`,
+		`sql.Where("t." + c.dialect.QuoteIdentifier("id")).IsNotNull(),`,
 		"for start := 0; start < len(productIDs); start += 32767 {",
+		`sql.Where("j." + c.dialect.QuoteIdentifier("product_id")).In(toAnySlice(chunk)...)`,
 		`sql.Where(c.dialect.QuoteIdentifier("product_id")).In(toAnySlice(chunk)...)`,
 		"parentToTargetIDs := make(map[string][]string)",
 		// The target fetch matches the chunk's junction rows, so it binds
@@ -672,7 +676,9 @@ func TestGetTemplate_m2mTargetFilterUsesTargetPKField(t *testing.T) {
 
 // TestGetTemplate_m2mJunctionScansTypedKeys pins the M2M junction scan to each
 // key's own Go type, so binary and network keys scan on pgx and match on both
-// map sides without parsing text.
+// map sides without parsing text. The target key is read off the joined
+// target into the target's field and stringified as step 3 reads it, so the
+// junction reference column's own type, nullable or not, never reaches a map.
 func TestGetTemplate_m2mJunctionScansTypedKeys(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -683,30 +689,31 @@ func TestGetTemplate_m2mJunctionScansTypedKeys(t *testing.T) {
 		{
 			name: "binary key", fkGoType: "[]byte", refType: "[]byte",
 			want: []string{
-				"var refKey []byte",
-				"parentID, targetID := localKey.String(), fmt.Sprint(refKey)",
+				"ptrs[localIdx], ptrs[refIdx] = &localKey, &target.ID",
+				"parentID, targetID := localKey.String(), fmt.Sprint(target.ID)",
 			},
 		},
 		{
 			name: "network key", fkGoType: "net.IP", refType: "net.IP",
 			want: []string{
-				"var refKey net.IP",
-				"parentID, targetID := localKey.String(), refKey.String()",
+				"ptrs[localIdx], ptrs[refIdx] = &localKey, &target.ID",
+				"parentID, targetID := localKey.String(), target.ID.String()",
 			},
 		},
 		{
 			name: "integer key", fkGoType: "int64", refType: "int64",
 			want: []string{
-				"var refKey int64",
-				"parentID, targetID := localKey.String(), fmt.Sprint(refKey)",
+				"ptrs[localIdx], ptrs[refIdx] = &localKey, &target.ID",
+				"parentID, targetID := localKey.String(), fmt.Sprint(target.ID)",
 			},
 		},
 		{
+			// A NULL reference joins no target, and the read keeps joined
+			// rows only.
 			name: "nullable junction column", fkGoType: "int64", refType: "sql.NullInt64",
 			want: []string{
-				"var refKey sql.NullInt64",
-				"if !(refKey.Valid) {\n\t\t\t\t\t\t\tcontinue",
-				"parentID, targetID := localKey.String(), fmt.Sprint(refKey.Int64)",
+				`sql.Where("t." + c.dialect.QuoteIdentifier("id")).IsNotNull(),`,
+				"parentID, targetID := localKey.String(), fmt.Sprint(target.ID)",
 			},
 		},
 	}

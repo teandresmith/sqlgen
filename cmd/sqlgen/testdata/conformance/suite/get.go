@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -427,6 +428,78 @@ func get(t *testing.T, h *Harness) {
 // getMany: GetMany returns the rows a filter matches, sorted and paged.
 func getMany(t *testing.T, h *Harness) {
 	ctx := context.Background()
+
+	t.Run("a loaded key that differs from its parent's only in case is an error, and from its target's loads", func(t *testing.T) {
+		h.Require(t, CapCaseInsensitiveText)
+		h.Reset(t)
+		const want = "match no parent key byte for byte"
+		// loadsOne asserts that the M2M load of one van returns its one
+		// target in the parent read, junction read and target read.
+		loadsOne := func(t *testing.T, edge string, fo *models.VanFieldOptions, id int64, got func(*models.Van) int) {
+			t.Helper()
+			h.Querier.ResetCount()
+			vans, err := h.Client.Vans().GetMany(ctx, &models.GetVansInput{
+				Filter: &models.VanFilter{ID: &comparator.Number[int64]{Eq: &id}},
+			}, func(o *models.CallOptions[models.VanFieldOptions]) { o.FieldOptions = fo })
+			if err != nil || len(vans) != 1 || got(vans[0]) != 1 {
+				n := -1
+				if len(vans) == 1 {
+					n = got(vans[0])
+				}
+				t.Errorf("GetMany vans with %s = %d vans, %d %s, %v; want 1 van with 1", edge, len(vans), n, edge, err)
+			}
+			if stmts := h.Querier.Statements(); len(stmts) != 3 {
+				t.Errorf("GetMany vans with %s sent %d statements %q, want 3", edge, len(stmts), stmts)
+			}
+		}
+		depot := createDepot(t, h, "EU", "north")
+		van, err := h.Client.Vans().Create(ctx, &models.CreateVanInput{Region: "eu", Plate: "held", DepotID: omittable.Set(&depot.ID)})
+		if err != nil {
+			t.Fatalf("Create van the foreign key matches case-insensitively: %v", err)
+		}
+		_, err = h.Client.Depots().GetMany(ctx, nil, func(o *models.CallOptions[models.DepotFieldOptions]) {
+			o.FieldOptions = &models.DepotFieldOptions{ID: true, Vans: &models.VanRelationshipOptions{}}
+		})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("GetMany depots with Vans error = %v, want one containing %q", err, want)
+		}
+
+		permit, err := h.Client.Permits().Create(ctx, &models.CreatePermitInput{Code: "ABC"})
+		if err != nil {
+			t.Fatalf("Create permit: %v", err)
+		}
+		if _, err := h.Client.VanPermits().Create(ctx, &models.CreateVanPermitInput{VanID: van.ID, PermitCode: "abc"}); err != nil {
+			t.Fatalf("Create van permit the foreign key matches case-insensitively: %v", err)
+		}
+		_, err = h.Client.Permits().GetMany(ctx, &models.GetPermitsInput{
+			Filter: &models.PermitFilter{ID: &comparator.Number[int64]{Eq: &permit.ID}},
+		}, func(o *models.CallOptions[models.PermitFieldOptions]) {
+			o.FieldOptions = &models.PermitFieldOptions{ID: true, Vans: &models.VanRelationshipOptions{}}
+		})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("GetMany permits with Vans error = %v, want one containing %q", err, want)
+		}
+		// The junction read joins the permit, so the target key is the
+		// permit's own spelling.
+		loadsOne(t, "Permits", &models.VanFieldOptions{ID: true, Permits: &models.PermitRelationshipOptions{}}, van.ID,
+			func(v *models.Van) int { return len(v.Permits) })
+
+		tool := createTool(t, h, "eu", "tool")
+		linked := createVan(t, h, "EU", "linked")
+		if _, err := h.Client.VanTools().Create(ctx, &models.CreateVanToolInput{Region: "EU", VanID: linked.ID, ToolID: tool.ID}); err != nil {
+			t.Fatalf("Create van tool the foreign keys match case-insensitively: %v", err)
+		}
+		_, err = h.Client.Tools().GetMany(ctx, nil, func(o *models.CallOptions[models.ToolFieldOptions]) {
+			o.FieldOptions = &models.ToolFieldOptions{ID: true, Vans: &models.VanRelationshipOptions{}}
+		})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("GetMany tools with Vans error = %v, want one containing %q", err, want)
+		}
+		// The junction shares region between its two keys: EU matches the
+		// van, and the join reads the tool's eu.
+		loadsOne(t, "Tools", &models.VanFieldOptions{ID: true, Tools: &models.ToolRelationshipOptions{}}, linked.ID,
+			func(v *models.Van) int { return len(v.Tools) })
+	})
 
 	t.Run("returns exactly the rows the filter matches", func(t *testing.T) {
 		h.Reset(t)

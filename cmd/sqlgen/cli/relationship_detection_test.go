@@ -116,7 +116,8 @@ func TestGenerate_CompositeKeyEdgeIsGenerated(t *testing.T) {
 			`fmt.Sprintf("t.%s = r.%s", d.QuoteIdentifier("id"), d.QuoteIdentifier("report_id"))`,
 		}},
 		{"tenant junction m2m", []string{
-			`Columns:    []string{"workspace_id", "task_id", "tag_id"},`,
+			`Columns: []string{"workspace_id", "task_id"},`,
+			`" AND t." + c.dialect.QuoteIdentifier("id") + " = j." + c.dialect.QuoteIdentifier("tag_id"),`,
 			`sql.TupleInSubquery(c.dialect, []string{"workspace_id", "id"}, sql.Subquery{`,
 		}},
 	}
@@ -176,7 +177,7 @@ CREATE TABLE badges (id integer PRIMARY KEY, owner_email text UNIQUE REFERENCES 
 			wants: []string{
 				"userIDs[idx] = u.Email",
 				"Email: &comparator.NullableID{ID: comparator.ID{In: userIDs}}",
-				"byFK[users[i].Email]",
+				"key := users[i].Email",
 				`columns = unionColumns(columns, "email")`,
 				`return sql.Exists("email", sql.Subquery{`,
 				`On:    fmt.Sprintf("u.%s = b.%s", d.QuoteIdentifier("email"), d.QuoteIdentifier("owner_email")),`,

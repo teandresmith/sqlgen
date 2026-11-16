@@ -468,8 +468,21 @@ func (c *timeKeyedClient) loadRelationships(ctx context.Context, conn database.Q
 				key := r.KeyedAt.Time.String()
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range timeKeyeds {
-				timeKeyeds[i].TimeKeyedNotes = byFK[timeKeyeds[i].At.String()]
+				key := timeKeyeds[i].At.String()
+				rs, ok := byFK[key]
+				timeKeyeds[i].TimeKeyedNotes = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load time_keyed time_keyed_notes: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})

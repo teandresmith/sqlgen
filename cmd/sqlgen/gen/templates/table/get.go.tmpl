@@ -532,8 +532,21 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 				key := {{ fkLoadKey .FKColumnGoType $fkVar }}
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range {{ $resultVar }} {
-				{{ $resultVar }}[i].{{ .FieldName }} = byFK[{{ fkToString .ParentKey (printf "%s[i].%s" $resultVar .ParentKey.FieldName) }}]
+				key := {{ fkToString .ParentKey (printf "%s[i].%s" $resultVar .ParentKey.FieldName) }}
+				rs, ok := byFK[key]
+				{{ $resultVar }}[i].{{ .FieldName }} = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load {{ $.TableName | toSingular }} {{ .TargetTable }}: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})
@@ -573,14 +586,26 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 			for start := 0; start < len({{ $parentIDsVar }}); start += {{ loadChunkSize 1 }} {
 				chunk := {{ $parentIDsVar }}[start:min(start+{{ loadChunkSize 1 }}, len({{ $parentIDsVar }}))]
 
-				// Step 1: Query junction table to get mapping. Each junction
-				// column scans into its own Go type, so both sides of the maps
-				// stringify keys the same way.
+				// Step 1: Query the junction joined to the target, so step 3 maps
+				// targets on the key as the target stores it, not the junction's
+				// spelling (a case-insensitive collation, CHAR padding). Key column
+				// only; step 2 decides which targets load.
 				parentToTargetIDs := make(map[string][]string)
 				if err := func() error {
-					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: {{ printf "%q" .JunctionSchema }}, Name: {{ printf "%q" .JunctionTable }}}, sql.SelectOptions{
-						Columns:    []string{ {{- printf "%q" .JunctionLocalFK }}, {{ printf "%q" .JunctionReferenceFK -}} },
-						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier({{ printf "%q" .JunctionLocalFK }})).In(toAnySlice(chunk)...)},
+					junctionQuery, junctionArgs := sql.BuildSelectJoin(c.dialect, sql.Table{Schema: {{ printf "%q" .JunctionSchema }}, Name: {{ printf "%q" .JunctionTable }}}, []sql.JoinClause{ {
+						Table:   sql.Table{Schema: {{ printf "%q" .TargetSchema }}, Name: {{ printf "%q" .TargetTable }}},
+						Alias:   "t",
+						On:      "t." + c.dialect.QuoteIdentifier({{ printf "%q" .TargetPKColumn }}) + " = j." + c.dialect.QuoteIdentifier({{ printf "%q" .JunctionReferenceFK }}),
+						Columns: []string{ {{- printf "%q" .TargetPKColumn -}} },
+					} }, sql.SelectOptions{
+						Alias:   "j",
+						Columns: []string{ {{- printf "%q" .JunctionLocalFK -}} },
+						Conditions: []sql.Condition{
+							sql.Where("j." + c.dialect.QuoteIdentifier({{ printf "%q" .JunctionLocalFK }})).In(toAnySlice(chunk)...),
+							// The builder's join is a LEFT JOIN: a junction row whose
+							// target is gone maps nothing.
+							sql.Where("t." + c.dialect.QuoteIdentifier({{ printf "%q" .TargetPKColumn }})).IsNotNull(),
+						},
 					})
 
 					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
@@ -589,7 +614,8 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 					}
 					defer junctionRows.Close()
 
-					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					// Discover column positions from result (each column is
+					// labelled with its table's alias)
 					junctionCols, err := junctionRows.Columns()
 					if err != nil {
 						return fmt.Errorf("load {{ $.TableName | toSingular }} {{ .TargetTable }} junction columns: %w", err)
@@ -597,18 +623,18 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 					localIdx, refIdx := 0, 1
 					for i, col := range junctionCols {
 						switch col {
-						case {{ printf "%q" .JunctionLocalFK }}:
+						case {{ printf "%q" (printf "j.%s" .JunctionLocalFK) }}:
 							localIdx = i
-						case {{ printf "%q" .JunctionReferenceFK }}:
+						case {{ printf "%q" (printf "t.%s" .TargetPKColumn) }}:
 							refIdx = i
 						}
 					}
 
 					for junctionRows.Next() {
 						var localKey {{ .FKColumnGoType }}
-						var refKey {{ .JunctionReferenceGoType }}
+						var target {{ .TargetStructName }}
 						ptrs := make([]any, len(junctionCols))
-						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &target.{{ .TargetPKFieldName }}
 						if err := junctionRows.Scan(ptrs...); err != nil {
 							return fmt.Errorf("scan {{ $.TableName | toSingular }} {{ .TargetTable }} junction: %w", err)
 						}
@@ -617,12 +643,7 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 							continue
 						}
 {{- end }}
-{{- with fkLoadGuard .JunctionReferenceGoType "refKey" }}
-						if !({{ . }}) {
-							continue
-						}
-{{- end }}
-						parentID, targetID := {{ fkLoadKey .FKColumnGoType "localKey" }}, {{ fkLoadKey .JunctionReferenceGoType "refKey" }}
+						parentID, targetID := {{ fkLoadKey .FKColumnGoType "localKey" }}, {{ fkToStringByGoType .FKGoType (printf "target.%s" .TargetPKFieldName) }}
 						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
 					}
 					if err := junctionRows.Err(); err != nil {
@@ -705,11 +726,27 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 				// the relationship's Sorts — the caller's, or the static `sort:` —
 				// order each parent's slice. Walking the
 				// junction rows instead would keep junction order and drop the sort.
+				//
+				// The junction read matched its rows in the database, so a junction
+				// key no parent holds byte for byte is one the column's comparison
+				// calls equal: Go cannot apply that collation, and the row is not
+				// dropped silently. A target no junction row maps is skipped: the
+				// target read is a second statement, so a link written between the
+				// two reaches it alone.
 				parentsByTarget := make(map[string][]int, len({{ $relVar }}))
+				matched := make(map[string]struct{}, len(parentToTargetIDs))
 				for i := start; i < start+len(chunk); i++ {
-					for _, tID := range parentToTargetIDs[{{ fkToString .ParentKey (printf "%s[i].%s" $resultVar .ParentKey.FieldName) }}] {
+					key := {{ fkToString .ParentKey (printf "%s[i].%s" $resultVar .ParentKey.FieldName) }}
+					tIDs, ok := parentToTargetIDs[key]
+					if ok {
+						matched[key] = struct{}{}
+					}
+					for _, tID := range tIDs {
 						parentsByTarget[tID] = append(parentsByTarget[tID], i)
 					}
+				}
+				if len(matched) != len(parentToTargetIDs) {
+					return fmt.Errorf("load {{ $.TableName | toSingular }} {{ .TargetTable }} junction: %d of %d junction keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(parentToTargetIDs)-len(matched), len(parentToTargetIDs))
 				}
 				for _, t := range {{ $relVar }} {
 					for _, i := range parentsByTarget[{{ fkToStringByGoType .FKGoType (printf "t.%s" .TargetPKFieldName) }}] {
@@ -823,8 +860,21 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 				key := {{ keyTuple $rel.LoadKey "holder" "r" }}
 				byKey[key] = append(byKey[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the columns' comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[[{{ len $rel.LoadKey }}]string]struct{}, len(byKey))
 			for _, parent := range {{ .KeyedVar }} {
-				parent.{{ $rel.FieldName }} = byKey[{{ keyTuple $rel.LoadKey "referenced" "parent" }}]
+				key := {{ keyTuple $rel.LoadKey "referenced" "parent" }}
+				rs, ok := byKey[key]
+				parent.{{ $rel.FieldName }} = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byKey) {
+				return fmt.Errorf("load {{ .Table.TableName | toSingular }} {{ $rel.TargetTable }}: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byKey)-len(matched), len(byKey))
 			}
 			return nil
 		})
@@ -844,14 +894,26 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 			for start := 0; start < len({{ .KeysVar }}); start += {{ loadChunkSize $n }} {
 				chunk := {{ .KeysVar }}[start:min(start+{{ loadChunkSize $n }}, len({{ .KeysVar }}))]
 
-				// Step 1: Query junction table to get mapping. Each junction
-				// column scans into its own Go type, so both sides of the maps
-				// stringify keys the same way.
+				// Step 1: Query the junction joined to the target, so step 3 maps
+				// targets on the key as the target stores it, not the junction's
+				// spelling (a case-insensitive collation, CHAR padding). Key columns
+				// only; step 2 decides which targets load.
 				parentToTargetIDs := make(map[[{{ $n }}]string][][{{ $m }}]string)
 				if err := func() error {
-					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: {{ printf "%q" $rel.JunctionSchema }}, Name: {{ printf "%q" $rel.JunctionTable }}}, sql.SelectOptions{
-						Columns:    []string{ {{- range $i, $col := $rel.JunctionColumns }}{{ if $i }}, {{ end }}{{ printf "%q" $col.Name }}{{ end -}} },
-						Conditions: []sql.Condition{sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range $i, $k := $rel.LoadKey }}{{ if $i }}, {{ end }}{{ printf "%q" $k.Column }}{{ end -}} }, chunk)},
+					junctionQuery, junctionArgs := sql.BuildSelectJoin(c.dialect, sql.Table{Schema: {{ printf "%q" $rel.JunctionSchema }}, Name: {{ printf "%q" $rel.JunctionTable }}}, []sql.JoinClause{ {
+						Table: sql.Table{Schema: {{ printf "%q" $rel.TargetSchema }}, Name: {{ printf "%q" $rel.TargetTable }}},
+						Alias: "t",
+						On: {{ range $i, $k := $rel.LoadReferenceKey }}{{ if $i }} + " AND t." + {{ else }}"t." + {{ end }}c.dialect.QuoteIdentifier({{ printf "%q" $k.Referenced.Name }}) + " = j." + c.dialect.QuoteIdentifier({{ printf "%q" $k.Column }}){{ end }},
+						Columns: []string{ {{- range $i, $k := $rel.LoadReferenceKey }}{{ if $i }}, {{ end }}{{ printf "%q" $k.Referenced.Name }}{{ end -}} },
+					} }, sql.SelectOptions{
+						Alias:   "j",
+						Columns: []string{ {{- range $i, $k := $rel.LoadKey }}{{ if $i }}, {{ end }}{{ printf "%q" $k.Column }}{{ end -}} },
+						// The builder's join is a LEFT JOIN: a junction row whose
+						// target is gone, or whose reference key holds a NULL, maps
+						// nothing.
+						Conditions: append(sql.PrefixConditions("j", []sql.Condition{
+							sql.BuildCompositePKBatchCondition(c.dialect, []string{ {{- range $i, $k := $rel.LoadKey }}{{ if $i }}, {{ end }}{{ printf "%q" $k.Column }}{{ end -}} }, chunk),
+						}), sql.Where("t."+c.dialect.QuoteIdentifier({{ printf "%q" (index $rel.LoadReferenceKey 0).Referenced.Name }})).IsNotNull()),
 					})
 
 					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
@@ -860,22 +922,28 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 					}
 					defer junctionRows.Close()
 
-					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					// Discover column positions from result (each column is
+					// labelled with its table's alias)
 					junctionCols, err := junctionRows.Columns()
 					if err != nil {
 						return fmt.Errorf("load {{ .Table.TableName | toSingular }} {{ $rel.TargetTable }} junction columns: %w", err)
 					}
 
 					for junctionRows.Next() {
-{{- range $rel.JunctionColumns }}
+{{- range $rel.LoadKey }}
 						var {{ .Var }} {{ .GoType }}
 {{- end }}
+						var target {{ $rel.TargetStructName }}
 						ptrs := make([]any, len(junctionCols))
 						for i, col := range junctionCols {
 							switch col {
-{{- range $rel.JunctionColumns }}
-							case {{ printf "%q" .Name }}:
+{{- range $rel.LoadKey }}
+							case {{ printf "%q" (printf "j.%s" .Column) }}:
 								ptrs[i] = &{{ .Var }}
+{{- end }}
+{{- range $rel.LoadReferenceKey }}
+							case {{ printf "%q" (printf "t.%s" .Referenced.Name) }}:
+								ptrs[i] = &target.{{ .Referenced.FieldName }}
 {{- end }}
 							}
 						}
@@ -887,12 +955,7 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 							continue
 						}
 {{- end }}
-{{- with keyGuard $rel.LoadReferenceKey "junction" "" }}
-						if !({{ . }}) {
-							continue
-						}
-{{- end }}
-						parentID, targetID := {{ keyTuple $rel.LoadKey "junction" "" }}, {{ keyTuple $rel.LoadReferenceKey "junction" "" }}
+						parentID, targetID := {{ keyTuple $rel.LoadKey "junction" "" }}, {{ keyTuple $rel.LoadReferenceKey "referenced" "target" }}
 						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
 					}
 					if err := junctionRows.Err(); err != nil {
@@ -959,12 +1022,28 @@ func (c *{{ .StructName | toCamelCase }}Client) loadRelationships(ctx context.Co
 				// Step 3: Map back to this chunk's parents via junction mapping.
 				// The targets are walked in the order the fetch returned them, so
 				// the relationship's Sorts order each parent's slice.
+				//
+				// The junction read matched its rows in the database, so a junction
+				// key no parent holds byte for byte is one the columns' comparison
+				// calls equal: Go cannot apply that collation, and the row is not
+				// dropped silently. A target no junction row maps is skipped: the
+				// target read is a second statement, so a link written between the
+				// two reaches it alone.
 				parentsByTarget := make(map[[{{ $m }}]string][]int, len({{ .RelVar }}))
+				matched := make(map[[{{ $n }}]string]struct{}, len(parentToTargetIDs))
 				for i := start; i < start+len(chunk); i++ {
 					parent := {{ .KeyedVar }}[i]
-					for _, tID := range parentToTargetIDs[{{ keyTuple $rel.LoadKey "referenced" "parent" }}] {
+					key := {{ keyTuple $rel.LoadKey "referenced" "parent" }}
+					tIDs, ok := parentToTargetIDs[key]
+					if ok {
+						matched[key] = struct{}{}
+					}
+					for _, tID := range tIDs {
 						parentsByTarget[tID] = append(parentsByTarget[tID], i)
 					}
+				}
+				if len(matched) != len(parentToTargetIDs) {
+					return fmt.Errorf("load {{ .Table.TableName | toSingular }} {{ $rel.TargetTable }} junction: %d of %d junction keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(parentToTargetIDs)-len(matched), len(parentToTargetIDs))
 				}
 				for _, t := range {{ .RelVar }} {
 					for _, i := range parentsByTarget[{{ keyTuple $rel.LoadReferenceKey "referenced" "t" }}] {

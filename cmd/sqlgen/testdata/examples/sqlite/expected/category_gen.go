@@ -475,8 +475,21 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 				key := fmt.Sprint(r.CategoryID)
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range categories {
-				categories[i].Products = byFK[fmt.Sprint(categories[i].ID)]
+				key := fmt.Sprint(categories[i].ID)
+				rs, ok := byFK[key]
+				categories[i].Products = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load category products: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})
@@ -501,14 +514,26 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 			for start := 0; start < len(categoryIDs); start += 16383 {
 				chunk := categoryIDs[start:min(start+16383, len(categoryIDs))]
 
-				// Step 1: Query junction table to get mapping. Each junction
-				// column scans into its own Go type, so both sides of the maps
-				// stringify keys the same way.
+				// Step 1: Query the junction joined to the target, so step 3 maps
+				// targets on the key as the target stores it, not the junction's
+				// spelling (a case-insensitive collation, CHAR padding). Key column
+				// only; step 2 decides which targets load.
 				parentToTargetIDs := make(map[string][]string)
 				if err := func() error {
-					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "user_categories"}, sql.SelectOptions{
-						Columns:    []string{"category_id", "user_id"},
-						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("category_id")).In(toAnySlice(chunk)...)},
+					junctionQuery, junctionArgs := sql.BuildSelectJoin(c.dialect, sql.Table{Schema: "", Name: "user_categories"}, []sql.JoinClause{{
+						Table:   sql.Table{Schema: "", Name: "users"},
+						Alias:   "t",
+						On:      "t." + c.dialect.QuoteIdentifier("id") + " = j." + c.dialect.QuoteIdentifier("user_id"),
+						Columns: []string{"id"},
+					}}, sql.SelectOptions{
+						Alias:   "j",
+						Columns: []string{"category_id"},
+						Conditions: []sql.Condition{
+							sql.Where("j." + c.dialect.QuoteIdentifier("category_id")).In(toAnySlice(chunk)...),
+							// The builder's join is a LEFT JOIN: a junction row whose
+							// target is gone maps nothing.
+							sql.Where("t." + c.dialect.QuoteIdentifier("id")).IsNotNull(),
+						},
 					})
 
 					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
@@ -517,7 +542,8 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 					}
 					defer junctionRows.Close()
 
-					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					// Discover column positions from result (each column is
+					// labelled with its table's alias)
 					junctionCols, err := junctionRows.Columns()
 					if err != nil {
 						return fmt.Errorf("load category users junction columns: %w", err)
@@ -525,22 +551,22 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 					localIdx, refIdx := 0, 1
 					for i, col := range junctionCols {
 						switch col {
-						case "category_id":
+						case "j.category_id":
 							localIdx = i
-						case "user_id":
+						case "t.id":
 							refIdx = i
 						}
 					}
 
 					for junctionRows.Next() {
 						var localKey int64
-						var refKey int64
+						var target User
 						ptrs := make([]any, len(junctionCols))
-						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &target.ID
 						if err := junctionRows.Scan(ptrs...); err != nil {
 							return fmt.Errorf("scan category users junction: %w", err)
 						}
-						parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(refKey)
+						parentID, targetID := fmt.Sprint(localKey), fmt.Sprint(target.ID)
 						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
 					}
 					if err := junctionRows.Err(); err != nil {
@@ -607,11 +633,27 @@ func (c *categoryClient) loadRelationships(ctx context.Context, conn database.Qu
 				// the relationship's Sorts — the caller's, or the static `sort:` —
 				// order each parent's slice. Walking the
 				// junction rows instead would keep junction order and drop the sort.
+				//
+				// The junction read matched its rows in the database, so a junction
+				// key no parent holds byte for byte is one the column's comparison
+				// calls equal: Go cannot apply that collation, and the row is not
+				// dropped silently. A target no junction row maps is skipped: the
+				// target read is a second statement, so a link written between the
+				// two reaches it alone.
 				parentsByTarget := make(map[string][]int, len(relatedUsers))
+				matched := make(map[string]struct{}, len(parentToTargetIDs))
 				for i := start; i < start+len(chunk); i++ {
-					for _, tID := range parentToTargetIDs[fmt.Sprint(categories[i].ID)] {
+					key := fmt.Sprint(categories[i].ID)
+					tIDs, ok := parentToTargetIDs[key]
+					if ok {
+						matched[key] = struct{}{}
+					}
+					for _, tID := range tIDs {
 						parentsByTarget[tID] = append(parentsByTarget[tID], i)
 					}
+				}
+				if len(matched) != len(parentToTargetIDs) {
+					return fmt.Errorf("load category users junction: %d of %d junction keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(parentToTargetIDs)-len(matched), len(parentToTargetIDs))
 				}
 				for _, t := range relatedUsers {
 					for _, i := range parentsByTarget[fmt.Sprint(t.ID)] {

@@ -482,8 +482,21 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 				key := fmt.Sprint(r.BinaryKeyID)
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range binaryKeys {
-				binaryKeys[i].Events = byFK[fmt.Sprint(binaryKeys[i].ID)]
+				key := fmt.Sprint(binaryKeys[i].ID)
+				rs, ok := byFK[key]
+				binaryKeys[i].Events = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load binary_key binary_key_events: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})
@@ -552,8 +565,21 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 				key := fmt.Sprint(r.BinaryKeyID)
 				byFK[key] = append(byFK[key], r)
 			}
+			// The fetch matched every child in the database, so a key no
+			// parent holds byte for byte is one the column's comparison calls
+			// equal: Go cannot apply that collation, and the child is not
+			// dropped silently.
+			matched := make(map[string]struct{}, len(byFK))
 			for i := range binaryKeys {
-				binaryKeys[i].BinaryKeyEvents = byFK[fmt.Sprint(binaryKeys[i].ID)]
+				key := fmt.Sprint(binaryKeys[i].ID)
+				rs, ok := byFK[key]
+				binaryKeys[i].BinaryKeyEvents = rs
+				if ok {
+					matched[key] = struct{}{}
+				}
+			}
+			if len(matched) != len(byFK) {
+				return fmt.Errorf("load binary_key binary_key_events: %d of %d child keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(byFK)-len(matched), len(byFK))
 			}
 			return nil
 		})
@@ -578,14 +604,26 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 			for start := 0; start < len(binaryKeyIDs); start += 16383 {
 				chunk := binaryKeyIDs[start:min(start+16383, len(binaryKeyIDs))]
 
-				// Step 1: Query junction table to get mapping. Each junction
-				// column scans into its own Go type, so both sides of the maps
-				// stringify keys the same way.
+				// Step 1: Query the junction joined to the target, so step 3 maps
+				// targets on the key as the target stores it, not the junction's
+				// spelling (a case-insensitive collation, CHAR padding). Key column
+				// only; step 2 decides which targets load.
 				parentToTargetIDs := make(map[string][]string)
 				if err := func() error {
-					junctionQuery, junctionArgs := sql.BuildSelect(c.dialect, sql.Table{Schema: "", Name: "binary_key_badges"}, sql.SelectOptions{
-						Columns:    []string{"binary_key_id", "badge_code"},
-						Conditions: []sql.Condition{sql.Where(c.dialect.QuoteIdentifier("binary_key_id")).In(toAnySlice(chunk)...)},
+					junctionQuery, junctionArgs := sql.BuildSelectJoin(c.dialect, sql.Table{Schema: "", Name: "binary_key_badges"}, []sql.JoinClause{{
+						Table:   sql.Table{Schema: "", Name: "badges"},
+						Alias:   "t",
+						On:      "t." + c.dialect.QuoteIdentifier("code") + " = j." + c.dialect.QuoteIdentifier("badge_code"),
+						Columns: []string{"code"},
+					}}, sql.SelectOptions{
+						Alias:   "j",
+						Columns: []string{"binary_key_id"},
+						Conditions: []sql.Condition{
+							sql.Where("j." + c.dialect.QuoteIdentifier("binary_key_id")).In(toAnySlice(chunk)...),
+							// The builder's join is a LEFT JOIN: a junction row whose
+							// target is gone maps nothing.
+							sql.Where("t." + c.dialect.QuoteIdentifier("code")).IsNotNull(),
+						},
 					})
 
 					junctionRows, err := conn.Query(ctx, junctionQuery, junctionArgs...)
@@ -594,7 +632,8 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 					}
 					defer junctionRows.Close()
 
-					// Discover column positions from result (BuildSelect sorts columns alphabetically)
+					// Discover column positions from result (each column is
+					// labelled with its table's alias)
 					junctionCols, err := junctionRows.Columns()
 					if err != nil {
 						return fmt.Errorf("load binary_key badges junction columns: %w", err)
@@ -602,22 +641,22 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 					localIdx, refIdx := 0, 1
 					for i, col := range junctionCols {
 						switch col {
-						case "binary_key_id":
+						case "j.binary_key_id":
 							localIdx = i
-						case "badge_code":
+						case "t.code":
 							refIdx = i
 						}
 					}
 
 					for junctionRows.Next() {
 						var localKey []byte
-						var refKey string
+						var target Badge
 						ptrs := make([]any, len(junctionCols))
-						ptrs[localIdx], ptrs[refIdx] = &localKey, &refKey
+						ptrs[localIdx], ptrs[refIdx] = &localKey, &target.Code
 						if err := junctionRows.Scan(ptrs...); err != nil {
 							return fmt.Errorf("scan binary_key badges junction: %w", err)
 						}
-						parentID, targetID := fmt.Sprint(localKey), refKey
+						parentID, targetID := fmt.Sprint(localKey), target.Code
 						parentToTargetIDs[parentID] = append(parentToTargetIDs[parentID], targetID)
 					}
 					if err := junctionRows.Err(); err != nil {
@@ -684,11 +723,27 @@ func (c *binaryKeyClient) loadRelationships(ctx context.Context, conn database.Q
 				// the relationship's Sorts — the caller's, or the static `sort:` —
 				// order each parent's slice. Walking the
 				// junction rows instead would keep junction order and drop the sort.
+				//
+				// The junction read matched its rows in the database, so a junction
+				// key no parent holds byte for byte is one the column's comparison
+				// calls equal: Go cannot apply that collation, and the row is not
+				// dropped silently. A target no junction row maps is skipped: the
+				// target read is a second statement, so a link written between the
+				// two reaches it alone.
 				parentsByTarget := make(map[string][]int, len(relatedBadges))
+				matched := make(map[string]struct{}, len(parentToTargetIDs))
 				for i := start; i < start+len(chunk); i++ {
-					for _, tID := range parentToTargetIDs[fmt.Sprint(binaryKeys[i].ID)] {
+					key := fmt.Sprint(binaryKeys[i].ID)
+					tIDs, ok := parentToTargetIDs[key]
+					if ok {
+						matched[key] = struct{}{}
+					}
+					for _, tID := range tIDs {
 						parentsByTarget[tID] = append(parentsByTarget[tID], i)
 					}
+				}
+				if len(matched) != len(parentToTargetIDs) {
+					return fmt.Errorf("load binary_key badges junction: %d of %d junction keys match no parent key byte for byte, though the database matched them: the column compares spellings Go cannot tell apart as equal (a case-insensitive collation, CHAR padding); store one spelling", len(parentToTargetIDs)-len(matched), len(parentToTargetIDs))
 				}
 				for _, t := range relatedBadges {
 					for _, i := range parentsByTarget[t.Code] {

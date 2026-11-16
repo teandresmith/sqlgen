@@ -134,7 +134,8 @@ func BuildSelect(d Dialect, t Table, opts SelectOptions) (string, []any) {
 	return b.String(), bindArgs(d, args)
 }
 
-// BuildSelectJoin generates a SELECT with LEFT JOIN clauses for O2O relationships.
+// BuildSelectJoin generates a SELECT with LEFT JOIN clauses for O2O relationships
+// and the M2M junction read.
 // Column aliases use the "alias.column" pattern for prefix-based scanning.
 //
 // Placeholder numbering is driven entirely by opts.Conditions in slice order;

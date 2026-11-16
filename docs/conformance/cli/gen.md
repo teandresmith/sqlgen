@@ -208,7 +208,7 @@
 | gen.no-pk.override-full-surface | A `primary_key.columns` override makes the table generate with the full PK-keyed surface, as with a native `PRIMARY KEY` | `unit: cmd/sqlgen/gen: TestBuildTableContexts_NoPK_WithOverride_NotSkipped`; `unit: cmd/sqlgen/gen: TestRelationshipTargets_InferredEdgeIntoSkippedTableDropped/primary key declared` | all | |
 
 ## §9.8 Generated Method Patterns
-<!-- prd: 9.8 sha256: 443c6079c27bb433 -->
+<!-- prd: 9.8 sha256: 2f1f0f0ef6fc1cf2 -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -230,7 +230,7 @@
 | gen.input.json-tag-only | Input structs (`Create*Input`, `Update*Input`) are never scanned from a row: each field carries a `json` tag naming its column and no `db` tag | `unit: cmd/sqlgen/gen: TestInputTemplates_FieldsCarryJSONTagOnly/create input`; `unit: cmd/sqlgen/gen: TestInputTemplates_FieldsCarryJSONTagOnly/update input` | all |  |
 
 ## §9.9 Nested Mutations
-<!-- prd: 9.9 sha256: 2edb2b803d32adfe -->
+<!-- prd: 9.9 sha256: 51be945ba60a4f6b -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
@@ -374,21 +374,21 @@
 | rel.composite-m2m.struct-field | An M2M edge through a junction with composite keys generates a `[]*{Related}` field | `unit: cmd/sqlgen/gen: TestGenerate_CompositeKeyStructFields/m2m` | all | relationships: composite-m2m × struct-field |
 
 ## §13.2 Loading Strategy
-<!-- prd: 13.2 sha256: 5327d767bcdd32e9 -->
+<!-- prd: 13.2 sha256: 43f06deda121127d -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | rel.belongs-to.loader | A belongs-to edge gets an O2O LEFT JOIN loader (`resolveO2OJoins` and the joined scan), joining the parent's FK column to the target's referenced column | `unit: cmd/sqlgen/gen: TestBuildO2OJoinDetails_chainedFKOnTarget`; `unit: cmd/sqlgen/gen: TestRelationshipsTemplate_resolveO2OJoins`; `unit: cmd/sqlgen/gen: TestRelationshipsTemplate_o2oScanFunction`; `unit: cmd/sqlgen/gen: TestGetTemplate_o2oBranching` | all | relationships: belongs-to × loader |
 | rel.has-one.loader | A has-one edge gets an O2O LEFT JOIN loader joining the parent's key to the target's FK column | `unit: cmd/sqlgen/gen: TestBuildO2OJoinDetails_fkOnTargetParentPKName` | all | relationships: has-one × loader |
 | rel.o2m.loader | An O2M edge gets a batched loader in `loadRelationships` that reads the target through its own client's `GetMany`, keyed on the FK | `unit: cmd/sqlgen/gen: TestGetTemplate_o2mRelationshipLoading/pgx`; `unit: cmd/sqlgen/gen: TestGetTemplate_o2mRelationshipLoading/stdlib`; `unit: cmd/sqlgen/gen: TestGetTemplate_o2mRelationshipLoading_nullableNumericFK`; `unit: cmd/sqlgen/gen: TestGetTemplate_o2mRelationshipLoading_nullableStringFK` | all | relationships: o2m × loader |
-| rel.m2m.loader | An M2M edge gets a batched loader that reads the junction's two keys and then the target through its own client | `unit: cmd/sqlgen/gen: TestGetTemplate_m2mRelationshipLoading`; `unit: cmd/sqlgen/gen: TestGetTemplate_m2mJunctionScansTypedKeys` | all | relationships: m2m × loader |
+| rel.m2m.loader | An M2M edge gets a batched loader that reads the junction's local key with the target's key, joined to the target, and then the target through its own client | `unit: cmd/sqlgen/gen: TestGetTemplate_m2mRelationshipLoading`; `unit: cmd/sqlgen/gen: TestGetTemplate_m2mJunctionScansTypedKeys` | all | relationships: m2m × loader |
 | load.o2o-composite-key | A belongs-to O2O join through a composite key ANDs one equality per key pair in its `ON` clause | `unit: cmd/sqlgen/gen: TestBuildO2OJoinDetails_CompositeKeyJoinsEveryPair/belongs-to`; `conformance: Get/an O2O through a composite key joins on every pair` | all | relationships: composite-belongs-to × loader |
 | rel.composite-has-one.loader | A has-one O2O join through a composite key ANDs one equality per key pair, the parent's referenced columns against the target's FK columns | `unit: cmd/sqlgen/gen: TestBuildO2OJoinDetails_CompositeKeyJoinsEveryPair/has-one`; `conformance: Get/a has-one through a composite key joins on every pair` | all | relationships: composite-has-one × loader |
 | load.o2m-composite-key | An O2M load through a composite key filters the child with tuple IN over the parent's referenced columns and gives each parent exactly its children | `unit: cmd/sqlgen/gen: TestGetTemplate_o2mCompositeKeyLoading/pgx`; `unit: cmd/sqlgen/gen: TestGetTemplate_o2mCompositeKeyLoading/stdlib`; `conformance: GetMany/a composite foreign key loads each parent's children on every pair`; `conformance: GetMany/a consumer filter on a composite edge applies with the key condition`; `conformance: GetMany/a soft-delete comparator in a consumer filter narrows a composite edge's default` | all | relationships: composite-o2m × loader |
-| load.m2m-composite-key | An M2M load through composite junction keys reads the junction by tuple and maps each target to its parents on every key column, in the target query's order | `unit: cmd/sqlgen/gen: TestGetTemplate_m2mCompositeKeyLoading`; `unit: cmd/sqlgen/gen: TestGetTemplate_m2mIntoCompositePKTarget`; `conformance: GetMany/an M2M through composite junction keys maps each target to its parents`; `conformance: GetMany/an M2M from a one-column key into a composite key maps each target to its parents` | all | relationships: composite-m2m × loader |
+| load.m2m-composite-key | An M2M load through composite junction keys reads the junction by tuple, joined to the target on every reference column, and maps each target to its parents on every key column, in the target query's order | `unit: cmd/sqlgen/gen: TestGetTemplate_m2mCompositeKeyLoading`; `unit: cmd/sqlgen/gen: TestGetTemplate_m2mIntoCompositePKTarget`; `conformance: GetMany/an M2M through composite junction keys maps each target to its parents`; `conformance: GetMany/an M2M from a one-column key into a composite key maps each target to its parents` | all | relationships: composite-m2m × loader |
 
 ## §13.3 FK Type Conversion
-<!-- prd: 13.3 sha256: 36892391a448a7ad -->
+<!-- prd: 13.3 sha256: d073ac4bce825f0d -->
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
