@@ -36,7 +36,7 @@ GROUP BY p.id, p.title, p.price, c.name;
 | `title` | Title | `*string` | `text` | yes |  |  |  | `comparator.NullableString` |  |
 | `price` | Price | `float64` | `real` |  |  |  |  | `comparator.Number[float64]` |  |
 | `category_name` | CategoryName | `string` | `text` |  |  |  |  | `comparator.String` |  |
-| `order_count` | OrderCount | `int32` | `int32` |  |  |  |  | `comparator.Number[int32]` |  |
+| `order_count` | OrderCount | `int32` | `int64` |  |  |  |  | `comparator.Number[int32]` |  |
 
 ## Query methods
 

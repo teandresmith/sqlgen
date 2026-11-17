@@ -101,7 +101,7 @@
       "name": "document_count",
       "go_field": "DocumentCount",
       "go_type": "int32",
-      "db_type": "int32",
+      "db_type": "int64",
       "nullable": false,
       "pk": false,
       "unique": false,

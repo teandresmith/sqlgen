@@ -29,7 +29,7 @@ GROUP BY oi.product_id;
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `product_id` | ProductID | `uuid.UUID` | `uuid` |  | yes |  |  | `comparator.ID` |  |
 | `line_count` | LineCount | `int64` | `int64` |  |  |  |  | `comparator.Number[int64]` |  |
-| `total_quantity` | TotalQuantity | `int64` | `int64` |  |  |  |  | `comparator.Number[int64]` |  |
+| `total_quantity` | TotalQuantity | `int64` | `positive_int` |  |  |  |  | `comparator.Number[int64]` |  |
 
 ## Query methods
 

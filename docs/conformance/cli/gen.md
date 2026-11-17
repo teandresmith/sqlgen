@@ -482,7 +482,7 @@
 
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
-| gen.view-types.type-annotation | `@type` has the highest priority: the column's Go type is the literal Go type string, ahead of schema matching and aggregate inference | `unit: parser: TestBuildView_TypeResolution` | all | |
+| gen.view-types.type-annotation | `@type` has the highest priority: the column's Go type is the literal Go type string, ahead of schema matching and aggregate inference | `unit: parser: TestBuildView_TypeResolution`; `unit: cmd/sqlgen/cli: TestGenerate_RetypedArrayColumnKeepsSliceFilter/view @type to the enum's own slice type` | all | |
 | gen.view-types.schema-matching | A column that comes from a known table (through a table alias in the SELECT) takes that column's resolved type | `unit: parser: TestBuildView_TypeResolution`; `unit: parser: TestBuildView_SourceTableBySchema` | all | |
 | gen.view-types.count-int64 | `COUNT(...)` → `int64`, never null | `unit: parser: TestBuildView_AggregateInference/COUNT`; `unit: parser: TestBuildView_Nullability/COUNT over the outer side` | all | |
 | gen.view-types.avg-float64 | `AVG(...)` → `*float64`, nullable | `unit: parser: TestBuildView_AggregateInference/AVG` | all | |

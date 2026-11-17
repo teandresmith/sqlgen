@@ -23,9 +23,17 @@
 
 <!-- fixes:open:begin -->
 
+_No open fixes._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
 ### FIX-385
 
-- **Status:** Open
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 7, parser
 - **Surfaced by:** FIX-384 vet (2026-11-16), filed on the user's yes (2026-11-16)
@@ -38,7 +46,7 @@ view file `-- @pk: id` / `-- @type kinds: KindSlice` / `CREATE VIEW vrefs AS SEL
 `Kinds *comparator.Enum[KindSlice]`). Reproduced with and without FIX-384's prototype.
 
 **Root cause.** The parser replaces a `@type` view column's SQL type with the Go literal at two sites:
-`resolveColumnType` (`parser/view.go:351-353`, the `BuildView` path every schema-file run takes) returns `ta.GoType` as
+`resolveColumnType` (`parser/view.go:351-353`, pre-fix lines, the `BuildView` path every schema-file run takes) returns `ta.GoType` as
 the column's `Type`, and the introspected-view merge (`parser/view.go:1013-1014`) sets `col.Type = ta.GoType`. The Go
 type already travels in `GoTypeLiteral`, which `viewColumnGoType` reads first, so the overwritten `Type` only hides the
 array SQL type from `retypedArrayElemGoType` (and puts a Go type in the manifest's `db_type`).
@@ -73,13 +81,8 @@ array SQL type from `retypedArrayElemGoType` (and puts a Go type in the manifest
 **References.**
 - PRD §7.1, §10 (views, `@type`). FIX-384.
 
-**Resolution notes.** _Filled in by `/fix resolve`._
+**Resolution notes.** Resolved 2026-11-17. Both parser sites now keep the column's SQL type for a `@type` view column: `resolveColumnType` (`parser/view.go`) returns the type the column would resolve to without the annotation (aggregate inference, source column, or `any`), still NOT NULL unless `@nullable` names it, and `mergeView` no longer overwrites the introspected `Type`. `GoTypeLiteral`/`GoTypeImport` keep carrying the Go type, so `retypedArrayElemGoType` sees the array SQL type and a retyped view array keeps its element filter. Added the view `@type` case to `TestGenerate_RetypedArrayColumnKeepsSliceFilter`; updated `TestBuildView_TypeResolution`, `TestMergeViewAnnotations_AnnotationWins`, `TestMergeViewAnnotations_MatviewNoPKOverlayKeepsDiscovered` and sqlite `TestViewFileParsedAsView`. The prototype applied cleanly (fresh at HEAD); inline: `resolveColumnType`'s doc comment no longer lists `@type` in the type resolution chain, and `BuildView`'s comment above the `GoTypeLiteral` assignment no longer says a `@type` column's `Type` is a Go literal; `TestBuildView_TypeResolution` now asserts `GoTypeLiteral` too, since rows `gen.view-types.type-annotation` and `parser.viewfile.type-overrides` cite it for the `@type` Go type, which its `Type` column no longer carried (found by `/verify`). `/verify` doc corrections: `introspect.view.overlay-type` rows reworded (the SQL type stays) and cite `TestMergeViewAnnotations_AnnotationWins`; `gen.view-types.type-annotation` and `comparator.slice.retyped-array` (which now names a view's `@type`) cite the new CLI view `@type` case. Golden churn matches the vet line for line (manifest `db_type` only; graphql 4, mysql 3, postgres 4, sqlite 3, mirrored in `models/`), as ruled 2026-11-17. Fail-first: reverting both sites fails the view `@type` case (`views_gen.go has no filter field matching Kinds…NullableSlice[Kind]` under `-short`; `KindSlice does not satisfy comparable` when built) and the three parser `Type` assertions. Gates: `make check` ok, `make update-golden` no churn, `make update-golden-e2e` PASS, `make check-examples` ok.
 
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
 
 ### FIX-384
 

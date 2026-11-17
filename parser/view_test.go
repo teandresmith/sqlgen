@@ -141,14 +141,15 @@ func TestBuildView_TypeResolution(t *testing.T) {
 	want := []struct {
 		name       string
 		typ        string
+		goType     string
 		nullable   bool
 		primaryKey bool
 	}{
-		{"id", "uuid", false, true},
-		{"name", "text", false, false},
-		{"discount", "numeric(10,2)", true, false},
-		{"avg_rating", "float64", false, false}, // @type override, not nullable
-		{"review_count", "int64", false, false}, // COUNT aggregate
+		{"id", "uuid", "", false, true},
+		{"name", "text", "", false, false},
+		{"discount", "numeric(10,2)", "", true, false},
+		{"avg_rating", "*float64", "float64", false, false}, // @type keeps the AVG inference; not nullable
+		{"review_count", "int64", "int64", false, false},    // COUNT aggregate
 	}
 
 	if len(view.Columns) != len(want) {
@@ -161,6 +162,9 @@ func TestBuildView_TypeResolution(t *testing.T) {
 		}
 		if got.Type != w.typ {
 			t.Errorf("column[%d].Type = %q, want %q", i, got.Type, w.typ)
+		}
+		if got.GoTypeLiteral != w.goType {
+			t.Errorf("column[%d].GoTypeLiteral = %q, want %q", i, got.GoTypeLiteral, w.goType)
 		}
 		if got.Nullable != w.nullable {
 			t.Errorf("column[%d].Nullable = %v, want %v", i, got.Nullable, w.nullable)
@@ -597,8 +601,9 @@ func TestMergeViewAnnotations_AnnotationWins(t *testing.T) {
 	if view.Columns[0].Nullable {
 		t.Error("id Nullable = true, want false (PK)")
 	}
-	if view.Columns[1].Type != "decimal.Decimal" {
-		t.Errorf("total Type = %q, want %q", view.Columns[1].Type, "decimal.Decimal")
+	// @type leaves the introspected SQL type in place (PRD §7.1).
+	if view.Columns[1].Type != "numeric" {
+		t.Errorf("total Type = %q, want %q", view.Columns[1].Type, "numeric")
 	}
 	// The generator reads a @type override from GoTypeLiteral, as BuildView sets it.
 	if view.Columns[1].GoTypeLiteral != "decimal.Decimal" || view.Columns[1].GoTypeImport != "github.com/shopspring/decimal" {
@@ -829,8 +834,9 @@ func TestMergeViewAnnotations_MatviewNoPKOverlayKeepsDiscovered(t *testing.T) {
 	if !view.ConcurrentlyRefreshable {
 		t.Error("ConcurrentlyRefreshable = false, want true (discovered capability preserved)")
 	}
-	if view.Columns[1].Type != "decimal.Decimal" {
-		t.Errorf("total Type = %q, want %q", view.Columns[1].Type, "decimal.Decimal")
+	// @type leaves the introspected SQL type in place (PRD §7.1).
+	if view.Columns[1].Type != "numeric" {
+		t.Errorf("total Type = %q, want %q", view.Columns[1].Type, "numeric")
 	}
 }
 

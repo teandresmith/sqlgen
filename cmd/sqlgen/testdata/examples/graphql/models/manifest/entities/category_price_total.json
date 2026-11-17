@@ -43,7 +43,7 @@
       "name": "product_count",
       "go_field": "ProductCount",
       "go_type": "int32",
-      "db_type": "int32",
+      "db_type": "int64",
       "nullable": false,
       "pk": false,
       "unique": false,

@@ -43,7 +43,7 @@ GROUP BY p.category_id;
 | Name | Go field | Go type | DB type | Null | PK | Unique | Default | Comparator | Comment |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `category_id` | CategoryID | `int64` | `bigint` |  | yes |  |  | `comparator.Number[int64]` |  |
-| `product_count` | ProductCount | `int32` | `int32` |  |  |  |  | `comparator.Number[int32]` |  |
+| `product_count` | ProductCount | `int32` | `int64` |  |  |  |  | `comparator.Number[int32]` |  |
 | `total_price` | TotalPrice | `decimal.NullDecimal` | `numeric(12,2)` | yes |  |  |  | `comparator.NullableString` |  |
 | `max_price` | MaxPrice | `decimal.NullDecimal` | `numeric(12,2)` | yes |  |  |  | `comparator.NullableString` |  |
 

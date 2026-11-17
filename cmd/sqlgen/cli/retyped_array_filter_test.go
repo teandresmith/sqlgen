@@ -58,6 +58,12 @@ CREATE TABLE refs (id integer PRIMARY KEY, kinds kind[], nn kind[] NOT NULL);`
 			file:   "views_gen.go", elem: "Kind",
 		},
 		{
+			name:   "view @type to the enum's own slice type",
+			schema: enums,
+			view:   "-- @pk: id\n-- @type kinds: KindSlice\n-- @type nn: KindSlice\n-- @nullable: kinds\nCREATE VIEW vrefs AS SELECT id, kinds, nn FROM refs;",
+			file:   "views_gen.go", elem: "Kind",
+		},
+		{
 			name:   "type_map over an enum element that overrides.types also maps",
 			schema: enums,
 			config: "overrides:\n  types:\n    kind:\n      type: string\ntables:\n  refs:\n    type_map:\n      kinds: KindSlice\n      nn: KindSlice\n",

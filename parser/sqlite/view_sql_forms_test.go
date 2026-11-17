@@ -76,7 +76,7 @@ GROUP BY p.id, p.name, p.price;`
 		{Name: "id", Type: "integer", PK: true},
 		{Name: "name", Type: "text"},
 		{Name: "price", Type: "real", Nullable: true},
-		{Name: "review_count", Type: "int32", GoType: "int32"},
+		{Name: "review_count", Type: "int64", GoType: "int32"},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("view columns mismatch (-want +got):\n%s", diff)

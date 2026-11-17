@@ -301,9 +301,9 @@ func resolveViewColumns(selectCols []ViewSelectColumn, sources *viewSources, ann
 		col := Column{Name: sc.Alias}
 		col.Type, col.Nullable = resolveColumnType(sc, sources, annotations)
 
-		// Mark columns whose Type is already a Go type literal (from @type or
-		// aggregate inference). The code generator uses GoTypeLiteral directly
-		// instead of running the SQL-to-Go resolver.
+		// Set GoTypeLiteral for a @type column and for a column whose Type is
+		// already a Go type (aggregate inference). The code generator uses
+		// GoTypeLiteral directly instead of running the SQL-to-Go resolver.
 		if ta, ok := annotations.TypeOverrides[sc.Alias]; ok {
 			col.GoTypeLiteral = ta.GoType
 			col.GoTypeImport = ta.ImportPath
@@ -344,12 +344,16 @@ func resolveViewColumns(selectCols []ViewSelectColumn, sources *viewSources, ann
 }
 
 // resolveColumnType applies the PRD 16.3 resolution chain for a single column:
-// @type annotation → aggregate inference → schema matching → any fallback.
+// aggregate inference → schema matching → any fallback.
 // A schema-matched column is nullable when its source column is, or when its
 // table is on the outer side of a join.
 func resolveColumnType(sc ViewSelectColumn, sources *viewSources, annotations *ViewAnnotations) (string, bool) {
-	if ta, ok := annotations.TypeOverrides[sc.Alias]; ok {
-		return ta.GoType, false
+	// A @type column keeps its SQL type, which the generator still reads (a
+	// retyped array keeps its element filter); the Go type travels in
+	// GoTypeLiteral. It is NOT NULL unless @nullable names it.
+	if _, ok := annotations.TypeOverrides[sc.Alias]; ok {
+		typ, _ := resolveColumnType(sc, sources, &ViewAnnotations{})
+		return typ, false
 	}
 	if sc.Aggregate != "" {
 		baseType, _ := sources.column(sc)
@@ -1011,7 +1015,7 @@ func mergeView(introspected View, annotations *ViewAnnotations) (View, error) {
 	for i := range result.Columns {
 		col := &result.Columns[i]
 		if ta, ok := annotations.TypeOverrides[col.Name]; ok {
-			col.Type = ta.GoType
+			// col.Type keeps the introspected SQL type, as BuildView keeps it.
 			col.GoTypeLiteral = ta.GoType
 			col.GoTypeImport = ta.ImportPath
 			col.Nullable = false
