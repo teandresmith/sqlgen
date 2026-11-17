@@ -307,6 +307,12 @@ func resolveViewColumns(selectCols []ViewSelectColumn, sources *viewSources, ann
 		if ta, ok := annotations.TypeOverrides[sc.Alias]; ok {
 			col.GoTypeLiteral = ta.GoType
 			col.GoTypeImport = ta.ImportPath
+			// The @type sets the Go type, but Type is still the aggregate's
+			// source SQL type, so record the aggregate for codegen to widen the
+			// SQL type a SUM returns, as it does without the annotation.
+			if typ, _ := sources.column(sc); typ != "" && sc.Aggregate == "SUM" {
+				col.Aggregate = sc.Aggregate
+			}
 		} else if sc.Aggregate != "" {
 			// Most aggregates always return Go types (COUNT→int64, AVG→*float64).
 			// SUM/MIN/MAX/ARRAY_AGG return a SQL type from schema matching when

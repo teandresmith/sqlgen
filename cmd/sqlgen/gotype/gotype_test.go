@@ -1944,6 +1944,35 @@ func TestResolveAggregateSumWidening_Domain(t *testing.T) {
 	}
 }
 
+// TestSumResultSQLType pins the SQL type a view's SUM column reports: the
+// widened base where the dialect widens it, through a domain, and the column's
+// own type (modifiers kept) otherwise, matching what the database reports.
+func TestSumResultSQLType(t *testing.T) {
+	tests := []struct {
+		name    string
+		dialect config.Dialect
+		sqlType string
+		want    string
+	}{
+		{"pg integer", "postgres", "integer", "bigint"},
+		{"pg domain over integer", "postgres", "positive_int", "bigint"},
+		{"pg bigint", "postgres", "bigint", "numeric"},
+		{"pg numeric(10,2) unchanged", "postgres", "numeric(10,2)", "numeric(10,2)"},
+		{"mysql int", "mysql", "int", "decimal"},
+		{"mysql decimal(10,2) unchanged", "mysql", "decimal(10,2)", "decimal(10,2)"},
+		{"sqlite integer unchanged", "sqlite", "integer", "integer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gotype.NewResolver(tt.dialect, true, nil)
+			r.RegisterDomain("", "positive_int", "integer")
+			if got := r.SumResultSQLType(tt.sqlType); got != tt.want {
+				t.Errorf("SumResultSQLType(%q) [%s] = %q, want %q", tt.sqlType, tt.dialect, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestResolveAggregate_NonSumUnchanged confirms only SUM widens: a MIN/MAX
 // routed through ResolveAggregate resolves through the normal chain, and the
 // column type_map still wins over any inference.

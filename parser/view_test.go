@@ -92,6 +92,46 @@ CREATE VIEW ...`
 	}
 }
 
+// A @type over a SUM keeps the aggregate, so codegen reports the SQL type the
+// SUM returns, as it does for an unannotated SUM; other aggregates
+// under @type record none.
+func TestBuildView_TypeAnnotationKeepsSumAggregate(t *testing.T) {
+	tables := []parser.Table{{
+		Name:    "order_items",
+		Columns: []parser.Column{{Name: "id", Type: "bigint"}, {Name: "quantity", Type: "positive_int"}},
+	}}
+	parsed := parser.ViewSQL{
+		Name: "order_totals",
+		Columns: []parser.ViewSelectColumn{
+			{Alias: "line_count", Aggregate: "COUNT", SourceTable: "oi", SourceColumn: "id"},
+			{Alias: "total_quantity", Aggregate: "SUM", SourceTable: "oi", SourceColumn: "quantity"},
+			{Alias: "max_quantity", Aggregate: "MAX", SourceTable: "oi", SourceColumn: "quantity"},
+		},
+		TableAliases: map[string]string{"oi": "order_items"},
+	}
+	annotations := &parser.ViewAnnotations{TypeOverrides: map[string]parser.ViewTypeAnnotation{
+		"line_count":     {GoType: "int32"},
+		"total_quantity": {GoType: "int64"},
+		"max_quantity":   {GoType: "int32"},
+	}}
+	view, err := parser.BuildView(parsed, "CREATE VIEW ...", annotations, &parser.Schema{Tables: tables}, parser.SearchPath{})
+	if err != nil {
+		t.Fatalf("BuildView() error: %v", err)
+	}
+	type got struct{ Name, Type, GoTypeLiteral, Aggregate string }
+	want := []got{
+		{"line_count", "int64", "int32", ""},
+		{"total_quantity", "positive_int", "int64", "SUM"},
+		{"max_quantity", "positive_int", "int32", ""},
+	}
+	for i, w := range want {
+		c := view.Columns[i]
+		if g := (got{c.Name, c.Type, c.GoTypeLiteral, c.Aggregate}); g != w {
+			t.Errorf("column[%d] = %+v, want %+v", i, g, w)
+		}
+	}
+}
+
 func TestBuildView_TypeResolution(t *testing.T) {
 	tables := []parser.Table{
 		{

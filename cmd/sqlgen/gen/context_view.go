@@ -173,13 +173,20 @@ func buildViewColumns(input *GenerateInput, view *parser.View, viewCfg config.Vi
 		if gt.UnmappedSQLType != "" {
 			input.Warnings = append(input.Warnings, unmappedSQLTypeWarning("view column", qualifiedViewOrName(view), col.Name, col.Type, gt))
 		}
+		// A SUM column's SQL type is the type the database returns for it, so
+		// a view described from its SQL files and from the database agree
+		// (PRD §16.2).
+		sqlType := col.Type
+		if col.Aggregate == "SUM" {
+			sqlType = resolver.SumResultSQLType(col.Type)
+		}
 		columns = append(columns, ColumnContext{
 			Name:       col.Name,
 			FieldName:  FieldName(col.Name),
 			GoType:     gt.Name,
 			Import:     gt.Import,
 			ZeroValue:  gt.ZeroValue,
-			SQLType:    col.Type,
+			SQLType:    sqlType,
 			Nullable:   col.Nullable,
 			PrimaryKey: col.PrimaryKey,
 			DBTag:      col.Name,

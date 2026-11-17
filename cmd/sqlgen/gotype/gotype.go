@@ -689,6 +689,17 @@ func (r *Resolver) resolveDomainBase(sqlType string) string {
 	return t
 }
 
+// SumResultSQLType returns the SQL type a SUM over a column of sqlType
+// returns: the widened base type where the dialect widens it (PostgreSQL
+// SUM(integer) → bigint, through any domain), and sqlType itself otherwise.
+func (r *Resolver) SumResultSQLType(sqlType string) string {
+	base := stripModifiers(r.resolveDomainBase(normalizeSQL(sqlType)))
+	if widened := r.widenSumBase(base); widened != base {
+		return widened
+	}
+	return sqlType
+}
+
 // widenSumBase maps a SUM's base SQL type to the type PostgreSQL / MySQL
 // actually return, so the resolved Go type matches the scanned value. Returns
 // the base unchanged when the dialect does not widen it (all non-integer

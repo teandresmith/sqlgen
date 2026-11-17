@@ -9801,7 +9801,7 @@
           "name": "total_quantity",
           "go_field": "TotalQuantity",
           "go_type": "int64",
-          "db_type": "positive_int",
+          "db_type": "bigint",
           "nullable": false,
           "pk": false,
           "unique": false,
