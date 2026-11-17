@@ -1,6 +1,6 @@
 # Relationships Through Composite Foreign Keys
 
-> **Status: ruled, broken down as Phase 32 (2026-10-21; `docs/tracker/phase-32.md`, where N
+> **Status: SYNCED — superseded by PRD §4.6/§4.8/§4.13/§5.3/§8.2/§8.6/§9.9/§13.1/§13.4/§25.1/§29.10/§30 and Appendix A (2026-11-17, Phase 32 closed).** Previously: ruled, broken down as Phase 32 (2026-10-21; `docs/tracker/phase-32.md`, where N
 > is 32). Option D: full composite relationships. Rulings R1–R7 settled 2026-10-20 (§7), each
 > from a measured probe (§9).** Verified against source at `bd7783ea` on 2026-10-20; the
 > §6 code references re-checked at `244ce2ee` on 2026-10-21; §9.1 re-verified at `244ce2ee`

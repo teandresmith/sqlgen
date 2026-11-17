@@ -3705,7 +3705,7 @@ Closure is `/close-phase 31`, with no sub-item of its own. It flips the design d
 
 ## Phase 32: Composite Foreign-Key Relationships
 
-> **Status: In progress (broken down 2026-10-21; 32.0 complete 2026-10-22).** Design doc `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (option D; rulings R1–R7 settled 2026-10-20, each from a measured probe in its §9.4). Task file `docs/tracker/phase-32.md`.
+> **Status: Complete (closed 2026-11-17).** Design doc `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (SYNCED 2026-11-17; option D; rulings R1–R7 settled 2026-10-20, each from a measured probe in its §9.4). Task file `docs/tracker/phase-32.md`. All 9 sub-items (32.0–32.8) landed. Full sweep clean under `-race` (check 223s / static-examples 18s / conformance 829s, 6256 pass / 80 untested of 6336 rows), no flakes. 10 FIXes originated in the phase and were resolved within it, along with 15 older defects the composite-key work surfaced; none carried forward.
 
 **Why.**
 - **A composite foreign key gives no relationship.** The relationship model holds one column per side, and detection reads only `Column.FKReference`, which `deriveFKReferences` sets from single-column FOREIGN KEYs alone. The tenant-isolation pattern `TENANT_SCOPED_REFERENCES.md` §1.3 recommends, `(workspace_id, x_id) → (workspace_id, id)`, therefore removes the edge it guards. `sqlgen-example` fails `validate` on it today (design §1.1).

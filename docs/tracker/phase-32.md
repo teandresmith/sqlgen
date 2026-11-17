@@ -1,6 +1,6 @@
 # Phase 32: Composite Foreign-Key Relationships
 
-Status: In Progress
+Status: Complete (closed 2026-11-17)
 PRD Sections: 4.6, 4.8, 4.13, 5.3, 8.1.7, 8.2, 8.6, 8.7, 9.8.13, 9.9, 11.1, 13.1, 13.2, 13.4, 25.1, 29.10, 30, 31.3, Appendix A
 
 > **Design.** `docs/design/COMPOSITE_FK_RELATIONSHIPS.md` (option D, ruled 2026-10-20) is the
