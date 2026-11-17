@@ -66,6 +66,8 @@ type Client struct {
 	asset              *assetClient
 	assetDocumentLink  *assetDocumentLinkClient
 	badge              *badgeClient
+	bin                *binClient
+	binItem            *binItemClient
 	binaryKey          *binaryKeyClient
 	binaryKeyBadge     *binaryKeyBadgeClient
 	binaryKeyEvent     *binaryKeyEventClient
@@ -115,6 +117,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		asset:              newAssetClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		assetDocumentLink:  newAssetDocumentLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		badge:              newBadgeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		bin:                newBinClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
+		binItem:            newBinItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		binaryKey:          newBinaryKeyClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		binaryKeyBadge:     newBinaryKeyBadgeClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
 		binaryKeyEvent:     newBinaryKeyEventClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler),
@@ -173,6 +177,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	c.badge.ownerClient = c.owner
 	c.badge.binaryKeyBadgeClient = c.binaryKeyBadge
 	c.badge.ownerBadgeClient = c.ownerBadge
+	c.bin.binItemClient = c.binItem
 	c.binaryKey.binaryKeyEventClient = c.binaryKeyEvent
 	c.binaryKey.badgeClient = c.badge
 	c.binaryKey.binaryKeyBadgeClient = c.binaryKeyBadge
@@ -217,6 +222,16 @@ func (c *Client) AssetDocumentLinks() AssetDocumentLinkClient {
 // Badges returns the BadgeClient for Badge operations.
 func (c *Client) Badges() BadgeClient {
 	return c.badge
+}
+
+// Bins returns the BinClient for Bin operations.
+func (c *Client) Bins() BinClient {
+	return c.bin
+}
+
+// BinItems returns the BinItemClient for BinItem operations.
+func (c *Client) BinItems() BinItemClient {
+	return c.binItem
 }
 
 // BinaryKeys returns the BinaryKeyClient for BinaryKey operations.

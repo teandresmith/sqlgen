@@ -9,6 +9,8 @@ const (
 	TableArticles           hook.TableName = "articles"
 	TableAssetDocumentLinks hook.TableName = "asset_document_links"
 	TableAssets             hook.TableName = "assets"
+	TableBinItems           hook.TableName = "bin_items"
+	TableBins               hook.TableName = "bins"
 	TableBoolKeyeds         hook.TableName = "bool_keyed"
 	TableBoolKeyedNotes     hook.TableName = "bool_keyed_notes"
 	TableCategories         hook.TableName = "categories"

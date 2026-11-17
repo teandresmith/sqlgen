@@ -71,6 +71,31 @@ type BadgeSort struct {
 	Direction SortDirection  `json:"direction"`
 }
 
+type BinFilter struct {
+	Label    *StringComparator `json:"label,omitempty"`
+	BinItems *BinItemFilter    `json:"binItems,omitempty"`
+	And      []*BinFilter      `json:"and,omitempty"`
+	Or       []*BinFilter      `json:"or,omitempty"`
+}
+
+type BinItemFilter struct {
+	Aisle *NullableStringComparator  `json:"aisle,omitempty"`
+	Slot  *NullableNumericComparator `json:"slot,omitempty"`
+	Name  *StringComparator          `json:"name,omitempty"`
+	And   []*BinItemFilter           `json:"and,omitempty"`
+	Or    []*BinItemFilter           `json:"or,omitempty"`
+}
+
+type BinItemSort struct {
+	Field     BinItemSortField `json:"field"`
+	Direction SortDirection    `json:"direction"`
+}
+
+type BinSort struct {
+	Field     BinSortField  `json:"field"`
+	Direction SortDirection `json:"direction"`
+}
+
 type BinaryKeyBadgeFilter struct {
 	And []*BinaryKeyBadgeFilter `json:"and,omitempty"`
 	Or  []*BinaryKeyBadgeFilter `json:"or,omitempty"`
@@ -201,6 +226,18 @@ type CreateAssetInput struct {
 type CreateBadgeInput struct {
 	Code  string `json:"code"`
 	Label string `json:"label"`
+}
+
+type CreateBinInput struct {
+	Aisle string `json:"aisle"`
+	Slot  int    `json:"slot"`
+	Label string `json:"label"`
+}
+
+type CreateBinItemInput struct {
+	Aisle *string `json:"aisle,omitempty"`
+	Slot  *int    `json:"slot,omitempty"`
+	Name  string  `json:"name"`
 }
 
 type CreateBinaryKeyBadgeInput struct {
@@ -806,6 +843,16 @@ type UpdateBadgeInput struct {
 	Label *string `json:"label,omitempty"`
 }
 
+type UpdateBinInput struct {
+	Label *string `json:"label,omitempty"`
+}
+
+type UpdateBinItemInput struct {
+	Aisle graphql.Omittable[*string] `json:"aisle,omitempty"`
+	Slot  graphql.Omittable[*int]    `json:"slot,omitempty"`
+	Name  *string                    `json:"name,omitempty"`
+}
+
 type UpdateBinaryKeyEventInput struct {
 	BinaryKeyID []byte  `json:"binaryKeyID,omitempty"`
 	Label       *string `json:"label,omitempty"`
@@ -1253,6 +1300,122 @@ func (e *BadgeSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e BadgeSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type BinItemSortField string
+
+const (
+	BinItemSortFieldID    BinItemSortField = "ID"
+	BinItemSortFieldAisle BinItemSortField = "AISLE"
+	BinItemSortFieldSlot  BinItemSortField = "SLOT"
+	BinItemSortFieldName  BinItemSortField = "NAME"
+)
+
+var AllBinItemSortField = []BinItemSortField{
+	BinItemSortFieldID,
+	BinItemSortFieldAisle,
+	BinItemSortFieldSlot,
+	BinItemSortFieldName,
+}
+
+func (e BinItemSortField) IsValid() bool {
+	switch e {
+	case BinItemSortFieldID, BinItemSortFieldAisle, BinItemSortFieldSlot, BinItemSortFieldName:
+		return true
+	}
+	return false
+}
+
+func (e BinItemSortField) String() string {
+	return string(e)
+}
+
+func (e *BinItemSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = BinItemSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid BinItemSortField", str)
+	}
+	return nil
+}
+
+func (e BinItemSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *BinItemSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e BinItemSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type BinSortField string
+
+const (
+	BinSortFieldAisle BinSortField = "AISLE"
+	BinSortFieldSlot  BinSortField = "SLOT"
+	BinSortFieldLabel BinSortField = "LABEL"
+)
+
+var AllBinSortField = []BinSortField{
+	BinSortFieldAisle,
+	BinSortFieldSlot,
+	BinSortFieldLabel,
+}
+
+func (e BinSortField) IsValid() bool {
+	switch e {
+	case BinSortFieldAisle, BinSortFieldSlot, BinSortFieldLabel:
+		return true
+	}
+	return false
+}
+
+func (e BinSortField) String() string {
+	return string(e)
+}
+
+func (e *BinSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = BinSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid BinSortField", str)
+	}
+	return nil
+}
+
+func (e BinSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *BinSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e BinSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

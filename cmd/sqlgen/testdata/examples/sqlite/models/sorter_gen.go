@@ -98,6 +98,55 @@ func (s BadgeSorter) Label(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "label", Direction: direction}
 }
 
+// BinSorter provides type-safe sort helpers for the Bin entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BinSorter struct{}
+
+// NewBinSorter returns a new BinSorter.
+func NewBinSorter() BinSorter { return BinSorter{} }
+
+// Aisle returns a sort for the aisle column in the given direction.
+func (s BinSorter) Aisle(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "aisle", Direction: direction}
+}
+
+// Label returns a sort for the label column in the given direction.
+func (s BinSorter) Label(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label", Direction: direction}
+}
+
+// Slot returns a sort for the slot column in the given direction.
+func (s BinSorter) Slot(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "slot", Direction: direction}
+}
+
+// BinItemSorter provides type-safe sort helpers for the BinItem entity.
+// Each method returns a sql.Sort for the corresponding column.
+type BinItemSorter struct{}
+
+// NewBinItemSorter returns a new BinItemSorter.
+func NewBinItemSorter() BinItemSorter { return BinItemSorter{} }
+
+// Aisle returns a sort for the aisle column in the given direction.
+func (s BinItemSorter) Aisle(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "aisle", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s BinItemSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s BinItemSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// Slot returns a sort for the slot column in the given direction.
+func (s BinItemSorter) Slot(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "slot", Direction: direction}
+}
+
 // BinaryKeySorter provides type-safe sort helpers for the BinaryKey entity.
 // Each method returns a sql.Sort for the corresponding column.
 type BinaryKeySorter struct{}

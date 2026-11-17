@@ -124,6 +124,7 @@ func isRelationshipField(typeName, field string) bool {
 		"Asset.spvOrArchivedDocument",
 		"Badge.binaryKeys",
 		"Badge.owners",
+		"Bin.binItems",
 		"BinaryKey.badges",
 		"BinaryKey.binaryKeyEvents",
 		"BinaryKey.events",

@@ -260,6 +260,154 @@ func translateUpdateBadgeRequest(in gqlmodel.UpdateBadgeInput) sqlgenresolver.Up
 	return out
 }
 
+// translateCreateBinInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBinInput(in gqlmodel.CreateBinInput) *models.CreateBinInput {
+	out := &models.CreateBinInput{}
+	out.Aisle = in.Aisle
+	out.Slot = int64(in.Slot)
+	out.Label = in.Label
+
+	return out
+}
+
+// translateUpdateBinInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateBinRequest
+// carries them to the resolver.
+func translateUpdateBinInput(in gqlmodel.UpdateBinInput) *models.UpdateBinInput {
+	out := &models.UpdateBinInput{}
+	if in.Label != nil {
+		out.Label = omittable.Set(*in.Label)
+	}
+	return out
+}
+
+// hasUpdateBinSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateBinSetFields(in gqlmodel.UpdateBinInput) bool {
+	if in.Label != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateBinRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateBinInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateBinRequest(in gqlmodel.UpdateBinInput) sqlgenresolver.UpdateBinRequest {
+	out := sqlgenresolver.UpdateBinRequest{
+		Set:    translateUpdateBinInput(in),
+		HasSet: hasUpdateBinSetFields(in),
+	}
+	return out
+}
+
+// translateCreateBinItemInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateBinItemInput(in gqlmodel.CreateBinItemInput) *models.CreateBinItemInput {
+	out := &models.CreateBinItemInput{}
+	if in.Aisle != nil {
+		out.Aisle = omittable.Set(in.Aisle)
+	}
+	if in.Slot != nil {
+		v := int64(*in.Slot)
+		out.Slot = omittable.Set(&v)
+	}
+	out.Name = in.Name
+
+	return out
+}
+
+// translateUpdateBinItemInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateBinItemRequest
+// carries them to the resolver.
+func translateUpdateBinItemInput(in gqlmodel.UpdateBinItemInput) *models.UpdateBinItemInput {
+	out := &models.UpdateBinItemInput{}
+	if val, ok := in.Aisle.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Aisle.Get()
+			out.Aisle = omittable.Set(zero)
+		} else {
+			out.Aisle = omittable.Set(val)
+		}
+	}
+	if val, ok := in.Slot.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.Slot.Get()
+			out.Slot = omittable.Set(zero)
+		} else {
+			v := int64(*val)
+			out.Slot = omittable.Set(&v)
+		}
+	}
+	if in.Name != nil {
+		out.Name = omittable.Set(*in.Name)
+	}
+	return out
+}
+
+// hasUpdateBinItemSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateBinItemSetFields(in gqlmodel.UpdateBinItemInput) bool {
+	if in.Aisle.IsSet() {
+		return true
+	}
+	if in.Slot.IsSet() {
+		return true
+	}
+	if in.Name != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateBinItemRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateBinItemInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateBinItemRequest(in gqlmodel.UpdateBinItemInput) sqlgenresolver.UpdateBinItemRequest {
+	out := sqlgenresolver.UpdateBinItemRequest{
+		Set:    translateUpdateBinItemInput(in),
+		HasSet: hasUpdateBinItemSetFields(in),
+	}
+	return out
+}
+
 // translateCreateBinaryKeyInput maps a gqlgen-generated input value
 // onto the consumer model's Create<Table>Input. The body shape per field
 // depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×

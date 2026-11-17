@@ -127,6 +127,58 @@ type ComplexityRoot struct {
 		TotalCount func(childComplexity int) int
 	}
 
+	Bin struct {
+		Aisle    func(childComplexity int) int
+		BinItems func(childComplexity int) int
+		Label    func(childComplexity int) int
+		Slot     func(childComplexity int) int
+	}
+
+	BinConnection struct {
+		Edges      func(childComplexity int) int
+		PageInfo   func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	BinEdge struct {
+		Cursor func(childComplexity int) int
+		Node   func(childComplexity int) int
+	}
+
+	BinItem struct {
+		Aisle func(childComplexity int) int
+		ID    func(childComplexity int) int
+		Name  func(childComplexity int) int
+		Slot  func(childComplexity int) int
+	}
+
+	BinItemConnection struct {
+		Edges      func(childComplexity int) int
+		PageInfo   func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	BinItemEdge struct {
+		Cursor func(childComplexity int) int
+		Node   func(childComplexity int) int
+	}
+
+	BinItemListResult struct {
+		HasMore    func(childComplexity int) int
+		Items      func(childComplexity int) int
+		Limit      func(childComplexity int) int
+		Offset     func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	BinListResult struct {
+		HasMore    func(childComplexity int) int
+		Items      func(childComplexity int) int
+		Limit      func(childComplexity int) int
+		Offset     func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
 	BoolKeyed struct {
 		BoolKeyedNotes func(childComplexity int) int
 		K              func(childComplexity int) int
@@ -319,6 +371,10 @@ type ComplexityRoot struct {
 		CreateAssetDocumentLinks   func(childComplexity int, inputs []*model.CreateAssetDocumentLinkInput) int
 		CreateAssetWithRelated     func(childComplexity int, input model.CreateAssetWithRelatedInput) int
 		CreateAssets               func(childComplexity int, inputs []*model.CreateAssetInput) int
+		CreateBin                  func(childComplexity int, input model.CreateBinInput) int
+		CreateBinItem              func(childComplexity int, input model.CreateBinItemInput) int
+		CreateBinItems             func(childComplexity int, inputs []*model.CreateBinItemInput) int
+		CreateBins                 func(childComplexity int, inputs []*model.CreateBinInput) int
 		CreateBoolKeyed            func(childComplexity int, input model.CreateBoolKeyedInput) int
 		CreateBoolKeyedNote        func(childComplexity int, input model.CreateBoolKeyedNoteInput) int
 		CreateBoolKeyedNotes       func(childComplexity int, inputs []*model.CreateBoolKeyedNoteInput) int
@@ -364,6 +420,8 @@ type ComplexityRoot struct {
 		CreateWarehouses           func(childComplexity int, inputs []*model.CreateWarehouseInput) int
 		DeleteAsset                func(childComplexity int, id int) int
 		DeleteAssetDocumentLink    func(childComplexity int, assetID int, documentID int) int
+		DeleteBin                  func(childComplexity int, aisle string, slot int) int
+		DeleteBinItem              func(childComplexity int, id int) int
 		DeleteBoolKeyed            func(childComplexity int, k bool) int
 		DeleteBoolKeyedNote        func(childComplexity int, id int) int
 		DeleteCategory             func(childComplexity int, id int) int
@@ -393,6 +451,10 @@ type ComplexityRoot struct {
 		UpdateAsset                func(childComplexity int, id int, input model.UpdateAssetInput) int
 		UpdateAssetWithRelated     func(childComplexity int, id int, input model.UpdateAssetWithRelatedInput) int
 		UpdateAssets               func(childComplexity int, filter model.AssetFilter, input model.UpdateAssetInput) int
+		UpdateBin                  func(childComplexity int, aisle string, slot int, input model.UpdateBinInput) int
+		UpdateBinItem              func(childComplexity int, id int, input model.UpdateBinItemInput) int
+		UpdateBinItems             func(childComplexity int, filter model.BinItemFilter, input model.UpdateBinItemInput) int
+		UpdateBins                 func(childComplexity int, filter model.BinFilter, input model.UpdateBinInput) int
 		UpdateBoolKeyed            func(childComplexity int, k bool, input model.UpdateBoolKeyedInput) int
 		UpdateBoolKeyedNote        func(childComplexity int, id int, input model.UpdateBoolKeyedNoteInput) int
 		UpdateBoolKeyedNotes       func(childComplexity int, filter model.BoolKeyedNoteFilter, input model.UpdateBoolKeyedNoteInput) int
@@ -440,6 +502,8 @@ type ComplexityRoot struct {
 		UpsertAsset                func(childComplexity int, input model.CreateAssetInput) int
 		UpsertAssetDocumentLink    func(childComplexity int, input model.CreateAssetDocumentLinkInput) int
 		UpsertAssetWithRelated     func(childComplexity int, input model.UpsertAssetWithRelatedInput, conflictTarget model.AssetConflictTarget) int
+		UpsertBin                  func(childComplexity int, input model.CreateBinInput) int
+		UpsertBinItem              func(childComplexity int, input model.CreateBinItemInput) int
 		UpsertBoolKeyed            func(childComplexity int, input model.CreateBoolKeyedInput) int
 		UpsertBoolKeyedNote        func(childComplexity int, input model.CreateBoolKeyedNoteInput) int
 		UpsertBoolKeyedWithRelated func(childComplexity int, input model.UpsertBoolKeyedWithRelatedInput, conflictTarget model.BoolKeyedConflictTarget) int
@@ -655,6 +719,12 @@ type ComplexityRoot struct {
 		AssetDocumentLinks    func(childComplexity int, filter *model.AssetDocumentLinkFilter, first *int, after *string, last *int, before *string) int
 		AssetList             func(childComplexity int, filter *model.AssetFilter, sort []*model.AssetSort, limit *int, offset *int) int
 		Assets                func(childComplexity int, filter *model.AssetFilter, first *int, after *string, last *int, before *string) int
+		Bin                   func(childComplexity int, aisle string, slot int) int
+		BinItem               func(childComplexity int, id int) int
+		BinItemList           func(childComplexity int, filter *model.BinItemFilter, sort []*model.BinItemSort, limit *int, offset *int) int
+		BinItems              func(childComplexity int, filter *model.BinItemFilter, first *int, after *string, last *int, before *string) int
+		BinList               func(childComplexity int, filter *model.BinFilter, sort []*model.BinSort, limit *int, offset *int) int
+		Bins                  func(childComplexity int, filter *model.BinFilter, first *int, after *string, last *int, before *string) int
 		BoolKeyed             func(childComplexity int, k bool) int
 		BoolKeyedList         func(childComplexity int, filter *model.BoolKeyedFilter, sort []*model.BoolKeyedSort, limit *int, offset *int) int
 		BoolKeyedNote         func(childComplexity int, id int) int
@@ -971,6 +1041,18 @@ type MutationResolver interface {
 	CreateAssetWithRelated(ctx context.Context, input model.CreateAssetWithRelatedInput) (*models.Asset, error)
 	UpdateAssetWithRelated(ctx context.Context, id int, input model.UpdateAssetWithRelatedInput) (*models.Asset, error)
 	UpsertAssetWithRelated(ctx context.Context, input model.UpsertAssetWithRelatedInput, conflictTarget model.AssetConflictTarget) (*models.Asset, error)
+	CreateBin(ctx context.Context, input model.CreateBinInput) (*models.Bin, error)
+	CreateBins(ctx context.Context, inputs []*model.CreateBinInput) ([]*models.Bin, error)
+	UpdateBin(ctx context.Context, aisle string, slot int, input model.UpdateBinInput) (*models.Bin, error)
+	UpdateBins(ctx context.Context, filter model.BinFilter, input model.UpdateBinInput) ([]*models.Bin, error)
+	UpsertBin(ctx context.Context, input model.CreateBinInput) (*models.Bin, error)
+	DeleteBin(ctx context.Context, aisle string, slot int) (bool, error)
+	CreateBinItem(ctx context.Context, input model.CreateBinItemInput) (*models.BinItem, error)
+	CreateBinItems(ctx context.Context, inputs []*model.CreateBinItemInput) ([]*models.BinItem, error)
+	UpdateBinItem(ctx context.Context, id int, input model.UpdateBinItemInput) (*models.BinItem, error)
+	UpdateBinItems(ctx context.Context, filter model.BinItemFilter, input model.UpdateBinItemInput) ([]*models.BinItem, error)
+	UpsertBinItem(ctx context.Context, input model.CreateBinItemInput) (*models.BinItem, error)
+	DeleteBinItem(ctx context.Context, id int) (bool, error)
 	CreateBoolKeyed(ctx context.Context, input model.CreateBoolKeyedInput) (*models.BoolKeyed, error)
 	CreateBoolKeyeds(ctx context.Context, inputs []*model.CreateBoolKeyedInput) ([]*models.BoolKeyed, error)
 	UpdateBoolKeyed(ctx context.Context, k bool, input model.UpdateBoolKeyedInput) (*models.BoolKeyed, error)
@@ -1114,6 +1196,12 @@ type QueryResolver interface {
 	Asset(ctx context.Context, id int) (*models.Asset, error)
 	Assets(ctx context.Context, filter *model.AssetFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Asset], error)
 	AssetList(ctx context.Context, filter *model.AssetFilter, sort []*model.AssetSort, limit *int, offset *int) (*models.PaginateResult[models.Asset], error)
+	Bin(ctx context.Context, aisle string, slot int) (*models.Bin, error)
+	Bins(ctx context.Context, filter *model.BinFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Bin], error)
+	BinList(ctx context.Context, filter *model.BinFilter, sort []*model.BinSort, limit *int, offset *int) (*models.PaginateResult[models.Bin], error)
+	BinItem(ctx context.Context, id int) (*models.BinItem, error)
+	BinItems(ctx context.Context, filter *model.BinItemFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BinItem], error)
+	BinItemList(ctx context.Context, filter *model.BinItemFilter, sort []*model.BinItemSort, limit *int, offset *int) (*models.PaginateResult[models.BinItem], error)
 	BoolKeyed(ctx context.Context, k bool) (*models.BoolKeyed, error)
 	BoolKeyeds(ctx context.Context, filter *model.BoolKeyedFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BoolKeyed], error)
 	BoolKeyedList(ctx context.Context, filter *model.BoolKeyedFilter, sort []*model.BoolKeyedSort, limit *int, offset *int) (*models.PaginateResult[models.BoolKeyed], error)
@@ -1494,6 +1582,182 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.AssetListResult.TotalCount(childComplexity), true
+
+	case "Bin.aisle":
+		if e.ComplexityRoot.Bin.Aisle == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Bin.Aisle(childComplexity), true
+	case "Bin.binItems":
+		if e.ComplexityRoot.Bin.BinItems == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Bin.BinItems(childComplexity), true
+	case "Bin.label":
+		if e.ComplexityRoot.Bin.Label == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Bin.Label(childComplexity), true
+	case "Bin.slot":
+		if e.ComplexityRoot.Bin.Slot == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Bin.Slot(childComplexity), true
+
+	case "BinConnection.edges":
+		if e.ComplexityRoot.BinConnection.Edges == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinConnection.Edges(childComplexity), true
+	case "BinConnection.pageInfo":
+		if e.ComplexityRoot.BinConnection.PageInfo == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinConnection.PageInfo(childComplexity), true
+	case "BinConnection.totalCount":
+		if e.ComplexityRoot.BinConnection.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinConnection.TotalCount(childComplexity), true
+
+	case "BinEdge.cursor":
+		if e.ComplexityRoot.BinEdge.Cursor == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinEdge.Cursor(childComplexity), true
+	case "BinEdge.node":
+		if e.ComplexityRoot.BinEdge.Node == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinEdge.Node(childComplexity), true
+
+	case "BinItem.aisle":
+		if e.ComplexityRoot.BinItem.Aisle == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItem.Aisle(childComplexity), true
+	case "BinItem.id":
+		if e.ComplexityRoot.BinItem.ID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItem.ID(childComplexity), true
+	case "BinItem.name":
+		if e.ComplexityRoot.BinItem.Name == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItem.Name(childComplexity), true
+	case "BinItem.slot":
+		if e.ComplexityRoot.BinItem.Slot == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItem.Slot(childComplexity), true
+
+	case "BinItemConnection.edges":
+		if e.ComplexityRoot.BinItemConnection.Edges == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItemConnection.Edges(childComplexity), true
+	case "BinItemConnection.pageInfo":
+		if e.ComplexityRoot.BinItemConnection.PageInfo == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItemConnection.PageInfo(childComplexity), true
+	case "BinItemConnection.totalCount":
+		if e.ComplexityRoot.BinItemConnection.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItemConnection.TotalCount(childComplexity), true
+
+	case "BinItemEdge.cursor":
+		if e.ComplexityRoot.BinItemEdge.Cursor == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItemEdge.Cursor(childComplexity), true
+	case "BinItemEdge.node":
+		if e.ComplexityRoot.BinItemEdge.Node == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItemEdge.Node(childComplexity), true
+
+	case "BinItemListResult.hasMore":
+		if e.ComplexityRoot.BinItemListResult.HasMore == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItemListResult.HasMore(childComplexity), true
+	case "BinItemListResult.items":
+		if e.ComplexityRoot.BinItemListResult.Items == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItemListResult.Items(childComplexity), true
+	case "BinItemListResult.limit":
+		if e.ComplexityRoot.BinItemListResult.Limit == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItemListResult.Limit(childComplexity), true
+	case "BinItemListResult.offset":
+		if e.ComplexityRoot.BinItemListResult.Offset == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItemListResult.Offset(childComplexity), true
+	case "BinItemListResult.totalCount":
+		if e.ComplexityRoot.BinItemListResult.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinItemListResult.TotalCount(childComplexity), true
+
+	case "BinListResult.hasMore":
+		if e.ComplexityRoot.BinListResult.HasMore == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinListResult.HasMore(childComplexity), true
+	case "BinListResult.items":
+		if e.ComplexityRoot.BinListResult.Items == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinListResult.Items(childComplexity), true
+	case "BinListResult.limit":
+		if e.ComplexityRoot.BinListResult.Limit == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinListResult.Limit(childComplexity), true
+	case "BinListResult.offset":
+		if e.ComplexityRoot.BinListResult.Offset == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinListResult.Offset(childComplexity), true
+	case "BinListResult.totalCount":
+		if e.ComplexityRoot.BinListResult.TotalCount == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BinListResult.TotalCount(childComplexity), true
 
 	case "BoolKeyed.boolKeyedNotes":
 		if e.ComplexityRoot.BoolKeyed.BoolKeyedNotes == nil {
@@ -2200,6 +2464,50 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.CreateAssets(childComplexity, args["inputs"].([]*model.CreateAssetInput)), true
+	case "Mutation.createBin":
+		if e.ComplexityRoot.Mutation.CreateBin == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createBin_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateBin(childComplexity, args["input"].(model.CreateBinInput)), true
+	case "Mutation.createBinItem":
+		if e.ComplexityRoot.Mutation.CreateBinItem == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createBinItem_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateBinItem(childComplexity, args["input"].(model.CreateBinItemInput)), true
+	case "Mutation.createBinItems":
+		if e.ComplexityRoot.Mutation.CreateBinItems == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createBinItems_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateBinItems(childComplexity, args["inputs"].([]*model.CreateBinItemInput)), true
+	case "Mutation.createBins":
+		if e.ComplexityRoot.Mutation.CreateBins == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createBins_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.CreateBins(childComplexity, args["inputs"].([]*model.CreateBinInput)), true
 	case "Mutation.createBoolKeyed":
 		if e.ComplexityRoot.Mutation.CreateBoolKeyed == nil {
 			break
@@ -2695,6 +3003,28 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.DeleteAssetDocumentLink(childComplexity, args["assetID"].(int), args["documentID"].(int)), true
+	case "Mutation.deleteBin":
+		if e.ComplexityRoot.Mutation.DeleteBin == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_deleteBin_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.DeleteBin(childComplexity, args["aisle"].(string), args["slot"].(int)), true
+	case "Mutation.deleteBinItem":
+		if e.ComplexityRoot.Mutation.DeleteBinItem == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_deleteBinItem_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.DeleteBinItem(childComplexity, args["id"].(int)), true
 	case "Mutation.deleteBoolKeyed":
 		if e.ComplexityRoot.Mutation.DeleteBoolKeyed == nil {
 			break
@@ -3014,6 +3344,50 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.UpdateAssets(childComplexity, args["filter"].(model.AssetFilter), args["input"].(model.UpdateAssetInput)), true
+	case "Mutation.updateBin":
+		if e.ComplexityRoot.Mutation.UpdateBin == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateBin_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateBin(childComplexity, args["aisle"].(string), args["slot"].(int), args["input"].(model.UpdateBinInput)), true
+	case "Mutation.updateBinItem":
+		if e.ComplexityRoot.Mutation.UpdateBinItem == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateBinItem_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateBinItem(childComplexity, args["id"].(int), args["input"].(model.UpdateBinItemInput)), true
+	case "Mutation.updateBinItems":
+		if e.ComplexityRoot.Mutation.UpdateBinItems == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateBinItems_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateBinItems(childComplexity, args["filter"].(model.BinItemFilter), args["input"].(model.UpdateBinItemInput)), true
+	case "Mutation.updateBins":
+		if e.ComplexityRoot.Mutation.UpdateBins == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_updateBins_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpdateBins(childComplexity, args["filter"].(model.BinFilter), args["input"].(model.UpdateBinInput)), true
 	case "Mutation.updateBoolKeyed":
 		if e.ComplexityRoot.Mutation.UpdateBoolKeyed == nil {
 			break
@@ -3531,6 +3905,28 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Mutation.UpsertAssetWithRelated(childComplexity, args["input"].(model.UpsertAssetWithRelatedInput), args["conflictTarget"].(model.AssetConflictTarget)), true
+	case "Mutation.upsertBin":
+		if e.ComplexityRoot.Mutation.UpsertBin == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_upsertBin_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpsertBin(childComplexity, args["input"].(model.CreateBinInput)), true
+	case "Mutation.upsertBinItem":
+		if e.ComplexityRoot.Mutation.UpsertBinItem == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_upsertBinItem_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Mutation.UpsertBinItem(childComplexity, args["input"].(model.CreateBinItemInput)), true
 	case "Mutation.upsertBoolKeyed":
 		if e.ComplexityRoot.Mutation.UpsertBoolKeyed == nil {
 			break
@@ -4549,6 +4945,72 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.Assets(childComplexity, args["filter"].(*model.AssetFilter), args["first"].(*int), args["after"].(*string), args["last"].(*int), args["before"].(*string)), true
+	case "Query.bin":
+		if e.ComplexityRoot.Query.Bin == nil {
+			break
+		}
+
+		args, err := ec.field_Query_bin_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.Bin(childComplexity, args["aisle"].(string), args["slot"].(int)), true
+	case "Query.binItem":
+		if e.ComplexityRoot.Query.BinItem == nil {
+			break
+		}
+
+		args, err := ec.field_Query_binItem_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BinItem(childComplexity, args["id"].(int)), true
+	case "Query.binItemList":
+		if e.ComplexityRoot.Query.BinItemList == nil {
+			break
+		}
+
+		args, err := ec.field_Query_binItemList_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BinItemList(childComplexity, args["filter"].(*model.BinItemFilter), args["sort"].([]*model.BinItemSort), args["limit"].(*int), args["offset"].(*int)), true
+	case "Query.binItems":
+		if e.ComplexityRoot.Query.BinItems == nil {
+			break
+		}
+
+		args, err := ec.field_Query_binItems_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BinItems(childComplexity, args["filter"].(*model.BinItemFilter), args["first"].(*int), args["after"].(*string), args["last"].(*int), args["before"].(*string)), true
+	case "Query.binList":
+		if e.ComplexityRoot.Query.BinList == nil {
+			break
+		}
+
+		args, err := ec.field_Query_binList_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.BinList(childComplexity, args["filter"].(*model.BinFilter), args["sort"].([]*model.BinSort), args["limit"].(*int), args["offset"].(*int)), true
+	case "Query.bins":
+		if e.ComplexityRoot.Query.Bins == nil {
+			break
+		}
+
+		args, err := ec.field_Query_bins_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.Bins(childComplexity, args["filter"].(*model.BinFilter), args["first"].(*int), args["after"].(*string), args["last"].(*int), args["before"].(*string)), true
 	case "Query.boolKeyed":
 		if e.ComplexityRoot.Query.BoolKeyed == nil {
 			break
@@ -6059,6 +6521,10 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputAssetPrimaryDocumentCreateNested,
 		ec.unmarshalInputAssetPrimaryDocumentUpdateNested,
 		ec.unmarshalInputAssetSort,
+		ec.unmarshalInputBinFilter,
+		ec.unmarshalInputBinItemFilter,
+		ec.unmarshalInputBinItemSort,
+		ec.unmarshalInputBinSort,
 		ec.unmarshalInputBoolKeyedBoolKeyedNotesCreateInput,
 		ec.unmarshalInputBoolKeyedBoolKeyedNotesCreateNested,
 		ec.unmarshalInputBoolKeyedBoolKeyedNotesUpdateNested,
@@ -6078,6 +6544,8 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputCreateAssetDocumentLinkInput,
 		ec.unmarshalInputCreateAssetInput,
 		ec.unmarshalInputCreateAssetWithRelatedInput,
+		ec.unmarshalInputCreateBinInput,
+		ec.unmarshalInputCreateBinItemInput,
 		ec.unmarshalInputCreateBoolKeyedInput,
 		ec.unmarshalInputCreateBoolKeyedNoteInput,
 		ec.unmarshalInputCreateBoolKeyedWithRelatedInput,
@@ -6159,6 +6627,8 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputUpdateArticleInput,
 		ec.unmarshalInputUpdateAssetInput,
 		ec.unmarshalInputUpdateAssetWithRelatedInput,
+		ec.unmarshalInputUpdateBinInput,
+		ec.unmarshalInputUpdateBinItemInput,
 		ec.unmarshalInputUpdateBoolKeyedInput,
 		ec.unmarshalInputUpdateBoolKeyedNoteInput,
 		ec.unmarshalInputUpdateBoolKeyedWithRelatedInput,
@@ -6284,7 +6754,7 @@ func newExecutionContext(
 	}
 }
 
-//go:embed "article_gen.graphqls" "asset_document_link_gen.graphqls" "asset_gen.graphqls" "bool_keyed_gen.graphqls" "bool_keyed_note_gen.graphqls" "category_gen.graphqls" "category_stat_gen.graphqls" "default_only_row_gen.graphqls" "document_gen.graphqls" "key_only_row_gen.graphqls" "order_gen.graphqls" "order_item_gen.graphqls" "product_gen.graphqls" "product_summary_gen.graphqls" "product_tag_label_gen.graphqls" "profile_gen.graphqls" "shared_gen.graphqls" "slugged_row_gen.graphqls" "tag_gen.graphqls" "time_keyed_gen.graphqls" "time_keyed_note_gen.graphqls" "user_category_gen.graphqls" "user_event_gen.graphqls" "user_gen.graphqls" "warehouse_gen.graphqls"
+//go:embed "article_gen.graphqls" "asset_document_link_gen.graphqls" "asset_gen.graphqls" "bin_gen.graphqls" "bin_item_gen.graphqls" "bool_keyed_gen.graphqls" "bool_keyed_note_gen.graphqls" "category_gen.graphqls" "category_stat_gen.graphqls" "default_only_row_gen.graphqls" "document_gen.graphqls" "key_only_row_gen.graphqls" "order_gen.graphqls" "order_item_gen.graphqls" "product_gen.graphqls" "product_summary_gen.graphqls" "product_tag_label_gen.graphqls" "profile_gen.graphqls" "shared_gen.graphqls" "slugged_row_gen.graphqls" "tag_gen.graphqls" "time_keyed_gen.graphqls" "time_keyed_note_gen.graphqls" "user_category_gen.graphqls" "user_event_gen.graphqls" "user_gen.graphqls" "warehouse_gen.graphqls"
 var sourcesFS embed.FS
 
 func sourceData(filename string) string {
@@ -6299,6 +6769,8 @@ var sources = []*ast.Source{
 	{Name: "article_gen.graphqls", Input: sourceData("article_gen.graphqls"), BuiltIn: false},
 	{Name: "asset_document_link_gen.graphqls", Input: sourceData("asset_document_link_gen.graphqls"), BuiltIn: false},
 	{Name: "asset_gen.graphqls", Input: sourceData("asset_gen.graphqls"), BuiltIn: false},
+	{Name: "bin_gen.graphqls", Input: sourceData("bin_gen.graphqls"), BuiltIn: false},
+	{Name: "bin_item_gen.graphqls", Input: sourceData("bin_item_gen.graphqls"), BuiltIn: false},
 	{Name: "bool_keyed_gen.graphqls", Input: sourceData("bool_keyed_gen.graphqls"), BuiltIn: false},
 	{Name: "bool_keyed_note_gen.graphqls", Input: sourceData("bool_keyed_note_gen.graphqls"), BuiltIn: false},
 	{Name: "category_gen.graphqls", Input: sourceData("category_gen.graphqls"), BuiltIn: false},
@@ -6494,6 +6966,110 @@ func (ec *executionContext) childFields_AssetListResult(ctx context.Context, fie
 		return ec.fieldContext_AssetListResult_hasMore(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type AssetListResult", field.Name)
+}
+
+func (ec *executionContext) childFields_Bin(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "aisle":
+		return ec.fieldContext_Bin_aisle(ctx, field)
+	case "slot":
+		return ec.fieldContext_Bin_slot(ctx, field)
+	case "label":
+		return ec.fieldContext_Bin_label(ctx, field)
+	case "binItems":
+		return ec.fieldContext_Bin_binItems(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type Bin", field.Name)
+}
+
+func (ec *executionContext) childFields_BinConnection(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "edges":
+		return ec.fieldContext_BinConnection_edges(ctx, field)
+	case "pageInfo":
+		return ec.fieldContext_BinConnection_pageInfo(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_BinConnection_totalCount(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BinConnection", field.Name)
+}
+
+func (ec *executionContext) childFields_BinEdge(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "node":
+		return ec.fieldContext_BinEdge_node(ctx, field)
+	case "cursor":
+		return ec.fieldContext_BinEdge_cursor(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BinEdge", field.Name)
+}
+
+func (ec *executionContext) childFields_BinItem(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "id":
+		return ec.fieldContext_BinItem_id(ctx, field)
+	case "aisle":
+		return ec.fieldContext_BinItem_aisle(ctx, field)
+	case "slot":
+		return ec.fieldContext_BinItem_slot(ctx, field)
+	case "name":
+		return ec.fieldContext_BinItem_name(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BinItem", field.Name)
+}
+
+func (ec *executionContext) childFields_BinItemConnection(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "edges":
+		return ec.fieldContext_BinItemConnection_edges(ctx, field)
+	case "pageInfo":
+		return ec.fieldContext_BinItemConnection_pageInfo(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_BinItemConnection_totalCount(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BinItemConnection", field.Name)
+}
+
+func (ec *executionContext) childFields_BinItemEdge(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "node":
+		return ec.fieldContext_BinItemEdge_node(ctx, field)
+	case "cursor":
+		return ec.fieldContext_BinItemEdge_cursor(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BinItemEdge", field.Name)
+}
+
+func (ec *executionContext) childFields_BinItemListResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "items":
+		return ec.fieldContext_BinItemListResult_items(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_BinItemListResult_totalCount(ctx, field)
+	case "offset":
+		return ec.fieldContext_BinItemListResult_offset(ctx, field)
+	case "limit":
+		return ec.fieldContext_BinItemListResult_limit(ctx, field)
+	case "hasMore":
+		return ec.fieldContext_BinItemListResult_hasMore(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BinItemListResult", field.Name)
+}
+
+func (ec *executionContext) childFields_BinListResult(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "items":
+		return ec.fieldContext_BinListResult_items(ctx, field)
+	case "totalCount":
+		return ec.fieldContext_BinListResult_totalCount(ctx, field)
+	case "offset":
+		return ec.fieldContext_BinListResult_offset(ctx, field)
+	case "limit":
+		return ec.fieldContext_BinListResult_limit(ctx, field)
+	case "hasMore":
+		return ec.fieldContext_BinListResult_hasMore(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BinListResult", field.Name)
 }
 
 func (ec *executionContext) childFields_BoolKeyed(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -7874,6 +8450,62 @@ func (ec *executionContext) field_Mutation_createAssets_args(ctx context.Context
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_createBinItem_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateBinItemInput, error) {
+			return ec.unmarshalNCreateBinItemInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinItemInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createBinItems_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "inputs",
+		func(ctx context.Context, v any) ([]*model.CreateBinItemInput, error) {
+			return ec.unmarshalNCreateBinItemInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinItemInputᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["inputs"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createBin_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateBinInput, error) {
+			return ec.unmarshalNCreateBinInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createBins_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "inputs",
+		func(ctx context.Context, v any) ([]*model.CreateBinInput, error) {
+			return ec.unmarshalNCreateBinInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinInputᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["inputs"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_createBoolKeyedNote_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -8512,6 +9144,42 @@ func (ec *executionContext) field_Mutation_deleteAsset_args(ctx context.Context,
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_deleteBinItem_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_deleteBin_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "aisle",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["aisle"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "slot",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["slot"] = arg1
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_deleteBoolKeyedNote_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -8974,6 +9642,102 @@ func (ec *executionContext) field_Mutation_updateAssets_args(ctx context.Context
 	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (model.UpdateAssetInput, error) {
 			return ec.unmarshalNUpdateAssetInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateAssetInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateBinItem_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateBinItemInput, error) {
+			return ec.unmarshalNUpdateBinItemInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBinItemInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateBinItems_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (model.BinItemFilter, error) {
+			return ec.unmarshalNBinItemFilter2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateBinItemInput, error) {
+			return ec.unmarshalNUpdateBinItemInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBinItemInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateBin_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "aisle",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["aisle"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "slot",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["slot"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateBinInput, error) {
+			return ec.unmarshalNUpdateBinInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBinInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg2
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_updateBins_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (model.BinFilter, error) {
+			return ec.unmarshalNBinFilter2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.UpdateBinInput, error) {
+			return ec.unmarshalNUpdateBinInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBinInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -10016,6 +10780,34 @@ func (ec *executionContext) field_Mutation_upsertAsset_args(ctx context.Context,
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_upsertBinItem_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateBinItemInput, error) {
+			return ec.unmarshalNCreateBinItemInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinItemInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_upsertBin_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
+		func(ctx context.Context, v any) (model.CreateBinInput, error) {
+			return ec.unmarshalNCreateBinInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinInput(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_upsertBoolKeyedNote_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -10698,6 +11490,210 @@ func (ec *executionContext) field_Query_assets_args(ctx context.Context, rawArgs
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
 		func(ctx context.Context, v any) (*model.AssetFilter, error) {
 			return ec.unmarshalOAssetFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐAssetFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "first",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["first"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "after",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["after"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "last",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["last"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "before",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["before"] = arg4
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_binItemList_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.BinItemFilter, error) {
+			return ec.unmarshalOBinItemFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort",
+		func(ctx context.Context, v any) ([]*model.BinItemSort, error) {
+			return ec.unmarshalOBinItemSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemSortᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["limit"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "offset",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["offset"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_binItem_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_binItems_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.BinItemFilter, error) {
+			return ec.unmarshalOBinItemFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "first",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["first"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "after",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["after"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "last",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["last"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "before",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["before"] = arg4
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_binList_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.BinFilter, error) {
+			return ec.unmarshalOBinFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinFilter(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "sort",
+		func(ctx context.Context, v any) ([]*model.BinSort, error) {
+			return ec.unmarshalOBinSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinSortᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["sort"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["limit"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "offset",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["offset"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_bin_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "aisle",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["aisle"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "slot",
+		func(ctx context.Context, v any) (int, error) {
+			return ec.unmarshalNInt2int(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["slot"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_bins_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter",
+		func(ctx context.Context, v any) (*model.BinFilter, error) {
+			return ec.unmarshalOBinFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinFilter(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -14093,6 +15089,731 @@ func (ec *executionContext) _AssetListResult_hasMore(ctx context.Context, field 
 }
 func (ec *executionContext) fieldContext_AssetListResult_hasMore(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("AssetListResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _Bin_aisle(ctx context.Context, field graphql.CollectedField, obj *models.Bin) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Bin_aisle(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Aisle, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Bin_aisle(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Bin", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _Bin_slot(ctx context.Context, field graphql.CollectedField, obj *models.Bin) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Bin_slot(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Slot, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int32) graphql.Marshaler {
+			return ec.marshalNInt2int32(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Bin_slot(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Bin", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _Bin_label(ctx context.Context, field graphql.CollectedField, obj *models.Bin) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Bin_label(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Label, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Bin_label(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Bin", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Bin_binItems(ctx context.Context, field graphql.CollectedField, obj *models.Bin) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Bin_binItems(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BinItems, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BinItem) graphql.Marshaler {
+			return ec.marshalNBinItem2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinItemᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Bin_binItems(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Bin",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinItem(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BinConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Bin]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinConnection_edges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Edges, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []models.Edge[models.Bin]) graphql.Marshaler {
+			return ec.marshalNBinEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinConnection_edges(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinEdge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BinConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Bin]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinConnection_pageInfo(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PageInfo, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v models.PageInfo) graphql.Marshaler {
+			return ec.marshalNPageInfo2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐPageInfo(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinConnection_pageInfo(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_PageInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BinConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.Bin]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinConnection_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinConnection_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinConnection", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinEdge_node(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.Bin]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinEdge_node(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Node, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Bin) graphql.Marshaler {
+			return ec.marshalNBin2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBin(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinEdge_node(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinEdge",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Bin(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BinEdge_cursor(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.Bin]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinEdge_cursor(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Cursor, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinEdge_cursor(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinEdge", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _BinItem_id(ctx context.Context, field graphql.CollectedField, obj *models.BinItem) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItem_id(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.ID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinItem_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinItem", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinItem_aisle(ctx context.Context, field graphql.CollectedField, obj *models.BinItem) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItem_aisle(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Aisle, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *string) graphql.Marshaler {
+			return ec.marshalOString2ᚖstring(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_BinItem_aisle(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinItem", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _BinItem_slot(ctx context.Context, field graphql.CollectedField, obj *models.BinItem) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItem_slot(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Slot, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *int32) graphql.Marshaler {
+			return ec.marshalOInt2ᚖint32(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_BinItem_slot(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinItem", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinItem_name(ctx context.Context, field graphql.CollectedField, obj *models.BinItem) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItem_name(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinItem_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinItem", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _BinItemConnection_edges(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BinItem]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItemConnection_edges(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Edges, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []models.Edge[models.BinItem]) graphql.Marshaler {
+			return ec.marshalNBinItemEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdgeᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinItemConnection_edges(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinItemConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinItemEdge(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BinItemConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BinItem]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItemConnection_pageInfo(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.PageInfo, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v models.PageInfo) graphql.Marshaler {
+			return ec.marshalNPageInfo2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐPageInfo(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinItemConnection_pageInfo(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinItemConnection",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_PageInfo(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BinItemConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.Connection[models.BinItem]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItemConnection_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinItemConnection_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinItemConnection", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinItemEdge_node(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.BinItem]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItemEdge_node(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Node, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BinItem) graphql.Marshaler {
+			return ec.marshalNBinItem2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinItem(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinItemEdge_node(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinItemEdge",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinItem(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BinItemEdge_cursor(ctx context.Context, field graphql.CollectedField, obj *models.Edge[models.BinItem]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItemEdge_cursor(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Cursor, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinItemEdge_cursor(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinItemEdge", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _BinItemListResult_items(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BinItem]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItemListResult_items(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Items, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BinItem) graphql.Marshaler {
+			return ec.marshalNBinItem2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinItemᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinItemListResult_items(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinItemListResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinItem(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BinItemListResult_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BinItem]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItemListResult_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinItemListResult_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinItemListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinItemListResult_offset(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BinItem]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItemListResult_offset(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Offset, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinItemListResult_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinItemListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinItemListResult_limit(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BinItem]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItemListResult_limit(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Limit, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinItemListResult_limit(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinItemListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinItemListResult_hasMore(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.BinItem]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinItemListResult_hasMore(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.HasMore, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinItemListResult_hasMore(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinItemListResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
+}
+
+func (ec *executionContext) _BinListResult_items(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Bin]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinListResult_items(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Items, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.Bin) graphql.Marshaler {
+			return ec.marshalNBin2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinListResult_items(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "BinListResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Bin(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _BinListResult_totalCount(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Bin]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinListResult_totalCount(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.TotalCount, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinListResult_totalCount(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinListResult_offset(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Bin]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinListResult_offset(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Offset, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinListResult_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinListResult_limit(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Bin]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinListResult_limit(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Limit, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinListResult_limit(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinListResult", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _BinListResult_hasMore(ctx context.Context, field graphql.CollectedField, obj *models.PaginateResult[models.Bin]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BinListResult_hasMore(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.HasMore, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BinListResult_hasMore(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BinListResult", field, false, false, errors.New("field of type Boolean does not have child fields"))
 }
 
 func (ec *executionContext) _BoolKeyed_k(ctx context.Context, field graphql.CollectedField, obj *models.BoolKeyed) (ret graphql.Marshaler) {
@@ -17601,6 +19322,534 @@ func (ec *executionContext) fieldContext_Mutation_upsertAssetWithRelated(ctx con
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_upsertAssetWithRelated_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createBin(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createBin(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateBin(ctx, fc.Args["input"].(model.CreateBinInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Bin) graphql.Marshaler {
+			return ec.marshalNBin2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBin(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createBin(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Bin(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createBin_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createBins(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createBins(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateBins(ctx, fc.Args["inputs"].([]*model.CreateBinInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.Bin) graphql.Marshaler {
+			return ec.marshalNBin2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createBins(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Bin(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createBins_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateBin(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateBin(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateBin(ctx, fc.Args["aisle"].(string), fc.Args["slot"].(int), fc.Args["input"].(model.UpdateBinInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Bin) graphql.Marshaler {
+			return ec.marshalNBin2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBin(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateBin(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Bin(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateBin_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateBins(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateBins(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateBins(ctx, fc.Args["filter"].(model.BinFilter), fc.Args["input"].(model.UpdateBinInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.Bin) graphql.Marshaler {
+			return ec.marshalNBin2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateBins(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Bin(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateBins_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_upsertBin(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_upsertBin(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpsertBin(ctx, fc.Args["input"].(model.CreateBinInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Bin) graphql.Marshaler {
+			return ec.marshalNBin2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBin(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_upsertBin(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Bin(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_upsertBin_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_deleteBin(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_deleteBin(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().DeleteBin(ctx, fc.Args["aisle"].(string), fc.Args["slot"].(int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_deleteBin(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_deleteBin_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createBinItem(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createBinItem(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateBinItem(ctx, fc.Args["input"].(model.CreateBinItemInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BinItem) graphql.Marshaler {
+			return ec.marshalNBinItem2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinItem(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createBinItem(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinItem(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createBinItem_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createBinItems(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_createBinItems(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().CreateBinItems(ctx, fc.Args["inputs"].([]*model.CreateBinItemInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BinItem) graphql.Marshaler {
+			return ec.marshalNBinItem2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinItemᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_createBinItems(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinItem(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createBinItems_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateBinItem(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateBinItem(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateBinItem(ctx, fc.Args["id"].(int), fc.Args["input"].(model.UpdateBinItemInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BinItem) graphql.Marshaler {
+			return ec.marshalNBinItem2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinItem(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateBinItem(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinItem(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateBinItem_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_updateBinItems(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_updateBinItems(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpdateBinItems(ctx, fc.Args["filter"].(model.BinItemFilter), fc.Args["input"].(model.UpdateBinItemInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []*models.BinItem) graphql.Marshaler {
+			return ec.marshalNBinItem2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinItemᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_updateBinItems(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinItem(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_updateBinItems_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_upsertBinItem(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_upsertBinItem(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().UpsertBinItem(ctx, fc.Args["input"].(model.CreateBinItemInput))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BinItem) graphql.Marshaler {
+			return ec.marshalNBinItem2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinItem(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_upsertBinItem(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinItem(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_upsertBinItem_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_deleteBinItem(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Mutation_deleteBinItem(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Mutation().DeleteBinItem(ctx, fc.Args["id"].(int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Mutation_deleteBinItem(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_deleteBinItem_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -26432,6 +28681,270 @@ func (ec *executionContext) fieldContext_Query_assetList(ctx context.Context, fi
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_bin(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_bin(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().Bin(ctx, fc.Args["aisle"].(string), fc.Args["slot"].(int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Bin) graphql.Marshaler {
+			return ec.marshalOBin2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBin(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Query_bin(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Bin(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_bin_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_bins(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_bins(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().Bins(ctx, fc.Args["filter"].(*model.BinFilter), fc.Args["first"].(*int), fc.Args["after"].(*string), fc.Args["last"].(*int), fc.Args["before"].(*string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Connection[models.Bin]) graphql.Marshaler {
+			return ec.marshalNBinConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐConnection(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_bins(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinConnection(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_bins_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_binList(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_binList(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BinList(ctx, fc.Args["filter"].(*model.BinFilter), fc.Args["sort"].([]*model.BinSort), fc.Args["limit"].(*int), fc.Args["offset"].(*int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.PaginateResult[models.Bin]) graphql.Marshaler {
+			return ec.marshalNBinListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐPaginateResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_binList(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinListResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_binList_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_binItem(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_binItem(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BinItem(ctx, fc.Args["id"].(int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.BinItem) graphql.Marshaler {
+			return ec.marshalOBinItem2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinItem(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Query_binItem(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinItem(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_binItem_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_binItems(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_binItems(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BinItems(ctx, fc.Args["filter"].(*model.BinItemFilter), fc.Args["first"].(*int), fc.Args["after"].(*string), fc.Args["last"].(*int), fc.Args["before"].(*string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.Connection[models.BinItem]) graphql.Marshaler {
+			return ec.marshalNBinItemConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐConnection(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_binItems(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinItemConnection(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_binItems_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_binItemList(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_binItemList(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().BinItemList(ctx, fc.Args["filter"].(*model.BinItemFilter), fc.Args["sort"].([]*model.BinItemSort), fc.Args["limit"].(*int), fc.Args["offset"].(*int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *models.PaginateResult[models.BinItem]) graphql.Marshaler {
+			return ec.marshalNBinItemListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐPaginateResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_binItemList(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BinItemListResult(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_binItemList_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_boolKeyed(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -34259,6 +36772,189 @@ func (ec *executionContext) unmarshalInputAssetSort(ctx context.Context, obj any
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputBinFilter(ctx context.Context, obj any) (model.BinFilter, error) {
+	var it model.BinFilter
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"label", "binItems", "and", "or"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "label":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("label"))
+			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Label = data
+		case "binItems":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("binItems"))
+			data, err := ec.unmarshalOBinItemFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemFilter(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.BinItems = data
+		case "and":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("and"))
+			data, err := ec.unmarshalOBinFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.And = data
+		case "or":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("or"))
+			data, err := ec.unmarshalOBinFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Or = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputBinItemFilter(ctx context.Context, obj any) (model.BinItemFilter, error) {
+	var it model.BinItemFilter
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"aisle", "slot", "name", "and", "or"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "aisle":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("aisle"))
+			data, err := ec.unmarshalONullableStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐNullableStringComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Aisle = data
+		case "slot":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("slot"))
+			data, err := ec.unmarshalONullableNumericComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐNullableNumericComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Slot = data
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalOStringComparator2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐStringComparator(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		case "and":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("and"))
+			data, err := ec.unmarshalOBinItemFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.And = data
+		case "or":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("or"))
+			data, err := ec.unmarshalOBinItemFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemFilterᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Or = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputBinItemSort(ctx context.Context, obj any) (model.BinItemSort, error) {
+	var it model.BinItemSort
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"field", "direction"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "field":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("field"))
+			data, err := ec.unmarshalNBinItemSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemSortField(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Field = data
+		case "direction":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("direction"))
+			data, err := ec.unmarshalNSortDirection2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐSortDirection(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Direction = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputBinSort(ctx context.Context, obj any) (model.BinSort, error) {
+	var it model.BinSort
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"field", "direction"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "field":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("field"))
+			data, err := ec.unmarshalNBinSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinSortField(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Field = data
+		case "direction":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("direction"))
+			data, err := ec.unmarshalNSortDirection2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐSortDirection(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Direction = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputBoolKeyedBoolKeyedNotesCreateInput(ctx context.Context, obj any) (model.BoolKeyedBoolKeyedNotesCreateInput, error) {
 	var it model.BoolKeyedBoolKeyedNotesCreateInput
 	if obj == nil {
@@ -35146,6 +37842,94 @@ func (ec *executionContext) unmarshalInputCreateAssetWithRelatedInput(ctx contex
 				return it, err
 			}
 			it.PrimaryDocument = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputCreateBinInput(ctx context.Context, obj any) (model.CreateBinInput, error) {
+	var it model.CreateBinInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"aisle", "slot", "label"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "aisle":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("aisle"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Aisle = data
+		case "slot":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("slot"))
+			data, err := ec.unmarshalNInt2int(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Slot = data
+		case "label":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("label"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Label = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputCreateBinItemInput(ctx context.Context, obj any) (model.CreateBinItemInput, error) {
+	var it model.CreateBinItemInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"aisle", "slot", "name"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "aisle":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("aisle"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Aisle = data
+		case "slot":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("slot"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Slot = data
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
 		}
 	}
 	return it, nil
@@ -39408,6 +42192,80 @@ func (ec *executionContext) unmarshalInputUpdateAssetWithRelatedInput(ctx contex
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputUpdateBinInput(ctx context.Context, obj any) (model.UpdateBinInput, error) {
+	var it model.UpdateBinInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"label"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "label":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("label"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Label = data
+		}
+	}
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputUpdateBinItemInput(ctx context.Context, obj any) (model.UpdateBinItemInput, error) {
+	var it model.UpdateBinItemInput
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"aisle", "slot", "name"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "aisle":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("aisle"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Aisle = graphql.OmittableOf(data)
+		case "slot":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("slot"))
+			data, err := ec.unmarshalOInt2ᚖint(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Slot = graphql.OmittableOf(data)
+		case "name":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Name = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputUpdateBoolKeyedInput(ctx context.Context, obj any) (model.UpdateBoolKeyedInput, error) {
 	var it model.UpdateBoolKeyedInput
 	if obj == nil {
@@ -42709,6 +45567,410 @@ func (ec *executionContext) _AssetListResult(ctx context.Context, sel ast.Select
 	return out
 }
 
+var binImplementors = []string{"Bin"}
+
+func (ec *executionContext) _Bin(ctx context.Context, sel ast.SelectionSet, obj *models.Bin) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, binImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Bin")
+		case "aisle":
+			out.Values[i] = ec._Bin_aisle(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "slot":
+			out.Values[i] = ec._Bin_slot(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "label":
+			out.Values[i] = ec._Bin_label(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "binItems":
+			out.Values[i] = ec._Bin_binItems(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var binConnectionImplementors = []string{"BinConnection"}
+
+func (ec *executionContext) _BinConnection(ctx context.Context, sel ast.SelectionSet, obj *models.Connection[models.Bin]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, binConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BinConnection")
+		case "edges":
+			out.Values[i] = ec._BinConnection_edges(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "pageInfo":
+			out.Values[i] = ec._BinConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._BinConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var binEdgeImplementors = []string{"BinEdge"}
+
+func (ec *executionContext) _BinEdge(ctx context.Context, sel ast.SelectionSet, obj *models.Edge[models.Bin]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, binEdgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BinEdge")
+		case "node":
+			out.Values[i] = ec._BinEdge_node(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "cursor":
+			out.Values[i] = ec._BinEdge_cursor(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var binItemImplementors = []string{"BinItem"}
+
+func (ec *executionContext) _BinItem(ctx context.Context, sel ast.SelectionSet, obj *models.BinItem) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, binItemImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BinItem")
+		case "id":
+			out.Values[i] = ec._BinItem_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "aisle":
+			out.Values[i] = ec._BinItem_aisle(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "slot":
+			out.Values[i] = ec._BinItem_slot(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "name":
+			out.Values[i] = ec._BinItem_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var binItemConnectionImplementors = []string{"BinItemConnection"}
+
+func (ec *executionContext) _BinItemConnection(ctx context.Context, sel ast.SelectionSet, obj *models.Connection[models.BinItem]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, binItemConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BinItemConnection")
+		case "edges":
+			out.Values[i] = ec._BinItemConnection_edges(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "pageInfo":
+			out.Values[i] = ec._BinItemConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._BinItemConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var binItemEdgeImplementors = []string{"BinItemEdge"}
+
+func (ec *executionContext) _BinItemEdge(ctx context.Context, sel ast.SelectionSet, obj *models.Edge[models.BinItem]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, binItemEdgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BinItemEdge")
+		case "node":
+			out.Values[i] = ec._BinItemEdge_node(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "cursor":
+			out.Values[i] = ec._BinItemEdge_cursor(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var binItemListResultImplementors = []string{"BinItemListResult"}
+
+func (ec *executionContext) _BinItemListResult(ctx context.Context, sel ast.SelectionSet, obj *models.PaginateResult[models.BinItem]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, binItemListResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BinItemListResult")
+		case "items":
+			out.Values[i] = ec._BinItemListResult_items(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._BinItemListResult_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "offset":
+			out.Values[i] = ec._BinItemListResult_offset(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "limit":
+			out.Values[i] = ec._BinItemListResult_limit(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "hasMore":
+			out.Values[i] = ec._BinItemListResult_hasMore(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var binListResultImplementors = []string{"BinListResult"}
+
+func (ec *executionContext) _BinListResult(ctx context.Context, sel ast.SelectionSet, obj *models.PaginateResult[models.Bin]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, binListResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BinListResult")
+		case "items":
+			out.Values[i] = ec._BinListResult_items(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._BinListResult_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "offset":
+			out.Values[i] = ec._BinListResult_offset(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "limit":
+			out.Values[i] = ec._BinListResult_limit(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "hasMore":
+			out.Values[i] = ec._BinListResult_hasMore(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
 var boolKeyedImplementors = []string{"BoolKeyed"}
 
 func (ec *executionContext) _BoolKeyed(ctx context.Context, sel ast.SelectionSet, obj *models.BoolKeyed) graphql.Marshaler {
@@ -44296,6 +47558,90 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "upsertAssetWithRelated":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_upsertAssetWithRelated(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createBin":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createBin(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createBins":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createBins(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateBin":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateBin(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateBins":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateBins(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "upsertBin":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_upsertBin(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "deleteBin":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_deleteBin(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createBinItem":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createBinItem(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "createBinItems":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createBinItems(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateBinItem":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateBinItem(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateBinItems":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_updateBinItems(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "upsertBinItem":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_upsertBinItem(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "deleteBinItem":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_deleteBinItem(ctx, field)
 			})
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
@@ -46791,6 +50137,138 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_assetList(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "bin":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_bin(ctx, field)
+				if res == graphql.RequiredNull {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "bins":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_bins(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "binList":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_binList(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "binItem":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_binItem(ctx, field)
+				if res == graphql.RequiredNull {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "binItems":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_binItems(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "binItemList":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_binItemList(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -50566,6 +54044,188 @@ func (ec *executionContext) marshalNAssetSortField2githubᚗcomᚋteandresmith�
 	return v
 }
 
+func (ec *executionContext) marshalNBin2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinᚄ(ctx context.Context, sel ast.SelectionSet, v []*models.Bin) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNBin2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBin(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNBin2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBin(ctx context.Context, sel ast.SelectionSet, v *models.Bin) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._Bin(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNBinConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐConnection(ctx context.Context, sel ast.SelectionSet, v *models.Connection[models.Bin]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BinConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNBinEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdge(ctx context.Context, sel ast.SelectionSet, v models.Edge[models.Bin]) graphql.Marshaler {
+	return ec._BinEdge(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNBinEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdgeᚄ(ctx context.Context, sel ast.SelectionSet, v []models.Edge[models.Bin]) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNBinEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdge(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) unmarshalNBinFilter2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinFilter(ctx context.Context, v any) (model.BinFilter, error) {
+	res, err := ec.unmarshalInputBinFilter(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNBinFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinFilter(ctx context.Context, v any) (*model.BinFilter, error) {
+	res, err := ec.unmarshalInputBinFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNBinItem2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinItemᚄ(ctx context.Context, sel ast.SelectionSet, v []*models.BinItem) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNBinItem2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinItem(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNBinItem2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinItem(ctx context.Context, sel ast.SelectionSet, v *models.BinItem) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BinItem(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNBinItemConnection2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐConnection(ctx context.Context, sel ast.SelectionSet, v *models.Connection[models.BinItem]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BinItemConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalNBinItemEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdge(ctx context.Context, sel ast.SelectionSet, v models.Edge[models.BinItem]) graphql.Marshaler {
+	return ec._BinItemEdge(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNBinItemEdge2ᚕgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdgeᚄ(ctx context.Context, sel ast.SelectionSet, v []models.Edge[models.BinItem]) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNBinItemEdge2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐEdge(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) unmarshalNBinItemFilter2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemFilter(ctx context.Context, v any) (model.BinItemFilter, error) {
+	res, err := ec.unmarshalInputBinItemFilter(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNBinItemFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemFilter(ctx context.Context, v any) (*model.BinItemFilter, error) {
+	res, err := ec.unmarshalInputBinItemFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNBinItemListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐPaginateResult(ctx context.Context, sel ast.SelectionSet, v *models.PaginateResult[models.BinItem]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BinItemListResult(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNBinItemSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemSort(ctx context.Context, v any) (*model.BinItemSort, error) {
+	res, err := ec.unmarshalInputBinItemSort(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNBinItemSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemSortField(ctx context.Context, v any) (model.BinItemSortField, error) {
+	var res model.BinItemSortField
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNBinItemSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemSortField(ctx context.Context, sel ast.SelectionSet, v model.BinItemSortField) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) marshalNBinListResult2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐPaginateResult(ctx context.Context, sel ast.SelectionSet, v *models.PaginateResult[models.Bin]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._BinListResult(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNBinSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinSort(ctx context.Context, v any) (*model.BinSort, error) {
+	res, err := ec.unmarshalInputBinSort(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNBinSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinSortField(ctx context.Context, v any) (model.BinSortField, error) {
+	var res model.BinSortField
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNBinSortField2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinSortField(ctx context.Context, sel ast.SelectionSet, v model.BinSortField) graphql.Marshaler {
+	return v
+}
+
 func (ec *executionContext) marshalNBoolKeyed2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBoolKeyedᚄ(ctx context.Context, sel ast.SelectionSet, v []*models.BoolKeyed) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
@@ -51058,6 +54718,54 @@ func (ec *executionContext) unmarshalNCreateAssetInput2ᚖgithubᚗcomᚋteandre
 func (ec *executionContext) unmarshalNCreateAssetWithRelatedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateAssetWithRelatedInput(ctx context.Context, v any) (model.CreateAssetWithRelatedInput, error) {
 	res, err := ec.unmarshalInputCreateAssetWithRelatedInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateBinInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinInput(ctx context.Context, v any) (model.CreateBinInput, error) {
+	res, err := ec.unmarshalInputCreateBinInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateBinInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinInputᚄ(ctx context.Context, v any) ([]*model.CreateBinInput, error) {
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.CreateBinInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNCreateBinInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNCreateBinInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinInput(ctx context.Context, v any) (*model.CreateBinInput, error) {
+	res, err := ec.unmarshalInputCreateBinInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateBinItemInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinItemInput(ctx context.Context, v any) (model.CreateBinItemInput, error) {
+	res, err := ec.unmarshalInputCreateBinItemInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateBinItemInput2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinItemInputᚄ(ctx context.Context, v any) ([]*model.CreateBinItemInput, error) {
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.CreateBinItemInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNCreateBinItemInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinItemInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNCreateBinItemInput2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBinItemInput(ctx context.Context, v any) (*model.CreateBinItemInput, error) {
+	res, err := ec.unmarshalInputCreateBinItemInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) unmarshalNCreateBoolKeyedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐCreateBoolKeyedInput(ctx context.Context, v any) (model.CreateBoolKeyedInput, error) {
@@ -53018,6 +56726,16 @@ func (ec *executionContext) unmarshalNUpdateAssetWithRelatedInput2githubᚗcom�
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
+func (ec *executionContext) unmarshalNUpdateBinInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBinInput(ctx context.Context, v any) (model.UpdateBinInput, error) {
+	res, err := ec.unmarshalInputUpdateBinInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNUpdateBinItemInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBinItemInput(ctx context.Context, v any) (model.UpdateBinItemInput, error) {
+	res, err := ec.unmarshalInputUpdateBinItemInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) unmarshalNUpdateBoolKeyedInput2githubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐUpdateBoolKeyedInput(ctx context.Context, v any) (model.UpdateBoolKeyedInput, error) {
 	res, err := ec.unmarshalInputUpdateBoolKeyedInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -53989,6 +57707,104 @@ func (ec *executionContext) unmarshalOAssetSort2ᚕᚖgithubᚗcomᚋteandresmit
 	for i := range vSlice {
 		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
 		res[i], err = ec.unmarshalNAssetSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐAssetSort(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalOBin2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBin(ctx context.Context, sel ast.SelectionSet, v *models.Bin) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._Bin(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOBinFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinFilterᚄ(ctx context.Context, v any) ([]*model.BinFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.BinFilter, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBinFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinFilter(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalOBinFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinFilter(ctx context.Context, v any) (*model.BinFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputBinFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOBinItem2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚐBinItem(ctx context.Context, sel ast.SelectionSet, v *models.BinItem) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._BinItem(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOBinItemFilter2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemFilterᚄ(ctx context.Context, v any) ([]*model.BinItemFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.BinItemFilter, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBinItemFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemFilter(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalOBinItemFilter2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemFilter(ctx context.Context, v any) (*model.BinItemFilter, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputBinItemFilter(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalOBinItemSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemSortᚄ(ctx context.Context, v any) ([]*model.BinItemSort, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.BinItemSort, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBinItemSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinItemSort(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalOBinSort2ᚕᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinSortᚄ(ctx context.Context, v any) ([]*model.BinSort, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]*model.BinSort, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNBinSort2ᚖgithubᚗcomᚋteandresmithᚋsqlgenᚋcmdᚋsqlgenᚋtestdataᚋexamplesᚋmysqlᚋmodelsᚋgraphᚋmodelᚐBinSort(ctx, vSlice[i])
 		if err != nil {
 			return nil, err
 		}

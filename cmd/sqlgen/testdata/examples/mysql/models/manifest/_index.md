@@ -13,6 +13,8 @@ Features: audit_columns, graphql, soft_delete, views
 | Article | `articles` | table | [article.md](article.md) | Blog articles with timestamp soft delete |
 | Asset | `assets` | table | [asset.md](asset.md) | Polymorphic parent for sub-categorized document relationships |
 | AssetDocumentLink | `asset_document_links` | table | [asset_document_link.md](asset_document_link.md) | Junction table for m2m sub-categorized polymorphism |
+| Bin | `bins` | table | [bin.md](bin.md) |  |
+| BinItem | `bin_items` | table | [bin_item.md](bin_item.md) |  |
 | BoolKeyed | `bool_keyed` | table | [bool_keyed.md](bool_keyed.md) |  |
 | BoolKeyedNote | `bool_keyed_notes` | table | [bool_keyed_note.md](bool_keyed_note.md) |  |
 | Category | `categories` | table | [category.md](category.md) | Product classification categories |

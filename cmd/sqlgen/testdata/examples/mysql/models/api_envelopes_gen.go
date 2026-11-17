@@ -34,6 +34,14 @@ type AssetDocumentLinkConnection = Connection[AssetDocumentLink]
 type AssetDocumentLinkEdge = Edge[AssetDocumentLink]
 type AssetDocumentLinkListResult = PaginateResult[AssetDocumentLink]
 
+type BinConnection = Connection[Bin]
+type BinEdge = Edge[Bin]
+type BinListResult = PaginateResult[Bin]
+
+type BinItemConnection = Connection[BinItem]
+type BinItemEdge = Edge[BinItem]
+type BinItemListResult = PaginateResult[BinItem]
+
 type BoolKeyedConnection = Connection[BoolKeyed]
 type BoolKeyedEdge = Edge[BoolKeyed]
 type BoolKeyedListResult = PaginateResult[BoolKeyed]

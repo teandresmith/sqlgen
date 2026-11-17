@@ -127,6 +127,8 @@ type Client struct {
 	article           *articleClient
 	asset             *assetClient
 	assetDocumentLink *assetDocumentLinkClient
+	bin               *binClient
+	binItem           *binItemClient
 	boolKeyed         *boolKeyedClient
 	boolKeyedNote     *boolKeyedNoteClient
 	category          *categoryClient
@@ -168,6 +170,8 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 		article:           newArticleClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		asset:             newAssetClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		assetDocumentLink: newAssetDocumentLinkClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		bin:               newBinClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
+		binItem:           newBinItemClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		boolKeyed:         newBoolKeyedClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		boolKeyedNote:     newBoolKeyedNoteClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
 		category:          newCategoryClient(querier, options.mutationHooks, options.queryHooks, options.panicHandler, mysqlVersion),
@@ -209,6 +213,7 @@ func New(querier database.Querier, opts ...ClientOption) *Client {
 	// the nested-mutation executors write through
 	c.asset.documentClient = c.document
 	c.asset.assetDocumentLinkClient = c.assetDocumentLink
+	c.bin.binItemClient = c.binItem
 	c.boolKeyed.boolKeyedNoteClient = c.boolKeyedNote
 	c.category.productClient = c.product
 	c.category.userClient = c.user
@@ -241,6 +246,16 @@ func (c *Client) Assets() AssetClient {
 // AssetDocumentLinks returns the AssetDocumentLinkClient for AssetDocumentLink operations.
 func (c *Client) AssetDocumentLinks() AssetDocumentLinkClient {
 	return c.assetDocumentLink
+}
+
+// Bins returns the BinClient for Bin operations.
+func (c *Client) Bins() BinClient {
+	return c.bin
+}
+
+// BinItems returns the BinItemClient for BinItem operations.
+func (c *Client) BinItems() BinItemClient {
+	return c.binItem
 }
 
 // BoolKeyeds returns the BoolKeyedClient for BoolKeyed operations.

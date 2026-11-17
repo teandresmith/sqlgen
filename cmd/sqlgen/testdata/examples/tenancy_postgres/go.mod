@@ -3,6 +3,7 @@ module github.com/teandresmith/sqlgen/cmd/sqlgen/testdata/examples/tenancy_postg
 go 1.27.0
 
 require (
+	github.com/google/go-cmp v0.7.0
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/teandresmith/sqlgen v0.0.0
 	github.com/teandresmith/sqlgen/cache/memory v0.0.0-00010101000000-000000000000

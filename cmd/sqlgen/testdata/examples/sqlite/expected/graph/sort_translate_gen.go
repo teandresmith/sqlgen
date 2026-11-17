@@ -175,6 +175,80 @@ func badgeSortFieldToColumn(f gqlmodel.BadgeSortField) string {
 	return ""
 }
 
+// translateBinSort converts a gqlgen-generated
+// []*BinSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateBinSort(in []*gqlmodel.BinSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    binSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// binSortFieldToColumn resolves a gqlgen
+// BinSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func binSortFieldToColumn(f gqlmodel.BinSortField) string {
+	switch string(f) {
+	case "AISLE":
+		return "aisle"
+	case "SLOT":
+		return "slot"
+	case "LABEL":
+		return "label"
+	}
+	return ""
+}
+
+// translateBinItemSort converts a gqlgen-generated
+// []*BinItemSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateBinItemSort(in []*gqlmodel.BinItemSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    binItemSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// binItemSortFieldToColumn resolves a gqlgen
+// BinItemSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func binItemSortFieldToColumn(f gqlmodel.BinItemSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	case "AISLE":
+		return "aisle"
+	case "SLOT":
+		return "slot"
+	case "NAME":
+		return "name"
+	}
+	return ""
+}
+
 // translateBinaryKeySort converts a gqlgen-generated
 // []*BinaryKeySort into a []sql.Sort. nil / empty input returns nil
 // so the caller's "no sort" path is preserved.

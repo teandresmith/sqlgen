@@ -648,6 +648,372 @@ func (m *M) DeleteAssetDocumentLink(ctx context.Context, assetID int, documentID
 	return true, nil
 }
 
+// Bin resolves the single-by-PK query for bins.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) Bin(ctx context.Context, aisle string, slot int) (*models.Bin, error) {
+	fo := binFieldOptionsFromContext(ctx)
+	res, err := q.Client.Bins().Get(ctx, models.BinPK{Aisle: aisle, Slot: int32(slot)}, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// Bins resolves the cursor-paginated Connection query for bins.
+func (q *Q) Bins(ctx context.Context, filter *models.BinFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Bin], error) {
+	fo := binFieldOptionsFromContext(ctx)
+	res, err := q.Client.Bins().Connection(ctx, models.ConnectionInput[models.BinFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BinList resolves the offset-paginated ListResult query for bins.
+func (q *Q) BinList(ctx context.Context, filter *models.BinFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.Bin], error) {
+	fo := binFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.BinFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.Bins().Paginate(ctx, in, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBin resolves the single-row create mutation for bins.
+func (m *M) CreateBin(ctx context.Context, input *models.CreateBinInput) (*models.Bin, error) {
+	fo := binFieldOptionsFromContext(ctx)
+	res, err := m.Client.Bins().Create(ctx, input, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBins resolves the bulk create mutation for bins.
+func (m *M) CreateBins(ctx context.Context, inputs []*models.CreateBinInput) ([]*models.Bin, error) {
+	fo := binFieldOptionsFromContext(ctx)
+	res, err := m.Client.Bins().CreateMany(ctx, inputs, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBinRequest is one updateBin /
+// updateBins input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBinRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBinInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateBin resolves the single-row update mutation for bins.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBin(ctx context.Context, aisle string, slot int, input UpdateBinRequest) (*models.Bin, error) {
+	fo := binFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.Bins().Update(ctx, models.BinPK{Aisle: aisle, Slot: int32(slot)}, input.Set, func(o *models.CallOptions[models.BinFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.Bins().Get(ctx, models.BinPK{Aisle: aisle, Slot: int32(slot)}, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBins resolves the bulk update-where mutation for bins.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBins(ctx context.Context, filter *models.BinFilter, input UpdateBinRequest) ([]*models.Bin, error) {
+	fo := binFieldOptionsFromContext(ctx)
+	res, err := m.Client.Bins().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertBin resolves the single-row upsert mutation for bins.
+func (m *M) UpsertBin(ctx context.Context, input *models.CreateBinInput) (*models.Bin, error) {
+	fo := binFieldOptionsFromContext(ctx)
+	res, err := m.Client.Bins().Upsert(ctx, input, models.BinConflictPK, func(o *models.CallOptions[models.BinFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteBin resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteBin(ctx context.Context, aisle string, slot int) (bool, error) {
+	if err := m.Client.Bins().HardDelete(ctx, models.BinPK{Aisle: aisle, Slot: int32(slot)}, func(o *models.CallOptions[models.BinFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.BinFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// BinItem resolves the single-by-PK query for bin_items.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) BinItem(ctx context.Context, id int) (*models.BinItem, error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	res, err := q.Client.BinItems().Get(ctx, int64(id), func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BinItems resolves the cursor-paginated Connection query for bin_items.
+func (q *Q) BinItems(ctx context.Context, filter *models.BinItemFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.BinItem], error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	res, err := q.Client.BinItems().Connection(ctx, models.ConnectionInput[models.BinItemFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// BinItemList resolves the offset-paginated ListResult query for bin_items.
+func (q *Q) BinItemList(ctx context.Context, filter *models.BinItemFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.BinItem], error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.BinItemFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.BinItems().Paginate(ctx, in, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBinItem resolves the single-row create mutation for bin_items.
+func (m *M) CreateBinItem(ctx context.Context, input *models.CreateBinItemInput) (*models.BinItem, error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinItems().Create(ctx, input, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateBinItems resolves the bulk create mutation for bin_items.
+func (m *M) CreateBinItems(ctx context.Context, inputs []*models.CreateBinItemInput) ([]*models.BinItem, error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinItems().CreateMany(ctx, inputs, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBinItemRequest is one updateBinItem /
+// updateBinItems input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateBinItemRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateBinItemInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateBinItem resolves the single-row update mutation for bin_items.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateBinItem(ctx context.Context, id int, input UpdateBinItemRequest) (*models.BinItem, error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.BinItems().Update(ctx, int64(id), input.Set, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.BinItems().Get(ctx, int64(id), func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateBinItems resolves the bulk update-where mutation for bin_items.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateBinItems(ctx context.Context, filter *models.BinItemFilter, input UpdateBinItemRequest) ([]*models.BinItem, error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinItems().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertBinItem resolves the single-row upsert mutation for bin_items.
+func (m *M) UpsertBinItem(ctx context.Context, input *models.CreateBinItemInput) (*models.BinItem, error) {
+	fo := binItemFieldOptionsFromContext(ctx)
+	res, err := m.Client.BinItems().Upsert(ctx, input, models.BinItemConflictPK, func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteBinItem resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteBinItem(ctx context.Context, id int) (bool, error) {
+	if err := m.Client.BinItems().HardDelete(ctx, int64(id), func(o *models.CallOptions[models.BinItemFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.BinItemFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
 // BoolKeyed resolves the single-by-PK query for bool_keyed.
 // <table>(id) returns null when missing — no separate exists query is
 // needed. ErrNotFound is collapsed to (nil, nil) so the nullable

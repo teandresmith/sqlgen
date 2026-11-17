@@ -120,6 +120,7 @@ func isRelationshipField(typeName, field string) bool {
 		"Asset.photoAttachments",
 		"Asset.primaryActiveDocument",
 		"Asset.primaryDocument",
+		"Bin.binItems",
 		"BoolKeyed.boolKeyedNotes",
 		"Category.products",
 		"Category.users",

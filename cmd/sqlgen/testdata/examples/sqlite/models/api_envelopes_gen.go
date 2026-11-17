@@ -38,6 +38,14 @@ type BadgeConnection = Connection[Badge]
 type BadgeEdge = Edge[Badge]
 type BadgeListResult = PaginateResult[Badge]
 
+type BinConnection = Connection[Bin]
+type BinEdge = Edge[Bin]
+type BinListResult = PaginateResult[Bin]
+
+type BinItemConnection = Connection[BinItem]
+type BinItemEdge = Edge[BinItem]
+type BinItemListResult = PaginateResult[BinItem]
+
 type BinaryKeyConnection = Connection[BinaryKey]
 type BinaryKeyEdge = Edge[BinaryKey]
 type BinaryKeyListResult = PaginateResult[BinaryKey]

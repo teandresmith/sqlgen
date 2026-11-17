@@ -949,7 +949,7 @@ Requirements of the generated client, proved by the cross-dialect conformance su
 | ID | Requirement | Tests | Applies to | Matrix cell |
 |---|---|---|---|---|
 | tenant-rel.skip-tenancy-propagates | A parent read's `SkipTenancy` is forwarded to the child `GetMany` that loads its O2M relationship | `unit: cmd/sqlgen/gen: TestTenancyTemplate_loadRelationships_propagatesSkipTenancy` | all |  |
-| tenant-rel.composite-load-in-tenant | A composite tenant edge's load runs the child's tenant-scoped `GetMany` | `unit: cmd/sqlgen/gen: TestTenancyTemplate_keyedLoadPropagatesTenantOptions/o2m`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_keyedLoadPropagatesTenantOptions/m2m` | all |  |
+| tenant-rel.composite-load-in-tenant | A composite tenant edge's load runs the child's tenant-scoped `GetMany` | `unit: cmd/sqlgen/gen: TestTenancyTemplate_keyedLoadPropagatesTenantOptions/o2m`; `unit: cmd/sqlgen/gen: TestTenancyTemplate_keyedLoadPropagatesTenantOptions/m2m`; `example: tenancy_postgres: TestCompositeTenantFK_LoadStaysInTenant`; `example: tenancy_postgres: TestCompositeTenantFK_RelationshipFilterStaysInTenant` | all |  |
 
 ## Not applicable
 

@@ -148,6 +148,81 @@ func translateAssetDocumentLinkFilter(in *gqlmodel.AssetDocumentLinkFilter) *mod
 	return out
 }
 
+// translateBinFilter converts the gqlgen-generated
+// BinFilter into a *models.BinFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateBinFilter(in *gqlmodel.BinFilter) *models.BinFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.BinFilter{}
+	if in.Label != nil {
+		out.Label = translateStringComparator(in.Label)
+	}
+	if in.BinItems != nil {
+		out.BinItems = translateBinItemFilter(in.BinItems)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.BinFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateBinFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.BinFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateBinFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateBinItemFilter converts the gqlgen-generated
+// BinItemFilter into a *models.BinItemFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateBinItemFilter(in *gqlmodel.BinItemFilter) *models.BinItemFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.BinItemFilter{}
+	if in.Aisle != nil {
+		out.Aisle = translateNullableStringComparator(in.Aisle)
+	}
+	if in.Name != nil {
+		out.Name = translateStringComparator(in.Name)
+	}
+	if in.Slot != nil {
+		out.Slot = translateNullableNumericComparatorInt32(in.Slot)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.BinItemFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateBinItemFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.BinItemFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateBinItemFilter(sub))
+		}
+	}
+	return out
+}
+
 // translateBoolKeyedFilter converts the gqlgen-generated
 // BoolKeyedFilter into a *models.BoolKeyedFilter.
 // Returns nil when the input is nil so the model layer's "nil filter ⇒ no

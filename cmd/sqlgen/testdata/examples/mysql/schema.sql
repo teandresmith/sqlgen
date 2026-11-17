@@ -228,3 +228,20 @@ CREATE TABLE bool_keyed_notes (
     note VARCHAR(50) NOT NULL,
     FOREIGN KEY (keyed_k) REFERENCES bool_keyed (k)
 );
+
+-- bins / bin_items: a composite foreign key into a composite primary key. Its
+-- members are nullable, so a row with one NULL member references nothing.
+CREATE TABLE bins (
+    aisle VARCHAR(10) NOT NULL,
+    slot INT NOT NULL,
+    label VARCHAR(50) NOT NULL,
+    PRIMARY KEY (aisle, slot)
+);
+
+CREATE TABLE bin_items (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    aisle VARCHAR(10),
+    slot INT,
+    name VARCHAR(50) NOT NULL,
+    FOREIGN KEY (aisle, slot) REFERENCES bins (aisle, slot)
+);

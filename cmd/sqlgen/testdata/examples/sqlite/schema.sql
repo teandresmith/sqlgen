@@ -305,3 +305,20 @@ CREATE TABLE key_class_real_children (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     parent_id REAL REFERENCES key_class_parents(id)
 );
+
+-- bins / bin_items: a composite foreign key into a composite primary key. Its
+-- members are nullable, so a row with one NULL member references nothing.
+CREATE TABLE bins (
+    aisle TEXT NOT NULL,
+    slot INTEGER NOT NULL,
+    label TEXT NOT NULL,
+    PRIMARY KEY (aisle, slot)
+);
+
+CREATE TABLE bin_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    aisle TEXT,
+    slot INTEGER,
+    name TEXT NOT NULL,
+    FOREIGN KEY (aisle, slot) REFERENCES bins (aisle, slot)
+);

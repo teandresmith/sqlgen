@@ -1,0 +1,74 @@
+"""
+Bin corresponds to the bins table.
+"""
+type Bin {
+  "aisle"
+  aisle: ID!
+  "slot"
+  slot: Int!
+  "label"
+  label: String!
+  "one-to-many relationship with the bin_items table."
+  binItems: [BinItem!]!
+}
+
+type BinConnection {
+  edges:      [BinEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type BinEdge {
+  node:   Bin!
+  cursor: String!
+}
+
+type BinListResult {
+  items:      [Bin!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input BinFilter {
+  label: StringComparator
+  binItems: BinItemFilter
+  and: [BinFilter!]
+  or:  [BinFilter!]
+}
+
+enum BinSortField {
+  AISLE
+  SLOT
+  LABEL
+}
+
+input BinSort {
+  field:     BinSortField!
+  direction: SortDirection!
+}
+input CreateBinInput {
+  aisle: ID!
+  slot: Int!
+  label: String!
+}
+input UpdateBinInput {
+  label: String
+}
+
+extend type Query {
+  bin(aisle: ID!, slot: Int!): Bin
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to binList instead."
+  bins(filter: BinFilter, first: Int, after: String, last: Int, before: String): BinConnection!
+  binList(filter: BinFilter, sort: [BinSort!], limit: Int, offset: Int): BinListResult!
+}
+
+extend type Mutation {
+  createBin(input: CreateBinInput!): Bin!
+  createBins(inputs: [CreateBinInput!]!): [Bin!]!
+  updateBin(aisle: ID!, slot: Int!, input: UpdateBinInput!): Bin!
+  updateBins(filter: BinFilter!, input: UpdateBinInput!): [Bin!]!
+  upsertBin(input: CreateBinInput!): Bin!
+  deleteBin(aisle: ID!, slot: Int!): Boolean!
+}

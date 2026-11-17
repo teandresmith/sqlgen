@@ -1330,20 +1330,21 @@ phase requires only `connect`, and 32.6 covers those verbs live in `tenancy_post
 
 **PRD Reference:** Sections 8.1.7, 29.10
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] `tenancy_postgres` (schema landed in 32.6, with the nested and cross-tenant connect
+- [x] `tenancy_postgres` (schema landed in 32.6, with the nested and cross-tenant connect
   tests): load and filter tests over the composite tenant FK, the tenant junction and the
   composite-PK target, each staying in the tenant.
-- [ ] `mysql` and `sqlite`: one composite FK each, with a load and a filter test.
-- [ ] Regenerate the goldens. Only the new tables' files and manifest entries change.
-- [ ] `TestE2EDatabaseTwin` stays green for the changed examples (detection parity under
+- [x] `mysql` and `sqlite`: one composite FK each, with a load and a filter test.
+- [x] Regenerate the goldens. Only the new tables' files and manifest entries change.
+- [x] `TestE2EDatabaseTwin` stays green for the changed examples (detection parity under
   `database`).
-- [ ] `sqlgen-example` probe against HEAD (design §9.2; `reference_example_probe_harness`):
+- [x] `sqlgen-example` probe against HEAD (design §9.2; `reference_example_probe_harness`):
   `validate`, `generate`, build, vet and the full suite pass with no manual relationships, and
-  `Cycle.Tasks` / `Team.Projects` are detected. Its own change lands in that repo.
+  `Cycle.Tasks` / `Team.Projects` are detected. Its own change lands in that repo once a sqlgen
+  release carries this phase (the app pins v0.1.0).
 
 ### Acceptance Criteria
 
@@ -1354,11 +1355,34 @@ phase requires only `connect`, and 32.6 covers those verbs live in `tenancy_post
 
 ### Tests Required
 
-- [ ] The new runtime tests in each example (load, filter, nested where eligible).
-- [ ] `TestE2EGoldenFiles` and `TestE2EDatabaseTwin` green.
-- [ ] The `sqlgen-example` probe result recorded in the Completion Record.
-- [ ] Every design §10.5 row for 32.8 passes, and its registry row lists the test.
+- [x] The new runtime tests in each example (load, filter, nested where eligible).
+- [x] `TestE2EGoldenFiles` and `TestE2EDatabaseTwin` green.
+- [x] The `sqlgen-example` probe result recorded in the Completion Record.
+- [x] Every design §10.5 row for 32.8 passes, and its registry row lists the test.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+**Completed 2026-11-17.**
+
+- **Fixtures.** `tenancy_postgres` needed no schema change: 32.6 landed `cycles`, `projects` (composite PK) and `task_labels`. `mysql` and `sqlite` gain `bins (aisle, slot)`, a composite-PK parent, and `bin_items`, whose nullable `(aisle, slot)` key references it. Bins share an aisle or a slot, so matching on one column alone crosses bins.
+- **Tests.**
+  - `tenancy_postgres/tests/composite_tenant_fk_test.go`: `TestCompositeTenantFK_LoadStaysInTenant` and `TestCompositeTenantFK_RelationshipFilterStaysInTenant`, over the composite O2M (`Cycle.Tasks`), the composite-PK target (`Project.Tasks`) and the tenant junction (`Task.Labels`). Each case runs as tenant A, as tenant B and with `SkipTenancy`. Both tenants hold the same data and the same project codes. Tenant B also holds two rows planted under `session_replication_role = replica`: a task that names A's c1 by id, and a `task_labels` row linking A's t1 to B's `lb`. With these, under `SkipTenancy` only the composite key keeps the tenants apart on all three edges (the projects share codes).
+  - `mysql` and `sqlite` `tests/composite_fk_test.go`: `TestCompositeFK_LoadMatchesEveryKeyColumn` (the parent's key columns are not selected) and `TestCompositeFK_RelationshipFilterMatchesEveryKeyColumn`, which includes a child with a NULL member that matches no parent.
+  - No nested tests: the new `mysql` and `sqlite` parents have composite PKs, which nested mutations exclude, and 32.6 covers the `tenancy_postgres` nested writes.
+- **Fail first.** The `mysql` and `sqlite` tests do not compile at HEAD (`client.Bins` undefined). The `tenancy_postgres` tests pass on arrival, since 32.5 and 32.6 built the behavior. All five mutations of the generated code below were caught; each file was restored afterwards:
+  - `mysql` loader mapping children on `aisle` only: fails the load test.
+  - `mysql` filter `EXISTS` on `aisle` only: fails `/i3` and `/i5`.
+  - `tenancy_postgres` `Project.Tasks` loader mapping on `code` only: fails `composite-PK target/skip tenancy`.
+  - `tenancy_postgres` `CycleFilter.Tasks` on `cycle_id` only: fails `composite o2m matches every key column/skip tenancy`.
+  - `tenancy_postgres` `TaskFilter.Labels` without the junction's `workspace_id` correlation: fails `tenant junction, label in one tenant/skip tenancy`. The junction loader maps rows back on the junction's own `(workspace_id, task_id)`, so it hides the planted row even if its query drops `workspace_id`.
+- **Goldens.** Only `mysql` and `sqlite` moved: the new tables' files, plus lines added to shared files. With `--diff-algorithm=minimal` the only removed line is the `//go:embed` list in each `graph/generated_gen.go`. `tenancy_postgres` gains `github.com/google/go-cmp` as a direct test dependency.
+- **`TestE2EDatabaseTwin`.** Green for `graphql`, `mysql`, `sqlite`, `tenancy_mysql` and `tenancy_postgres`.
+- **`sqlgen-example` probe (2026-11-17, HEAD `b5ec396f`).** Scratch copy of the app at `a019b2e`, with `replace` directives to this checkout and `bin/sqlgen` built from HEAD:
+  - `validate` is clean.
+  - `generate` detects `cycles.tasks` and `teams.projects` as O2M through `tasks_cycle_same_ws` and `projects_team_same_ws`, with keys `[workspace_id, cycle_id]` and `[workspace_id, team_id]`. The app declares no manual relationship for either.
+  - Build, vet and `go test ./...` (testcontainers) pass.
+  - One upgrade step was needed: the app's `internal/graph/*_gen.resolvers.go` were seeded by v0.1.0 and still call the old update signature (`UpdateX(ctx, id, input, hasSet)`, changed in `90aff0e4`). gqlgen carries existing resolver bodies through, so they had to be deleted and reseeded. A diff showed no hand edits in them, only the old seed.
+  - The app's own change is not landed: it pins `sqlgen v0.1.0` and needs a sqlgen release that carries this phase.
+- **Registry.** `tenant-rel.composite-load-in-tenant` lists both `tenancy_postgres` tests. `gen.filter.rel-composite-correlation` and `load.o2m-composite-key` list the `mysql` and `sqlite` tests. Design §10.1 marks both 32.8 rows passing. `make req-check` is ok.
+- **Checks.** `make check`, `make check-examples` (conformance on all four drivers included), `make test-integration` and `TestE2EGoldenFiles` all exit 0. The `mysql` and `sqlite` `go.sum` files gain two `testcontainers-go/modules/postgres` lines: a test dependency of `database/stdlib`, which these examples now reach (`go mod why`).
+- **Auto-review.** No PRD or regression findings; fail first confirmed independently on `cycleTasksFilterExists`. One test-strength issue, fixed: the tenant-junction cases had no row crossing tenants through `task_labels`, so dropping the junction's `workspace_id` went unseen. The planted `task_labels` row and the fifth mutation above close it. Inline doc fixes applied: the probe task's wording (the app's change waits on a sqlgen release), this record's `SkipTenancy` claim, and the design §10.1 row's Tests cell. No questions to adjudicate.

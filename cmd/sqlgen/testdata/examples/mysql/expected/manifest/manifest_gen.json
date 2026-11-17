@@ -1775,6 +1775,907 @@
     },
     {
       "kind": "table",
+      "name": "Bin",
+      "table": "bins",
+      "file_prefix": "bin",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "aisle",
+            "slot"
+          ],
+          "unique": true,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "composite",
+        "struct": "BinPK",
+        "columns": [
+          {
+            "name": "aisle",
+            "go_field": "Aisle",
+            "go_type": "string"
+          },
+          {
+            "name": "slot",
+            "go_field": "Slot",
+            "go_type": "int32"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "aisle",
+          "go_field": "Aisle",
+          "go_type": "string",
+          "db_type": "varchar(10)",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.ID",
+          "comment": ""
+        },
+        {
+          "name": "slot",
+          "go_field": "Slot",
+          "go_type": "int32",
+          "db_type": "int",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "comparator": "comparator.Number[int32]",
+          "comment": ""
+        },
+        {
+          "name": "label",
+          "go_field": "Label",
+          "go_type": "string",
+          "db_type": "varchar(50)",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [
+        {
+          "name": "bin_items",
+          "kind": "o2m",
+          "target_entity": "BinItem",
+          "fk": {
+            "table": "bin_items",
+            "columns": [
+              "aisle",
+              "slot"
+            ],
+            "references": [
+              "aisle",
+              "slot"
+            ],
+            "constraint": "bin_items_ibfk_1"
+          }
+        }
+      ],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "pk",
+                "type": "BinPK"
+              }
+            ],
+            "returns": "*Bin",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "mysql": "SELECT `aisle`, `label`, `slot` FROM `bins` WHERE `aisle` = ? AND `slot` = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetBinsInput"
+              }
+            ],
+            "returns": "[]*Bin",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT `aisle`, `label`, `slot` FROM `bins` WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "pk",
+                "type": "BinPK"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT EXISTS(SELECT 1 FROM `bins` WHERE `aisle` = ? AND `slot` = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT EXISTS(SELECT 1 FROM `bins` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `bins` WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[BinFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[Bin]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[BinFilter]"
+              }
+            ],
+            "returns": "*Connection[Bin]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamBinsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*Bin, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "mysql": "SELECT `aisle`, `label`, `slot` FROM `bins` WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBinInput"
+              }
+            ],
+            "returns": "*Bin",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bins` (<columns>) VALUES (<values>)"
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBinInput"
+              }
+            ],
+            "returns": "[]*Bin",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bins` (<columns>) VALUES <values>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "pk",
+                "type": "BinPK"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateBinInput"
+              }
+            ],
+            "returns": "*Bin",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "mysql": "UPDATE `bins` SET <set> WHERE `aisle` = ? AND `slot` = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateBinItem"
+              }
+            ],
+            "returns": "[]*Bin",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "mysql": "UPDATE `bins` SET <set> WHERE `aisle` = ? AND `slot` = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateBinInput"
+              }
+            ],
+            "returns": "[]*Bin",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "mysql": "UPDATE `bins` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBinInput"
+              },
+              {
+                "name": "target",
+                "type": "BinConflictTarget"
+              }
+            ],
+            "returns": "*Bin",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated BinConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bins` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBinInput"
+              },
+              {
+                "name": "target",
+                "type": "BinConflictTarget"
+              }
+            ],
+            "returns": "[]*Bin",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same BinConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bins` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "pk",
+                "type": "BinPK"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `bins` WHERE `aisle` = ? AND `slot` = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "pks",
+                "type": "[]BinPK"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `bins` WHERE (`aisle`, `slot`) IN (<pks>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `bins` WHERE <filter>"
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "BinFilter",
+        "fields": [
+          {
+            "name": "Aisle",
+            "type": "*comparator.ID"
+          },
+          {
+            "name": "Label",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "Slot",
+            "type": "*comparator.Number[int32]"
+          },
+          {
+            "name": "And",
+            "type": "[]*BinFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*BinFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "BinSort",
+        "fields": [
+          "Aisle",
+          "Label",
+          "Slot"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.Bins().Get(ctx, models.BinPK{Aisle: \"example\", Slot: 1})",
+          "rows, err := client.Bins().GetMany(ctx, &models.GetBinsInput{Filter: &models.BinFilter{Label: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.Bins().Create(ctx, &models.CreateBinInput{Aisle: \"example\", Slot: 1, Label: \"example\"})",
+          "updated, err := client.Bins().Update(ctx, models.BinPK{Aisle: \"example\", Slot: 1}, &models.UpdateBinInput{Label: omittable.Set(\"example\")})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
+      "name": "BinItem",
+      "table": "bin_items",
+      "file_prefix": "bin_item",
+      "files": [
+        "models_gen.go"
+      ],
+      "comment": "",
+      "indexes": [
+        {
+          "name": "PRIMARY",
+          "columns": [
+            "id"
+          ],
+          "unique": true,
+          "method": "btree"
+        },
+        {
+          "name": "aisle",
+          "columns": [
+            "aisle",
+            "slot"
+          ],
+          "unique": false,
+          "method": "btree"
+        }
+      ],
+      "pk": {
+        "kind": "single",
+        "columns": [
+          {
+            "name": "id",
+            "go_field": "ID",
+            "go_type": "int64"
+          }
+        ]
+      },
+      "features": {
+        "soft_delete": null,
+        "cache": null,
+        "events": null,
+        "tenancy": null
+      },
+      "columns": [
+        {
+          "name": "id",
+          "go_field": "ID",
+          "go_type": "int64",
+          "db_type": "bigint",
+          "nullable": false,
+          "pk": true,
+          "unique": false,
+          "auto": "insert",
+          "comparator": "comparator.Number[int64]",
+          "comment": ""
+        },
+        {
+          "name": "aisle",
+          "go_field": "Aisle",
+          "go_type": "*string",
+          "db_type": "varchar(10)",
+          "nullable": true,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.NullableString",
+          "comment": ""
+        },
+        {
+          "name": "slot",
+          "go_field": "Slot",
+          "go_type": "*int32",
+          "db_type": "int",
+          "nullable": true,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.NullableNumber[int32]",
+          "comment": ""
+        },
+        {
+          "name": "name",
+          "go_field": "Name",
+          "go_type": "string",
+          "db_type": "varchar(50)",
+          "nullable": false,
+          "pk": false,
+          "unique": false,
+          "comparator": "comparator.String",
+          "comment": ""
+        }
+      ],
+      "relationships": [],
+      "methods": {
+        "query": [
+          {
+            "name": "Get",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "*BinItem",
+            "errors": [
+              "ErrNotFound"
+            ],
+            "notes": "Delegates to GetMany with a primary-key filter; returns ErrNotFound when no row matches.",
+            "sql_bodies": {
+              "mysql": "SELECT `aisle`, `id`, `name`, `slot` FROM `bin_items` WHERE `id` = ? LIMIT 1"
+            }
+          },
+          {
+            "name": "GetMany",
+            "params": [
+              {
+                "name": "input",
+                "type": "*GetBinItemsInput"
+              }
+            ],
+            "returns": "[]*BinItem",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT `aisle`, `id`, `name`, `slot` FROM `bin_items` WHERE <filter> ORDER BY <sort> LIMIT <limit>"
+            }
+          },
+          {
+            "name": "Exists",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT EXISTS(SELECT 1 FROM `bin_items` WHERE `id` = ?)"
+            }
+          },
+          {
+            "name": "ExistsWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinItemFilter"
+              }
+            ],
+            "returns": "bool",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT EXISTS(SELECT 1 FROM `bin_items` WHERE <filter>)"
+            }
+          },
+          {
+            "name": "Count",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinItemFilter"
+              }
+            ],
+            "returns": "int64",
+            "errors": [],
+            "sql_bodies": {
+              "mysql": "SELECT COUNT(*) FROM `bin_items` WHERE <filter>"
+            }
+          },
+          {
+            "name": "Paginate",
+            "params": [
+              {
+                "name": "input",
+                "type": "PaginateInput[BinItemFilter]"
+              }
+            ],
+            "returns": "*PaginateResult[BinItem]",
+            "errors": [],
+            "notes": "Offset pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Connection",
+            "params": [
+              {
+                "name": "input",
+                "type": "ConnectionInput[BinItemFilter]"
+              }
+            ],
+            "returns": "*Connection[BinItem]",
+            "errors": [
+              "ErrInvalidCursor"
+            ],
+            "notes": "Relay cursor pagination. Issues no statement of its own — composes Count and GetMany, so no sql_bodies entry."
+          },
+          {
+            "name": "Stream",
+            "params": [
+              {
+                "name": "input",
+                "type": "*StreamBinItemsInput"
+              }
+            ],
+            "returns": "iter.Seq2[*BinItem, error]",
+            "errors": [],
+            "notes": "Scalars only — no relationship loading, cache always bypassed. Errors surface through the iterator's second value.",
+            "sql_bodies": {
+              "mysql": "SELECT `aisle`, `id`, `name`, `slot` FROM `bin_items` WHERE <filter> ORDER BY <sort>"
+            }
+          }
+        ],
+        "mutation": [
+          {
+            "name": "Create",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBinItemInput"
+              }
+            ],
+            "returns": "*BinItem",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bin_items` (<columns>) VALUES (<values>)"
+            }
+          },
+          {
+            "name": "CreateMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBinItemInput"
+              }
+            ],
+            "returns": "[]*BinItem",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bin_items` (<columns>) VALUES <values>"
+            }
+          },
+          {
+            "name": "Update",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateBinItemInput"
+              }
+            ],
+            "returns": "*BinItem",
+            "errors": [
+              "ErrNotFound",
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Only fields where IsSet() reports true reach the SET clause; an input with none set issues no UPDATE and returns the row unchanged.",
+            "sql_bodies": {
+              "mysql": "UPDATE `bin_items` SET <set> WHERE `id` = ?"
+            }
+          },
+          {
+            "name": "UpdateMany",
+            "params": [
+              {
+                "name": "items",
+                "type": "[]UpdateBinItemItem"
+              }
+            ],
+            "returns": "[]*BinItem",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Issues one statement per item. Batched like CreateMany — earlier items are not rolled back on a later failure. A primary key that does not exist is silently skipped, even under strict_updates.",
+            "sql_bodies": {
+              "mysql": "UPDATE `bin_items` SET <set> WHERE `id` = ?"
+            }
+          },
+          {
+            "name": "UpdateWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinItemFilter"
+              },
+              {
+                "name": "input",
+                "type": "*UpdateBinItemInput"
+              }
+            ],
+            "returns": "[]*BinItem",
+            "errors": [
+              "ErrNilInput",
+              "ErrEmptyFilter",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Idempotent — returns an empty slice when no row matches. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "mysql": "UPDATE `bin_items` SET <set> WHERE <filter>"
+            }
+          },
+          {
+            "name": "Upsert",
+            "params": [
+              {
+                "name": "input",
+                "type": "*CreateBinItemInput"
+              },
+              {
+                "name": "target",
+                "type": "BinItemConflictTarget"
+              }
+            ],
+            "returns": "*BinItem",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "One method over the generated BinItemConflictTarget enum — the target argument selects the conflict columns at call time.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bin_items` (<columns>) VALUES (<values>) ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "UpsertMany",
+            "params": [
+              {
+                "name": "inputs",
+                "type": "[]*CreateBinItemInput"
+              },
+              {
+                "name": "target",
+                "type": "BinItemConflictTarget"
+              }
+            ],
+            "returns": "[]*BinItem",
+            "errors": [
+              "ErrNilInput",
+              "ErrConstraintViolation"
+            ],
+            "notes": "Batched in generation.batch_size chunks over the same BinItemConflictTarget enum Upsert takes. Inputs resolving to one target are deduped before the statement is built, last occurrence wins. Earlier chunks are not rolled back on a later failure — wrap in a transaction for atomicity.",
+            "sql_bodies": {
+              "mysql": "INSERT INTO `bin_items` (<columns>) VALUES <values> ON DUPLICATE KEY UPDATE <excluded>"
+            }
+          },
+          {
+            "name": "HardDelete",
+            "params": [
+              {
+                "name": "id",
+                "type": "int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — a primary key that does not exist is not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `bin_items` WHERE `id` = ?"
+            }
+          },
+          {
+            "name": "HardDeleteMany",
+            "params": [
+              {
+                "name": "ids",
+                "type": "[]int64"
+              }
+            ],
+            "returns": "",
+            "errors": [],
+            "notes": "Idempotent — primary keys that do not exist are not an error.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `bin_items` WHERE `id` IN (<ids>)"
+            }
+          },
+          {
+            "name": "HardDeleteWhere",
+            "params": [
+              {
+                "name": "filter",
+                "type": "*BinItemFilter"
+              }
+            ],
+            "returns": "",
+            "errors": [
+              "ErrEmptyFilter"
+            ],
+            "notes": "Idempotent — no match is not an error. ErrEmptyFilter when the filter produces no conditions.",
+            "sql_bodies": {
+              "mysql": "DELETE FROM `bin_items` WHERE <filter>"
+            }
+          }
+        ]
+      },
+      "filter": {
+        "type": "BinItemFilter",
+        "fields": [
+          {
+            "name": "Aisle",
+            "type": "*comparator.NullableString"
+          },
+          {
+            "name": "ID",
+            "type": "*comparator.Number[int64]"
+          },
+          {
+            "name": "Name",
+            "type": "*comparator.String"
+          },
+          {
+            "name": "Slot",
+            "type": "*comparator.NullableNumber[int32]"
+          },
+          {
+            "name": "And",
+            "type": "[]*BinItemFilter"
+          },
+          {
+            "name": "Or",
+            "type": "[]*BinItemFilter"
+          }
+        ]
+      },
+      "sort": {
+        "type": "BinItemSort",
+        "fields": [
+          "Aisle",
+          "ID",
+          "Name",
+          "Slot"
+        ]
+      },
+      "examples": {
+        "read": [
+          "row, err := client.BinItems().Get(ctx, 1)",
+          "rows, err := client.BinItems().GetMany(ctx, &models.GetBinItemsInput{Filter: &models.BinItemFilter{Name: &comparator.String{Eq: new(\"example\")}}})"
+        ],
+        "write": [
+          "created, err := client.BinItems().Create(ctx, &models.CreateBinItemInput{Name: \"example\"})",
+          "updated, err := client.BinItems().Update(ctx, 1, &models.UpdateBinItemInput{Aisle: omittable.Set(new(\"example\"))})"
+        ]
+      }
+    },
+    {
+      "kind": "table",
       "name": "BoolKeyed",
       "table": "bool_keyed",
       "file_prefix": "bool_keyed",
