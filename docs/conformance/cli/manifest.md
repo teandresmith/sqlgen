@@ -580,7 +580,7 @@ Matrix `manifest-artifacts`. The `gated` gate for each artifact is: `breadcrumbs
 | manifest.ver.pin-schema-url | Consumers pin via the `$schema` URL: `manifest validate` validates against the schema that URL names | `unit: cmd/sqlgen/cli: TestManifestValidate_UsesSchemaAtManifestURL/a manifest the embedded schema accepts fails the schema at its URL`; `unit: cmd/sqlgen/cli: TestManifestValidate_UsesSchemaAtManifestURL/a manifest the embedded schema rejects passes the schema at its URL` | all |  |
 | manifest.ver.zero-x | `schema_version` ships at `0.x` until the shape is frozen | `golden: postgres` | all |  |
 | manifest.ver.zero-x-minor-breaking | While `0.x`, breaking changes are permitted under a minor bump | | all |  |
-| manifest.ver.0-2-0 | `schema_version` is `0.2.0`: every relationship's `fk` and `junction` take the key-list shape of §30.4.2, with `constraint` | | all |  |
+| manifest.ver.0-2-0 | `schema_version` is `0.2.0`: every relationship's `fk` and `junction` take the key-list shape of §30.4.2, with `constraint` | `unit: cmd/sqlgen/manifest: TestEmitJSON_SchemaVersion`; `unit: cmd/sqlgen/manifest: TestSchemaV1_RelationshipKeyRequiresColumnsAndReferences` | all |  |
 | manifest.ver.1-0-0-freeze | The `1.0.0` freeze requires the `schema/v1.json` conventions tightening: the `call_options` / `soft_delete` / `comparator` / `omittable` sub-blocks take their final shape and `conventions.required` is tightened | | all |  |
 
 ## §30.7 Extended Schema Metadata
