@@ -202,6 +202,11 @@ type ColumnContext struct {
 	// arrays (e.g., "UserRole") and MySQL SETs (e.g., "UsersPermissionsSetValue").
 	// Empty for bare slices like []string or []uuid.UUID.
 	SliceElemType string
+	// ArrayElemGoType is the element Go type of a PostgreSQL array column
+	// that a column_map, type_map or overrides.types retype left without the
+	// slice flag, so its filter keeps comparator.Slice of what the column
+	// holds. Empty otherwise.
+	ArrayElemGoType string
 	// IsSet indicates MySQL SET types (named []ValueType slices).
 	IsSet bool
 	// FKConvert indicates how to convert the value to string for FK comparisons.

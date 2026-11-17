@@ -868,8 +868,7 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 			// Enum arrays use a named slice type (e.g., UserRoleSlice) with
 			// Scan/Value methods so pgx can handle the custom OID without
 			// manual type registration.
-			baseKey, baseSchemaType := r.schemaTypeKey(baseType)
-			if goTypeName, ok := r.enums[baseKey]; baseSchemaType && ok {
+			if goTypeName, ok := r.arrayEnumElem(baseType); ok {
 				return GoType{
 					Name:          goTypeName + "Slice",
 					ZeroValue:     "nil",
@@ -893,6 +892,26 @@ func (r *Resolver) resolveByTypeSource(sqlType string, nullable bool, tableOverr
 
 	// Step 5: Built-in dialect mapping
 	return r.builtinResolve(sqlType, nullable), overrideSource{}
+}
+
+// arrayEnumElem returns the enum Go type of a PostgreSQL array element type
+// that names a registered enum. An enum element wins over overrides.types.
+func (r *Resolver) arrayEnumElem(elemSQLType string) (string, bool) {
+	key, schemaType := r.schemaTypeKey(elemSQLType)
+	goTypeName, ok := r.enums[key]
+	return goTypeName, schemaType && ok
+}
+
+// ArrayElemGoType returns the Go type of one element of a PostgreSQL array
+// whose element SQL type is elemSQLType, as the array column resolves it
+// when nothing retypes the column.
+func (r *Resolver) ArrayElemGoType(elemSQLType string, tableOverrides map[string]config.TypeOverride) string {
+	elemSQLType = normalizeSQL(elemSQLType)
+	if goTypeName, ok := r.arrayEnumElem(elemSQLType); ok {
+		return goTypeName
+	}
+	base, _ := r.resolveByTypeSource(elemSQLType, false, tableOverrides)
+	return base.Name
 }
 
 // resolveSchemaType resolves sqlType as a registered enum, SET or domain,

@@ -1358,29 +1358,32 @@ func buildColumnContext(input *GenerateInput, schema, qualifiedTable string, col
 		}
 	}
 
+	arrayElemGoType := retypedArrayElemGoType(input.Config.Input.Dialect, resolver, col.Type, gt, tableOverrides)
+
 	return ColumnContext{
-		Name:          col.Name,
-		FieldName:     fieldName,
-		GoType:        gt.Name,
-		Import:        gt.Import,
-		ZeroValue:     gt.ZeroValue,
-		SQLType:       col.Type,
-		BaseSQLType:   baseSQLType(resolver, col.Type),
-		Nullable:      col.Nullable,
-		PrimaryKey:    col.PrimaryKey,
-		HasDefault:    col.Default != "",
-		DefaultExpr:   resolveDefaultExpr(col),
-		AutoIncrement: col.AutoIncrement,
-		IsComputed:    col.GeneratedExpr != "",
-		Description:   resolveColumnDescription(col, tableCfg),
-		DBTag:         col.Name,
-		JSONTag:       col.Name,
-		IsSlice:       gt.IsSlice,
-		SliceElemType: gt.SliceElemType,
-		IsSet:         resolver.IsSet(col.Type),
-		FKConvert:     gt.FKConvert,
-		FKReference:   fkRef,
-		Unique:        col.Unique,
+		Name:            col.Name,
+		FieldName:       fieldName,
+		GoType:          gt.Name,
+		Import:          gt.Import,
+		ZeroValue:       gt.ZeroValue,
+		SQLType:         col.Type,
+		BaseSQLType:     baseSQLType(resolver, col.Type),
+		Nullable:        col.Nullable,
+		PrimaryKey:      col.PrimaryKey,
+		HasDefault:      col.Default != "",
+		DefaultExpr:     resolveDefaultExpr(col),
+		AutoIncrement:   col.AutoIncrement,
+		IsComputed:      col.GeneratedExpr != "",
+		Description:     resolveColumnDescription(col, tableCfg),
+		DBTag:           col.Name,
+		JSONTag:         col.Name,
+		IsSlice:         gt.IsSlice,
+		SliceElemType:   gt.SliceElemType,
+		ArrayElemGoType: arrayElemGoType,
+		IsSet:           resolver.IsSet(col.Type),
+		FKConvert:       gt.FKConvert,
+		FKReference:     fkRef,
+		Unique:          col.Unique,
 
 		FieldNameOverridden: fieldNameOverridden,
 
@@ -1426,6 +1429,21 @@ func resolveColumnFieldName(column string, tableCfg config.TableConfig) (string,
 		return override.Name, true
 	}
 	return FieldName(column), false
+}
+
+// retypedArrayElemGoType returns the element Go type of a PostgreSQL array
+// column whose resolved Go type gt is not a slice, as a retype leaves it, and
+// "" for any other column. The element resolves as it does for the unretyped
+// column, so the filter compares what the database holds (PRD §11.2).
+func retypedArrayElemGoType(dialect config.Dialect, resolver *gotype.Resolver, sqlType string, gt gotype.GoType, tableOverrides map[string]config.TypeOverride) string {
+	if dialect != config.DialectPostgres || gt.IsSlice || resolver == nil {
+		return ""
+	}
+	elem, ok := strings.CutSuffix(resolver.BaseSQLType(sqlType), "[]")
+	if !ok {
+		return ""
+	}
+	return resolver.ArrayElemGoType(elem, tableOverrides)
 }
 
 // resolveColumnGoType resolves a column's Go type: the tenant column's
@@ -2612,7 +2630,7 @@ func resolveGenericComparator(col ColumnContext, baseGoType string) string {
 	case col.IsSet:
 		// SET columns store comma-separated strings; use String comparator.
 		return ""
-	case col.IsSlice:
+	case col.IsSlice, col.ArrayElemGoType != "":
 		elemType := sliceElementType(col, baseGoType)
 		if !isComparableSliceElement(elemType) {
 			// `comparator.Slice[T]` requires `T comparable`. JSON
@@ -2747,7 +2765,7 @@ func isOpaqueComparatorGoType(goType string) bool {
 // The dialect is a parameter rather than read from the column because
 // ColumnContext carries the SQL type, not the dialect that spelled it.
 func columnIsFilterable(col ColumnContext, dialect config.Dialect) bool {
-	if col.IsSlice {
+	if col.IsSlice || col.ArrayElemGoType != "" {
 		elemType := sliceElementType(col, strings.TrimPrefix(col.GoType, "*"))
 		return isComparableSliceElement(elemType)
 	}
@@ -2764,6 +2782,9 @@ func columnIsFilterable(col ColumnContext, dialect config.Dialect) bool {
 func sliceElementType(col ColumnContext, baseGoType string) string {
 	if col.SliceElemType != "" {
 		return col.SliceElemType
+	}
+	if col.ArrayElemGoType != "" {
+		return col.ArrayElemGoType
 	}
 	return strings.TrimPrefix(baseGoType, "[]")
 }

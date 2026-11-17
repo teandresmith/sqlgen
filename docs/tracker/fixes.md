@@ -23,9 +23,41 @@
 
 <!-- fixes:open:begin -->
 
-### FIX-384
+### FIX-385
 
 - **Status:** Open
+- **Severity:** tracked
+- **Origin:** phase 7, parser
+- **Surfaced by:** FIX-384 vet (2026-11-16), filed on the user's yes (2026-11-16)
+
+**Issue.** **A view column retyped with `@type` over a PostgreSQL array does not compile.** postgres/pgx, schema
+`CREATE TYPE kind AS ENUM ('a','b'); CREATE TABLE refs (id integer PRIMARY KEY, kinds kind[], nn kind[] NOT NULL);`,
+view file `-- @pk: id` / `-- @type kinds: KindSlice` / `CREATE VIEW vrefs AS SELECT id, kinds, nn FROM refs;` →
+`sqlgen generate` exits 0; `go build` → `out/views_gen.go:474:25: KindSlice does not satisfy comparable` (filter
+`Kinds *comparator.Enum[KindSlice]`). Reproduced with and without FIX-384's prototype.
+
+**Root cause.** Not yet vetted. `parser/view.go:1011-1013` overwrites `col.Type` with the `@type` Go literal, so the
+generator never sees the array SQL type and FIX-384's element recovery cannot run.
+
+**Suggested fix.**
+- Keep the column's SQL type alongside the `@type` override in the parser, so the generator resolves the Go type from
+  the override and the comparator from the SQL type (as FIX-384 does for table columns).
+- Add the view `@type` case to FIX-384's `TestGenerate_RetypedArrayColumnKeepsSliceFilter`.
+
+**References.**
+- PRD §7.1, §10 (views, `@type`). FIX-384.
+
+**Resolution notes.** _Filled in by `/fix resolve`._
+
+<!-- fixes:open:end -->
+
+## Resolved
+
+<!-- fixes:resolved:begin -->
+
+### FIX-384
+
+- **Status:** Resolved
 - **Severity:** tracked
 - **Origin:** phase 11, cmd/sqlgen/gen
 - **Surfaced by:** FIX-377 implementation (2026-11-16), filed on the user's yes (2026-11-16)
@@ -37,8 +69,8 @@ with `type_map: {kinds: KindSlice}` (pgx) → `sqlgen generate` exits 0; `go bui
 comparable` on `Kinds *comparator.Enum[KindSlice]` (and `*comparator.NullableEnum[KindSlice]`). With no retype the
 fields are `comparator.Slice[Kind]` / `comparator.NullableSlice[Kind]`. The column need not be a key.
 
-**Root cause.** Not yet vetted. Filter comparator resolution (`resolveGenericComparator`,
-`cmd/sqlgen/gen/context_table.go:2514`) sees a bare capitalised name and `isEnumLikeType` sends it to `Enum`. The
+**Root cause.** Filter comparator resolution (`resolveGenericComparator`,
+`cmd/sqlgen/gen/context_table.go:2628`) sees a bare capitalised name and `isEnumLikeType` sends it to `Enum`. The
 element type is lost one level up: every per-column retype goes through `gotype.FromLiteral` (`type_map`,
 `column_map`) or `FromOverride` (`overrides.types`), and both return a GoType with `IsSlice` false. Table and global
 `overrides.types`, `column_map.type`, and global `overrides.types` on a view column all hit it (measured).
@@ -50,7 +82,7 @@ element type is lost one level up: every per-column retype goes through `gotype.
   `resolveGenericComparator`, `columnIsFilterable` and `sliceElementType` read it, so a retyped array keeps
   `Slice[elem]` / `NullableSlice[elem]` (and its GraphQL comparator), and a JSON element stays non-filterable.
   The PostgreSQL guard is required (`TestSliceComparator_dialectGating` fails without it).
-- Tests: `TestGenerate_RetypedArrayColumnKeepsSliceFilter` (`cmd/sqlgen/cli/retyped_array_filter_test.go`, 8 cases,
+- Tests: `TestGenerate_RetypedArrayColumnKeepsSliceFilter` (`cmd/sqlgen/cli/retyped_array_filter_test.go`, 10 cases,
   each builds); FIX-377's `TestGenerate_UnkeyableForeignKeyRetypedToItsOwnSliceTypeGivesNoRelationship` now builds.
 - Vet correction: the fix is not confined to `resolveGenericComparator`; the element must be recovered where the
   ColumnContext is built.
@@ -89,39 +121,23 @@ element type is lost one level up: every per-column retype goes through `gotype.
 **References.**
 - PRD §7.1 (type resolution; literal retypes), §11 (comparators), §4.13. FIX-377 (`1c4849fd`).
 
-**Resolution notes.** _Filled in by `/fix resolve`._
+**Resolution notes.** A PostgreSQL array column retyped by `type_map`, `column_map.type` or `overrides.types` (tables
+and views) keeps `comparator.Slice[elem]` / `NullableSlice[elem]`: new internal `ColumnContext.ArrayElemGoType`, filled
+by `retypedArrayElemGoType` from `buildColumnContext` and `buildViewColumns`, is read by `resolveGenericComparator`,
+`columnIsFilterable` and `sliceElementType`; a json/jsonb element stays non-filterable. PRD §7.1 and §11.2 amended per
+the 2026-11-16 ruling (option a); conformance rows in `docs/conformance/cli/gotype.md` and
+`docs/conformance/runtime/sql.md` updated. Tests: `TestGenerate_RetypedArrayColumnKeepsSliceFilter` (each case builds);
+FIX-377's `TestGenerate_UnkeyableForeignKeyRetypedToItsOwnSliceTypeGivesNoRelationship` now builds the package. The
+prototype's base (`bd76ff03`) was behind HEAD by FIX-380 (`705aa731`), which touched `context_table.go` and the PRD; it
+applied without conflict. Fail-first re-run on the final code (helper disabled → "KindSlice does not satisfy
+comparable"). Gates: `make check` ok, `make check-examples` ok; `make update-golden` / `update-golden-e2e` no churn.
+Verify (reviewer) found the recovered element differed from the unretyped column's when `overrides.types` also maps the
+enum's SQL type (`Slice[string]` vs `Slice[Kind]`): new `gotype.Resolver.ArrayElemGoType` resolves the element as the
+array branch does (enum first, shared `arrayEnumElem`), with the subtest "type_map over an enum element that
+overrides.types also maps" (fails on the old call). Inline doc fixes: `comparator.pg-only.never-selected` now cites
+`TestSliceComparator_dialectGating`; stale line ref and case count in this entry; `ArrayElemGoType` field comment;
+history sentence dropped from the test comment; `TestSliceComparator_dialectGating` comment reworded.
 
-### FIX-385
-
-- **Status:** Open
-- **Severity:** tracked
-- **Origin:** phase 7, parser
-- **Surfaced by:** FIX-384 vet (2026-11-16), filed on the user's yes (2026-11-16)
-
-**Issue.** **A view column retyped with `@type` over a PostgreSQL array does not compile.** postgres/pgx, schema
-`CREATE TYPE kind AS ENUM ('a','b'); CREATE TABLE refs (id integer PRIMARY KEY, kinds kind[], nn kind[] NOT NULL);`,
-view file `-- @pk: id` / `-- @type kinds: KindSlice` / `CREATE VIEW vrefs AS SELECT id, kinds, nn FROM refs;` →
-`sqlgen generate` exits 0; `go build` → `out/views_gen.go:474:25: KindSlice does not satisfy comparable` (filter
-`Kinds *comparator.Enum[KindSlice]`). Reproduced with and without FIX-384's prototype.
-
-**Root cause.** Not yet vetted. `parser/view.go:1011-1013` overwrites `col.Type` with the `@type` Go literal, so the
-generator never sees the array SQL type and FIX-384's element recovery cannot run.
-
-**Suggested fix.**
-- Keep the column's SQL type alongside the `@type` override in the parser, so the generator resolves the Go type from
-  the override and the comparator from the SQL type (as FIX-384 does for table columns).
-- Add the view `@type` case to FIX-384's `TestGenerate_RetypedArrayColumnKeepsSliceFilter`.
-
-**References.**
-- PRD §7.1, §10 (views, `@type`). FIX-384.
-
-**Resolution notes.** _Filled in by `/fix resolve`._
-
-<!-- fixes:open:end -->
-
-## Resolved
-
-<!-- fixes:resolved:begin -->
 ### FIX-380
 
 - **Status:** Resolved

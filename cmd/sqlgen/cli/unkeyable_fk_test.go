@@ -153,11 +153,13 @@ CREATE TABLE refs (id int PRIMARY KEY, sk set('a', 'b'));`,
 }
 
 // An enum array retyped to its own slice type on both sides of a detected
-// foreign key is still an array: the edge is omitted with the warning. The
-// package is not built here: its filter for the retyped column does not
-// compile, since resolveGenericComparator picks comparator.Enum for an array
-// retyped to a bare local type name, a separate defect.
+// foreign key is still an array: the edge is omitted with the warning, and
+// the package builds.
 func TestGenerate_UnkeyableForeignKeyRetypedToItsOwnSliceTypeGivesNoRelationship(t *testing.T) {
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
 	const cfg = `version: 1
 input:
   dialect: postgres
@@ -186,8 +188,14 @@ CREATE TABLE refs (id integer PRIMARY KEY, kinds kind[] REFERENCES things(kinds)
 		if strings.Count(stderr, want) != 1 {
 			t.Errorf("%s stderr = %q, want %q once", command, stderr, want)
 		}
-		if command == "generate" && strings.Contains(generatedGo(t, dir)["models_gen.go"], "Refs []*Ref") {
+		if command != "generate" {
+			continue
+		}
+		if strings.Contains(generatedGo(t, dir)["models_gen.go"], "Refs []*Ref") {
 			t.Errorf("models_gen.go has the Refs edge, want it omitted")
+		}
+		if !testing.Short() || os.Getenv("SQLGEN_BUILD_GENERATED") != "" {
+			buildGenerated(t, root, dir)
 		}
 	}
 }
