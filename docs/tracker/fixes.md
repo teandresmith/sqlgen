@@ -29,6 +29,7 @@
 - **Severity:** tracked
 - **Origin:** phase 7, parser
 - **Surfaced by:** FIX-384 vet (2026-11-16), filed on the user's yes (2026-11-16)
+- **Vetted:** corrected at `a622760c` (2026-11-17)
 
 **Issue.** **A view column retyped with `@type` over a PostgreSQL array does not compile.** postgres/pgx, schema
 `CREATE TYPE kind AS ENUM ('a','b'); CREATE TABLE refs (id integer PRIMARY KEY, kinds kind[], nn kind[] NOT NULL);`,
@@ -36,13 +37,38 @@ view file `-- @pk: id` / `-- @type kinds: KindSlice` / `CREATE VIEW vrefs AS SEL
 `sqlgen generate` exits 0; `go build` → `out/views_gen.go:474:25: KindSlice does not satisfy comparable` (filter
 `Kinds *comparator.Enum[KindSlice]`). Reproduced with and without FIX-384's prototype.
 
-**Root cause.** Not yet vetted. `parser/view.go:1011-1013` overwrites `col.Type` with the `@type` Go literal, so the
-generator never sees the array SQL type and FIX-384's element recovery cannot run.
+**Root cause.** The parser replaces a `@type` view column's SQL type with the Go literal at two sites:
+`resolveColumnType` (`parser/view.go:351-353`, the `BuildView` path every schema-file run takes) returns `ta.GoType` as
+the column's `Type`, and the introspected-view merge (`parser/view.go:1013-1014`) sets `col.Type = ta.GoType`. The Go
+type already travels in `GoTypeLiteral`, which `viewColumnGoType` reads first, so the overwritten `Type` only hides the
+array SQL type from `retypedArrayElemGoType` (and puts a Go type in the manifest's `db_type`).
 
 **Suggested fix.**
-- Keep the column's SQL type alongside the `@type` override in the parser, so the generator resolves the Go type from
-  the override and the comparator from the SQL type (as FIX-384 does for table columns).
-- Add the view `@type` case to FIX-384's `TestGenerate_RetypedArrayColumnKeepsSliceFilter`.
+- At both parser sites, leave `col.Type` as the SQL type the column would have without the annotation (the source
+  column's type, the aggregate inference, or `any`; the introspected type on the merge path). `GoTypeLiteral` /
+  `GoTypeImport` keep carrying the `@type`, and a `@type` column stays NOT NULL unless `@nullable` names it. No
+  generator change: FIX-384's `retypedArrayElemGoType` then sees the array SQL type.
+- Add a view `@type` case to FIX-384's `TestGenerate_RetypedArrayColumnKeepsSliceFilter` (with `@nullable: kinds`, so
+  the shared assertions hold). Update the four parser tests that pinned the old `Type`:
+  `TestBuildView_TypeResolution` (`avg_rating` → `*float64`), `TestMergeViewAnnotations_AnnotationWins` and
+  `TestMergeViewAnnotations_MatviewNoPKOverlayKeepsDiscovered` (`total` → `numeric`), and sqlite
+  `TestViewFileParsedAsView` (`review_count` → `int64`).
+- Vet correction: the entry named only the merge site (`view.go:1011-1013`), but the reproduction runs through
+  `BuildView`, where `resolveColumnType` does the overwrite; both sites need the change.
+- Pending ruling, now ruled: the change moves the manifest's `db_type` for `@type` view columns from the Go type to the
+  SQL type. The user ruled on 2026-11-17: accept the churn (`db_type` reports the database type, as it already does for
+  unannotated view columns).
+- Prototype results, run at `a622760c` on 2026-11-17: reproduction (new view `@type` case at HEAD) → `views_gen.go has
+  no filter field matching Kinds\s+\*comparator\.NullableSlice\[Kind\]` and `out/views_gen.go:474:25: KindSlice does not
+  satisfy comparable`. Gates: `go test -race -count=1 ./gen/... ./cli/...` ok; parser `go test -count=1 ./...` ok
+  (after the four test updates); parser golangci-lint and gofumpt clean; `make update-golden` no churn; `make
+  update-golden-e2e` PASS. Fail-first: reverting `resolveColumnType` → the view `@type` case fails ("views_gen.go has no
+  filter field matching Kinds…NullableSlice[Kind]"); reverting the merge site →
+  `TestMergeViewAnnotations_AnnotationWins` fails ("total Type = \"decimal.Decimal\", want \"numeric\""); the existing
+  suite without the fix passes. Golden churn (manifest `db_type` only, `models/` mirrors `expected/`): graphql ~4
+  (category_price_total, workspace_note_summary .md/.json), mysql ~3, postgres ~4 (adds order_total.md), sqlite ~3
+  (category_stat.md, manifest_gen.json, product_summary.md). Revert the environmental mysql/sqlite go.sum lines. Patch:
+  `.claude/prototypes/FIX-385.patch` (32 files, +59/-46; source 4 files, +23/-10).
 
 **References.**
 - PRD §7.1, §10 (views, `@type`). FIX-384.
