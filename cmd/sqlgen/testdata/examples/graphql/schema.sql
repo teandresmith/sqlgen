@@ -537,6 +537,53 @@ CREATE TABLE keyed_code_entries (
     note TEXT NOT NULL
 );
 
+-- Composite tenant foreign keys. Each child reaches its parent through
+-- (workspace_id, <parent>_id), so a row can only point at a parent in its own
+-- workspace. Detection gives an O2M cycles → tasks, an O2O task_reports →
+-- tasks (task_id is UNIQUE) and an M2M tasks ↔ labels through the tenant
+-- junction task_labels, whose primary key is the union of both keys. Every
+-- table carries workspace_id, so each is tenanted and the GraphQL edges load
+-- through the tenant-scoped client.
+CREATE TABLE cycles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (workspace_id, id)
+);
+
+CREATE TABLE tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL,
+    cycle_id UUID,
+    title TEXT NOT NULL,
+    UNIQUE (workspace_id, id),
+    FOREIGN KEY (workspace_id, cycle_id) REFERENCES cycles (workspace_id, id)
+);
+
+CREATE TABLE task_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL,
+    task_id UUID NOT NULL UNIQUE,
+    summary TEXT NOT NULL,
+    FOREIGN KEY (workspace_id, task_id) REFERENCES tasks (workspace_id, id)
+);
+
+CREATE TABLE labels (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (workspace_id, id)
+);
+
+CREATE TABLE task_labels (
+    workspace_id UUID NOT NULL,
+    task_id UUID NOT NULL,
+    label_id UUID NOT NULL,
+    PRIMARY KEY (workspace_id, task_id, label_id),
+    FOREIGN KEY (workspace_id, task_id) REFERENCES tasks (workspace_id, id),
+    FOREIGN KEY (workspace_id, label_id) REFERENCES labels (workspace_id, id)
+);
+
 -- Manifest + GraphQL description fixtures. COMMENT ON exercises the §26.4
 -- .graphqls description wiring end-to-end AND the manifest
 -- comment/Column.comment fields, which no example previously covered. The

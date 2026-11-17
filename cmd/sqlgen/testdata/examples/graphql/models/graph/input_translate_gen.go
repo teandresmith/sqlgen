@@ -616,6 +616,175 @@ func translateCategoryUsersUpdateNested(in *gqlmodel.CategoryUsersUpdateNested) 
 	return out
 }
 
+// translateCreateCycleInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateCycleInput(in gqlmodel.CreateCycleInput) *models.CreateCycleInput {
+	out := &models.CreateCycleInput{}
+	if in.WorkspaceID != nil {
+		out.WorkspaceID = omittable.Set(*in.WorkspaceID)
+	}
+	out.Name = in.Name
+
+	return out
+}
+
+// translateUpdateCycleInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateCycleRequest
+// carries them to the resolver.
+func translateUpdateCycleInput(in gqlmodel.UpdateCycleInput) *models.UpdateCycleInput {
+	out := &models.UpdateCycleInput{}
+	if in.Name != nil {
+		out.Name = omittable.Set(*in.Name)
+	}
+	return out
+}
+
+// hasUpdateCycleSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateCycleSetFields(in gqlmodel.UpdateCycleInput) bool {
+	if in.Name != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateCycleRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateCycleInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateCycleRequest(in gqlmodel.UpdateCycleInput) sqlgenresolver.UpdateCycleRequest {
+	out := sqlgenresolver.UpdateCycleRequest{
+		Set:    translateUpdateCycleInput(in),
+		HasSet: hasUpdateCycleSetFields(in),
+	}
+	return out
+}
+
+// translateCreateCycleWithRelatedInput maps the gqlgen-generated nested create
+// input onto the model's. The flat half goes through the ordinary
+// create translator, so the wrapper cannot drift from the input it contains.
+func translateCreateCycleWithRelatedInput(in gqlmodel.CreateCycleWithRelatedInput) *models.CreateCycleWithRelatedInput {
+	out := &models.CreateCycleWithRelatedInput{}
+	if in.Cycle != nil {
+		out.Cycle = *translateCreateCycleInput(*in.Cycle)
+	}
+	out.Tasks = translateCycleTasksCreateNested(in.Tasks)
+	return out
+}
+
+// translateUpdateCycleWithRelatedInput maps the gqlgen-generated nested update
+// input onto the model's. An omitted flat half leaves every parent
+// column alone, and the parent write then issues no UPDATE at all.
+// The flat half's `_inc` / `_dec` operators have no place on the Go input;
+// this table has no incrementable column, so the input carries none.
+func translateUpdateCycleWithRelatedInput(in gqlmodel.UpdateCycleWithRelatedInput) *models.UpdateCycleWithRelatedInput {
+	out := &models.UpdateCycleWithRelatedInput{}
+	if in.Cycle != nil {
+		out.Cycle = *translateUpdateCycleInput(*in.Cycle)
+	}
+	out.Tasks = translateCycleTasksUpdateNested(in.Tasks)
+	return out
+}
+
+// translateUpsertCycleWithRelatedInput maps the gqlgen-generated nested upsert
+// input onto the model's. Its nested half is the update-side block verbatim.
+func translateUpsertCycleWithRelatedInput(in gqlmodel.UpsertCycleWithRelatedInput) *models.UpsertCycleWithRelatedInput {
+	out := &models.UpsertCycleWithRelatedInput{}
+	if in.Cycle != nil {
+		out.Cycle = *translateCreateCycleInput(*in.Cycle)
+	}
+	out.Tasks = translateCycleTasksUpdateNested(in.Tasks)
+	return out
+}
+
+// translateCycleConflictTarget maps the GraphQL conflict-target enum onto
+// the model's constant. Cases compare on the raw enum value, as
+// the sort translators do, so the mapping does not depend on how gqlgen spells
+// the enum's Go constants. gqlgen rejects an undeclared value before the
+// resolver runs; the error is for a schema and a translator that disagree,
+// which must fail loudly rather than fall back to some other target.
+func translateCycleConflictTarget(v gqlmodel.CycleConflictTarget) (models.CycleConflictTarget, error) {
+	switch string(v) {
+	case "PK":
+		return models.CycleConflictPK, nil
+	case "WORKSPACE_ID_ID":
+		return models.CycleConflictWorkspaceIDID, nil
+	}
+	var none models.CycleConflictTarget
+	return none, sqlgenresolver.InvalidInputError("upsert cycles with related: unknown conflict target \"" + string(v) + "\"")
+}
+
+// translateCycleTasksCreateNested maps the create-side verb block for
+// Cycle.Tasks.
+//
+// A nil block is an edge the caller did not touch.
+func translateCycleTasksCreateNested(in *gqlmodel.CycleTasksCreateNested) *models.CycleTasksCreateNested {
+	if in == nil {
+		return nil
+	}
+	out := &models.CycleTasksCreateNested{}
+	for _, c := range in.Create {
+		if c == nil {
+			continue
+		}
+		out.Create = append(out.Create, translateCycleTasksCreateInput(*c))
+	}
+	out.Connect = in.Connect
+	return out
+}
+
+// translateCycleTasksUpdateNested maps the update-side verb block for
+// Cycle.Tasks.
+//
+// A nil block is an edge the caller did not touch.
+func translateCycleTasksUpdateNested(in *gqlmodel.CycleTasksUpdateNested) *models.CycleTasksUpdateNested {
+	if in == nil {
+		return nil
+	}
+	out := &models.CycleTasksUpdateNested{}
+	if in.Clear != nil {
+		out.Clear = *in.Clear
+	}
+	for _, c := range in.Create {
+		if c == nil {
+			continue
+		}
+		out.Create = append(out.Create, translateCycleTasksCreateInput(*c))
+	}
+	out.Connect = in.Connect
+	out.Disconnect = in.Disconnect
+	return out
+}
+
+// translateCycleTasksCreateInput maps one element of the `create` verb for
+// Cycle.Tasks.
+//
+// It is the target's create input without the columns the edge sets itself
+// from the parent's key.
+func translateCycleTasksCreateInput(in gqlmodel.CycleTasksCreateInput) *models.CycleTasksCreateInput {
+	out := &models.CycleTasksCreateInput{}
+	out.Title = in.Title
+
+	return out
+}
+
 // translateCreateDocumentInput maps a gqlgen-generated input value
 // onto the consumer model's Create<Table>Input. The body shape per field
 // depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
@@ -1381,6 +1550,163 @@ func translateUpdateKeyedCodeEntryRequest(in gqlmodel.UpdateKeyedCodeEntryInput)
 		Set:    translateUpdateKeyedCodeEntryInput(in),
 		HasSet: hasUpdateKeyedCodeEntrySetFields(in),
 	}
+	return out
+}
+
+// translateCreateLabelInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateLabelInput(in gqlmodel.CreateLabelInput) *models.CreateLabelInput {
+	out := &models.CreateLabelInput{}
+	if in.WorkspaceID != nil {
+		out.WorkspaceID = omittable.Set(*in.WorkspaceID)
+	}
+	out.Name = in.Name
+
+	return out
+}
+
+// translateUpdateLabelInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateLabelRequest
+// carries them to the resolver.
+func translateUpdateLabelInput(in gqlmodel.UpdateLabelInput) *models.UpdateLabelInput {
+	out := &models.UpdateLabelInput{}
+	if in.Name != nil {
+		out.Name = omittable.Set(*in.Name)
+	}
+	return out
+}
+
+// hasUpdateLabelSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateLabelSetFields(in gqlmodel.UpdateLabelInput) bool {
+	if in.Name != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateLabelRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateLabelInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateLabelRequest(in gqlmodel.UpdateLabelInput) sqlgenresolver.UpdateLabelRequest {
+	out := sqlgenresolver.UpdateLabelRequest{
+		Set:    translateUpdateLabelInput(in),
+		HasSet: hasUpdateLabelSetFields(in),
+	}
+	return out
+}
+
+// translateCreateLabelWithRelatedInput maps the gqlgen-generated nested create
+// input onto the model's. The flat half goes through the ordinary
+// create translator, so the wrapper cannot drift from the input it contains.
+func translateCreateLabelWithRelatedInput(in gqlmodel.CreateLabelWithRelatedInput) *models.CreateLabelWithRelatedInput {
+	out := &models.CreateLabelWithRelatedInput{}
+	if in.Label != nil {
+		out.Label = *translateCreateLabelInput(*in.Label)
+	}
+	out.Tasks = translateLabelTasksCreateNested(in.Tasks)
+	return out
+}
+
+// translateUpdateLabelWithRelatedInput maps the gqlgen-generated nested update
+// input onto the model's. An omitted flat half leaves every parent
+// column alone, and the parent write then issues no UPDATE at all.
+// The flat half's `_inc` / `_dec` operators have no place on the Go input;
+// this table has no incrementable column, so the input carries none.
+func translateUpdateLabelWithRelatedInput(in gqlmodel.UpdateLabelWithRelatedInput) *models.UpdateLabelWithRelatedInput {
+	out := &models.UpdateLabelWithRelatedInput{}
+	if in.Label != nil {
+		out.Label = *translateUpdateLabelInput(*in.Label)
+	}
+	out.Tasks = translateLabelTasksUpdateNested(in.Tasks)
+	return out
+}
+
+// translateUpsertLabelWithRelatedInput maps the gqlgen-generated nested upsert
+// input onto the model's. Its nested half is the update-side block verbatim.
+func translateUpsertLabelWithRelatedInput(in gqlmodel.UpsertLabelWithRelatedInput) *models.UpsertLabelWithRelatedInput {
+	out := &models.UpsertLabelWithRelatedInput{}
+	if in.Label != nil {
+		out.Label = *translateCreateLabelInput(*in.Label)
+	}
+	out.Tasks = translateLabelTasksUpdateNested(in.Tasks)
+	return out
+}
+
+// translateLabelConflictTarget maps the GraphQL conflict-target enum onto
+// the model's constant. Cases compare on the raw enum value, as
+// the sort translators do, so the mapping does not depend on how gqlgen spells
+// the enum's Go constants. gqlgen rejects an undeclared value before the
+// resolver runs; the error is for a schema and a translator that disagree,
+// which must fail loudly rather than fall back to some other target.
+func translateLabelConflictTarget(v gqlmodel.LabelConflictTarget) (models.LabelConflictTarget, error) {
+	switch string(v) {
+	case "PK":
+		return models.LabelConflictPK, nil
+	case "WORKSPACE_ID_ID":
+		return models.LabelConflictWorkspaceIDID, nil
+	}
+	var none models.LabelConflictTarget
+	return none, sqlgenresolver.InvalidInputError("upsert labels with related: unknown conflict target \"" + string(v) + "\"")
+}
+
+// translateLabelTasksCreateNested maps the create-side verb block for
+// Label.Tasks.
+//
+// A nil block is an edge the caller did not touch.
+func translateLabelTasksCreateNested(in *gqlmodel.LabelTasksCreateNested) *models.LabelTasksCreateNested {
+	if in == nil {
+		return nil
+	}
+	out := &models.LabelTasksCreateNested{}
+	for _, c := range in.Create {
+		if c == nil {
+			continue
+		}
+		out.Create = append(out.Create, translateCreateTaskInput(*c))
+	}
+	out.Connect = in.Connect
+	return out
+}
+
+// translateLabelTasksUpdateNested maps the update-side verb block for
+// Label.Tasks.
+//
+// A nil block is an edge the caller did not touch.
+func translateLabelTasksUpdateNested(in *gqlmodel.LabelTasksUpdateNested) *models.LabelTasksUpdateNested {
+	if in == nil {
+		return nil
+	}
+	out := &models.LabelTasksUpdateNested{}
+	if in.Clear != nil {
+		out.Clear = *in.Clear
+	}
+	for _, c := range in.Create {
+		if c == nil {
+			continue
+		}
+		out.Create = append(out.Create, translateCreateTaskInput(*c))
+	}
+	out.Connect = in.Connect
+	out.Disconnect = in.Disconnect
 	return out
 }
 
@@ -2738,6 +3064,261 @@ func translateUpdateScalarProbeRequest(in gqlmodel.UpdateScalarProbeInput) sqlge
 	}
 	if in.RatioDec != nil {
 		out.RatioDec = new(int(*in.RatioDec))
+	}
+	return out
+}
+
+// translateCreateTaskInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateTaskInput(in gqlmodel.CreateTaskInput) *models.CreateTaskInput {
+	out := &models.CreateTaskInput{}
+	if in.WorkspaceID != nil {
+		out.WorkspaceID = omittable.Set(*in.WorkspaceID)
+	}
+	if in.CycleID != nil {
+		out.CycleID = omittable.Set(in.CycleID)
+	}
+	out.Title = in.Title
+
+	return out
+}
+
+// translateUpdateTaskInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateTaskRequest
+// carries them to the resolver.
+func translateUpdateTaskInput(in gqlmodel.UpdateTaskInput) *models.UpdateTaskInput {
+	out := &models.UpdateTaskInput{}
+	if val, ok := in.CycleID.ValueOK(); ok {
+		if val == nil {
+			zero, _ := out.CycleID.Get()
+			out.CycleID = omittable.Set(zero)
+		} else {
+			out.CycleID = omittable.Set(val)
+		}
+	}
+	if in.Title != nil {
+		out.Title = omittable.Set(*in.Title)
+	}
+	return out
+}
+
+// hasUpdateTaskSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateTaskSetFields(in gqlmodel.UpdateTaskInput) bool {
+	if in.CycleID.IsSet() {
+		return true
+	}
+	if in.Title != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateTaskRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateTaskInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateTaskRequest(in gqlmodel.UpdateTaskInput) sqlgenresolver.UpdateTaskRequest {
+	out := sqlgenresolver.UpdateTaskRequest{
+		Set:    translateUpdateTaskInput(in),
+		HasSet: hasUpdateTaskSetFields(in),
+	}
+	return out
+}
+
+// translateCreateTaskWithRelatedInput maps the gqlgen-generated nested create
+// input onto the model's. The flat half goes through the ordinary
+// create translator, so the wrapper cannot drift from the input it contains.
+func translateCreateTaskWithRelatedInput(in gqlmodel.CreateTaskWithRelatedInput) *models.CreateTaskWithRelatedInput {
+	out := &models.CreateTaskWithRelatedInput{}
+	if in.Task != nil {
+		out.Task = *translateCreateTaskInput(*in.Task)
+	}
+	out.Labels = translateTaskLabelsCreateNested(in.Labels)
+	return out
+}
+
+// translateUpdateTaskWithRelatedInput maps the gqlgen-generated nested update
+// input onto the model's. An omitted flat half leaves every parent
+// column alone, and the parent write then issues no UPDATE at all.
+// The flat half's `_inc` / `_dec` operators have no place on the Go input;
+// this table has no incrementable column, so the input carries none.
+func translateUpdateTaskWithRelatedInput(in gqlmodel.UpdateTaskWithRelatedInput) *models.UpdateTaskWithRelatedInput {
+	out := &models.UpdateTaskWithRelatedInput{}
+	if in.Task != nil {
+		out.Task = *translateUpdateTaskInput(*in.Task)
+	}
+	out.Labels = translateTaskLabelsUpdateNested(in.Labels)
+	return out
+}
+
+// translateUpsertTaskWithRelatedInput maps the gqlgen-generated nested upsert
+// input onto the model's. Its nested half is the update-side block verbatim.
+func translateUpsertTaskWithRelatedInput(in gqlmodel.UpsertTaskWithRelatedInput) *models.UpsertTaskWithRelatedInput {
+	out := &models.UpsertTaskWithRelatedInput{}
+	if in.Task != nil {
+		out.Task = *translateCreateTaskInput(*in.Task)
+	}
+	out.Labels = translateTaskLabelsUpdateNested(in.Labels)
+	return out
+}
+
+// translateTaskConflictTarget maps the GraphQL conflict-target enum onto
+// the model's constant. Cases compare on the raw enum value, as
+// the sort translators do, so the mapping does not depend on how gqlgen spells
+// the enum's Go constants. gqlgen rejects an undeclared value before the
+// resolver runs; the error is for a schema and a translator that disagree,
+// which must fail loudly rather than fall back to some other target.
+func translateTaskConflictTarget(v gqlmodel.TaskConflictTarget) (models.TaskConflictTarget, error) {
+	switch string(v) {
+	case "PK":
+		return models.TaskConflictPK, nil
+	case "WORKSPACE_ID_ID":
+		return models.TaskConflictWorkspaceIDID, nil
+	}
+	var none models.TaskConflictTarget
+	return none, sqlgenresolver.InvalidInputError("upsert tasks with related: unknown conflict target \"" + string(v) + "\"")
+}
+
+// translateTaskLabelsCreateNested maps the create-side verb block for
+// Task.Labels.
+//
+// A nil block is an edge the caller did not touch.
+func translateTaskLabelsCreateNested(in *gqlmodel.TaskLabelsCreateNested) *models.TaskLabelsCreateNested {
+	if in == nil {
+		return nil
+	}
+	out := &models.TaskLabelsCreateNested{}
+	for _, c := range in.Create {
+		if c == nil {
+			continue
+		}
+		out.Create = append(out.Create, translateCreateLabelInput(*c))
+	}
+	out.Connect = in.Connect
+	return out
+}
+
+// translateTaskLabelsUpdateNested maps the update-side verb block for
+// Task.Labels.
+//
+// A nil block is an edge the caller did not touch.
+func translateTaskLabelsUpdateNested(in *gqlmodel.TaskLabelsUpdateNested) *models.TaskLabelsUpdateNested {
+	if in == nil {
+		return nil
+	}
+	out := &models.TaskLabelsUpdateNested{}
+	if in.Clear != nil {
+		out.Clear = *in.Clear
+	}
+	for _, c := range in.Create {
+		if c == nil {
+			continue
+		}
+		out.Create = append(out.Create, translateCreateLabelInput(*c))
+	}
+	out.Connect = in.Connect
+	out.Disconnect = in.Disconnect
+	return out
+}
+
+// translateCreateTaskLabelInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateTaskLabelInput(in gqlmodel.CreateTaskLabelInput) *models.CreateTaskLabelInput {
+	out := &models.CreateTaskLabelInput{}
+	out.WorkspaceID = in.WorkspaceID
+	out.TaskID = in.TaskID
+	out.LabelID = in.LabelID
+
+	return out
+}
+
+// translateCreateTaskReportInput maps a gqlgen-generated input value
+// onto the consumer model's Create<Table>Input. The body shape per field
+// depends on (SchemaNullable) × (ModelOmittable) × (ModelInnerIsPointer) ×
+// (CastTo) × (AddressOf) × (PointerCast); see APIInputField doc-comment for
+// the full table. PointerCast is the one branch that cannot be an expression:
+// gqlgen's `*int` and the model's `*int32` do not thread through each other,
+// and Go cannot convert a pointee inline, so the value goes through a local.
+func translateCreateTaskReportInput(in gqlmodel.CreateTaskReportInput) *models.CreateTaskReportInput {
+	out := &models.CreateTaskReportInput{}
+	if in.WorkspaceID != nil {
+		out.WorkspaceID = omittable.Set(*in.WorkspaceID)
+	}
+	out.TaskID = in.TaskID
+	out.Summary = in.Summary
+
+	return out
+}
+
+// translateUpdateTaskReportInput maps the gqlgen-generated update
+// input onto the consumer model's Update<Table>Input. All fields are
+// omittable in the model; gqlgen emits each field as `*T` regardless of
+// schema nullability so the nil-check is uniform — only the inner coercion
+// varies (see inputCoerceDeref for the cast / address-of / deref branches).
+// A field over a nullable column arrives as `graphql.Omittable`, so an
+// explicit `null` is told apart from an omitted field: `null` sets the model
+// field to its type's zero value, which is that column's NULL.
+// `_inc` / `_dec` paired fields are skipped here; translateUpdateTaskReportRequest
+// carries them to the resolver.
+func translateUpdateTaskReportInput(in gqlmodel.UpdateTaskReportInput) *models.UpdateTaskReportInput {
+	out := &models.UpdateTaskReportInput{}
+	if in.TaskID != nil {
+		out.TaskID = omittable.Set(*in.TaskID)
+	}
+	if in.Summary != nil {
+		out.Summary = omittable.Set(*in.Summary)
+	}
+	return out
+}
+
+// hasUpdateTaskReportSetFields reports whether any non-`_inc`/`_dec`
+// field on the update input is present, an explicit `null` included. The
+// resolver only issues Update when at least one set-field is present; a pure
+// inc/dec mutation skips the Update call entirely so the unified client's
+// hook chain sees one Increment per op.
+func hasUpdateTaskReportSetFields(in gqlmodel.UpdateTaskReportInput) bool {
+	if in.TaskID != nil {
+		return true
+	}
+	if in.Summary != nil {
+		return true
+	}
+	return false
+}
+
+// translateUpdateTaskReportRequest carries the gqlgen-generated update
+// input into the resolver package: the column values through
+// translateUpdateTaskReportInput, and each `_inc` / `_dec` operator
+// exactly as the client sent it. The resolver owns every rule about how the
+// two combine, so this function and the seed that calls it stay the same
+// shape however the table's columns change.
+func translateUpdateTaskReportRequest(in gqlmodel.UpdateTaskReportInput) sqlgenresolver.UpdateTaskReportRequest {
+	out := sqlgenresolver.UpdateTaskReportRequest{
+		Set:    translateUpdateTaskReportInput(in),
+		HasSet: hasUpdateTaskReportSetFields(in),
 	}
 	return out
 }

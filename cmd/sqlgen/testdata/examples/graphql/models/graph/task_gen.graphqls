@@ -1,0 +1,118 @@
+"""
+Task corresponds to the tasks table.
+"""
+type Task {
+  "id"
+  id: UUID!
+  "workspace_id"
+  workspaceID: UUID!
+  "cycle_id"
+  cycleID: UUID
+  "title"
+  title: String!
+  "many-to-many relationship with the labels table."
+  labels: [Label!]!
+}
+
+type TaskConnection {
+  edges:      [TaskEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type TaskEdge {
+  node:   Task!
+  cursor: String!
+}
+
+type TaskListResult {
+  items:      [Task!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input TaskFilter {
+  workspaceID: IDComparator
+  cycleID: NullableIDComparator
+  title: StringComparator
+  labels: LabelFilter
+  and: [TaskFilter!]
+  or:  [TaskFilter!]
+}
+
+enum TaskSortField {
+  ID
+  WORKSPACE_ID
+  CYCLE_ID
+  TITLE
+}
+
+input TaskSort {
+  field:     TaskSortField!
+  direction: SortDirection!
+}
+input CreateTaskInput {
+  workspaceID: UUID
+  cycleID: UUID
+  title: String!
+}
+input UpdateTaskInput {
+  cycleID: UUID
+  title: String
+}
+
+extend type Query {
+  task(id: UUID!): Task
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to taskList instead."
+  tasks(filter: TaskFilter, first: Int, after: String, last: Int, before: String): TaskConnection!
+  taskList(filter: TaskFilter, sort: [TaskSort!], limit: Int, offset: Int): TaskListResult!
+}
+
+extend type Mutation {
+  createTask(input: CreateTaskInput!): Task!
+  createTasks(inputs: [CreateTaskInput!]!): [Task!]!
+  updateTask(id: UUID!, input: UpdateTaskInput!): Task!
+  updateTasks(filter: TaskFilter!, input: UpdateTaskInput!): [Task!]!
+  upsertTask(input: CreateTaskInput!): Task!
+  deleteTask(id: UUID!): Boolean!
+}
+
+input CreateTaskWithRelatedInput {
+  task: CreateTaskInput!
+  labels: TaskLabelsCreateNested
+}
+
+input UpdateTaskWithRelatedInput {
+  task: UpdateTaskInput
+  labels: TaskLabelsUpdateNested
+}
+
+input UpsertTaskWithRelatedInput {
+  task: CreateTaskInput!
+  labels: TaskLabelsUpdateNested
+}
+
+enum TaskConflictTarget {
+  PK
+  WORKSPACE_ID_ID
+}
+
+input TaskLabelsCreateNested {
+  create: [CreateLabelInput!]
+  connect: [UUID!]
+}
+
+input TaskLabelsUpdateNested {
+  clear: Boolean
+  create: [CreateLabelInput!]
+  connect: [UUID!]
+  disconnect: [UUID!]
+}
+
+extend type Mutation {
+  createTaskWithRelated(input: CreateTaskWithRelatedInput!): Task!
+  updateTaskWithRelated(id: UUID!, input: UpdateTaskWithRelatedInput!): Task!
+  upsertTaskWithRelated(input: UpsertTaskWithRelatedInput!, conflictTarget: TaskConflictTarget! = PK): Task!
+}

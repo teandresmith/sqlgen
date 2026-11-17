@@ -38,6 +38,10 @@ type CategoryPriceTotalConnection = Connection[CategoryPriceTotal]
 type CategoryPriceTotalEdge = Edge[CategoryPriceTotal]
 type CategoryPriceTotalListResult = PaginateResult[CategoryPriceTotal]
 
+type CycleConnection = Connection[Cycle]
+type CycleEdge = Edge[Cycle]
+type CycleListResult = PaginateResult[Cycle]
+
 type DocumentConnection = Connection[Document]
 type DocumentEdge = Edge[Document]
 type DocumentListResult = PaginateResult[Document]
@@ -57,6 +61,10 @@ type KeyedCodeListResult = PaginateResult[KeyedCode]
 type KeyedCodeEntryConnection = Connection[KeyedCodeEntry]
 type KeyedCodeEntryEdge = Edge[KeyedCodeEntry]
 type KeyedCodeEntryListResult = PaginateResult[KeyedCodeEntry]
+
+type LabelConnection = Connection[Label]
+type LabelEdge = Edge[Label]
+type LabelListResult = PaginateResult[Label]
 
 type MaskedLabelConnection = Connection[MaskedLabel]
 type MaskedLabelEdge = Edge[MaskedLabel]
@@ -85,6 +93,18 @@ type ProfileListResult = PaginateResult[Profile]
 type ScalarProbeConnection = Connection[ScalarProbe]
 type ScalarProbeEdge = Edge[ScalarProbe]
 type ScalarProbeListResult = PaginateResult[ScalarProbe]
+
+type TaskConnection = Connection[Task]
+type TaskEdge = Edge[Task]
+type TaskListResult = PaginateResult[Task]
+
+type TaskLabelConnection = Connection[TaskLabel]
+type TaskLabelEdge = Edge[TaskLabel]
+type TaskLabelListResult = PaginateResult[TaskLabel]
+
+type TaskReportConnection = Connection[TaskReport]
+type TaskReportEdge = Edge[TaskReport]
+type TaskReportListResult = PaginateResult[TaskReport]
 
 type UserConnection = Connection[User]
 type UserEdge = Edge[User]

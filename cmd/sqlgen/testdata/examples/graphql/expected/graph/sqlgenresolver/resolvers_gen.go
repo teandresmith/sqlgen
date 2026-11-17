@@ -725,6 +725,245 @@ func (q *Q) CategoryPriceTotalList(ctx context.Context, filter *models.CategoryP
 	return res, nil
 }
 
+// Cycle resolves the single-by-PK query for cycles.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) Cycle(ctx context.Context, id uuid.UUID) (*models.Cycle, error) {
+	fo := cycleFieldOptionsFromContext(ctx)
+	res, err := q.Client.Cycles().Get(ctx, id, func(o *models.CallOptions[models.CycleFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.CycleFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// Cycles resolves the cursor-paginated Connection query for cycles.
+func (q *Q) Cycles(ctx context.Context, filter *models.CycleFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Cycle], error) {
+	fo := cycleFieldOptionsFromContext(ctx)
+	res, err := q.Client.Cycles().Connection(ctx, models.ConnectionInput[models.CycleFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.CycleFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.CycleFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CycleList resolves the offset-paginated ListResult query for cycles.
+func (q *Q) CycleList(ctx context.Context, filter *models.CycleFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.Cycle], error) {
+	fo := cycleFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.CycleFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.Cycles().Paginate(ctx, in, func(o *models.CallOptions[models.CycleFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.CycleFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateCycle resolves the single-row create mutation for cycles.
+func (m *M) CreateCycle(ctx context.Context, input *models.CreateCycleInput) (*models.Cycle, error) {
+	fo := cycleFieldOptionsFromContext(ctx)
+	res, err := m.Client.Cycles().Create(ctx, input, func(o *models.CallOptions[models.CycleFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.CycleFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateCycles resolves the bulk create mutation for cycles.
+func (m *M) CreateCycles(ctx context.Context, inputs []*models.CreateCycleInput) ([]*models.Cycle, error) {
+	fo := cycleFieldOptionsFromContext(ctx)
+	res, err := m.Client.Cycles().CreateMany(ctx, inputs, func(o *models.CallOptions[models.CycleFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.CycleFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateCycleRequest is one updateCycle /
+// updateCycles input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateCycleRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateCycleInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateCycle resolves the single-row update mutation for cycles.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateCycle(ctx context.Context, id uuid.UUID, input UpdateCycleRequest) (*models.Cycle, error) {
+	fo := cycleFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.Cycles().Update(ctx, id, input.Set, func(o *models.CallOptions[models.CycleFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.CycleFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.Cycles().Get(ctx, id, func(o *models.CallOptions[models.CycleFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.CycleFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateCycles resolves the bulk update-where mutation for cycles.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateCycles(ctx context.Context, filter *models.CycleFilter, input UpdateCycleRequest) ([]*models.Cycle, error) {
+	fo := cycleFieldOptionsFromContext(ctx)
+	res, err := m.Client.Cycles().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.CycleFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.CycleFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertCycle resolves the single-row upsert mutation for cycles.
+func (m *M) UpsertCycle(ctx context.Context, input *models.CreateCycleInput) (*models.Cycle, error) {
+	fo := cycleFieldOptionsFromContext(ctx)
+	res, err := m.Client.Cycles().Upsert(ctx, input, models.CycleConflictPK, func(o *models.CallOptions[models.CycleFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.CycleFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteCycle resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteCycle(ctx context.Context, id uuid.UUID) (bool, error) {
+	if err := m.Client.Cycles().HardDelete(ctx, id, func(o *models.CallOptions[models.CycleFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.CycleFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// CreateCycleWithRelated resolves the nested create mutation for
+// cycles. The Go method writes the parent and
+// every nested row in one transaction, and the walked FieldOptions drive its
+// terminal read, so a selected relationship comes back already reflecting the
+// rows this call wrote.
+func (m *M) CreateCycleWithRelated(ctx context.Context, input *models.CreateCycleWithRelatedInput) (*models.Cycle, error) {
+	fo := cycleFieldOptionsFromContext(ctx)
+	res, err := m.Client.Cycles().CreateWithRelated(ctx, input, func(o *models.CallOptions[models.CycleFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.CycleFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateCycleWithRelated resolves the nested update mutation for
+// cycles. This table has no incrementable
+// column, so the flat half carries no `_inc` / `_dec` operator and the call is
+// the Go method alone.
+func (m *M) UpdateCycleWithRelated(ctx context.Context, id uuid.UUID, input *models.UpdateCycleWithRelatedInput) (*models.Cycle, error) {
+	fo := cycleFieldOptionsFromContext(ctx)
+	res, err := m.Client.Cycles().UpdateWithRelated(ctx, id, input, func(o *models.CallOptions[models.CycleFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.CycleFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertCycleWithRelated resolves the nested upsert mutation for
+// cycles. Unlike upsertCycle, it
+// takes the conflict target as an argument: its update-side block is reachable
+// from both branches, so an upsert that always took the insert branch would
+// make `disconnect` match nothing.
+func (m *M) UpsertCycleWithRelated(ctx context.Context, input *models.UpsertCycleWithRelatedInput, target models.CycleConflictTarget) (*models.Cycle, error) {
+	fo := cycleFieldOptionsFromContext(ctx)
+	res, err := m.Client.Cycles().UpsertWithRelated(ctx, input, target, func(o *models.CallOptions[models.CycleFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.CycleFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
 // Document resolves the single-by-PK query for documents.
 // <table>(id) returns null when missing — no separate exists query is
 // needed. ErrNotFound is collapsed to (nil, nil) so the nullable
@@ -1849,6 +2088,245 @@ func (m *M) DeleteKeyedCodeEntry(ctx context.Context, id uuid.UUID) (bool, error
 		return false, mapErrorToGQL(err)
 	}
 	return true, nil
+}
+
+// Label resolves the single-by-PK query for labels.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) Label(ctx context.Context, id uuid.UUID) (*models.Label, error) {
+	fo := labelFieldOptionsFromContext(ctx)
+	res, err := q.Client.Labels().Get(ctx, id, func(o *models.CallOptions[models.LabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.LabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// Labels resolves the cursor-paginated Connection query for labels.
+func (q *Q) Labels(ctx context.Context, filter *models.LabelFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Label], error) {
+	fo := labelFieldOptionsFromContext(ctx)
+	res, err := q.Client.Labels().Connection(ctx, models.ConnectionInput[models.LabelFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.LabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.LabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// LabelList resolves the offset-paginated ListResult query for labels.
+func (q *Q) LabelList(ctx context.Context, filter *models.LabelFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.Label], error) {
+	fo := labelFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.LabelFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.Labels().Paginate(ctx, in, func(o *models.CallOptions[models.LabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.LabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateLabel resolves the single-row create mutation for labels.
+func (m *M) CreateLabel(ctx context.Context, input *models.CreateLabelInput) (*models.Label, error) {
+	fo := labelFieldOptionsFromContext(ctx)
+	res, err := m.Client.Labels().Create(ctx, input, func(o *models.CallOptions[models.LabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.LabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateLabels resolves the bulk create mutation for labels.
+func (m *M) CreateLabels(ctx context.Context, inputs []*models.CreateLabelInput) ([]*models.Label, error) {
+	fo := labelFieldOptionsFromContext(ctx)
+	res, err := m.Client.Labels().CreateMany(ctx, inputs, func(o *models.CallOptions[models.LabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.LabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateLabelRequest is one updateLabel /
+// updateLabels input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateLabelRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateLabelInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateLabel resolves the single-row update mutation for labels.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateLabel(ctx context.Context, id uuid.UUID, input UpdateLabelRequest) (*models.Label, error) {
+	fo := labelFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.Labels().Update(ctx, id, input.Set, func(o *models.CallOptions[models.LabelFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.LabelFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.Labels().Get(ctx, id, func(o *models.CallOptions[models.LabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.LabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateLabels resolves the bulk update-where mutation for labels.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateLabels(ctx context.Context, filter *models.LabelFilter, input UpdateLabelRequest) ([]*models.Label, error) {
+	fo := labelFieldOptionsFromContext(ctx)
+	res, err := m.Client.Labels().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.LabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.LabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertLabel resolves the single-row upsert mutation for labels.
+func (m *M) UpsertLabel(ctx context.Context, input *models.CreateLabelInput) (*models.Label, error) {
+	fo := labelFieldOptionsFromContext(ctx)
+	res, err := m.Client.Labels().Upsert(ctx, input, models.LabelConflictPK, func(o *models.CallOptions[models.LabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.LabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteLabel resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteLabel(ctx context.Context, id uuid.UUID) (bool, error) {
+	if err := m.Client.Labels().HardDelete(ctx, id, func(o *models.CallOptions[models.LabelFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.LabelFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// CreateLabelWithRelated resolves the nested create mutation for
+// labels. The Go method writes the parent and
+// every nested row in one transaction, and the walked FieldOptions drive its
+// terminal read, so a selected relationship comes back already reflecting the
+// rows this call wrote.
+func (m *M) CreateLabelWithRelated(ctx context.Context, input *models.CreateLabelWithRelatedInput) (*models.Label, error) {
+	fo := labelFieldOptionsFromContext(ctx)
+	res, err := m.Client.Labels().CreateWithRelated(ctx, input, func(o *models.CallOptions[models.LabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.LabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateLabelWithRelated resolves the nested update mutation for
+// labels. This table has no incrementable
+// column, so the flat half carries no `_inc` / `_dec` operator and the call is
+// the Go method alone.
+func (m *M) UpdateLabelWithRelated(ctx context.Context, id uuid.UUID, input *models.UpdateLabelWithRelatedInput) (*models.Label, error) {
+	fo := labelFieldOptionsFromContext(ctx)
+	res, err := m.Client.Labels().UpdateWithRelated(ctx, id, input, func(o *models.CallOptions[models.LabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.LabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertLabelWithRelated resolves the nested upsert mutation for
+// labels. Unlike upsertLabel, it
+// takes the conflict target as an argument: its update-side block is reachable
+// from both branches, so an upsert that always took the insert branch would
+// make `disconnect` match nothing.
+func (m *M) UpsertLabelWithRelated(ctx context.Context, input *models.UpsertLabelWithRelatedInput, target models.LabelConflictTarget) (*models.Label, error) {
+	fo := labelFieldOptionsFromContext(ctx)
+	res, err := m.Client.Labels().UpsertWithRelated(ctx, input, target, func(o *models.CallOptions[models.LabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.LabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
 }
 
 // MaskedLabel resolves the single-by-PK query for masked_labels.
@@ -4385,6 +4863,555 @@ func (m *M) UpsertScalarProbe(ctx context.Context, input *models.CreateScalarPro
 func (m *M) DeleteScalarProbe(ctx context.Context, id uuid.UUID) (bool, error) {
 	if err := m.Client.ScalarProbes().HardDelete(ctx, id, func(o *models.CallOptions[models.ScalarProbeFieldOptions]) {
 		for _, f := range callOptionsFromHTTP[models.ScalarProbeFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// Task resolves the single-by-PK query for tasks.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) Task(ctx context.Context, id uuid.UUID) (*models.Task, error) {
+	fo := taskFieldOptionsFromContext(ctx)
+	res, err := q.Client.Tasks().Get(ctx, id, func(o *models.CallOptions[models.TaskFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// Tasks resolves the cursor-paginated Connection query for tasks.
+func (q *Q) Tasks(ctx context.Context, filter *models.TaskFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.Task], error) {
+	fo := taskFieldOptionsFromContext(ctx)
+	res, err := q.Client.Tasks().Connection(ctx, models.ConnectionInput[models.TaskFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.TaskFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TaskList resolves the offset-paginated ListResult query for tasks.
+func (q *Q) TaskList(ctx context.Context, filter *models.TaskFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.Task], error) {
+	fo := taskFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.TaskFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.Tasks().Paginate(ctx, in, func(o *models.CallOptions[models.TaskFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTask resolves the single-row create mutation for tasks.
+func (m *M) CreateTask(ctx context.Context, input *models.CreateTaskInput) (*models.Task, error) {
+	fo := taskFieldOptionsFromContext(ctx)
+	res, err := m.Client.Tasks().Create(ctx, input, func(o *models.CallOptions[models.TaskFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTasks resolves the bulk create mutation for tasks.
+func (m *M) CreateTasks(ctx context.Context, inputs []*models.CreateTaskInput) ([]*models.Task, error) {
+	fo := taskFieldOptionsFromContext(ctx)
+	res, err := m.Client.Tasks().CreateMany(ctx, inputs, func(o *models.CallOptions[models.TaskFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateTaskRequest is one updateTask /
+// updateTasks input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateTaskRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateTaskInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateTask resolves the single-row update mutation for tasks.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateTask(ctx context.Context, id uuid.UUID, input UpdateTaskRequest) (*models.Task, error) {
+	fo := taskFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.Tasks().Update(ctx, id, input.Set, func(o *models.CallOptions[models.TaskFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.TaskFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.Tasks().Get(ctx, id, func(o *models.CallOptions[models.TaskFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateTasks resolves the bulk update-where mutation for tasks.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateTasks(ctx context.Context, filter *models.TaskFilter, input UpdateTaskRequest) ([]*models.Task, error) {
+	fo := taskFieldOptionsFromContext(ctx)
+	res, err := m.Client.Tasks().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.TaskFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertTask resolves the single-row upsert mutation for tasks.
+func (m *M) UpsertTask(ctx context.Context, input *models.CreateTaskInput) (*models.Task, error) {
+	fo := taskFieldOptionsFromContext(ctx)
+	res, err := m.Client.Tasks().Upsert(ctx, input, models.TaskConflictPK, func(o *models.CallOptions[models.TaskFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteTask resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteTask(ctx context.Context, id uuid.UUID) (bool, error) {
+	if err := m.Client.Tasks().HardDelete(ctx, id, func(o *models.CallOptions[models.TaskFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.TaskFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// CreateTaskWithRelated resolves the nested create mutation for
+// tasks. The Go method writes the parent and
+// every nested row in one transaction, and the walked FieldOptions drive its
+// terminal read, so a selected relationship comes back already reflecting the
+// rows this call wrote.
+func (m *M) CreateTaskWithRelated(ctx context.Context, input *models.CreateTaskWithRelatedInput) (*models.Task, error) {
+	fo := taskFieldOptionsFromContext(ctx)
+	res, err := m.Client.Tasks().CreateWithRelated(ctx, input, func(o *models.CallOptions[models.TaskFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateTaskWithRelated resolves the nested update mutation for
+// tasks. This table has no incrementable
+// column, so the flat half carries no `_inc` / `_dec` operator and the call is
+// the Go method alone.
+func (m *M) UpdateTaskWithRelated(ctx context.Context, id uuid.UUID, input *models.UpdateTaskWithRelatedInput) (*models.Task, error) {
+	fo := taskFieldOptionsFromContext(ctx)
+	res, err := m.Client.Tasks().UpdateWithRelated(ctx, id, input, func(o *models.CallOptions[models.TaskFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertTaskWithRelated resolves the nested upsert mutation for
+// tasks. Unlike upsertTask, it
+// takes the conflict target as an argument: its update-side block is reachable
+// from both branches, so an upsert that always took the insert branch would
+// make `disconnect` match nothing.
+func (m *M) UpsertTaskWithRelated(ctx context.Context, input *models.UpsertTaskWithRelatedInput, target models.TaskConflictTarget) (*models.Task, error) {
+	fo := taskFieldOptionsFromContext(ctx)
+	res, err := m.Client.Tasks().UpsertWithRelated(ctx, input, target, func(o *models.CallOptions[models.TaskFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TaskLabel resolves the single-by-PK query for task_labels.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) TaskLabel(ctx context.Context, workspaceID uuid.UUID, taskID uuid.UUID, labelID uuid.UUID) (*models.TaskLabel, error) {
+	fo := taskLabelFieldOptionsFromContext(ctx)
+	res, err := q.Client.TaskLabels().Get(ctx, models.TaskLabelPK{WorkspaceID: workspaceID, TaskID: taskID, LabelID: labelID}, func(o *models.CallOptions[models.TaskLabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskLabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TaskLabels resolves the cursor-paginated Connection query for task_labels.
+func (q *Q) TaskLabels(ctx context.Context, filter *models.TaskLabelFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.TaskLabel], error) {
+	fo := taskLabelFieldOptionsFromContext(ctx)
+	res, err := q.Client.TaskLabels().Connection(ctx, models.ConnectionInput[models.TaskLabelFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.TaskLabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskLabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TaskLabelList resolves the offset-paginated ListResult query for task_labels.
+func (q *Q) TaskLabelList(ctx context.Context, filter *models.TaskLabelFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.TaskLabel], error) {
+	fo := taskLabelFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.TaskLabelFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.TaskLabels().Paginate(ctx, in, func(o *models.CallOptions[models.TaskLabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskLabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTaskLabel resolves the single-row create mutation for task_labels.
+func (m *M) CreateTaskLabel(ctx context.Context, input *models.CreateTaskLabelInput) (*models.TaskLabel, error) {
+	fo := taskLabelFieldOptionsFromContext(ctx)
+	res, err := m.Client.TaskLabels().Create(ctx, input, func(o *models.CallOptions[models.TaskLabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskLabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTaskLabels resolves the bulk create mutation for task_labels.
+func (m *M) CreateTaskLabels(ctx context.Context, inputs []*models.CreateTaskLabelInput) ([]*models.TaskLabel, error) {
+	fo := taskLabelFieldOptionsFromContext(ctx)
+	res, err := m.Client.TaskLabels().CreateMany(ctx, inputs, func(o *models.CallOptions[models.TaskLabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskLabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertTaskLabel resolves the single-row upsert mutation for task_labels.
+func (m *M) UpsertTaskLabel(ctx context.Context, input *models.CreateTaskLabelInput) (*models.TaskLabel, error) {
+	fo := taskLabelFieldOptionsFromContext(ctx)
+	res, err := m.Client.TaskLabels().Upsert(ctx, input, models.TaskLabelConflictPK, func(o *models.CallOptions[models.TaskLabelFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskLabelFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteTaskLabel resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteTaskLabel(ctx context.Context, workspaceID uuid.UUID, taskID uuid.UUID, labelID uuid.UUID) (bool, error) {
+	if err := m.Client.TaskLabels().HardDelete(ctx, models.TaskLabelPK{WorkspaceID: workspaceID, TaskID: taskID, LabelID: labelID}, func(o *models.CallOptions[models.TaskLabelFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.TaskLabelFieldOptions](ctx) {
+			f(o)
+		}
+	}); err != nil {
+		return false, mapErrorToGQL(err)
+	}
+	return true, nil
+}
+
+// TaskReport resolves the single-by-PK query for task_reports.
+// <table>(id) returns null when missing — no separate exists query is
+// needed. ErrNotFound is collapsed to (nil, nil) so the nullable
+// schema field surfaces as JSON null rather than a NOT_FOUND error.
+func (q *Q) TaskReport(ctx context.Context, id uuid.UUID) (*models.TaskReport, error) {
+	fo := taskReportFieldOptionsFromContext(ctx)
+	res, err := q.Client.TaskReports().Get(ctx, id, func(o *models.CallOptions[models.TaskReportFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskReportFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TaskReports resolves the cursor-paginated Connection query for task_reports.
+func (q *Q) TaskReports(ctx context.Context, filter *models.TaskReportFilter, first *int, after *string, last *int, before *string) (*models.Connection[models.TaskReport], error) {
+	fo := taskReportFieldOptionsFromContext(ctx)
+	res, err := q.Client.TaskReports().Connection(ctx, models.ConnectionInput[models.TaskReportFilter]{
+		Filter: filter,
+		First:  first,
+		After:  after,
+		Last:   last,
+		Before: before,
+	}, func(o *models.CallOptions[models.TaskReportFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskReportFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// TaskReportList resolves the offset-paginated ListResult query for task_reports.
+func (q *Q) TaskReportList(ctx context.Context, filter *models.TaskReportFilter, sort []sql.Sort, limit *int, offset *int) (*models.PaginateResult[models.TaskReport], error) {
+	fo := taskReportFieldOptionsFromContext(ctx)
+	in := models.PaginateInput[models.TaskReportFilter]{
+		Filter: filter,
+		Sort:   sort,
+	}
+	if limit != nil {
+		in.Limit = *limit
+	}
+	if offset != nil {
+		in.Offset = *offset
+	}
+	res, err := q.Client.TaskReports().Paginate(ctx, in, func(o *models.CallOptions[models.TaskReportFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskReportFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTaskReport resolves the single-row create mutation for task_reports.
+func (m *M) CreateTaskReport(ctx context.Context, input *models.CreateTaskReportInput) (*models.TaskReport, error) {
+	fo := taskReportFieldOptionsFromContext(ctx)
+	res, err := m.Client.TaskReports().Create(ctx, input, func(o *models.CallOptions[models.TaskReportFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskReportFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// CreateTaskReports resolves the bulk create mutation for task_reports.
+func (m *M) CreateTaskReports(ctx context.Context, inputs []*models.CreateTaskReportInput) ([]*models.TaskReport, error) {
+	fo := taskReportFieldOptionsFromContext(ctx)
+	res, err := m.Client.TaskReports().CreateMany(ctx, inputs, func(o *models.CallOptions[models.TaskReportFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskReportFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateTaskReportRequest is one updateTaskReport /
+// updateTaskReports input on its way from the graph package:
+// the column values as the model's update input, and nothing else — this
+// table has no incrementable column, so the input carries no `_inc` / `_dec`
+// operator.
+type UpdateTaskReportRequest struct {
+	// Set holds the column values to assign. Never nil.
+	Set *models.UpdateTaskReportInput
+	// HasSet reports whether Set holds at least one present field.
+	HasSet bool
+}
+
+// UpdateTaskReport resolves the single-row update mutation for task_reports.
+// This table has no numeric non-PK columns, so no `_inc`/`_dec` dispatch is
+// generated. The method applies the set input (when non-empty) and
+// re-fetches the entity.
+func (m *M) UpdateTaskReport(ctx context.Context, id uuid.UUID, input UpdateTaskReportRequest) (*models.TaskReport, error) {
+	fo := taskReportFieldOptionsFromContext(ctx)
+	if input.HasSet {
+		if _, err := m.Client.TaskReports().Update(ctx, id, input.Set, func(o *models.CallOptions[models.TaskReportFieldOptions]) {
+			for _, f := range callOptionsFromHTTP[models.TaskReportFieldOptions](ctx) {
+				f(o)
+			}
+		}); err != nil {
+			return nil, mapErrorToGQL(err)
+		}
+	}
+	res, err := m.Client.TaskReports().Get(ctx, id, func(o *models.CallOptions[models.TaskReportFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskReportFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpdateTaskReports resolves the bulk update-where mutation for task_reports.
+// This table has no incrementable column, so the input carries only set
+// fields and the call is UpdateWhere alone.
+func (m *M) UpdateTaskReports(ctx context.Context, filter *models.TaskReportFilter, input UpdateTaskReportRequest) ([]*models.TaskReport, error) {
+	fo := taskReportFieldOptionsFromContext(ctx)
+	res, err := m.Client.TaskReports().UpdateWhere(ctx, filter, input.Set, func(o *models.CallOptions[models.TaskReportFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskReportFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// UpsertTaskReport resolves the single-row upsert mutation for task_reports.
+func (m *M) UpsertTaskReport(ctx context.Context, input *models.CreateTaskReportInput) (*models.TaskReport, error) {
+	fo := taskReportFieldOptionsFromContext(ctx)
+	res, err := m.Client.TaskReports().Upsert(ctx, input, models.TaskReportConflictPK, func(o *models.CallOptions[models.TaskReportFieldOptions]) {
+		o.FieldOptions = fo
+		for _, f := range callOptionsFromHTTP[models.TaskReportFieldOptions](ctx) {
+			f(o)
+		}
+	})
+	if err != nil {
+		return nil, mapErrorToGQL(err)
+	}
+	return res, nil
+}
+
+// DeleteTaskReport resolves the bare `delete<Table>` mutation when
+// only hard delete is enabled. Returns Boolean!: true whenever the delete ran
+// without error, whether or not the row existed — the client's HardDelete is
+// idempotent.
+func (m *M) DeleteTaskReport(ctx context.Context, id uuid.UUID) (bool, error) {
+	if err := m.Client.TaskReports().HardDelete(ctx, id, func(o *models.CallOptions[models.TaskReportFieldOptions]) {
+		for _, f := range callOptionsFromHTTP[models.TaskReportFieldOptions](ctx) {
 			f(o)
 		}
 	}); err != nil {

@@ -224,6 +224,16 @@ type CreateCategoryWithRelatedInput struct {
 	Users    *CategoryUsersCreateNested    `json:"users,omitempty"`
 }
 
+type CreateCycleInput struct {
+	WorkspaceID *uuid.UUID `json:"workspaceID,omitempty"`
+	Name        string     `json:"name"`
+}
+
+type CreateCycleWithRelatedInput struct {
+	Cycle *CreateCycleInput       `json:"cycle"`
+	Tasks *CycleTasksCreateNested `json:"tasks,omitempty"`
+}
+
 type CreateDocumentInput struct {
 	EntityID   uuid.UUID                     `json:"entityID"`
 	EntityType models.DocumentEntityTypeEnum `json:"entityType"`
@@ -276,6 +286,16 @@ type CreateKeyedCodeEntryInput struct {
 type CreateKeyedCodeInput struct {
 	Code string `json:"code"`
 	Name string `json:"name"`
+}
+
+type CreateLabelInput struct {
+	WorkspaceID *uuid.UUID `json:"workspaceID,omitempty"`
+	Name        string     `json:"name"`
+}
+
+type CreateLabelWithRelatedInput struct {
+	Label *CreateLabelInput       `json:"label"`
+	Tasks *LabelTasksCreateNested `json:"tasks,omitempty"`
 }
 
 type CreateMaskedLabelInput struct {
@@ -365,6 +385,29 @@ type CreateScalarProbeInput struct {
 	CreatedAt  *time.Time       `json:"createdAt,omitempty"`
 }
 
+type CreateTaskInput struct {
+	WorkspaceID *uuid.UUID `json:"workspaceID,omitempty"`
+	CycleID     *uuid.UUID `json:"cycleID,omitempty"`
+	Title       string     `json:"title"`
+}
+
+type CreateTaskLabelInput struct {
+	WorkspaceID uuid.UUID `json:"workspaceID"`
+	TaskID      uuid.UUID `json:"taskID"`
+	LabelID     uuid.UUID `json:"labelID"`
+}
+
+type CreateTaskReportInput struct {
+	WorkspaceID *uuid.UUID `json:"workspaceID,omitempty"`
+	TaskID      uuid.UUID  `json:"taskID"`
+	Summary     string     `json:"summary"`
+}
+
+type CreateTaskWithRelatedInput struct {
+	Task   *CreateTaskInput        `json:"task"`
+	Labels *TaskLabelsCreateNested `json:"labels,omitempty"`
+}
+
 type CreateUserBadgeInput struct {
 	UserID *uuid.UUID `json:"userID,omitempty"`
 	Label  string     `json:"label"`
@@ -424,6 +467,35 @@ type CreateWorkspaceSettingInput struct {
 	Key         string     `json:"key"`
 	Value       string     `json:"value"`
 	CreatedAt   *time.Time `json:"createdAt,omitempty"`
+}
+
+type CycleFilter struct {
+	WorkspaceID *IDComparator     `json:"workspaceID,omitempty"`
+	Name        *StringComparator `json:"name,omitempty"`
+	Tasks       *TaskFilter       `json:"tasks,omitempty"`
+	And         []*CycleFilter    `json:"and,omitempty"`
+	Or          []*CycleFilter    `json:"or,omitempty"`
+}
+
+type CycleSort struct {
+	Field     CycleSortField `json:"field"`
+	Direction SortDirection  `json:"direction"`
+}
+
+type CycleTasksCreateInput struct {
+	Title string `json:"title"`
+}
+
+type CycleTasksCreateNested struct {
+	Create  []*CycleTasksCreateInput `json:"create,omitempty"`
+	Connect []uuid.UUID              `json:"connect,omitempty"`
+}
+
+type CycleTasksUpdateNested struct {
+	Clear      *bool                    `json:"clear,omitempty"`
+	Create     []*CycleTasksCreateInput `json:"create,omitempty"`
+	Connect    []uuid.UUID              `json:"connect,omitempty"`
+	Disconnect []uuid.UUID              `json:"disconnect,omitempty"`
 }
 
 type DecimalComparator struct {
@@ -618,6 +690,31 @@ type KeyedCodeFilter struct {
 type KeyedCodeSort struct {
 	Field     KeyedCodeSortField `json:"field"`
 	Direction SortDirection      `json:"direction"`
+}
+
+type LabelFilter struct {
+	WorkspaceID *IDComparator     `json:"workspaceID,omitempty"`
+	Name        *StringComparator `json:"name,omitempty"`
+	Tasks       *TaskFilter       `json:"tasks,omitempty"`
+	And         []*LabelFilter    `json:"and,omitempty"`
+	Or          []*LabelFilter    `json:"or,omitempty"`
+}
+
+type LabelSort struct {
+	Field     LabelSortField `json:"field"`
+	Direction SortDirection  `json:"direction"`
+}
+
+type LabelTasksCreateNested struct {
+	Create  []*CreateTaskInput `json:"create,omitempty"`
+	Connect []uuid.UUID        `json:"connect,omitempty"`
+}
+
+type LabelTasksUpdateNested struct {
+	Clear      *bool              `json:"clear,omitempty"`
+	Create     []*CreateTaskInput `json:"create,omitempty"`
+	Connect    []uuid.UUID        `json:"connect,omitempty"`
+	Disconnect []uuid.UUID        `json:"disconnect,omitempty"`
 }
 
 type MacAddrComparator struct {
@@ -1018,6 +1115,55 @@ type StringSliceComparator struct {
 	IsEmpty     *bool    `json:"isEmpty,omitempty"`
 }
 
+type TaskFilter struct {
+	WorkspaceID *IDComparator         `json:"workspaceID,omitempty"`
+	CycleID     *NullableIDComparator `json:"cycleID,omitempty"`
+	Title       *StringComparator     `json:"title,omitempty"`
+	Labels      *LabelFilter          `json:"labels,omitempty"`
+	And         []*TaskFilter         `json:"and,omitempty"`
+	Or          []*TaskFilter         `json:"or,omitempty"`
+}
+
+type TaskLabelFilter struct {
+	And []*TaskLabelFilter `json:"and,omitempty"`
+	Or  []*TaskLabelFilter `json:"or,omitempty"`
+}
+
+type TaskLabelSort struct {
+	Field     TaskLabelSortField `json:"field"`
+	Direction SortDirection      `json:"direction"`
+}
+
+type TaskLabelsCreateNested struct {
+	Create  []*CreateLabelInput `json:"create,omitempty"`
+	Connect []uuid.UUID         `json:"connect,omitempty"`
+}
+
+type TaskLabelsUpdateNested struct {
+	Clear      *bool               `json:"clear,omitempty"`
+	Create     []*CreateLabelInput `json:"create,omitempty"`
+	Connect    []uuid.UUID         `json:"connect,omitempty"`
+	Disconnect []uuid.UUID         `json:"disconnect,omitempty"`
+}
+
+type TaskReportFilter struct {
+	WorkspaceID *IDComparator       `json:"workspaceID,omitempty"`
+	TaskID      *IDComparator       `json:"taskID,omitempty"`
+	Summary     *StringComparator   `json:"summary,omitempty"`
+	And         []*TaskReportFilter `json:"and,omitempty"`
+	Or          []*TaskReportFilter `json:"or,omitempty"`
+}
+
+type TaskReportSort struct {
+	Field     TaskReportSortField `json:"field"`
+	Direction SortDirection       `json:"direction"`
+}
+
+type TaskSort struct {
+	Field     TaskSortField `json:"field"`
+	Direction SortDirection `json:"direction"`
+}
+
 type TimeComparator struct {
 	Eq       *time.Time   `json:"eq,omitempty"`
 	Neq      *time.Time   `json:"neq,omitempty"`
@@ -1061,6 +1207,15 @@ type UpdateCategoryWithRelatedInput struct {
 	Category *UpdateCategoryInput          `json:"category,omitempty"`
 	Products *CategoryProductsUpdateNested `json:"products,omitempty"`
 	Users    *CategoryUsersUpdateNested    `json:"users,omitempty"`
+}
+
+type UpdateCycleInput struct {
+	Name *string `json:"name,omitempty"`
+}
+
+type UpdateCycleWithRelatedInput struct {
+	Cycle *UpdateCycleInput       `json:"cycle,omitempty"`
+	Tasks *CycleTasksUpdateNested `json:"tasks,omitempty"`
 }
 
 type UpdateDocumentInput struct {
@@ -1118,6 +1273,15 @@ type UpdateFilterProbeInput struct {
 type UpdateKeyedCodeEntryInput struct {
 	KeyedCodeID *uuid.UUID `json:"keyedCodeID,omitempty"`
 	Note        *string    `json:"note,omitempty"`
+}
+
+type UpdateLabelInput struct {
+	Name *string `json:"name,omitempty"`
+}
+
+type UpdateLabelWithRelatedInput struct {
+	Label *UpdateLabelInput       `json:"label,omitempty"`
+	Tasks *LabelTasksUpdateNested `json:"tasks,omitempty"`
 }
 
 type UpdateMaskedLabelInput struct {
@@ -1233,6 +1397,21 @@ type UpdateScalarProbeInput struct {
 	CreatedAt     *time.Time                          `json:"createdAt,omitempty"`
 }
 
+type UpdateTaskInput struct {
+	CycleID graphql.Omittable[*uuid.UUID] `json:"cycleID,omitempty"`
+	Title   *string                       `json:"title,omitempty"`
+}
+
+type UpdateTaskReportInput struct {
+	TaskID  *uuid.UUID `json:"taskID,omitempty"`
+	Summary *string    `json:"summary,omitempty"`
+}
+
+type UpdateTaskWithRelatedInput struct {
+	Task   *UpdateTaskInput        `json:"task,omitempty"`
+	Labels *TaskLabelsUpdateNested `json:"labels,omitempty"`
+}
+
 type UpdateUserBadgeInput struct {
 	UserID graphql.Omittable[*uuid.UUID] `json:"userID,omitempty"`
 	Label  *string                       `json:"label,omitempty"`
@@ -1301,6 +1480,11 @@ type UpsertCategoryWithRelatedInput struct {
 	Users    *CategoryUsersUpdateNested    `json:"users,omitempty"`
 }
 
+type UpsertCycleWithRelatedInput struct {
+	Cycle *CreateCycleInput       `json:"cycle"`
+	Tasks *CycleTasksUpdateNested `json:"tasks,omitempty"`
+}
+
 type UpsertDocumentWithRelatedInput struct {
 	Document *CreateDocumentInput        `json:"document"`
 	Assets   *DocumentAssetsUpdateNested `json:"assets,omitempty"`
@@ -1311,6 +1495,11 @@ type UpsertKeyedCodeWithRelatedInput struct {
 	Entries   *KeyedCodeEntriesUpdateNested `json:"entries,omitempty"`
 }
 
+type UpsertLabelWithRelatedInput struct {
+	Label *CreateLabelInput       `json:"label"`
+	Tasks *LabelTasksUpdateNested `json:"tasks,omitempty"`
+}
+
 type UpsertOrderWithRelatedInput struct {
 	Order      *CreateOrderInput            `json:"order"`
 	OrderItems *OrderOrderItemsUpdateNested `json:"orderItems,omitempty"`
@@ -1319,6 +1508,11 @@ type UpsertOrderWithRelatedInput struct {
 type UpsertProductWithRelatedInput struct {
 	Product    *CreateProductInput            `json:"product"`
 	OrderItems *ProductOrderItemsUpdateNested `json:"orderItems,omitempty"`
+}
+
+type UpsertTaskWithRelatedInput struct {
+	Task   *CreateTaskInput        `json:"task"`
+	Labels *TaskLabelsUpdateNested `json:"labels,omitempty"`
 }
 
 type UpsertUserWithRelatedInput struct {
@@ -1908,6 +2102,118 @@ func (e CategorySortField) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+type CycleConflictTarget string
+
+const (
+	CycleConflictTargetPk            CycleConflictTarget = "PK"
+	CycleConflictTargetWorkspaceIDID CycleConflictTarget = "WORKSPACE_ID_ID"
+)
+
+var AllCycleConflictTarget = []CycleConflictTarget{
+	CycleConflictTargetPk,
+	CycleConflictTargetWorkspaceIDID,
+}
+
+func (e CycleConflictTarget) IsValid() bool {
+	switch e {
+	case CycleConflictTargetPk, CycleConflictTargetWorkspaceIDID:
+		return true
+	}
+	return false
+}
+
+func (e CycleConflictTarget) String() string {
+	return string(e)
+}
+
+func (e *CycleConflictTarget) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = CycleConflictTarget(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid CycleConflictTarget", str)
+	}
+	return nil
+}
+
+func (e CycleConflictTarget) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *CycleConflictTarget) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e CycleConflictTarget) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type CycleSortField string
+
+const (
+	CycleSortFieldID          CycleSortField = "ID"
+	CycleSortFieldWorkspaceID CycleSortField = "WORKSPACE_ID"
+	CycleSortFieldName        CycleSortField = "NAME"
+)
+
+var AllCycleSortField = []CycleSortField{
+	CycleSortFieldID,
+	CycleSortFieldWorkspaceID,
+	CycleSortFieldName,
+}
+
+func (e CycleSortField) IsValid() bool {
+	switch e {
+	case CycleSortFieldID, CycleSortFieldWorkspaceID, CycleSortFieldName:
+		return true
+	}
+	return false
+}
+
+func (e CycleSortField) String() string {
+	return string(e)
+}
+
+func (e *CycleSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = CycleSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid CycleSortField", str)
+	}
+	return nil
+}
+
+func (e CycleSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *CycleSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e CycleSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
 type DocumentConflictTarget string
 
 const (
@@ -2342,6 +2648,118 @@ func (e *KeyedCodeSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e KeyedCodeSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type LabelConflictTarget string
+
+const (
+	LabelConflictTargetPk            LabelConflictTarget = "PK"
+	LabelConflictTargetWorkspaceIDID LabelConflictTarget = "WORKSPACE_ID_ID"
+)
+
+var AllLabelConflictTarget = []LabelConflictTarget{
+	LabelConflictTargetPk,
+	LabelConflictTargetWorkspaceIDID,
+}
+
+func (e LabelConflictTarget) IsValid() bool {
+	switch e {
+	case LabelConflictTargetPk, LabelConflictTargetWorkspaceIDID:
+		return true
+	}
+	return false
+}
+
+func (e LabelConflictTarget) String() string {
+	return string(e)
+}
+
+func (e *LabelConflictTarget) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = LabelConflictTarget(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid LabelConflictTarget", str)
+	}
+	return nil
+}
+
+func (e LabelConflictTarget) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *LabelConflictTarget) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e LabelConflictTarget) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type LabelSortField string
+
+const (
+	LabelSortFieldID          LabelSortField = "ID"
+	LabelSortFieldWorkspaceID LabelSortField = "WORKSPACE_ID"
+	LabelSortFieldName        LabelSortField = "NAME"
+)
+
+var AllLabelSortField = []LabelSortField{
+	LabelSortFieldID,
+	LabelSortFieldWorkspaceID,
+	LabelSortFieldName,
+}
+
+func (e LabelSortField) IsValid() bool {
+	switch e {
+	case LabelSortFieldID, LabelSortFieldWorkspaceID, LabelSortFieldName:
+		return true
+	}
+	return false
+}
+
+func (e LabelSortField) String() string {
+	return string(e)
+}
+
+func (e *LabelSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = LabelSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid LabelSortField", str)
+	}
+	return nil
+}
+
+func (e LabelSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *LabelSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e LabelSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil
@@ -2986,6 +3404,236 @@ func (e *SortDirection) UnmarshalJSON(b []byte) error {
 }
 
 func (e SortDirection) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskConflictTarget string
+
+const (
+	TaskConflictTargetPk            TaskConflictTarget = "PK"
+	TaskConflictTargetWorkspaceIDID TaskConflictTarget = "WORKSPACE_ID_ID"
+)
+
+var AllTaskConflictTarget = []TaskConflictTarget{
+	TaskConflictTargetPk,
+	TaskConflictTargetWorkspaceIDID,
+}
+
+func (e TaskConflictTarget) IsValid() bool {
+	switch e {
+	case TaskConflictTargetPk, TaskConflictTargetWorkspaceIDID:
+		return true
+	}
+	return false
+}
+
+func (e TaskConflictTarget) String() string {
+	return string(e)
+}
+
+func (e *TaskConflictTarget) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskConflictTarget(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskConflictTarget", str)
+	}
+	return nil
+}
+
+func (e TaskConflictTarget) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskConflictTarget) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskConflictTarget) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskLabelSortField string
+
+const (
+	TaskLabelSortFieldWorkspaceID TaskLabelSortField = "WORKSPACE_ID"
+	TaskLabelSortFieldTaskID      TaskLabelSortField = "TASK_ID"
+	TaskLabelSortFieldLabelID     TaskLabelSortField = "LABEL_ID"
+)
+
+var AllTaskLabelSortField = []TaskLabelSortField{
+	TaskLabelSortFieldWorkspaceID,
+	TaskLabelSortFieldTaskID,
+	TaskLabelSortFieldLabelID,
+}
+
+func (e TaskLabelSortField) IsValid() bool {
+	switch e {
+	case TaskLabelSortFieldWorkspaceID, TaskLabelSortFieldTaskID, TaskLabelSortFieldLabelID:
+		return true
+	}
+	return false
+}
+
+func (e TaskLabelSortField) String() string {
+	return string(e)
+}
+
+func (e *TaskLabelSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskLabelSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskLabelSortField", str)
+	}
+	return nil
+}
+
+func (e TaskLabelSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskLabelSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskLabelSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskReportSortField string
+
+const (
+	TaskReportSortFieldID          TaskReportSortField = "ID"
+	TaskReportSortFieldWorkspaceID TaskReportSortField = "WORKSPACE_ID"
+	TaskReportSortFieldTaskID      TaskReportSortField = "TASK_ID"
+	TaskReportSortFieldSummary     TaskReportSortField = "SUMMARY"
+)
+
+var AllTaskReportSortField = []TaskReportSortField{
+	TaskReportSortFieldID,
+	TaskReportSortFieldWorkspaceID,
+	TaskReportSortFieldTaskID,
+	TaskReportSortFieldSummary,
+}
+
+func (e TaskReportSortField) IsValid() bool {
+	switch e {
+	case TaskReportSortFieldID, TaskReportSortFieldWorkspaceID, TaskReportSortFieldTaskID, TaskReportSortFieldSummary:
+		return true
+	}
+	return false
+}
+
+func (e TaskReportSortField) String() string {
+	return string(e)
+}
+
+func (e *TaskReportSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskReportSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskReportSortField", str)
+	}
+	return nil
+}
+
+func (e TaskReportSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskReportSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskReportSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+type TaskSortField string
+
+const (
+	TaskSortFieldID          TaskSortField = "ID"
+	TaskSortFieldWorkspaceID TaskSortField = "WORKSPACE_ID"
+	TaskSortFieldCycleID     TaskSortField = "CYCLE_ID"
+	TaskSortFieldTitle       TaskSortField = "TITLE"
+)
+
+var AllTaskSortField = []TaskSortField{
+	TaskSortFieldID,
+	TaskSortFieldWorkspaceID,
+	TaskSortFieldCycleID,
+	TaskSortFieldTitle,
+}
+
+func (e TaskSortField) IsValid() bool {
+	switch e {
+	case TaskSortFieldID, TaskSortFieldWorkspaceID, TaskSortFieldCycleID, TaskSortFieldTitle:
+		return true
+	}
+	return false
+}
+
+func (e TaskSortField) String() string {
+	return string(e)
+}
+
+func (e *TaskSortField) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TaskSortField(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TaskSortField", str)
+	}
+	return nil
+}
+
+func (e TaskSortField) MarshalGQL(w io.Writer) {
+	_, _ = fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *TaskSortField) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e TaskSortField) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

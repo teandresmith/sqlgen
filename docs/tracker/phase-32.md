@@ -1247,17 +1247,18 @@ was not run; it is due at 32.8.
 
 **PRD Reference:** Sections 26.4, 26.5
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] The `graphql` example (the only tenanted GraphQL example, design §12 Q4) gains a composite
-  tenant FK; regenerate its goldens, and only the new table's files change.
-- [ ] Relationship fields and filter inputs for edges with more than one pair: field shapes are
+- [x] The `graphql` example (the only tenanted GraphQL example, design §12 Q4) gains a composite
+  tenant FK; regenerate its goldens: only the new tables' files change, and shared files only gain
+  lines.
+- [x] Relationship fields and filter inputs for edges with more than one pair: field shapes are
   unchanged, and resolvers go through the 32.5 loaders.
-- [ ] Nested connect on a composite-FK edge to a single-column-PK target takes the target ID, as
+- [x] Nested connect on a composite-FK edge to a single-column-PK target takes the target ID, as
   today.
-- [ ] `field_options` forcing: the parent's referenced columns and the child's FK members are
+- [x] `field_options` forcing: the parent's referenced columns and the child's FK members are
   selected even when the query does not ask for them.
 
 ### Acceptance Criteria
@@ -1269,15 +1270,61 @@ was not run; it is due at 32.8.
 
 ### Tests Required
 
-- [ ] GraphQL resolver tests for a composite O2M, O2O and M2M edge, and a relationship filter.
-- [ ] A query that selects no key column still loads the edge (field forcing).
-- [ ] `graphql` example: a query over the composite tenant FK returns the same rows as the Go
+- [x] GraphQL resolver tests for a composite O2M, O2O and M2M edge, and a relationship filter.
+- [x] A query that selects no key column still loads the edge (field forcing).
+- [x] `graphql` example: a query over the composite tenant FK returns the same rows as the Go
   client, under tenancy, and its relationship filter matches on every pair.
-- [ ] Every design §10.5 row for 32.7 passes, and its registry row lists the test.
+- [x] Every design §10.5 row for 32.7 passes, and its registry row lists the test.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+**Fail first.** The gen-side rows passed on arrival, as 32.5 recorded ("composite edges reach the
+generated schema"): the API layer projects the model's relationship and filter contexts, which
+32.5 made composite-aware, so no gen code changed. `TestGraphQLSchema_CompositeKeyRelationshipFields`
+and `TestGraphQLFilterTranslation_RelationshipMember` pin it. The example tests failed first against
+HEAD's `graphql` example: `client.Cycles undefined`, since the composite tables did not exist. Each
+example assertion was also mutated to show it can fail: a `CycleFilter.Tasks` EXISTS correlating on
+`cycle_id` alone fails `/every pair` ("the filter matched on cycle_id without workspace_id"), and
+dropping the `cycles` loader's `unionColumns(columns, "workspace_id", "id")` fails
+`TestCompositeTenantFK_EdgeLoadsWithoutSelectedKeys/o2m and m2m`.
+
+**Fixture.** `graphql/schema.sql` gains `cycles`, `tasks` (composite tenant FK into `cycles`),
+`task_reports` (O2O: `task_id` is UNIQUE), `labels` and the tenant junction `task_labels` (PK = the
+union of both keys). All five carry `workspace_id`, so all are tenanted. The schema shapes match
+the one-column ones: `Cycle.tasks: [Task!]!`, `TaskReport.tasks: Task`, `Task.labels: [Label!]!`,
+`CycleFilter.tasks: TaskFilter`, and nested `connect: [UUID!]` (the target ID).
+
+**Tests.**
+- `cmd/sqlgen/gen/api_composite_key_test.go`: `TestGraphQLSchema_CompositeKeyRelationshipFields`
+  (o2m, o2o, m2m, composite-PK parent, and the o2m, m2m and composite-PK parent filter members),
+  `TestGraphQLFilterTranslation_RelationshipMember` (composite foreign key, composite junction,
+  composite-PK parent).
+- `graphql/tests/composite_tenant_fk_test.go`: `TestCompositeTenantFK_GraphQLMatchesGoClient`
+  (o2m and m2m, o2o: GraphQL equals the Go client and the seeded rows of tenant A, with tenant B
+  seeded alike), `TestCompositeTenantFK_EdgeLoadsWithoutSelectedKeys`,
+  `TestCompositeTenantFK_GraphQLRelationshipFilter` (o2m against the Go client, m2m, every pair),
+  `TestCompositeTenantFK_GraphQLNestedConnect` (same tenant; another tenant's target is
+  `NOT_FOUND` and unwritten).
+- **Every pair under tenancy.** Through a tenanted GraphQL request the workspace pair and the
+  subquery's tenant predicate agree, so the pair cannot be told apart there, and GraphQL has no
+  `SkipTenancy`. `/every pair` plants a task in tenant B naming tenant A's cycle (with
+  `session_replication_role = replica`) and reads through the Go client under `SkipTenancy`, which
+  runs the same `CycleFilter.ToConditions` the GraphQL translator feeds.
+- Registry: the five `api.*` rows in `docs/conformance/cli/api.md` list their tests; design §10.1
+  marks them passing.
+
+**Goldens.** `graphql` only. The new tables' files are new, and every shared file only gains lines
+(checked with `git diff --diff-algorithm=minimal`: no removed line but the `//go:embed` list in
+`generated_gen.go`, which gains the five new schema files). `truncateAll` lists the new tables.
+
+**Checks.** `make check` and `make check-examples` green, conformance included on all four drivers. After the review fixes (the drift row is now a parameterized `INSERT`, and the unit test reuses `graphQLBlock`), the new example and unit tests and the example lint were rerun green. `make test-integration` was not run; it is due at 32.8.
+
+**Auto-review (sqlgen-reviewer).** No high-confidence finding. It confirmed fail first separately (the
+`cycle_id`-only EXISTS fails `/every pair`), agreed no gen change was needed, and confirmed that the
+golden diff only adds lines. Applied: the drift `INSERT` is parameterized, `typeBlock` became the
+existing `graphQLBlock`, the README table count is 27, and the golden task line was reworded. Not
+done (optional): a GraphQL test of `disconnect` and the M2M `connect` through `task_labels`. The
+phase requires only `connect`, and 32.6 covers those verbs live in `tenancy_postgres`.
 
 ## 32.8 Examples — composite tenant FKs end to end
 

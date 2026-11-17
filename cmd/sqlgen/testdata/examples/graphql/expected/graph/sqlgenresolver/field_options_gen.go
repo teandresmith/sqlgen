@@ -263,6 +263,53 @@ func categoryPriceTotalFieldOptionsFromCollected(opCtx *graphql.OperationContext
 	return fo
 }
 
+// cycleFieldOptionsFromContext returns the
+// models.CycleFieldOptions for the current GraphQL request.
+func cycleFieldOptionsFromContext(ctx context.Context) *models.CycleFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "CycleConnection", "CycleListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.CycleFieldOptions{}
+	}
+	return cycleFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// cycleFieldOptionsFromCollected walks one level of
+// the Cycle selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func cycleFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.CycleFieldOptions {
+	fo := &models.CycleFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "workspaceID":
+			fo.WorkspaceID = true
+		case "name":
+			fo.Name = true
+		case "tasks":
+			fo.Tasks = &models.TaskRelationshipOptions{
+				FieldOptions: taskFieldOptionsFromCollected(opCtx, f.Sub),
+			}
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
 // documentFieldOptionsFromContext returns the
 // models.DocumentFieldOptions for the current GraphQL request.
 func documentFieldOptionsFromContext(ctx context.Context) *models.DocumentFieldOptions {
@@ -520,6 +567,53 @@ func keyedCodeEntryFieldOptionsFromCollected(opCtx *graphql.OperationContext, fi
 			fo.KeyedCodeID = true
 		case "note":
 			fo.Note = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
+// labelFieldOptionsFromContext returns the
+// models.LabelFieldOptions for the current GraphQL request.
+func labelFieldOptionsFromContext(ctx context.Context) *models.LabelFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "LabelConnection", "LabelListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.LabelFieldOptions{}
+	}
+	return labelFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// labelFieldOptionsFromCollected walks one level of
+// the Label selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func labelFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.LabelFieldOptions {
+	fo := &models.LabelFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "workspaceID":
+			fo.WorkspaceID = true
+		case "name":
+			fo.Name = true
+		case "tasks":
+			fo.Tasks = &models.TaskRelationshipOptions{
+				FieldOptions: taskFieldOptionsFromCollected(opCtx, f.Sub),
+			}
 		}
 	}
 	if !fo.HasSelectedColumns() {
@@ -915,6 +1009,147 @@ func scalarProbeFieldOptionsFromCollected(opCtx *graphql.OperationContext, field
 			fo.ObservedAt = true
 		case "createdAt":
 			fo.CreatedAt = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
+// taskFieldOptionsFromContext returns the
+// models.TaskFieldOptions for the current GraphQL request.
+func taskFieldOptionsFromContext(ctx context.Context) *models.TaskFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "TaskConnection", "TaskListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.TaskFieldOptions{}
+	}
+	return taskFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// taskFieldOptionsFromCollected walks one level of
+// the Task selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func taskFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.TaskFieldOptions {
+	fo := &models.TaskFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "workspaceID":
+			fo.WorkspaceID = true
+		case "cycleID":
+			fo.CycleID = true
+		case "title":
+			fo.Title = true
+		case "labels":
+			fo.Labels = &models.LabelRelationshipOptions{
+				FieldOptions: labelFieldOptionsFromCollected(opCtx, f.Sub),
+			}
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.ID = true
+	}
+	return fo
+}
+
+// taskLabelFieldOptionsFromContext returns the
+// models.TaskLabelFieldOptions for the current GraphQL request.
+func taskLabelFieldOptionsFromContext(ctx context.Context) *models.TaskLabelFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "TaskLabelConnection", "TaskLabelListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.TaskLabelFieldOptions{}
+	}
+	return taskLabelFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// taskLabelFieldOptionsFromCollected walks one level of
+// the TaskLabel selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func taskLabelFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.TaskLabelFieldOptions {
+	fo := &models.TaskLabelFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "workspaceID":
+			fo.WorkspaceID = true
+		case "taskID":
+			fo.TaskID = true
+		case "labelID":
+			fo.LabelID = true
+		}
+	}
+	if !fo.HasSelectedColumns() {
+		// The selection asked for this row but named no column. Projecting the
+		// row's identity keeps the all-false short-circuit — which means
+		// "the caller wants no rows" — from swallowing it. Columns
+		// the read derives rather than returns (cursor keys, relationship
+		// mapping keys, O2O NULL-detection keys) are unioned in downstream by
+		// the client method that reads them, not here.
+		fo.WorkspaceID = true
+		fo.TaskID = true
+		fo.LabelID = true
+	}
+	return fo
+}
+
+// taskReportFieldOptionsFromContext returns the
+// models.TaskReportFieldOptions for the current GraphQL request.
+func taskReportFieldOptionsFromContext(ctx context.Context) *models.TaskReportFieldOptions {
+	opCtx := graphql.GetOperationContext(ctx)
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+	entityFields, wantsRows := unwrapConnectionFields(ctx, fields, "TaskReportConnection", "TaskReportListResult")
+	if !wantsRows {
+		// Count-only envelope selection: the request never reaches a row, so
+		// the all-false FieldOptions is the right answer and the read
+		// short-circuits into a single COUNT.
+		return &models.TaskReportFieldOptions{}
+	}
+	return taskReportFieldOptionsFromCollected(opCtx, entityFields)
+}
+
+// taskReportFieldOptionsFromCollected walks one level of
+// the TaskReport selection set and produces the corresponding
+// FieldOptions tree. Recursive descent into relationships re-enters the
+// related table's walker on the child's selection set.
+func taskReportFieldOptionsFromCollected(opCtx *graphql.OperationContext, fields []graphql.CollectedField) *models.TaskReportFieldOptions {
+	fo := &models.TaskReportFieldOptions{}
+	for _, f := range coalesceAliases(opCtx, fields) {
+		switch f.Name {
+		case "id":
+			fo.ID = true
+		case "workspaceID":
+			fo.WorkspaceID = true
+		case "taskID":
+			fo.TaskID = true
+		case "summary":
+			fo.Summary = true
+		case "tasks":
+			fo.Tasks = taskFieldOptionsFromCollected(opCtx, f.Sub)
 		}
 	}
 	if !fo.HasSelectedColumns() {

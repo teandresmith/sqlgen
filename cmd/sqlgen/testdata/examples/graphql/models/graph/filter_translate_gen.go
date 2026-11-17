@@ -193,6 +193,45 @@ func translateCategoryPriceTotalFilter(in *gqlmodel.CategoryPriceTotalFilter) *m
 	return out
 }
 
+// translateCycleFilter converts the gqlgen-generated
+// CycleFilter into a *models.CycleFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateCycleFilter(in *gqlmodel.CycleFilter) *models.CycleFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.CycleFilter{}
+	if in.Name != nil {
+		out.Name = translateStringComparator(in.Name)
+	}
+	if in.WorkspaceID != nil {
+		out.WorkspaceID = translateIDComparator(in.WorkspaceID)
+	}
+	if in.Tasks != nil {
+		out.Tasks = translateTaskFilter(in.Tasks)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.CycleFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateCycleFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.CycleFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateCycleFilter(sub))
+		}
+	}
+	return out
+}
+
 // translateDocumentFilter converts the gqlgen-generated
 // DocumentFilter into a *models.DocumentFilter.
 // Returns nil when the input is nil so the model layer's "nil filter ⇒ no
@@ -446,6 +485,45 @@ func translateKeyedCodeEntryFilter(in *gqlmodel.KeyedCodeEntryFilter) *models.Ke
 				continue
 			}
 			out.Or = append(out.Or, translateKeyedCodeEntryFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateLabelFilter converts the gqlgen-generated
+// LabelFilter into a *models.LabelFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateLabelFilter(in *gqlmodel.LabelFilter) *models.LabelFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.LabelFilter{}
+	if in.Name != nil {
+		out.Name = translateStringComparator(in.Name)
+	}
+	if in.WorkspaceID != nil {
+		out.WorkspaceID = translateIDComparator(in.WorkspaceID)
+	}
+	if in.Tasks != nil {
+		out.Tasks = translateTaskFilter(in.Tasks)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.LabelFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateLabelFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.LabelFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateLabelFilter(sub))
 		}
 	}
 	return out
@@ -830,6 +908,117 @@ func translateScalarProbeFilter(in *gqlmodel.ScalarProbeFilter) *models.ScalarPr
 				continue
 			}
 			out.Or = append(out.Or, translateScalarProbeFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateTaskFilter converts the gqlgen-generated
+// TaskFilter into a *models.TaskFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateTaskFilter(in *gqlmodel.TaskFilter) *models.TaskFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.TaskFilter{}
+	if in.CycleID != nil {
+		out.CycleID = translateNullableIDComparator(in.CycleID)
+	}
+	if in.Title != nil {
+		out.Title = translateStringComparator(in.Title)
+	}
+	if in.WorkspaceID != nil {
+		out.WorkspaceID = translateIDComparator(in.WorkspaceID)
+	}
+	if in.Labels != nil {
+		out.Labels = translateLabelFilter(in.Labels)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.TaskFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateTaskFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.TaskFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateTaskFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateTaskLabelFilter converts the gqlgen-generated
+// TaskLabelFilter into a *models.TaskLabelFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateTaskLabelFilter(in *gqlmodel.TaskLabelFilter) *models.TaskLabelFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.TaskLabelFilter{}
+	if len(in.And) > 0 {
+		out.And = make([]*models.TaskLabelFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateTaskLabelFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.TaskLabelFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateTaskLabelFilter(sub))
+		}
+	}
+	return out
+}
+
+// translateTaskReportFilter converts the gqlgen-generated
+// TaskReportFilter into a *models.TaskReportFilter.
+// Returns nil when the input is nil so the model layer's "nil filter ⇒ no
+// where clause" contract is preserved.
+func translateTaskReportFilter(in *gqlmodel.TaskReportFilter) *models.TaskReportFilter {
+	if in == nil {
+		return nil
+	}
+	out := &models.TaskReportFilter{}
+	if in.Summary != nil {
+		out.Summary = translateStringComparator(in.Summary)
+	}
+	if in.TaskID != nil {
+		out.TaskID = translateIDComparator(in.TaskID)
+	}
+	if in.WorkspaceID != nil {
+		out.WorkspaceID = translateIDComparator(in.WorkspaceID)
+	}
+	if len(in.And) > 0 {
+		out.And = make([]*models.TaskReportFilter, 0, len(in.And))
+		for _, sub := range in.And {
+			if sub == nil {
+				continue
+			}
+			out.And = append(out.And, translateTaskReportFilter(sub))
+		}
+	}
+	if len(in.Or) > 0 {
+		out.Or = make([]*models.TaskReportFilter, 0, len(in.Or))
+		for _, sub := range in.Or {
+			if sub == nil {
+				continue
+			}
+			out.Or = append(out.Or, translateTaskReportFilter(sub))
 		}
 	}
 	return out

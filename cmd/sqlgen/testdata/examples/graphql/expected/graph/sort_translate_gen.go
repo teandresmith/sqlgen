@@ -179,6 +179,42 @@ func categoryPriceTotalSortFieldToColumn(f gqlmodel.CategoryPriceTotalSortField)
 	return ""
 }
 
+// translateCycleSort converts a gqlgen-generated
+// []*CycleSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateCycleSort(in []*gqlmodel.CycleSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    cycleSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// cycleSortFieldToColumn resolves a gqlgen
+// CycleSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func cycleSortFieldToColumn(f gqlmodel.CycleSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	case "WORKSPACE_ID":
+		return "workspace_id"
+	case "NAME":
+		return "name"
+	}
+	return ""
+}
+
 // translateDocumentSort converts a gqlgen-generated
 // []*DocumentSort into a []sql.Sort. nil / empty input returns nil
 // so the caller's "no sort" path is preserved.
@@ -403,6 +439,42 @@ func keyedCodeEntrySortFieldToColumn(f gqlmodel.KeyedCodeEntrySortField) string 
 		return "keyed_code_id"
 	case "NOTE":
 		return "note"
+	}
+	return ""
+}
+
+// translateLabelSort converts a gqlgen-generated
+// []*LabelSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateLabelSort(in []*gqlmodel.LabelSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    labelSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// labelSortFieldToColumn resolves a gqlgen
+// LabelSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func labelSortFieldToColumn(f gqlmodel.LabelSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	case "WORKSPACE_ID":
+		return "workspace_id"
+	case "NAME":
+		return "name"
 	}
 	return ""
 }
@@ -739,6 +811,118 @@ func scalarProbeSortFieldToColumn(f gqlmodel.ScalarProbeSortField) string {
 		return "observed_at"
 	case "CREATED_AT":
 		return "created_at"
+	}
+	return ""
+}
+
+// translateTaskSort converts a gqlgen-generated
+// []*TaskSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateTaskSort(in []*gqlmodel.TaskSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    taskSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// taskSortFieldToColumn resolves a gqlgen
+// TaskSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func taskSortFieldToColumn(f gqlmodel.TaskSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	case "WORKSPACE_ID":
+		return "workspace_id"
+	case "CYCLE_ID":
+		return "cycle_id"
+	case "TITLE":
+		return "title"
+	}
+	return ""
+}
+
+// translateTaskLabelSort converts a gqlgen-generated
+// []*TaskLabelSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateTaskLabelSort(in []*gqlmodel.TaskLabelSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    taskLabelSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// taskLabelSortFieldToColumn resolves a gqlgen
+// TaskLabelSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func taskLabelSortFieldToColumn(f gqlmodel.TaskLabelSortField) string {
+	switch string(f) {
+	case "WORKSPACE_ID":
+		return "workspace_id"
+	case "TASK_ID":
+		return "task_id"
+	case "LABEL_ID":
+		return "label_id"
+	}
+	return ""
+}
+
+// translateTaskReportSort converts a gqlgen-generated
+// []*TaskReportSort into a []sql.Sort. nil / empty input returns nil
+// so the caller's "no sort" path is preserved.
+func translateTaskReportSort(in []*gqlmodel.TaskReportSort) []sql.Sort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sql.Sort, 0, len(in))
+	for _, s := range in {
+		if s == nil {
+			continue
+		}
+		out = append(out, sql.Sort{
+			Column:    taskReportSortFieldToColumn(s.Field),
+			Direction: directionToSortDirection(s.Direction),
+		})
+	}
+	return out
+}
+
+// taskReportSortFieldToColumn resolves a gqlgen
+// TaskReportSortField value to the SQL column it sorts on. Returns an
+// empty string for unrecognised values so the caller can decide whether to
+// surface a validation error or silently drop the entry.
+func taskReportSortFieldToColumn(f gqlmodel.TaskReportSortField) string {
+	switch string(f) {
+	case "ID":
+		return "id"
+	case "WORKSPACE_ID":
+		return "workspace_id"
+	case "TASK_ID":
+		return "task_id"
+	case "SUMMARY":
+		return "summary"
 	}
 	return ""
 }

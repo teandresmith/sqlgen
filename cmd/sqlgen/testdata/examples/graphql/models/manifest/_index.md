@@ -14,11 +14,13 @@ Features: audit_columns, cache, events, graphql, soft_delete, tenancy, views
 | AssetDocumentLink | `asset_document_links` | table | [asset_document_link.md](asset_document_link.md) |  |
 | Category | `categories` | table | [category.md](category.md) | Product classification categories |
 | CategoryPriceTotal | `category_price_totals` | view | [category_price_total.md](category_price_total.md) |  |
+| Cycle | `cycles` | table | [cycle.md](cycle.md) |  |
 | Document | `documents` | table | [document.md](document.md) |  |
 | Event | `events` | table | [event.md](event.md) |  |
 | FilterProbe | `filter_probes` | table | [filter_probe.md](filter_probe.md) |  |
 | KeyedCode | `keyed_codes` | table | [keyed_code.md](keyed_code.md) |  |
 | KeyedCodeEntry | `keyed_code_entries` | table | [keyed_code_entry.md](keyed_code_entry.md) |  |
+| Label | `labels` | table | [label.md](label.md) |  |
 | MaskedLabel | `masked_labels` | table | [masked_label.md](masked_label.md) |  |
 | NumericWidth | `numeric_widths` | table | [numeric_width.md](numeric_width.md) |  |
 | Order | `orders` | table | [order.md](order.md) |  |
@@ -26,6 +28,9 @@ Features: audit_columns, cache, events, graphql, soft_delete, tenancy, views
 | Product | `products` | table | [product.md](product.md) |  |
 | Profile | `profiles` | table | [profile.md](profile.md) |  |
 | ScalarProbe | `scalar_probes` | table | [scalar_probe.md](scalar_probe.md) |  |
+| Task | `tasks` | table | [task.md](task.md) |  |
+| TaskLabel | `task_labels` | table | [task_label.md](task_label.md) |  |
+| TaskReport | `task_reports` | table | [task_report.md](task_report.md) |  |
 | User | `users` | table | [user.md](user.md) |  |
 | UserBadge | `user_badges` | table | [user_badge.md](user_badge.md) |  |
 | UserCategory | `user_categories` | table | [user_category.md](user_category.md) |  |

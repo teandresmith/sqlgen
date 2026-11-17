@@ -1,0 +1,65 @@
+"""
+TaskLabel corresponds to the task_labels table.
+"""
+type TaskLabel {
+  "workspace_id"
+  workspaceID: UUID!
+  "task_id"
+  taskID: UUID!
+  "label_id"
+  labelID: UUID!
+}
+
+type TaskLabelConnection {
+  edges:      [TaskLabelEdge!]!
+  pageInfo:   PageInfo!
+  totalCount: Int!
+}
+
+type TaskLabelEdge {
+  node:   TaskLabel!
+  cursor: String!
+}
+
+type TaskLabelListResult {
+  items:      [TaskLabel!]!
+  totalCount: Int!
+  offset:     Int!
+  limit:      Int!
+  hasMore:    Boolean!
+}
+
+input TaskLabelFilter {
+  and: [TaskLabelFilter!]
+  or:  [TaskLabelFilter!]
+}
+
+enum TaskLabelSortField {
+  WORKSPACE_ID
+  TASK_ID
+  LABEL_ID
+}
+
+input TaskLabelSort {
+  field:     TaskLabelSortField!
+  direction: SortDirection!
+}
+input CreateTaskLabelInput {
+  workspaceID: UUID!
+  taskID: UUID!
+  labelID: UUID!
+}
+
+extend type Query {
+  taskLabel(workspaceID: UUID!, taskID: UUID!, labelID: UUID!): TaskLabel
+  "Cursor-paginated; ordering is driven by cursor_keys to preserve keyset semantics — pass `sort` to taskLabelList instead."
+  taskLabels(filter: TaskLabelFilter, first: Int, after: String, last: Int, before: String): TaskLabelConnection!
+  taskLabelList(filter: TaskLabelFilter, sort: [TaskLabelSort!], limit: Int, offset: Int): TaskLabelListResult!
+}
+
+extend type Mutation {
+  createTaskLabel(input: CreateTaskLabelInput!): TaskLabel!
+  createTaskLabels(inputs: [CreateTaskLabelInput!]!): [TaskLabel!]!
+  upsertTaskLabel(input: CreateTaskLabelInput!): TaskLabel!
+  deleteTaskLabel(workspaceID: UUID!, taskID: UUID!, labelID: UUID!): Boolean!
+}

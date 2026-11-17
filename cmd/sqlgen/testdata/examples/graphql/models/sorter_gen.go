@@ -81,6 +81,28 @@ func (s CategorySorter) Name(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "name", Direction: direction}
 }
 
+// CycleSorter provides type-safe sort helpers for the Cycle entity.
+// Each method returns a sql.Sort for the corresponding column.
+type CycleSorter struct{}
+
+// NewCycleSorter returns a new CycleSorter.
+func NewCycleSorter() CycleSorter { return CycleSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s CycleSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s CycleSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s CycleSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
 // DocumentSorter provides type-safe sort helpers for the Document entity.
 // Each method returns a sql.Sort for the corresponding column.
 type DocumentSorter struct{}
@@ -309,6 +331,28 @@ func (s KeyedCodeEntrySorter) KeyedCodeID(direction sql.SortDirection) sql.Sort 
 // Note returns a sort for the note column in the given direction.
 func (s KeyedCodeEntrySorter) Note(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "note", Direction: direction}
+}
+
+// LabelSorter provides type-safe sort helpers for the Label entity.
+// Each method returns a sql.Sort for the corresponding column.
+type LabelSorter struct{}
+
+// NewLabelSorter returns a new LabelSorter.
+func NewLabelSorter() LabelSorter { return LabelSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s LabelSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Name returns a sort for the name column in the given direction.
+func (s LabelSorter) Name(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "name", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s LabelSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
 }
 
 // MaskedLabelSorter provides type-safe sort helpers for the MaskedLabel entity.
@@ -673,6 +717,82 @@ func (s ScalarProbeSorter) Signature(direction sql.SortDirection) sql.Sort {
 // SmallCount returns a sort for the small_count column in the given direction.
 func (s ScalarProbeSorter) SmallCount(direction sql.SortDirection) sql.Sort {
 	return sql.Sort{Column: "small_count", Direction: direction}
+}
+
+// TaskSorter provides type-safe sort helpers for the Task entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TaskSorter struct{}
+
+// NewTaskSorter returns a new TaskSorter.
+func NewTaskSorter() TaskSorter { return TaskSorter{} }
+
+// CycleID returns a sort for the cycle_id column in the given direction.
+func (s TaskSorter) CycleID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "cycle_id", Direction: direction}
+}
+
+// ID returns a sort for the id column in the given direction.
+func (s TaskSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Title returns a sort for the title column in the given direction.
+func (s TaskSorter) Title(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "title", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s TaskSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// TaskLabelSorter provides type-safe sort helpers for the TaskLabel entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TaskLabelSorter struct{}
+
+// NewTaskLabelSorter returns a new TaskLabelSorter.
+func NewTaskLabelSorter() TaskLabelSorter { return TaskLabelSorter{} }
+
+// LabelID returns a sort for the label_id column in the given direction.
+func (s TaskLabelSorter) LabelID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "label_id", Direction: direction}
+}
+
+// TaskID returns a sort for the task_id column in the given direction.
+func (s TaskLabelSorter) TaskID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "task_id", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s TaskLabelSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
+}
+
+// TaskReportSorter provides type-safe sort helpers for the TaskReport entity.
+// Each method returns a sql.Sort for the corresponding column.
+type TaskReportSorter struct{}
+
+// NewTaskReportSorter returns a new TaskReportSorter.
+func NewTaskReportSorter() TaskReportSorter { return TaskReportSorter{} }
+
+// ID returns a sort for the id column in the given direction.
+func (s TaskReportSorter) ID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "id", Direction: direction}
+}
+
+// Summary returns a sort for the summary column in the given direction.
+func (s TaskReportSorter) Summary(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "summary", Direction: direction}
+}
+
+// TaskID returns a sort for the task_id column in the given direction.
+func (s TaskReportSorter) TaskID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "task_id", Direction: direction}
+}
+
+// WorkspaceID returns a sort for the workspace_id column in the given direction.
+func (s TaskReportSorter) WorkspaceID(direction sql.SortDirection) sql.Sort {
+	return sql.Sort{Column: "workspace_id", Direction: direction}
 }
 
 // UserSorter provides type-safe sort helpers for the User entity.
