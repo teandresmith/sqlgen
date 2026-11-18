@@ -555,6 +555,10 @@ database …` line, which gives the header its database versions.
 - **`make conformance` exits non-zero** after writing the report when any `go test` run failed. A
   stale `models/` aborts it before anything runs.
 
+**Report delta.** `make report-delta` compares the working-tree report with the one committed at
+`REPORT_BASE` (default `HEAD`). It prints the totals per status and every row that changed,
+appeared or disappeared, and fails when a row that passed there no longer passes or is gone.
+
 `make check` doesn't regenerate the report, because that needs Docker. It is regenerated and
 committed by `/close-phase` (§6) and by a deliberate `make conformance` run. It is not rewritten
 on every test run, to keep churn down (§9 ruling 2). Its header records the commit and the

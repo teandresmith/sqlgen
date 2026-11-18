@@ -17,9 +17,14 @@ PRD Sections: 9.9, 11.1, 11.2, 13.7, 16.4, 20.2, 22.3, 27.5, 27.7, 27.9, 28.4, 2
 > registry citations and deletes example copies once their ports pass.
 >
 > **Ground rules for every sub-item:**
-> - **No report regression.** Each sub-item runs 33.1's report-delta check. No registry row moves
->   from `pass` to another status, and the totals per status are recorded in the Completion
->   Record.
+> - **No report regression.** Each sub-item runs 33.1's report-delta check after its `make
+>   conformance`: `make report-delta` against the last committed report, and
+>   `make report-delta REPORT_BASE=<base>` against the phase's base. The base is `5b24d6ba` (the
+>   merge base with `main`) through 33.2. From 33.3 on it is the commit holding 33.2's
+>   regenerated `REPORT.md`, since 33.2 may change the report's layout and `ParseReport` reads
+>   only the current one (user ruling, 2026-11-18). No registry row moves from `pass` to another
+>   status, `skip` included (user ruling, 2026-11-18), and the totals per status are recorded in
+>   the Completion Record.
 > - **Fail first.** Each new suite test is seen failing before its registry row moves: against a
 >   deliberately broken assertion, or a generated-code mutation where the behavior already holds,
 >   as 32.8 did. Record it in the Completion Record.
@@ -106,13 +111,13 @@ Completed 2026-11-18 on `feat/conformance-variants`. Docs only, no code.
 
 **PRD Reference:** none (repository tooling, `CONFORMANCE.md` §5.5)
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] A report-delta check that compares two `REPORT.md` files (or two result sets): the totals
+- [x] A report-delta check that compares two `REPORT.md` files (or two result sets): the totals
   per status, and every row whose status changed, failing when a row leaves `pass`.
-- [ ] Wire it as a make target the later sub-items run against the report at the phase's base
+- [x] Wire it as a make target the later sub-items run against the report at the phase's base
   commit.
 
 ### Acceptance Criteria
@@ -122,12 +127,43 @@ Completed 2026-11-18 on `feat/conformance-variants`. Docs only, no code.
 
 ### Tests Required
 
-- [ ] `unit: cmd/sqlgen/internal/reqcheck`: the delta check passes on current code before any
+- [x] `unit: cmd/sqlgen/internal/reqcheck`: the delta check passes on current code before any
   change (today's report against itself), and reports a row moved from `pass` to `untested`.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-11-18 on `feat/conformance-variants`.
+
+- **Files:** `cmd/sqlgen/internal/reqcheck/{delta.go,delta_test.go}` (new),
+  `cmd/sqlgen/internal/cmd/reqcheck/main.go` (`-delta`), `Makefile` (`report-delta`),
+  `docs/design/CONFORMANCE.md` §5.5, `docs/design/CONFORMANCE_VARIANTS.md` §6.2.
+- **Shape:** `ParseReport` reads a committed `REPORT.md` back to one status per requirement row:
+  the most severe cell, raised by the row's line in "Failing and not-run rows" (a row whose
+  conformance tests apply to no target shows only `—` cells). Each file's derived totals must
+  equal its Modules line, so a rendering change fails loudly instead of misreading rows.
+  `DiffReports` lists rows that changed, appeared or disappeared; a row that leaves `pass`,
+  including one that disappears, is a regression. PRD-gap pinning tests are not compared.
+- **Make target:** `make report-delta [REPORT_BASE=<rev>]` pipes `git show
+  <rev>:docs/conformance/REPORT.md` into `reqcheck -delta -` and compares it with the working-tree
+  report. `REPORT_BASE` defaults to `HEAD`. A bad rev fails (empty report, no Requirements section).
+- **Contract runs:** `TestParseReportRoundTrip`, `TestReportDeltaCommittedReport`,
+  `TestParseReportErrors` and the `unchanged` case of `TestDiffReports` passed with `DiffReports`
+  stubbed to return totals only. `TestReportDeltaPassToUntested` and the six change cases of
+  `TestDiffReports` failed there (no change reported), then passed with the implementation.
+- **Live runs:** `make report-delta` (HEAD): 6257 pass, 85 untested, 0 changed, ok.
+  `make report-delta REPORT_BASE=5b24d6ba`: 6256 → 6257 pass, 80 → 85 untested, 6 rows added
+  (`config.overrides.types.nullable-import-other-package` and the five `view.*` rows), none left
+  `pass`; this matches 33.0's record. A scratch report with one `cli/access-control.md` row moved
+  to `untested` fails with that row marked.
+- **Auto-review:** fail-first confirmed independently; parser audited against the writer with no
+  misread found. Fixed inline: a missing space in `.PHONY` (`report-deltatest`) and a ground-rule
+  re-wrap.
+- **Rulings (user, 2026-11-18):** `pass` → `skip` stays a regression, even for a capability skip.
+  The phase base moves to the post-33.2 report rather than `ParseReport` reading two layouts.
+  Deleted or renamed rows have no allowlist; they fail and need a base move.
+- **Verify:** independent reviewer confirmed fail-first and found no issues. Three doc wordings
+  were fixed inline, and a `pass to skip` case now pins the strict ruling.
+- **Tests:** `make check` green; `make check-examples` green (the Makefile change triggers it).
 
 ## 33.2 `reqcheck`, Makefile and CI — a second suite
 
@@ -146,6 +182,10 @@ _Filled in when complete: files changed, commit references, notes._
 - [ ] Makefile: `CONFORMANCE_DIALECT_DIRS` and the conformance loops skip `features_suite` as they
   skip `suite`.
 - [ ] CI (`.github/workflows/examples.yml:44-45`): the target discovery drops `features_suite`.
+- [ ] Before the layout change lands, run `make report-delta REPORT_BASE=5b24d6ba` one last time.
+  A writer change lands in one commit with the matching `ParseReport` change and a regenerated
+  `REPORT.md` (`make conformance`, Docker), or `make check` goes red on the committed report.
+  Record that commit in the ground rules as the phase's report-delta base for 33.3 on.
 - [ ] A stub `features_suite` with one subtest and one stub target, enough to fail first; 33.3
   replaces it.
 

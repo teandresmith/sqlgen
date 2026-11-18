@@ -322,13 +322,13 @@ PRD, since the PRD does not specify repository tooling.
 |---|---|---|---|
 | Core citations resolve and join exactly as today | CONFORMANCE.md §5.3 | `cmd/sqlgen/internal/reqcheck: TestConformance`, `TestBuildReportJoin`, `TestBuildReportTargets` | guarded |
 | The 30 core method trees, schema and harness are unchanged by the Features suite | CONFORMANCE.md §4 | `make conformance` on the core targets (6,256 pass at `84626ff5`) | guarded |
-| The report never drops a row from `pass` to `untested` or `not run` | CONFORMANCE.md §5.5 | `make conformance` totals, compared before and after each sub-item | unguarded |
+| The report never moves a row from `pass` to another status (`skip` included) or drops a passing row | CONFORMANCE.md §5.5 | `make report-delta` after each sub-item's `make conformance`; `cmd/sqlgen/internal/reqcheck: TestDiffReports`, `TestReportDeltaPassToUntested` | guarded |
 | Example tests that are not ported keep passing, and their citations stay valid | CONFORMANCE.md §9 ruling 6 | `make check-examples`, `make req-check` | guarded |
 | The examples' feature combinations (`tenancy`, `tenancy_postgres`, `tenancy_mysql`, `cache`, `events`) keep their config-variant tests | CONFORMANCE.md §2 | `make check-examples` | guarded |
 | Adding a view to the core schema changes no existing core-suite result | §16.4 | `make conformance` on the core targets | guarded |
 
-The report-delta guard is `unguarded`. It needs a check that compares `REPORT.md` totals per
-status between two runs (§9 N.1).
+The report-delta guard is `make report-delta` (§9 N.1): it compares the working-tree `REPORT.md`
+with the one committed at `REPORT_BASE` and fails when a row leaves `pass`.
 
 ### 6.3 Module matrix cells
 
@@ -409,7 +409,7 @@ status between two runs (§9 N.1).
 | # | Sub-item | Contract rows | Notes |
 |---|---|---|---|
 | N.0 | Doc sync (§8) and relabel the dialect-neutral rows | relabel.neutral | No code. Widens the seven `sqlite` rows and adds the notes |
-| N.1 | Regression guards | the report-delta guard | A `reqcheck` report diff (totals per status) run before and after each sub-item; passes on today's report |
+| N.1 | Regression guards | the report-delta guard | A `reqcheck` report diff (totals per status and per-row changes) run before and after each sub-item; passes on today's report |
 | N.2 | `reqcheck`, Makefile and CI support a second suite | tool.suite-citation, tool.suite-orphans, tool.suite-targets | Fail-first against a stub `features_suite` with one subtest |
 | N.3 | Features modules: schema, `sqlgen.yml`, harness, committed `models/` | tool.features-fresh | Generation on four targets is the probe §7 did not run |
 | N.4 | Events per operation and input | events.per-op, events.input | Includes the MySQL `LastInsertId`, `Upsert` and `Increment` paths §3.1 lists as untested |
