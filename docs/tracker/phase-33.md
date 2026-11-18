@@ -282,6 +282,9 @@ Completed 2026-11-18 on `feat/conformance-variants`.
 - [ ] `features_postgres`, `features_postgres_stdlib`, `features_mysql`, `features_sqlite`: a
   `TestConformance` per target (containers as the core targets), capabilities set per target.
 - [ ] Replace 33.2's stub.
+- [ ] `reqcheck` `readTarget`: a module whose tests import more than one conformance suite fails
+  the report, naming the module and the suites, as importing none does (user ruling,
+  2026-11-18; today the last import wins).
 
 ### Acceptance Criteria
 
@@ -292,6 +295,8 @@ Completed 2026-11-18 on `feat/conformance-variants`.
 
 - [ ] A stale Features `models/` fails `make conformance-fresh` (shown once by editing a
   generated file), and the fresh tree passes.
+- [ ] `unit: cmd/sqlgen/internal/reqcheck: TestBuildReportTargets/a module that imports two suites
+  is an error` fails before the change (the last import wins), passes after.
 - [ ] 33.1's report-delta check: no row leaves `pass`.
 
 ### Completion Record
