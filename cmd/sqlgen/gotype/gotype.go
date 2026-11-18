@@ -1069,7 +1069,7 @@ func FromOverride(override config.TypeOverride, nullable, usePointers bool) GoTy
 
 	gt := GoType{
 		Name:      override.Type,
-		Import:    override.Import,
+		Import:    overrideImport(override.Type, override.Import),
 		ZeroValue: zero,
 		FKConvert: DeriveFKMethod(override.Type),
 	}
@@ -1078,11 +1078,18 @@ func FromOverride(override config.TypeOverride, nullable, usePointers bool) GoTy
 		return gt
 	}
 
-	// Nullable with explicit nullable variant.
+	// Nullable with explicit nullable variant. Without an import of its own it
+	// shares the parent's explicit one; failing that, a known literal brings
+	// its own.
 	if override.Nullable.Type != "" {
 		gt.Name = override.Nullable.Type
-		if override.Nullable.Import != "" {
+		switch {
+		case override.Nullable.Import != "":
 			gt.Import = override.Nullable.Import
+		case override.Import == "":
+			if info, ok := literal.Lookup(override.Nullable.Type); ok {
+				gt.Import = info.Import
+			}
 		}
 		if strings.HasPrefix(override.Nullable.Type, "*") {
 			gt.ZeroValue = "nil"
@@ -1116,6 +1123,17 @@ func FromOverride(override config.TypeOverride, nullable, usePointers bool) GoTy
 	gt.Name = "*" + override.Type
 	gt.ZeroValue = "nil"
 	return gt
+}
+
+// overrideImport returns an override's import: the explicit one, or the
+// registry's for a known literal (PRD §4.7). Leaving it to goimports would make
+// the generated file depend on the consumer's module cache.
+func overrideImport(goType, explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	info, _ := literal.Lookup(goType)
+	return info.Import
 }
 
 // KnownLiteral reports whether goType names a Go type literal the resolver

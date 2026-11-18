@@ -31,6 +31,50 @@ _No open fixes._
 
 <!-- fixes:resolved:begin -->
 
+### FIX-386
+
+- **Status:** Resolved
+- **Severity:** blocking
+- **Origin:** conformance seeding, cmd/sqlgen/gotype
+- **Surfaced by:** CI on PR #4 (`unit (cmd/sqlgen)`, run 44325074798, 2026-11-18)
+
+**Issue.** **An override naming a known non-stdlib literal with no `import` emits no import.**
+`overrides.types: {json: {type: types.JSON}}` passes validation, as PRD §4.7 allows, but
+`models_gen.go` references `types.JSON` without importing
+`github.com/teandresmith/sqlgen/types`. Whether the file compiles depends on goimports finding
+a `types` package in the consumer's GOMODCACHE. `TestGenerate_KnownLiteralOverridesNeedNoImport`
+fails on CI (`config_fields_test.go:739: models_gen.go does not import
+"github.com/teandresmith/sqlgen/types" for types.JSON`) and locally with an empty cache
+(`GOMODCACHE=<empty dir> go test -short -run TestGenerate_KnownLiteralOverridesNeedNoImport
+./gen/` fails the same way). It passes on a machine whose cache holds `sqlgen@v0.1.0`, which is
+why `/close-phase 32` ran green. `json.RawMessage` and `net.IP` are unaffected: goimports fills
+standard-library paths from its built-in table.
+
+**Root cause.** `gotype.FromOverride` (`cmd/sqlgen/gotype/gotype.go:1064`) copies
+`override.Import` and `override.Nullable.Import` verbatim and never consults the
+`gotype/literal` registry, while `FromLiteral` (`gotype.go:1156`) does. Config validation
+(`literal.NeedsExplicitImport`) already treats a registry literal as needing no import, so
+validation and generation disagree. Every override surface goes through `FromOverride`: global and
+per-table `overrides.types` and the built-in integrations (`gotype.go:851-866`), and `tenancy.type`
+(`gen/context_tenancy.go:414`).
+
+**Suggested fix.**
+- In `FromOverride`, when `override.Import` is empty, take `literal.Lookup(override.Type).Import`;
+  when a nullable variant names a registry literal and neither half carries an import, take its
+  registry import the same way.
+- Add a table-driven `gotype` unit test over `FromOverride`: `types.JSON`, `json.RawMessage`,
+  `net.IP`, an explicit import that wins over the registry, and a nullable `types.JSON`.
+- `TestGenerate_KnownLiteralOverridesNeedNoImport` stays as the end-to-end guard.
+
+**References.**
+- PRD §4.7 (`import` is required only when `type` names a package sqlgen does not already know)
+  and §4.8.
+- `cmd/sqlgen/gotype/literal/literal.go` (the registry); `08db661b` moved it there and added the
+  test.
+- `FromLiteral` (`gotype.go:1156-1167`) is the pattern to follow.
+
+**Resolution notes.** `FromOverride` takes a known literal's import from the `gotype/literal` registry when the override names none (new `overrideImport` helper, the rule `FromLiteral` already follows), and a nullable variant naming a registry literal takes its import when neither half carries one; an explicit import still wins. This covers every surface that resolves through `FromOverride`: global and per-table `overrides.types`, the built-in integrations, and `tenancy.type` (`column_map` resolves through `FromLiteral`, already registry-aware). New table-driven `TestFromOverrideKnownLiteralImport` (`cmd/sqlgen/gotype/override_import_test.go`) failed first on five of its eight cases; `TestGenerate_KnownLiteralOverridesNeedNoImport` now passes with an empty GOMODCACHE, the CI condition. Registry: `config.overrides.types.import-omitted-known-literal.others` also lists the new test. No golden churn: `make check`, `make check-examples` and `TestE2EGoldenFiles` pass.
+
 ### FIX-385
 
 - **Status:** Resolved
