@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/teandresmith/sqlgen/compare/v0.1.1...v0.1.2) (2026-11-18)
+
+
+### Features
+
+* relationships through composite foreign keys ([#4](https://github.com/teandresmith/sqlgen/issues/4)) ([5b24d6b](https://github.com/teandresmith/sqlgen/commit/5b24d6baf22feb10c4a0c8505be4e2d3c9f7f5ca))
+
 ## [0.1.1](https://github.com/teandresmith/sqlgen/compare/v0.1.0...v0.1.1) (2026-10-16)
 
 
