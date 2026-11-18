@@ -3742,6 +3742,41 @@ Closure is `/close-phase 32`, with no sub-item of its own. It flips the design d
 - **Composite-PK parents and targets in nested mutations.** The next phase (R3): lift E1 and E3, GraphQL `<T>PKInput` types, E8's opaque-key rule for key structs.
 - **Manual relationships to a non-PK key** (R7), **ON DELETE / ON UPDATE** recording, **MATCH PARTIAL**, FKs to tables outside the generated schema, and polymorphic references.
 
+## Phase 33: Conformance Variant Suite and Core-Suite Ports
+
+> **Status: Not started (design approved 2026-11-18).** Design doc `docs/design/CONFORMANCE_VARIANTS.md` (rulings Q1–Q4 settled 2026-11-18, §11). Task file `docs/tracker/phase-33.md`.
+
+**Why.**
+- **About 120 tenancy, cache and events requirements are proven on one dialect.** Their tests live only in the `tenancy`, `cache` and `events` examples (all SQLite) or in `tenancy_postgres` / `tenancy_mysql`, and the report counts one passing target as `pass` (design §1.1).
+- **The generated code those rows depend on differs by dialect.** Events and cache read the mutation's `AffectedPKs` / `AffectedTenants`, which PostgreSQL and SQLite fill from `RETURNING`, MySQL by pre-read and pgx `UpdateMany` through `SendBatch` (design §3.1). MySQL `Upsert`, `Increment` and `Create` events, and every PostgreSQL event, have no test.
+- **Ten `client.md` rows are narrowed to `sqlite` with no PRD basis**, against `CONFORMANCE.md` §5.1.
+- **Core-suite gaps:** no view in the conformance schema, no relationship-filter or comparator test against a database, and 52 example tests copied across the dialect examples that no row claims (design §1.1).
+
+**Normative spec:** design doc §5 and §6. No PRD change. 33.0 syncs `CONFORMANCE.md` §4.2, §5.3 and §8, `docs/conformance/README.md` and `guidelines/TESTING.md` (design §8).
+
+**Depends on:** Phase 32 closed. The open FIX queue is empty.
+
+**Sub-items** (`docs/tracker/phase-33.md`), design §9:
+- **33.0** — **Doc sync and relabel.** Widen the seven dialect-neutral `sqlite` rows to `all`; add a note to each of the 64 dialect-neutral rows naming the dialect-free code. *Blocks every other sub-item.*
+- **33.1** — **Regression guard.** A report-delta check (totals per status) that passes on today's report.
+- **33.2** — **`reqcheck`, Makefile and CI support a second suite.** `conformance: Features/…` citations, suite trees, targets per suite. *Depends on 33.1.*
+- **33.3** — **Features modules.** `features_suite` and four `features_*` targets with tenancy, cache and events on. *Depends on 33.2.*
+- **33.4** — **Events per operation and input.** *Depends on 33.3.*
+- **33.5** — **Tenancy carriers:** stamps, tenant in the PK, nested tenancy. *Depends on 33.3.*
+- **33.6** — **Cache invalidation and event-driven receive.** *Depends on 33.3.*
+- **33.7** — **Core-suite ports:** a view in the core schema, view reads, relationship filters, comparators against the database. *Depends on 33.1; independent of 33.2–33.6.*
+- **33.8** — **Delete the ported example copies** (`CONFORMANCE.md` §9 ruling 6) and regenerate the report. *Depends on 33.4–33.7.*
+
+Closure is `/close-phase 33`, with no sub-item of its own. It flips the design doc to SYNCED.
+
+**Tests required:**
+- **Fail first:** every new suite test is seen failing before its registry row moves (design §10).
+- **Every carrier-dependent row passes on all four targets** (design §3.2).
+- **No report row moves from `pass` to another status** (33.1's guard, on every sub-item).
+- **Sweep:** `make check`, `make check-examples` and `make conformance` are green.
+
+**Out of scope (design §2.2):** the GraphQL / REST / gRPC rows, dialect-specific example tests, golden and consumer-build coverage, event transports, and any PRD or generated-API change.
+
 ## Deferred Features
 
 These remain deferred until consumer demand justifies the implementation cost. Phase 15 establishes the unified client surface as feature-complete for direct Go consumers; Phase 16 extends it to GraphQL consumers. The deferred items below extend further or address adjacent surfaces.
