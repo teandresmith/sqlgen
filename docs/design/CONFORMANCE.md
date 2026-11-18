@@ -540,7 +540,9 @@ event's package path is `github.com/teandresmith/sqlgen/<dir>` for every module 
 so a reference's `<dir>` names its package directly. Names match as `go test` reports them, with
 spaces as underscores, the same rule `req-check` resolves with. A `conformance:` reference becomes
 `TestConformance/<Method>/<subtest>` in each dialect module, the targets, whose dialect and driver
-are the string literals its test sets on the harness. The suite logs a `conformance harness:
+are the string literals its test sets on the harness. A target runs the suite its test imports (a module
+importing none fails the report), and a citation joins only the targets of its own suite (§5.3). A variant suite's targets follow the core
+ones, labeled with the suite name (`Features sqlite/stdlib`). The suite logs a `conformance harness:
 database …` line, which gives the header its database versions.
 
 - **Not run is never pass.** A test with no result of its own is `not run`, with the reason: its

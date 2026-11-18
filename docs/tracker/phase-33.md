@@ -20,11 +20,11 @@ PRD Sections: 9.9, 11.1, 11.2, 13.7, 16.4, 20.2, 22.3, 27.5, 27.7, 27.9, 28.4, 2
 > - **No report regression.** Each sub-item runs 33.1's report-delta check after its `make
 >   conformance`: `make report-delta` against the last committed report, and
 >   `make report-delta REPORT_BASE=<base>` against the phase's base. The base is `5b24d6ba` (the
->   merge base with `main`) through 33.2. From 33.3 on it is the commit holding 33.2's
->   regenerated `REPORT.md`, since 33.2 may change the report's layout and `ParseReport` reads
->   only the current one (user ruling, 2026-11-18). No registry row moves from `pass` to another
->   status, `skip` included (user ruling, 2026-11-18), and the totals per status are recorded in
->   the Completion Record.
+>   merge base with `main`) through 33.2. From 33.3 on it is the 33.2 commit
+>   (`git log -1 --format=%h --grep='^feat(conformance): a second conformance suite'`), whose
+>   `REPORT.md` first lists the Features targets (user ruling, 2026-11-18). No registry row moves
+>   from `pass` to another status, `skip` included (user ruling, 2026-11-18), and the totals per
+>   status are recorded in the Completion Record.
 > - **Fail first.** Each new suite test is seen failing before its registry row moves: against a
 >   deliberately broken assertion, or a generated-code mutation where the behavior already holds,
 >   as 32.8 did. Record it in the Completion Record.
@@ -169,24 +169,24 @@ Completed 2026-11-18 on `feat/conformance-variants`.
 
 **PRD Reference:** none (repository tooling, `CONFORMANCE.md` §4.2, §5.3, §5.5)
 
-**Status:** Not Started
+**Status:** Complete
 
 ### Tasks
 
-- [ ] `reqcheck`: suites become a table, the core suite (`conformance/suite`) and
+- [x] `reqcheck`: suites become a table, the core suite (`conformance/suite`) and
   `Features` (`conformance/features_suite`). The citation and orphan checks walk both trees
-  (`check.go:436,605-636`).
-- [ ] `readTarget` records which suite package a target's root test imports. `joinRow` sends a
+  (`check.go:436,608-659`).
+- [x] `readTarget` records which suite package a target's root test imports. `joinRow` sends a
   citation whose first segment names a suite to that suite's targets only, and any other
   `conformance:` citation to the core targets.
-- [ ] Makefile: `CONFORMANCE_DIALECT_DIRS` and the conformance loops skip `features_suite` as they
+- [x] Makefile: `CONFORMANCE_DIALECT_DIRS` and the conformance loops skip `features_suite` as they
   skip `suite`.
-- [ ] CI (`.github/workflows/examples.yml:44-45`): the target discovery drops `features_suite`.
-- [ ] Before the layout change lands, run `make report-delta REPORT_BASE=5b24d6ba` one last time.
+- [x] CI (`.github/workflows/examples.yml:44-45`): the target discovery drops `features_suite`.
+- [x] Before the layout change lands, run `make report-delta REPORT_BASE=5b24d6ba` one last time.
   A writer change lands in one commit with the matching `ParseReport` change and a regenerated
   `REPORT.md` (`make conformance`, Docker), or `make check` goes red on the committed report.
   Record that commit in the ground rules as the phase's report-delta base for 33.3 on.
-- [ ] A stub `features_suite` with one subtest and one stub target, enough to fail first; 33.3
+- [x] A stub `features_suite` with one subtest and one stub target, enough to fail first; 33.3
   replaces it.
 
 ### Acceptance Criteria
@@ -199,19 +199,64 @@ Completed 2026-11-18 on `feat/conformance-variants`.
 
 ### Tests Required
 
-- [ ] Regression guards still pass: `unit: cmd/sqlgen/internal/reqcheck: TestConformance`,
+- [x] Regression guards still pass: `unit: cmd/sqlgen/internal/reqcheck: TestCheck`,
   `TestBuildReportJoin`, `TestBuildReportTargets`.
-- [ ] `unit: cmd/sqlgen/internal/reqcheck: TestBuildReportJoin/a suite-rooted citation joins only
+- [x] `unit: cmd/sqlgen/internal/reqcheck: TestBuildReportJoin/a suite-rooted citation joins only
   that suite's targets` fails before the change, passes after.
-- [ ] `unit: cmd/sqlgen/internal/reqcheck: TestCheck/an unclaimed Features subtest is an orphan`
+- [x] `unit: cmd/sqlgen/internal/reqcheck: TestCheck/an unclaimed Features subtest is an orphan`
   fails before the change, passes after.
-- [ ] `unit: cmd/sqlgen/internal/reqcheck: TestBuildReportTargets/variant modules are targets of
+- [x] `unit: cmd/sqlgen/internal/reqcheck: TestBuildReportTargets/variant modules are targets of
   their suite` fails before the change, passes after.
-- [ ] 33.1's report-delta check: no row leaves `pass`.
+- [x] 33.1's report-delta check: no row leaves `pass`.
 
 ### Completion Record
 
-_Filled in when complete: files changed, commit references, notes._
+Completed 2026-11-18 on `feat/conformance-variants`.
+
+- **Files:** `cmd/sqlgen/internal/reqcheck/{testtree.go,check.go,report.go}` and their tests
+  (`check_test.go`, `report_test.go`); `Makefile` (`CONFORMANCE_DIALECT_DIRS`);
+  `.github/workflows/examples.yml` (dialect discovery); new modules
+  `cmd/sqlgen/testdata/conformance/features_suite/` and `features_sqlite/` (stub);
+  `docs/design/CONFORMANCE.md` §5.5; `docs/conformance/REPORT.md` (regenerated).
+- **Shape:** `reqcheck.Suites` lists the core suite and `{Name: "Features", Dir: features_suite}`.
+  `ParseTestRef` sends a `conformance:` path whose first segment names a variant suite to that
+  suite's directory, so the citation and orphan checks resolve it in that tree. In a variant
+  suite a behavior is two levels under the root segment (`Features/<area>/<behavior>`), and every
+  `Run` subtest must be the root segment: one beside it would be cited without it and routed to
+  the core suite. `readTarget` sets `Target.Suite` from the suite package the module's test
+  imports, and fails the report when it imports none (user ruling, 2026-11-18). `joinRow` joins a
+  citation only with its suite's targets. Variant targets sort after the core ones and are
+  labeled `Features sqlite/stdlib`.
+- **Stub:** `features_suite` runs one subtest, `Features/harness` (a `Count` on a one-table
+  schema), which is not a behavior and needs no claim. `features_sqlite` is its one target, with a
+  committed `models/` (`…/conformance/features/models`). 33.3 replaces both.
+- **Contract runs:** with only the `Target.Suite` field added, the existing `TestCheck`,
+  `TestBuildReportJoin` and `TestBuildReportTargets` cases passed. The six new cases failed
+  because `Features/…` resolved against the core tree (`Run has no subtest "Features"`): four
+  `TestCheck` cases (resolves, orphan, looked up in the Features tree, subtest outside the root
+  segment), `TestBuildReportJoin/a suite-rooted citation joins only that suite's targets` and
+  `TestBuildReportTargets/variant modules are targets of their suite`. All pass after.
+- **Report delta:** `make report-delta REPORT_BASE=5b24d6ba` before the change: ok, 6 rows added,
+  none left `pass`. `ParseReport` needed no change: it takes the most severe of whatever cells a
+  row has, so the extra target column parses in both layouts, and the old-base delta still passes
+  on the new report.
+- **`make conformance`:** 6342 rows, 6257 pass, 0 fail, 0 skip, 0 not run, 85 untested.
+  `Features sqlite/stdlib` is listed with SQLite 3.51.3. `make report-delta` against HEAD: 0 rows
+  changed.
+- **Tests:** `make check` green; `make check-examples` green, with `features_sqlite` linted,
+  fresh and passing (the Makefile and CI changes trigger it). Lint asked for two test-helper
+  changes: `sectionHash` lost its always-`"9.3"` key (now `deleteSectionHash`), and `reportRepo`
+  now builds from `reportFiles` so `featuresRepo` can extend the same file map.
+- **Auto-review:** no issues; fail-first confirmed independently (dropping the join's suite
+  filter fails the join subtest both ways). One line range fixed inline (`check.go:436,608-659`).
+  Its open question, whether a module importing no suite counts as core, was ruled an error
+  (user, 2026-11-18): `TestBuildReportTargets/a module that imports no suite is an error` failed
+  first (no error), then passed. The `dialectTest` fixture now imports the core suite, and a
+  rejoin of the last `make conformance` results over the real modules gives the same totals.
+- **Verify:** independent reviewer confirmed fail-first on the no-suite error and found no issues.
+  Fixed inline: the regression-guard test name (`TestConformance` → `TestCheck`, here and in the
+  design's §6.2) and three over-long lines. Open question: a module importing two suites takes the
+  last one.
 
 ## 33.3 Features modules — schema, config, harness
 

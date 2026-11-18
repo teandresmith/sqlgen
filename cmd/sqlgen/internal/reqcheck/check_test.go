@@ -131,6 +131,45 @@ func hardDeleteMany(t *testing.T) {
 }
 `
 
+// checkFeaturesSuite is a variant suite: its tree sits under one root segment, so its citations
+// read Features/<area>/<behavior>, and a leaf directly under the root is not a behavior.
+const checkFeaturesSuite = `package featuressuite
+
+import "testing"
+
+func Run(t *testing.T) {
+	t.Run("Features", func(t *testing.T) {
+		t.Run("harness", func(t *testing.T) {})
+		t.Run("Events", func(t *testing.T) { events(t) })
+	})
+}
+
+func events(t *testing.T) {
+	t.Run("publishes one event", func(t *testing.T) {})
+	t.Run("carries the input", func(t *testing.T) {})
+}
+`
+
+const (
+	checkSuitePath         = "cmd/sqlgen/testdata/conformance/suite/suite.go"
+	checkFeaturesSuitePath = reqcheck.FeaturesSuiteDir + "/suite.go"
+)
+
+// withSuites adds both suites and a client.md row claiming the given conformance tests beside
+// the two core subtests.
+func withSuites(t *testing.T, f map[string]string, features ...string) {
+	t.Helper()
+	f[checkSuitePath] = checkSuite
+	f[checkFeaturesSuitePath] = checkFeaturesSuite
+	tests := append([]string{
+		"conformance: HardDeleteMany/empty key list deletes nothing",
+		"conformance: HardDeleteMany/missing keys are not an error",
+	}, features...)
+	f["docs/conformance/client.md"] = "# Client\n\n<!-- seeding: in-progress -->\n\n## §9.3\n<!-- prd: 9.3 sha256: " + deleteSectionHash(t) +
+		" -->\n\n| ID | Requirement | Tests | Applies to | Matrix cell |\n|---|---|---|---|---|\n| delete.empty | Empty deletes nothing | " +
+		strings.Join(tests, "; ") + " | all | |\n"
+}
+
 // baseRepo is a repository the check passes on: every test style resolves, and the anchor
 // hash is current.
 func baseRepo(t *testing.T) map[string]string {
@@ -505,7 +544,7 @@ func TestCheck(t *testing.T) {
 				edit(f, "cmd/sqlgen/testdata/conformance/suite/suite.go", `t.Run("missing keys are not an error", func(t *testing.T) {})`, `for i := range 2 {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {})
 	}`)
-				f["docs/conformance/client.md"] = "# Client\n\n<!-- seeding: in-progress -->\n\n## §9.3\n<!-- prd: 9.3 sha256: " + sectionHash(t, "9.3") + " -->\n\n| ID | Requirement | Tests | Applies to | Matrix cell |\n|---|---|---|---|---|\n| delete.empty | Empty deletes nothing | conformance: HardDeleteMany/empty key list deletes nothing | all | |\n"
+				f["docs/conformance/client.md"] = "# Client\n\n<!-- seeding: in-progress -->\n\n## §9.3\n<!-- prd: 9.3 sha256: " + deleteSectionHash(t) + " -->\n\n| ID | Requirement | Tests | Applies to | Matrix cell |\n|---|---|---|---|---|\n| delete.empty | Empty deletes nothing | conformance: HardDeleteMany/empty key list deletes nothing | all | |\n"
 			},
 			wantErr: "subtest names under HardDeleteMany are computed, so they cannot be claimed",
 		},
@@ -513,9 +552,39 @@ func TestCheck(t *testing.T) {
 			name: "conformance subtest claimed by no requirement",
 			mutate: func(f map[string]string) {
 				f["cmd/sqlgen/testdata/conformance/suite/suite.go"] = checkSuite
-				f["docs/conformance/client.md"] = "# Client\n\n<!-- seeding: in-progress -->\n\n## §9.3\n<!-- prd: 9.3 sha256: " + sectionHash(t, "9.3") + " -->\n\n| ID | Requirement | Tests | Applies to | Matrix cell |\n|---|---|---|---|---|\n| delete.empty | Empty deletes nothing | conformance: HardDeleteMany/empty key list deletes nothing | all | |\n"
+				f["docs/conformance/client.md"] = "# Client\n\n<!-- seeding: in-progress -->\n\n## §9.3\n<!-- prd: 9.3 sha256: " + deleteSectionHash(t) + " -->\n\n| ID | Requirement | Tests | Applies to | Matrix cell |\n|---|---|---|---|---|\n| delete.empty | Empty deletes nothing | conformance: HardDeleteMany/empty key list deletes nothing | all | |\n"
 			},
 			wantErr: "conformance subtest HardDeleteMany/missing keys are not an error is claimed by no requirement",
+		},
+		{
+			name: "a Features citation resolves against the Features tree",
+			mutate: func(f map[string]string) {
+				withSuites(t, f, "conformance: Features/Events/publishes one event", "conformance: Features/Events/carries the input")
+			},
+			wantNoErr: true,
+		},
+		{
+			name: "an unclaimed Features subtest is an orphan",
+			mutate: func(f map[string]string) {
+				withSuites(t, f, "conformance: Features/Events/publishes one event")
+			},
+			wantErr: "conformance subtest Features/Events/carries the input is claimed by no requirement",
+		},
+		{
+			name: "a Features citation is looked up in the Features tree, not the core one",
+			mutate: func(f map[string]string) {
+				withSuites(t, f, "conformance: Features/Events/publishes one event", "conformance: Features/Events/carries the input", "conformance: Features/Events/gone")
+			},
+			wantErr: `Features/Events has no subtest "gone"`,
+		},
+		{
+			name: "a variant suite subtest outside its root segment",
+			mutate: func(f map[string]string) {
+				withSuites(t, f, "conformance: Features/Events/publishes one event", "conformance: Features/Events/carries the input")
+				edit(f, checkFeaturesSuitePath, "\t\tt.Run(\"harness\", func(t *testing.T) {})\n", "")
+				edit(f, checkFeaturesSuitePath, "\t})\n}\n", "\t})\n\tt.Run(\"harness\", func(t *testing.T) {})\n}\n")
+			},
+			wantErr: "Run subtest harness is outside Features",
 		},
 		{
 			name: "gap tests count as claimed",
@@ -617,7 +686,7 @@ func TestCheck(t *testing.T) {
 			name: "conformance subtest claimed by a gap",
 			mutate: func(f map[string]string) {
 				f["cmd/sqlgen/testdata/conformance/suite/suite.go"] = checkSuite
-				f["docs/conformance/client.md"] = "# Client\n\n<!-- seeding: in-progress -->\n\n## §9.3\n<!-- prd: 9.3 sha256: " + sectionHash(t, "9.3") + " -->\n\n| ID | Requirement | Tests | Applies to | Matrix cell |\n|---|---|---|---|---|\n| delete.empty | Empty deletes nothing | conformance: HardDeleteMany/empty key list deletes nothing | all | |\n" +
+				f["docs/conformance/client.md"] = "# Client\n\n<!-- seeding: in-progress -->\n\n## §9.3\n<!-- prd: 9.3 sha256: " + deleteSectionHash(t) + " -->\n\n| ID | Requirement | Tests | Applies to | Matrix cell |\n|---|---|---|---|---|\n| delete.empty | Empty deletes nothing | conformance: HardDeleteMany/empty key list deletes nothing | all | |\n" +
 					"\n| Gap | Behavior | Tests | Section | Ruling |\n|---|---|---|---|---|\n| gap.delete.missing | Missing keys are not an error | conformance: HardDeleteMany/missing keys are not an error | §9.3 | |\n"
 			},
 			wantNoErr: true,
@@ -697,15 +766,16 @@ func TestRehash(t *testing.T) {
 	}
 }
 
-func sectionHash(t *testing.T, key string) string {
+// deleteSectionHash is the current hash of §9.3, the section the client.md fixtures anchor.
+func deleteSectionHash(t *testing.T) string {
 	t.Helper()
 	prd, err := reqcheck.ParsePRD(checkPRD)
 	if err != nil {
 		t.Fatalf("ParsePRD() unexpected error: %v", err)
 	}
-	s, ok := prd.Section(key)
+	s, ok := prd.Section("9.3")
 	if !ok {
-		t.Fatalf("Section(%q) not found", key)
+		t.Fatal(`Section("9.3") not found`)
 	}
 	return s.Hash
 }

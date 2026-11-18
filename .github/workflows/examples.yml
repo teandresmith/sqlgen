@@ -37,12 +37,12 @@ jobs:
           examples=$(find cmd/sqlgen/testdata/examples -mindepth 2 -maxdepth 2 -name go.mod \
             | xargs -n1 dirname | xargs -n1 basename | sort | jq -R . | jq -sc .)
           echo "examples=$examples" >> "$GITHUB_OUTPUT"
-      # The conformance dialect modules: every module beside the suite, the
-      # same set as the Makefile's CONFORMANCE_DIALECT_DIRS.
+      # The conformance dialect modules: every module beside the two suites,
+      # the same set as the Makefile's CONFORMANCE_DIALECT_DIRS.
       - id: dialects
         run: |
           dialects=$(find cmd/sqlgen/testdata/conformance -mindepth 2 -maxdepth 2 -name go.mod \
-            | xargs -n1 dirname | xargs -n1 basename | grep -vx suite | sort | jq -R . | jq -sc .)
+            | xargs -n1 dirname | xargs -n1 basename | grep -vxE 'suite|features_suite' | sort | jq -R . | jq -sc .)
           echo "dialects=$dialects" >> "$GITHUB_OUTPUT"
 
   lint:

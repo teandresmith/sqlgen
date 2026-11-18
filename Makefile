@@ -1,10 +1,11 @@
 MODULES = . parser cmd/sqlgen event/natsbus cache/memory cache/redis cache/msgpack metrics/otel
 EXAMPLE_MODULES = $(wildcard cmd/sqlgen/testdata/examples/*/go.mod)
 EXAMPLE_DIRS = $(dir $(EXAMPLE_MODULES))
-# The cross-dialect conformance suite (docs/design/CONFORMANCE.md §4.2): a suite
-# library module plus one module per dialect, each generating its own models/.
+# The cross-dialect conformance suites (docs/design/CONFORMANCE.md §4.2): the core
+# and Features suite library modules, plus one module per dialect and suite, each
+# generating its own models/.
 CONFORMANCE_DIRS = $(dir $(wildcard cmd/sqlgen/testdata/conformance/*/go.mod))
-CONFORMANCE_DIALECT_DIRS = $(filter-out %/suite/,$(CONFORMANCE_DIRS))
+CONFORMANCE_DIALECT_DIRS = $(filter-out %/suite/ %/features_suite/,$(CONFORMANCE_DIRS))
 
 # Timeout for the slow suites. Deliberately generous: a test timeout exists to
 # catch a hang, not to bound a normal run. It was sized when `cmd/sqlgen/cli`

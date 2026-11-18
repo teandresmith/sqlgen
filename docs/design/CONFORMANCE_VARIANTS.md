@@ -299,9 +299,9 @@ PRD, since the PRD does not specify repository tooling.
 
 | ID | Requirement | PRD | Applies to | Test | Matrix cell | Status |
 |---|---|---|---|---|---|---|
-| tool.suite-citation | A `conformance: Features/…` citation resolves against the Features suite tree and is joined only with Features targets; a core citation never reaches a Features target | CONFORMANCE.md §5.3 (proposed in §8) | all | `unit: cmd/sqlgen/internal/reqcheck: TestBuildReportJoin/a suite-rooted citation joins only that suite's targets` | — | planned |
-| tool.suite-orphans | An unclaimed leaf in the Features tree fails `req-check` as one in the core tree does | CONFORMANCE.md §5.3 | all | `unit: cmd/sqlgen/internal/reqcheck: TestCheck/an unclaimed Features subtest is an orphan` | — | planned |
-| tool.suite-targets | The report lists the four Features targets beside the four core ones, each with its database version | CONFORMANCE.md §5.5 | all | `unit: cmd/sqlgen/internal/reqcheck: TestBuildReportTargets/variant modules are targets of their suite` | — | planned |
+| tool.suite-citation | A `conformance: Features/…` citation resolves against the Features suite tree and is joined only with Features targets; a core citation never reaches a Features target | CONFORMANCE.md §5.3 (proposed in §8) | all | `unit: cmd/sqlgen/internal/reqcheck: TestBuildReportJoin/a suite-rooted citation joins only that suite's targets` | — | passing |
+| tool.suite-orphans | An unclaimed leaf in the Features tree fails `req-check` as one in the core tree does | CONFORMANCE.md §5.3 | all | `unit: cmd/sqlgen/internal/reqcheck: TestCheck/an unclaimed Features subtest is an orphan` | — | passing |
+| tool.suite-targets | The report lists the four Features targets beside the four core ones, each with its database version | CONFORMANCE.md §5.5 | all | `unit: cmd/sqlgen/internal/reqcheck: TestBuildReportTargets/variant modules are targets of their suite` | — | passing |
 | tool.features-fresh | A stale Features `models/` fails `make conformance-fresh` | CONFORMANCE.md §4.2 | all | `golden: conformance features_*` (the `sqlgen diff --quiet` gate) | — | planned |
 | events.per-op | Each §28.4 operation publishes the events its row states on every target | §28.4 | all | `conformance: Features/Events/<Method>/publishes one event per affected row` | — | planned |
 | events.input | Each §28.6 input row holds on every target | §28.6 | all | `conformance: Features/Events/<Method>/the event carries the documented input` | — | planned |
@@ -320,7 +320,7 @@ PRD, since the PRD does not specify repository tooling.
 
 | Behavior that must not change | PRD | Guarded by | Status |
 |---|---|---|---|
-| Core citations resolve and join exactly as today | CONFORMANCE.md §5.3 | `cmd/sqlgen/internal/reqcheck: TestConformance`, `TestBuildReportJoin`, `TestBuildReportTargets` | guarded |
+| Core citations resolve and join exactly as today | CONFORMANCE.md §5.3 | `cmd/sqlgen/internal/reqcheck: TestCheck`, `TestBuildReportJoin`, `TestBuildReportTargets` | guarded |
 | The 30 core method trees, schema and harness are unchanged by the Features suite | CONFORMANCE.md §4 | `make conformance` on the core targets (6,256 pass at `84626ff5`) | guarded |
 | The report never moves a row from `pass` to another status (`skip` included) or drops a passing row | CONFORMANCE.md §5.5 | `make report-delta` after each sub-item's `make conformance`; `cmd/sqlgen/internal/reqcheck: TestDiffReports`, `TestReportDeltaPassToUntested` | guarded |
 | Example tests that are not ported keep passing, and their citations stay valid | CONFORMANCE.md §9 ruling 6 | `make check-examples`, `make req-check` | guarded |
